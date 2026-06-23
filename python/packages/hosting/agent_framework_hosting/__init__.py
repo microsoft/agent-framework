@@ -12,6 +12,14 @@ so users install only what they need.
 import importlib.metadata
 
 from ._host import AgentFrameworkHost, ChannelContext, logger
+from ._isolation import (
+    ISOLATION_HEADER_CHAT,
+    ISOLATION_HEADER_USER,
+    IsolationKeys,
+    get_current_isolation_keys,
+    reset_current_isolation_keys,
+    set_current_isolation_keys,
+)
 from ._types import (
     Channel,
     ChannelCommand,
@@ -33,6 +41,8 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 
 __all__ = [
+    "ISOLATION_HEADER_CHAT",
+    "ISOLATION_HEADER_USER",
     "AgentFrameworkHost",
     "Channel",
     "ChannelCommand",
@@ -47,6 +57,10 @@ __all__ = [
     "ChannelStreamUpdateHook",
     "HostStatePaths",
     "HostedRunResult",
+    "IsolationKeys",
     "__version__",
+    "get_current_isolation_keys",
     "logger",
+    "reset_current_isolation_keys",
+    "set_current_isolation_keys",
 ]

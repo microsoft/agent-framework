@@ -2,8 +2,11 @@
 
 A `Workflow` (writer → legal reviewer → formatter) hosted
 behind the **Responses API**, with the host configured to
-**persist per-conversation checkpoints**. The `run_hook` prepares the
-writer prompt before the workflow starts.
+**persist per-conversation checkpoints**. Mirrors
+[`../../foundry-hosted-agents/responses/05_workflows/`](../../foundry-hosted-agents/responses/05_workflows/)
+but uses the `agent-framework-hosting` stack instead of the
+Foundry-Hosted-Agents runtime. The `run_hook` prepares the writer prompt
+before the workflow starts.
 
 ## What's interesting
 
@@ -73,5 +76,5 @@ After a few turns, inspect `storage/checkpoints/<isolation_key>/` —
 each conversation has its own subdirectory of checkpoint files written
 by the host.
 
-> This sample is **local-only** — it uses a Foundry project as the model
-> provider, but it is not a Foundry Hosted Agents packaging sample.
+> This sample is **local-only** — no Dockerfile, no Foundry packaging.
+> A Foundry-Hosted-Agents-compatible packaging sample will be added separately.

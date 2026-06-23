@@ -178,7 +178,7 @@ class TestResponsesChannelNonStreaming:
         assert sess is not None
         assert sess["session_id"] == "resp_first"
 
-    def test_unknown_headers_do_not_override_local_response_id_session(self) -> None:
+    def test_chat_isolation_header_ignored_outside_foundry(self) -> None:
         client, _host, agent = _make_client(response_id_factory=lambda *_: "resp_local")
         with client:
             client.post(
@@ -189,6 +189,46 @@ class TestResponsesChannelNonStreaming:
         sess = agent.calls[0]["kwargs"].get("session")
         assert sess is not None
         assert sess["session_id"] == "resp_local"
+
+    def test_chat_isolation_header_creates_session_in_foundry(self, monkeypatch: Any) -> None:
+        """Foundry-style ``x-agent-chat-isolation-key`` falls back to a session anchor.
+
+        First-turn requests have no ``previous_response_id`` (the client
+        doesn't have one yet), but Foundry Hosted Agents always inject
+        the isolation headers. The channel must derive a session from the
+        chat key so the host can build a stable per-conversation session
+        that history providers persist under.
+        """
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
+        client, _host, agent = _make_client()
+        with client:
+            client.post(
+                "/responses",
+                json={"input": "x"},
+                headers={"x-agent-chat-isolation-key": "chat-abc"},
+            )
+        sess = agent.calls[0]["kwargs"].get("session")
+        assert sess is not None
+        assert sess["session_id"] == "chat-abc"
+
+    def test_prev_response_id_wins_over_chat_isolation_header(self, monkeypatch: Any) -> None:
+        """When both anchors are present, ``previous_response_id`` wins.
+
+        ``previous_response_id`` is the protocol-native chain anchor; the
+        header fallback is only meant to bootstrap when no protocol
+        anchor exists.
+        """
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
+        client, _host, agent = _make_client()
+        with client:
+            client.post(
+                "/responses",
+                json={"input": "x", "previous_response_id": "resp_99"},
+                headers={"x-agent-chat-isolation-key": "chat-abc"},
+            )
+        sess = agent.calls[0]["kwargs"].get("session")
+        assert sess is not None
+        assert sess["session_id"] == "resp_99"
 
     def test_response_hook_can_rewrite_originating_reply(self) -> None:
         seen_kwargs: list[dict[str, Any]] = []

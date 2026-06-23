@@ -2,8 +2,10 @@
 
 """Hosted workflow sample with run-hook input prep + checkpoint location.
 
-Three-agent slogan workflow (writer → legal reviewer → formatter) driven
-through the ``agent-framework-hosting`` stack.
+Same three-agent slogan workflow as
+``../../foundry-hosted-agents/responses/05_workflows/main.py`` (writer →
+legal reviewer → formatter), driven through the ``agent-framework-hosting``
+stack instead of the Foundry-Hosted-Agents runtime.
 
 Workflow shape
 --------------
@@ -145,7 +147,7 @@ def build_host() -> AgentFrameworkHost:
     )
 
     # ``context_mode="last_agent"`` ensures each agent only sees the
-    # previous executor's output.
+    # previous executor's output — matching the Foundry sample.
     writer_ex = AgentExecutor(writer, context_mode="last_agent")
     legal_ex = AgentExecutor(legal, context_mode="last_agent")
     format_ex = AgentExecutor(formatter, context_mode="last_agent")

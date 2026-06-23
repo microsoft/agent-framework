@@ -29,6 +29,7 @@ from agent_framework_hosting import (
     ChannelRunHook,
     ChannelSession,
     ChannelStreamUpdateHook,
+    get_current_isolation_keys,
     logger,
 )
 from openai.types.responses import (
@@ -90,7 +91,9 @@ class ResponsesChannel:
                 per-request response id. Default produces
                 ``resp_<uuid hex>`` which matches the OpenAI Responses
                 wire shape. Override when the host backing storage
-                requires a different id format.
+                requires a different id format (e.g. Foundry storage,
+                whose partition keys are encoded in the id and which
+                rejects free-form ``resp_*`` ids with a server error).
                 The same id is used for the channel envelope and for
                 the host-side anchoring (``ChannelRequest.attributes``)
                 so storage and replay agree.
@@ -100,8 +103,16 @@ class ResponsesChannel:
                 factory so id backends that embed partition keys can
                 co-locate the new record with the chain's existing
                 partition. The factory passes that hint through to the
-                storage layer; ownership and authorization are enforced by
-                that storage layer, not by this channel.
+                storage layer; **partition ownership is enforced at
+                the storage layer**, not in the channel: the Foundry
+                storage provider, for example, validates the request
+                against the bound user/chat isolation keys and rejects
+                writes whose embedded partition does not match the
+                authenticated caller's isolation. Channel-level
+                forwarding is therefore a performance hint, not a
+                security boundary; the host's isolation middleware
+                must establish the caller's identity before this
+                route is entered.
         """
         self.path = path
         self._hook = run_hook
@@ -140,10 +151,35 @@ class ResponsesChannel:
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=422)
 
+        # When no ``previous_response_id`` chain anchor is on the body,
+        # surface the isolation key the **host** lifted off the request
+        # (via ``_FoundryIsolationASGIMiddleware`` for the default
+        # Foundry-platform deployment, or whatever middleware the
+        # operator configured in front of the host) as the channel
+        # session id, so callers without an explicit anchor still get
+        # a stable per-conversation session id (used by non-Foundry
+        # history providers, routing/idempotency, etc.).
+        #
+        # Security note: we consume the host-bound contextvar set by the
+        # ASGI isolation middleware, NOT the raw header off the wire.
+        # That middleware is the operator's place to enforce auth and
+        # gate which callers get to set isolation. If you mount the host
+        # in front of a custom auth boundary, your middleware should
+        # validate the caller before stamping ``set_current_isolation_keys``;
+        # never trust raw wire headers to identify a session bucket.
+        # The chat-iso value is *not* a valid storage anchor: the
+        # Foundry history provider deliberately ignores it — multi-turn
+        # storage chaining goes through the ``previous_response_id`` /
+        # bound ``response_id`` pair on ``ChannelRequest.attributes``.
+        bound_keys = get_current_isolation_keys()
+        chat_iso = bound_keys.chat_key if bound_keys is not None else None
+        if session is None and chat_iso:
+            session = ChannelSession(isolation_key=chat_iso)
+
         # Mint the response id once per request so the channel envelope
         # (one-shot or streamed) and any host-side anchoring (e.g. the
-        # context providers that bind ``response_id``) agree on the same
-        # handle. The next turn arrives with this value as
+        # Foundry history provider's ``bind_request_context``) agree on
+        # the same handle. The next turn arrives with this value as
         # ``previous_response_id`` and the storage chain walks. We pass
         # both anchors via ``ChannelRequest.attributes`` so the host
         # can pick them up without a channel-specific contract.
@@ -152,8 +188,8 @@ class ResponsesChannel:
         if isinstance(prev_raw, str) and prev_raw:
             previous_response_id = prev_raw
         # Pass the previous id (if any) as a hint to the factory so id
-        # backends that embed partition keys can co-locate the new record
-        # with the chain's existing partition.
+        # backends that embed partition keys (e.g. Foundry storage) can
+        # co-locate the new record with the chain's existing partition.
         # No-arg factories continue to work via ``Callable[..., str]``.
         response_id = self._response_id_factory(previous_response_id)
         if session is None:

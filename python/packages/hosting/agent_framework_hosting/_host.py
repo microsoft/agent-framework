@@ -43,10 +43,19 @@ from agent_framework import (
     WorkflowEvent,
 )
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 from starlette.routing import BaseRoute, Mount, Route, WebSocketRoute
+from starlette.types import ASGIApp, Receive, Scope, Send
 
+from ._isolation import (
+    ISOLATION_HEADER_CHAT,
+    ISOLATION_HEADER_USER,
+    IsolationKeys,
+    reset_current_isolation_keys,
+    set_current_isolation_keys,
+)
 from ._persistence import normalize_state_dir
 from ._state_store import SessionsStateStore, build_session_aliases
 from ._types import (
@@ -84,12 +93,13 @@ def _checkpoint_path_for_isolation_key(root: Path, isolation_key: str) -> Path:
     r"""Return ``root / isolation_key`` after rejecting path-traversal patterns.
 
     Isolation keys are intentionally caller-controlled: they originate from
-    channel-supplied derivations such as ``telegram:<chat_id>`` /
-    ``entra:<oid>``, protocol-native continuation handles, or from a channel
-    ``run_hook`` that may read body fields. Joining such a value into a
-    filesystem path without validation is CWE-22: a value such as
-    ``../../../etc/foo`` or ``\\foo`` (Windows UNC) would let the resulting
-    checkpoint directory escape the configured root.
+    inbound HTTP headers (``x-agent-{user,chat}-isolation-key`` injected by
+    the Foundry runtime), from channel-supplied derivations such as
+    ``telegram:<chat_id>`` / ``entra:<oid>``, or from a channel ``run_hook``
+    that may read body fields. Joining such a value into a filesystem path
+    without validation is CWE-22: a value such as ``../../../etc/foo`` or
+    ``\\foo`` (Windows UNC) would let the resulting checkpoint directory
+    escape the configured root.
 
     The check intentionally uses a denylist so legitimate namespaced keys
     (``telegram:42``, ``entra:abc-def``) are preserved as-is. Rejected:
@@ -259,9 +269,9 @@ class _BoundResponseStream:
 
     Streaming runs return a :class:`ResponseStream` synchronously, but
     consumption happens later (the channel iterates). For host-bound
-    request context (for example response-chain anchors) to survive that gap,
-    we hold the stack open until the underlying stream is exhausted or
-    :meth:`aclose` is called. We forward awaitable + async-iterator +
+    request context (e.g. Foundry response-id binding) to survive that
+    gap, we hold the stack open until the underlying stream is exhausted
+    or :meth:`aclose` is called. We forward awaitable + async-iterator +
     ``get_final_response`` semantics so the channel sees a normal
     ``ResponseStream``-shaped object.
 
@@ -493,6 +503,45 @@ class ChannelContext:
         )  # type: ignore[return-value]
 
 
+class _FoundryIsolationASGIMiddleware:
+    """Lift the two well-known Foundry isolation headers into a contextvar.
+
+    The Foundry Hosted Agents runtime injects
+    ``x-agent-{user,chat}-isolation-key`` on every inbound HTTP request.
+    Storage providers that need partition-aware writes (notably
+    :class:`FoundryHostedAgentHistoryProvider`) read those keys via
+    :func:`get_current_isolation_keys` to avoid every channel having to
+    parse Foundry-specific headers itself. We intentionally inspect
+    only HTTP scopes; lifespan/websocket scopes are forwarded
+    untouched. When neither header is present the contextvar stays at
+    its default ``None``, so local-dev requests behave as before.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        user_key: str | None = None
+        chat_key: str | None = None
+        for raw_name, raw_value in scope.get("headers") or ():
+            name = raw_name.decode("latin-1").lower()
+            if name == ISOLATION_HEADER_USER:
+                user_key = raw_value.decode("latin-1") or None
+            elif name == ISOLATION_HEADER_CHAT:
+                chat_key = raw_value.decode("latin-1") or None
+        if user_key is None and chat_key is None:
+            await self.app(scope, receive, send)
+            return
+        token = set_current_isolation_keys(IsolationKeys(user_key=user_key, chat_key=chat_key))
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            reset_current_isolation_keys(token)
+
+
 class AgentFrameworkHost:
     """Owns one Starlette app, one hostable target, and a sequence of channels."""
 
@@ -671,10 +720,11 @@ class AgentFrameworkHost:
     ) -> None:
         """Start the host on ``host:port`` using Hypercorn.
 
-        Hypercorn provides a production-capable ASGI server for local
-        development and self-managed deployments (Trio fallbacks,
-        lifespan semantics, HTTP/2 support, …). Install with the
-        ``serve`` extra (``pip install agent-framework-hosting[serve]``).
+        Hypercorn is the same ASGI server the Foundry Hosted Agents
+        runtime uses for production deployments, so running locally with
+        the same server keeps dev/prod parity (Trio fallbacks, lifespan
+        semantics, HTTP/2 support, …). Install with the ``serve`` extra
+        (``pip install agent-framework-hosting[serve]``).
 
         Args:
             host: Interface to bind. Defaults to ``127.0.0.1``.
@@ -741,10 +791,13 @@ class AgentFrameworkHost:
     ) -> None:
         """Emit a single human-friendly startup banner.
 
-        Emits one INFO line that captures the target type, every channel
-        + its endpoint path, the bind address (when known), and the
-        worker count. Keeps log noise low while still giving an operator
-        a single grep-able anchor when triaging.
+        Mirrors the ``AgentServerHost`` convention from
+        ``azure.ai.agentserver.core``: one INFO line that captures the
+        target type, every channel + its endpoint path, the bind address
+        (when known), whether we're running inside a Foundry Hosted
+        Agents container, and the worker count. Keeps log noise low
+        while still giving an operator a single grep-able anchor when
+        triaging.
 
         Called from both :meth:`serve` (which knows the bind triple)
         and the ASGI lifespan ``startup`` phase (which does not — the
@@ -757,13 +810,15 @@ class AgentFrameworkHost:
             f"{ch.name}@{ch.path or '/'}"  # blank path means "mounted at root"
             for ch in self.channels
         )
+        is_hosted = bool(os.environ.get("FOUNDRY_HOSTING_ENVIRONMENT"))
         bind = f"{host}:{port}" if host is not None and port is not None else "<embedded>"
         logger.info(
-            "AgentFrameworkHost starting: target=%s (%s) bind=%s workers=%s channels=[%s]",
+            "AgentFrameworkHost starting: target=%s (%s) bind=%s workers=%s hosted=%s channels=[%s]",
             target_name,
             target_kind,
             bind,
             workers if workers is not None else "<embedded>",
+            is_hosted,
             channels_repr or "<none>",
         )
 
@@ -773,12 +828,15 @@ class AgentFrameworkHost:
         on_startup: list[Callable[[], Awaitable[None]]] = []
         on_shutdown: list[Callable[[], Awaitable[None]]] = []
 
-        # Expose a cheap readiness probe unconditionally. Once the ASGI app
-        # is up the host considers itself ready; channels can register startup
-        # hooks for their own work. Mounted first so a channel cannot
+        # ``/readiness`` is the standard probe path the Foundry Hosted Agents
+        # runtime hits to gate traffic. We expose it unconditionally — once the
+        # ASGI app is up the host considers itself ready (channels register
+        # their own startup hooks and may run before the first request, but
+        # readiness is intentionally cheap so the platform's probe never times
+        # out on transient channel work). Mounted first so a channel cannot
         # accidentally shadow it.
         async def _readiness(_request: Request) -> PlainTextResponse:  # noqa: RUF029
-            """Liveness/readiness probe handler."""
+            """Liveness/readiness probe handler used by Foundry Hosted Agents."""
             return PlainTextResponse("ok")
 
         routes.append(Route("/readiness", _readiness, methods=["GET"]))
@@ -871,10 +929,14 @@ class AgentFrameworkHost:
                         )
                     raise first_exc
 
+        middleware = (
+            [Middleware(_FoundryIsolationASGIMiddleware)] if os.environ.get("FOUNDRY_HOSTING_ENVIRONMENT") else []
+        )
         return Starlette(
             debug=self._debug,
             routes=routes,
             lifespan=lifespan,
+            middleware=middleware,
         )
 
     def _build_run_kwargs(self, request: ChannelRequest) -> dict[str, Any]:
@@ -952,9 +1014,9 @@ class AgentFrameworkHost:
         ``attributes`` / ``metadata`` (the channel's protocol-specific bag,
         e.g. ``chat_id`` / ``callback_query_id`` for Telegram).
 
-        Uses ``extra={...}`` so structured-logging consumers
-        (OpenTelemetry handlers, JSON log sinks, …) can index per-field
-        rather than re-parsing a template string.
+        Uses ``extra={...}`` so structured-logging consumers (the
+        Foundry hosted-agent log shipper, OpenTelemetry handlers, …)
+        can index per-field rather than re-parsing a template string.
         """
         isolation_key = request.session.isolation_key if request.session is not None else None
         logger.info(
@@ -983,16 +1045,20 @@ class AgentFrameworkHost:
 
         Channels announce per-request anchors (currently ``response_id``
         and ``previous_response_id``) via ``ChannelRequest.attributes``.
-        Some history providers need to write storage under the same
-        ``response_id`` the channel surfaces on its envelope so the next
-        turn's ``previous_response_id`` walks the chain. Rather than the
-        host knowing about specific provider classes, we duck-type: any
+        Some history providers — notably the Foundry hosted-agent history
+        provider — need to write storage under the same ``response_id``
+        the channel surfaces on its envelope so the next turn's
+        ``previous_response_id`` walks the chain. Rather than the host
+        knowing about specific provider classes, we duck-type: any
         context provider on the target that exposes a
         ``bind_request_context(response_id=..., previous_response_id=...,
         **_)`` context-manager gets it called with the request's
-        attribute values. Bindings are scoped to the returned
-        :class:`ExitStack` which the caller must enter before invoking
-        the target and leave after the run completes.
+        attribute values. Per-request platform isolation keys are handled
+        separately by :class:`_FoundryIsolationASGIMiddleware` (lifted
+        off the inbound headers into a contextvar) so providers don't
+        depend on channels to forward them. Bindings are scoped to the
+        returned :class:`ExitStack` which the caller must enter before
+        invoking the target and leave after the run completes.
         """
         stack = ExitStack()
         attrs = request.attributes or {}
@@ -1113,7 +1179,8 @@ class AgentFrameworkHost:
         When ``checkpoint_location`` is configured on the host, a
         per-conversation checkpoint storage is resolved, the workflow is
         restored from its latest checkpoint (if any) and then re-run with
-        the new input.
+        the new input — mirroring the resume semantics of the Foundry
+        Responses host.
 
         The full :class:`~agent_framework._workflows._workflow.WorkflowRunResult`
         is carried unchanged on :attr:`HostedRunResult.result` so

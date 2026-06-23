@@ -11,7 +11,7 @@ its own package. This first sample set includes
 | Sample | What it shows | Packaging |
 |---|---|---|
 | [`local_responses/`](./local_responses) | The minimal shape: one agent + one `@tool` + `ResponsesChannel` + a single `run_hook` that strips caller-supplied options and forces a `reasoning` preset. | **Local only.** Start here to learn the run-hook seam. |
-| [`local_responses_workflow/`](./local_responses_workflow) | A 3-step `Workflow` (writer → legal → formatter) hosted behind the Responses channel via a `run_hook` that parses inbound text/JSON into the writer prompt. The host writes per-conversation checkpoints via `checkpoint_location=…`. Demonstrates workflow targets + input preparation + resume-across-turns. Includes a `call_server.rest` file with REST examples. | **Local only.** |
+| [`local_responses_workflow/`](./local_responses_workflow) | A 4-step `Workflow` (typed `SloganBrief` intake → writer → legal → formatter) hosted behind the Responses channel via a `run_hook` that parses inbound text/JSON into the workflow's typed input. The host writes per-conversation checkpoints via `checkpoint_location=…`. Demonstrates workflow targets + structured input adaptation + resume-across-turns. Includes a `call_server.rest` file with REST examples. | **Local only.** |
 
 Each sample is fully self-contained — its own `pyproject.toml`, `uv.lock`,
 server `app.py`, calling script(s), and `storage/` directory. Every
@@ -23,22 +23,20 @@ the monorepo while the hosting packages are still pre-PyPI. Once those
 packages publish, drop the `[tool.uv.sources]` block and let the
 declared deps resolve from PyPI.
 
-## Relationship to Foundry Hosted Agents
+## Relationship to `../foundry-hosted-agents/`
 
-These samples are **not** the recommended hosting path for Foundry Hosted
-Agents. They are local/custom-ASGI samples for learning the generic
-`agent-framework-hosting` host/channel seams.
+The sibling [`../foundry-hosted-agents/`](../foundry-hosted-agents) directory
+contains samples for the **`agent-framework-hosted`** stack — agents
+that run **inside** the Foundry Hosted Agents platform using its
+built-in protocol surface (Responses, Invocations, conversation store,
+isolation, identity), with **no `agent-framework-hosting` package
+involved**.
 
-For Foundry Hosted Agents, use the `agent-framework-foundry-hosting`
-package and the Foundry hosting samples. That stack targets the Foundry
-Hosted Agents platform contract and owns the platform-specific HTTP
-surface, conversation store, isolation, and identity behavior.
-
-| Aspect | `af-hosting/` (this directory) | Foundry Hosted Agents |
+| Aspect | `af-hosting/` (this directory) | `foundry-hosted-agents/` |
 |---|---|---|
-| Server stack | `agent-framework-hosting` + channel packages | `agent-framework-foundry-hosting` |
-| Channels | Self-managed channel packages such as Responses | Foundry-managed protocol surface |
-| Run target | Local Hypercorn or your own ASGI host | Foundry Hosted Agents platform |
-| When to pick this | You want to learn host/channel seams locally or need custom ASGI hosting | You are deploying to Foundry Hosted Agents |
+| Server stack | `agent-framework-hosting` + `agent-framework-hosting-responses` | `agent-framework-hosted` only — the Foundry Hosted Agents runtime owns the HTTP surface |
+| Channels | Responses only in this initial sample set | The platform exposes Responses + Invocations |
+| Run target | Local Hypercorn (`local_responses/`, `local_responses_workflow/`) | Hosted Agents *or* local container; targets the Hosted Agents platform contract |
+| When to pick this | You want to learn the host/channel seams locally or need custom hosting middleware | You want zero hosting boilerplate, leveraging the Foundry-managed surface |
 
 The table above summarizes the cross-sample story.
