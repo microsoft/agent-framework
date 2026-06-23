@@ -1199,4 +1199,26 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Equal("references/legit.md", skill.GetTestResources()![0].Name);
     }
 #endif
+
+    [Fact]
+    public async Task GetSkillsAsync_NestedSkillMd_DoesNotTreatSubdirectoryAsIndependentSkillAsync()
+    {
+        // Arrange — parent has SKILL.md; subdirectory also has SKILL.md.
+        // Only the parent should be discovered as a skill root.
+        string parentSkillDir = this.CreateSkillDirectory("parent-skill", "Parent skill", "Parent body.");
+        string childDir = Path.Combine(parentSkillDir, "child");
+        Directory.CreateDirectory(childDir);
+        File.WriteAllText(
+            Path.Combine(childDir, "SKILL.md"),
+            "---\nname: child-skill\ndescription: Child skill\n---\nChild body.");
+
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync();
+
+        // Assert — only the parent skill is discovered; the nested child is not an independent skill
+        Assert.Single(skills);
+        Assert.Equal("parent-skill", skills[0].Frontmatter.Name);
+    }
 }
