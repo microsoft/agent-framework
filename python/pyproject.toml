@@ -42,7 +42,7 @@ dev = [
     "pyrefly==1.0.0",
     "ty==0.0.46",
     "zuban==0.8.2",
-    "mcp[ws]==1.27.2",
+    "mcp[ws]==1.28.0",
     "opentelemetry-sdk==1.40.0",
     "azure-monitor-opentelemetry==1.8.8",
     #tasks
