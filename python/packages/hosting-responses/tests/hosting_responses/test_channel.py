@@ -535,6 +535,8 @@ class TestResponsesChannelStreaming:
                     yield AgentResponseUpdate(
                         contents=[
                             Content.from_text("caption"),
+                            Content.from_text_reasoning(id="rs_1", text="thinking"),
+                            Content.from_function_call("call_1", "lookup", arguments={"city": "Seattle"}),
                             Content.from_uri("https://example.com/cat.png", media_type="image/png"),
                         ],
                         role="assistant",
@@ -559,13 +561,38 @@ class TestResponsesChannelStreaming:
         assert r.status_code == 200
         assert "event: response.output_item.added" in r.text
         assert "event: response.output_item.done" in r.text
-        added = _sse_payload(r.text, "response.output_item.added")
-        assert added["item"]["output"] == [
+        events = [line[len("event: ") :] for line in r.text.splitlines() if line.startswith("event: ")]
+        assert "response.content_part.added" in events
+        assert "response.output_text.done" in events
+        assert "response.reasoning_text.delta" in events
+        assert "response.reasoning_text.done" in events
+        assert "response.function_call_arguments.delta" in events
+        assert "response.function_call_arguments.done" in events
+        content_part_added = _sse_payload(r.text, "response.content_part.added")
+        assert content_part_added["part"] == {"annotations": [], "text": "", "type": "output_text"}
+        added_items = [
+            json.loads(line[len("data: ") :])["item"]
+            for line in r.text.splitlines()
+            if line.startswith("data: ") and '"type":"response.output_item.added"' in line
+        ]
+        assert [item["type"] for item in added_items] == [
+            "message",
+            "reasoning",
+            "function_call",
+            "function_call_output",
+        ]
+        assert added_items[0]["content"] == []
+        assert added_items[1]["content"] == []
+        assert added_items[2]["name"] == "lookup"
+        assert added_items[2]["arguments"] == ""
+        assert added_items[3]["output"] == [
             {"detail": "auto", "type": "input_image", "image_url": "https://example.com/cat.png"}
         ]
         completed = _sse_payload(r.text, "response.completed")
         assert completed["response"]["output"][0]["content"][0]["text"] == "caption"
-        assert completed["response"]["output"][1]["output"] == [
+        assert completed["response"]["output"][1]["content"][0]["text"] == "thinking"
+        assert completed["response"]["output"][2]["name"] == "lookup"
+        assert completed["response"]["output"][3]["output"] == [
             {"detail": "auto", "type": "input_image", "image_url": "https://example.com/cat.png"}
         ]
 

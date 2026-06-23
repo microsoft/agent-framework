@@ -21,7 +21,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import Any, cast
 
-from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message
+from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream
 from agent_framework_hosting import (
     ChannelContext,
     ChannelContribution,
@@ -37,22 +37,36 @@ from openai.types.responses import (
     Response as OpenAIResponse,
 )
 from openai.types.responses import (
+    ResponseCodeInterpreterCallCodeDeltaEvent,
+    ResponseCodeInterpreterCallCodeDoneEvent,
+    ResponseCodeInterpreterToolCall,
     ResponseCompletedEvent,
+    ResponseContentPartAddedEvent,
+    ResponseContentPartDoneEvent,
     ResponseCreatedEvent,
     ResponseError,
     ResponseFailedEvent,
+    ResponseFunctionCallArgumentsDeltaEvent,
+    ResponseFunctionCallArgumentsDoneEvent,
     ResponseFunctionToolCall,
     ResponseFunctionToolCallOutputItem,
     ResponseInputFile,
     ResponseInputImage,
     ResponseInputText,
+    ResponseMcpCallArgumentsDeltaEvent,
+    ResponseMcpCallArgumentsDoneEvent,
     ResponseOutputItem,
     ResponseOutputItemAddedEvent,
     ResponseOutputItemDoneEvent,
     ResponseOutputMessage,
     ResponseOutputText,
+    ResponseReasoningItem,
+    ResponseReasoningTextDeltaEvent,
+    ResponseReasoningTextDoneEvent,
     ResponseTextDeltaEvent,
+    ResponseTextDoneEvent,
 )
+from openai.types.responses.response_output_item import McpCall
 from pydantic import TypeAdapter, ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
@@ -247,6 +261,7 @@ class ResponsesChannel:
         *,
         status: str,
         response_id: str | None = None,
+        output_message_id: str | None = None,
     ) -> OpenAIResponse:
         """Construct an OpenAI ``Response`` for a finished (non-streaming) run.
 
@@ -264,6 +279,12 @@ class ResponsesChannel:
         when callers (e.g. :meth:`_stream_events`'s skeleton path
         before this argument was introduced) don't supply one.
         """
+        output_items = list(output)
+        if output_message_id is not None:
+            for output_item in output_items:
+                if isinstance(output_item, ResponseOutputMessage):
+                    output_item.id = output_message_id
+                    break
         model = body.get("model")
         return OpenAIResponse(
             id=response_id or self._response_id_factory(None),
@@ -271,7 +292,7 @@ class ResponsesChannel:
             created_at=int(time.time()),
             status=status,  # type: ignore[arg-type]
             model=model if isinstance(model, str) and model else "agent",
-            output=list(output),
+            output=output_items,
             parallel_tool_calls=False,
             tool_choice="auto",
             tools=[],
@@ -301,19 +322,16 @@ class ResponsesChannel:
             seq += 1
             return seq
 
-        def sse(event: Any) -> str:
-            return f"event: {event.type}\ndata: {_event_json(event)}\n\n"
-
         skeleton = self._build_response(
             body,
             _text_output_items("", status="in_progress", message_id=msg_id),
             status="in_progress",
             response_id=response_id,
         )
-        yield sse(ResponseCreatedEvent(type="response.created", response=skeleton, sequence_number=next_seq()))
+        yield _sse_event(ResponseCreatedEvent(type="response.created", response=skeleton, sequence_number=next_seq()))
 
-        streamed_updates: list[AgentResponseUpdate] = []
         next_output_index = 1
+        update_stream: ResponseStream[AgentResponseUpdate, list[ResponseOutputItem]] | None = None
         try:
             stream = await self._ctx.run_stream(
                 request,
@@ -323,16 +341,34 @@ class ResponsesChannel:
                 response_hook=self.response_hook,
                 channel_name=self.name,
             )
-            async for update in stream:
-                streamed_updates.append(update)
-                update_events, next_output_index = _stream_events_from_update(
-                    update,
+
+            def update_to_events(update: AgentResponseUpdate) -> list[Any]:
+                nonlocal next_output_index
+                events: list[Any] = []
+                for content in update.contents:
+                    content_events, uses_output_index = _content_to_stream_events(
+                        content,
+                        message_id=msg_id,
+                        output_index=next_output_index,
+                        next_sequence_number=next_seq,
+                    )
+                    events.extend(content_events)
+                    if uses_output_index:
+                        next_output_index += 1
+                return events
+
+            update_stream = ResponseStream(
+                stream,
+                finalizer=lambda updates: _streamed_updates_output(
+                    updates,
+                    status="completed",
                     message_id=msg_id,
-                    next_output_index=next_output_index,
-                    next_sequence_number=next_seq,
-                )
-                for event in update_events:
-                    yield sse(event)
+                ),
+            )
+            event_stream = update_stream.flat_map(update_to_events, finalizer=lambda _events: None)
+
+            async for event in event_stream:
+                yield _sse_event(event)
             try:
                 # Finalize so context-provider / history hooks on the agent
                 # still run even though we are emitting our own SSE.
@@ -342,14 +378,19 @@ class ResponsesChannel:
                 final_response = None
         except Exception as exc:
             logger.exception("Responses stream consumption failed")
+            failed_output = (
+                _streamed_updates_output(update_stream.updates, status="failed", message_id=msg_id)
+                if update_stream is not None
+                else _text_output_items("", status="failed", message_id=msg_id)
+            )
             failed = self._build_response(
                 body,
-                _streamed_updates_output(streamed_updates, status="failed", message_id=msg_id),
+                failed_output,
                 status="failed",
                 response_id=response_id,
             )
             failed.error = ResponseError(code="server_error", message=str(exc))
-            yield sse(
+            yield _sse_event(
                 ResponseFailedEvent(
                     type="response.failed",
                     response=failed,
@@ -358,18 +399,16 @@ class ResponsesChannel:
             )
             return
 
-        completed_output = (
+        completed = self._build_response(
+            body,
             _result_to_output_items(final_response, status="completed")
             if final_response is not None
-            else _streamed_updates_output(streamed_updates, status="completed", message_id=msg_id)
+            else await update_stream.get_final_response(),
+            status="completed",
+            response_id=response_id,
+            output_message_id=msg_id,
         )
-        completed = self._build_response(body, completed_output, status="completed", response_id=response_id)
-        # Reuse the same message id we emitted deltas under.
-        for output_item in completed.output:
-            if isinstance(output_item, ResponseOutputMessage):
-                output_item.id = msg_id
-                break
-        yield sse(
+        yield _sse_event(
             ResponseCompletedEvent(
                 type="response.completed",
                 response=completed,
@@ -378,66 +417,320 @@ class ResponsesChannel:
         )
 
 
-def _stream_events_from_update(
-    update: AgentResponseUpdate,
+def _sse_event(event: Any) -> str:
+    return f"event: {event.type}\ndata: {_event_json(event)}\n\n"
+
+
+def _content_to_stream_events(
+    content: Content,
     *,
     message_id: str,
-    next_output_index: int,
+    output_index: int,
     next_sequence_number: Callable[[], int],
-) -> tuple[list[Any], int]:
+) -> tuple[list[Any], bool]:
     events: list[Any] = []
-    for output_item in _contents_to_output_items(update.contents, status="completed"):
-        if isinstance(output_item, ResponseOutputMessage):
-            _append_message_delta_events(
-                events,
-                output_item,
-                message_id=message_id,
-                next_sequence_number=next_sequence_number,
-            )
-            continue
 
+    def add_start(item: ResponseOutputItem) -> None:
         events.append(
             ResponseOutputItemAddedEvent(
                 type="response.output_item.added",
-                item=output_item,
-                output_index=next_output_index,
+                item=item,
+                output_index=output_index,
                 sequence_number=next_sequence_number(),
             )
         )
+
+    def add_done(item: ResponseOutputItem) -> None:
         events.append(
             ResponseOutputItemDoneEvent(
                 type="response.output_item.done",
-                item=output_item,
-                output_index=next_output_index,
+                item=item,
+                output_index=output_index,
                 sequence_number=next_sequence_number(),
             )
         )
-        next_output_index += 1
 
-    return events, next_output_index
+    def add_item(item: ResponseOutputItem, *, added_item: ResponseOutputItem | None = None) -> None:
+        add_start(added_item or item)
+        add_done(item)
 
+    raw_item = _raw_response_output_item(content.raw_representation)
+    if raw_item is not None:
+        add_item(raw_item)
+        return events, not isinstance(raw_item, ResponseOutputMessage)
 
-def _append_message_delta_events(
-    events: list[Any],
-    output_item: ResponseOutputMessage,
-    *,
-    message_id: str,
-    next_sequence_number: Callable[[], int],
-) -> None:
-    for content_index, content in enumerate(output_item.content):
-        if not isinstance(content, ResponseOutputText) or not content.text:
-            continue
-        events.append(
-            ResponseTextDeltaEvent(
-                type="response.output_text.delta",
-                item_id=message_id,
-                output_index=0,
-                content_index=content_index,
-                delta=content.text,
-                logprobs=[],
-                sequence_number=next_sequence_number(),
+    match content.type:
+        case "text":
+            text_part = ResponseOutputText(type="output_text", text=content.text or "", annotations=[])
+            added_part = ResponseOutputText(type="output_text", text="", annotations=[])
+            output_item = ResponseOutputMessage(
+                id=message_id,
+                type="message",
+                role="assistant",
+                status="completed",
+                content=[text_part],
             )
-        )
+            events.append(
+                ResponseOutputItemAddedEvent(
+                    type="response.output_item.added",
+                    item=ResponseOutputMessage(
+                        id=message_id,
+                        type="message",
+                        role="assistant",
+                        status="in_progress",
+                        content=[],
+                    ),
+                    output_index=0,
+                    sequence_number=next_sequence_number(),
+                )
+            )
+            events.append(
+                ResponseContentPartAddedEvent(
+                    type="response.content_part.added",
+                    item_id=message_id,
+                    output_index=0,
+                    content_index=0,
+                    part=added_part,
+                    sequence_number=next_sequence_number(),
+                )
+            )
+            if text_part.text:
+                events.append(
+                    ResponseTextDeltaEvent(
+                        type="response.output_text.delta",
+                        item_id=message_id,
+                        output_index=0,
+                        content_index=0,
+                        delta=text_part.text,
+                        logprobs=[],
+                        sequence_number=next_sequence_number(),
+                    )
+                )
+                events.append(
+                    ResponseTextDoneEvent(
+                        type="response.output_text.done",
+                        item_id=message_id,
+                        output_index=0,
+                        content_index=0,
+                        text=text_part.text,
+                        logprobs=[],
+                        sequence_number=next_sequence_number(),
+                    )
+                )
+            events.append(
+                ResponseContentPartDoneEvent(
+                    type="response.content_part.done",
+                    item_id=message_id,
+                    output_index=0,
+                    content_index=0,
+                    part=text_part,
+                    sequence_number=next_sequence_number(),
+                )
+            )
+            events.append(
+                ResponseOutputItemDoneEvent(
+                    type="response.output_item.done",
+                    item=output_item,
+                    output_index=0,
+                    sequence_number=next_sequence_number(),
+                )
+            )
+            return events, False
+
+        case "text_reasoning":
+            reasoning_id = content.id or f"rs_{uuid.uuid4().hex}"
+            text = content.text or ""
+            output_item = _reasoning_output_item(content, status="completed")
+            add_start(
+                ResponseReasoningItem(
+                    id=reasoning_id,
+                    type="reasoning",
+                    summary=[],
+                    content=[],
+                    status="in_progress",
+                )
+            )
+            if text:
+                events.append(
+                    ResponseReasoningTextDeltaEvent(
+                        type="response.reasoning_text.delta",
+                        item_id=reasoning_id,
+                        output_index=output_index,
+                        content_index=0,
+                        delta=text,
+                        sequence_number=next_sequence_number(),
+                    ),
+                )
+                events.append(
+                    ResponseReasoningTextDoneEvent(
+                        type="response.reasoning_text.done",
+                        item_id=reasoning_id,
+                        output_index=output_index,
+                        content_index=0,
+                        text=text,
+                        sequence_number=next_sequence_number(),
+                    ),
+                )
+            add_done(output_item)
+            return events, True
+
+        case "function_call":
+            output_item = _function_call_output_item(content, status="completed")
+            if not isinstance(output_item, ResponseFunctionToolCall):
+                add_item(output_item)
+                return events, True
+            add_start(
+                ResponseFunctionToolCall(
+                    id=output_item.id,
+                    type="function_call",
+                    call_id=output_item.call_id,
+                    name=output_item.name,
+                    arguments="",
+                    status="in_progress",
+                )
+            )
+            if output_item.arguments:
+                item_id = output_item.id or output_item.call_id
+                events.append(
+                    ResponseFunctionCallArgumentsDeltaEvent(
+                        type="response.function_call_arguments.delta",
+                        item_id=item_id,
+                        output_index=output_index,
+                        delta=output_item.arguments,
+                        sequence_number=next_sequence_number(),
+                    ),
+                )
+                events.append(
+                    ResponseFunctionCallArgumentsDoneEvent(
+                        type="response.function_call_arguments.done",
+                        item_id=item_id,
+                        output_index=output_index,
+                        arguments=output_item.arguments,
+                        name=output_item.name,
+                        sequence_number=next_sequence_number(),
+                    ),
+                )
+            add_done(output_item)
+            return events, True
+
+        case "mcp_server_tool_call":
+            output_item = _mcp_call_output_item(content, status="completed")
+            if not isinstance(output_item, McpCall):
+                add_item(output_item)
+                return events, True
+            add_start(
+                McpCall(
+                    id=output_item.id,
+                    type="mcp_call",
+                    server_label=output_item.server_label,
+                    name=output_item.name,
+                    arguments="",
+                    status="in_progress",
+                )
+            )
+            if output_item.arguments:
+                events.append(
+                    ResponseMcpCallArgumentsDeltaEvent(
+                        type="response.mcp_call_arguments.delta",
+                        item_id=output_item.id,
+                        output_index=output_index,
+                        delta=output_item.arguments,
+                        sequence_number=next_sequence_number(),
+                    ),
+                )
+                events.append(
+                    ResponseMcpCallArgumentsDoneEvent(
+                        type="response.mcp_call_arguments.done",
+                        item_id=output_item.id,
+                        output_index=output_index,
+                        arguments=output_item.arguments,
+                        sequence_number=next_sequence_number(),
+                    ),
+                )
+            add_done(output_item)
+            return events, True
+
+        case "code_interpreter_tool_call" | "code_interpreter_tool_result":
+            output_item = _code_interpreter_output_item(content, status="completed")
+            if not isinstance(output_item, ResponseCodeInterpreterToolCall):
+                add_item(output_item)
+                return events, True
+            add_start(
+                ResponseCodeInterpreterToolCall(
+                    id=output_item.id,
+                    type="code_interpreter_call",
+                    container_id=output_item.container_id,
+                    code="",
+                    outputs=None,
+                    status="in_progress",
+                )
+            )
+            if output_item.code:
+                events.append(
+                    ResponseCodeInterpreterCallCodeDeltaEvent(
+                        type="response.code_interpreter_call_code.delta",
+                        item_id=output_item.id,
+                        output_index=output_index,
+                        delta=output_item.code,
+                        sequence_number=next_sequence_number(),
+                    ),
+                )
+                events.append(
+                    ResponseCodeInterpreterCallCodeDoneEvent(
+                        type="response.code_interpreter_call_code.done",
+                        item_id=output_item.id,
+                        output_index=output_index,
+                        code=output_item.code,
+                        sequence_number=next_sequence_number(),
+                    ),
+                )
+            add_done(output_item)
+            return events, True
+
+        case "function_result":
+            add_item(_function_result_output_item(content, status="completed"))
+            return events, True
+
+        case "image_generation_tool_call" | "image_generation_tool_result":
+            add_item(_image_generation_output_item(content, status="completed"))
+            return events, True
+
+        case "mcp_server_tool_result":
+            add_item(_mcp_result_output_item(content, status="completed"))
+            return events, True
+
+        case "shell_tool_call":
+            add_item(_shell_call_output_item(content, status="completed"))
+            return events, True
+
+        case "shell_tool_result":
+            add_item(_shell_result_output_item(content, status="completed"))
+            return events, True
+
+        case "function_approval_request":
+            add_item(_function_approval_request_output_item(content))
+            return events, True
+
+        case "function_approval_response":
+            add_item(_function_approval_response_output_item(content))
+            return events, True
+
+        case "data" | "uri" | "hosted_file":
+            add_item(_media_content_output_item(content, status="completed"))
+            return events, True
+
+        case "error":
+            error_text = str(content)
+            text_content = Content.from_text(error_text)
+            return _content_to_stream_events(
+                text_content,
+                message_id=message_id,
+                output_index=output_index,
+                next_sequence_number=next_sequence_number,
+            )
+
+        case _:
+            return [], False
 
 
 def _streamed_updates_output(

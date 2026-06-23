@@ -41,7 +41,6 @@ def main() -> None:
     prompt = " ".join(args) or '{"topic": "electric SUV", "style": "playful", "audience": "young families"}'
     client = OpenAI(base_url=BASE_URL, api_key="not-needed")
     response = client.responses.create(
-        model="agent",
         input=prompt,
         previous_response_id=previous_response_id,
     )

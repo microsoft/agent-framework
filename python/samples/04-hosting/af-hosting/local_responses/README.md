@@ -7,8 +7,8 @@ without any multi-channel or identity-link concerns.
 
 What the run hook demonstrates:
 
-- **Strips** caller-supplied `temperature` / `store` so the host owns
-  those settings.
+- **Strips** caller-supplied `model` / `temperature` / `store` so the
+  host owns the backing deployment and persistence settings.
 - **Forces** a `reasoning` preset (`effort=medium`, `summary=auto`) on
   every turn — caller-side overrides are ignored.
 
@@ -19,7 +19,7 @@ is Hypercorn.
 
 ```bash
 export FOUNDRY_PROJECT_ENDPOINT=https://<your-project>.services.ai.azure.com
-export FOUNDRY_MODEL=gpt-5.4-nano
+export FOUNDRY_MODEL=gpt-5-nano
 az login
 
 uv sync
@@ -37,11 +37,18 @@ uv run python app.py
 ```bash
 uv sync --group dev
 
-# Plain call:
-uv run python call_server.py "What is the weather in Tokyo?"
+# Plain OpenAI SDK call:
+uv run python call_server.py
 
-# Continue an existing conversation by its `response.id`:
-uv run python call_server.py --previous-response-id <response-id> "And in Seattle?"
+# The client intentionally omits `model`; the host chooses the backing
+# deployment from FOUNDRY_MODEL.
+
+# The script then sends a second turn, "And what about Amsterdam?",
+# using the first `response.id` as `previous_response_id`.
+
+# Same two-turn interaction through an Agent Framework Agent backed by
+# OpenAIChatClient, with streaming enabled:
+uv run python call_server_af.py
 ```
 
 > This sample is **local-only** — no Dockerfile, no Foundry packaging.

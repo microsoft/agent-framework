@@ -13,35 +13,38 @@ Start the server first (in another shell)::
 
 Then::
 
-    uv run python call_server.py "What is the weather in Tokyo?"
+    uv run python call_server.py
+
+The script sends a follow-up turn ("And what about Amsterdam?") using the
+first response's ``response.id`` as ``previous_response_id``.
 """
 
 from __future__ import annotations
 
-import sys
-
 from openai import OpenAI
 
 BASE_URL = "http://127.0.0.1:8000"
+PROMPT = "What is the weather in Tokyo?"
+FOLLOW_UP_PROMPT = "And what about Amsterdam?"
 
 
 def main() -> None:
-    args = sys.argv[1:]
-    previous_response_id: str | None = None
-    if len(args) >= 2 and args[0] == "--previous-response-id":
-        previous_response_id = args[1]
-        args = args[2:]
-        print(f"Resuming response: {previous_response_id}")
-    prompt = " ".join(args) or "What is the weather in Tokyo?"
     client = OpenAI(base_url=BASE_URL, api_key="not-needed")
     response = client.responses.create(
-        model="agent",
-        input=prompt,
-        previous_response_id=previous_response_id,
+        input=PROMPT,
     )
-    print(f"User: {prompt}")
-    print(f"Response ID: {response.id}")
+    print(f"User: {PROMPT}")
     print(f"Agent: {response.output_text}")
+    print(f"Response ID: {response.id}")
+
+    follow_up = client.responses.create(
+        input=FOLLOW_UP_PROMPT,
+        previous_response_id=response.id,
+    )
+    print()
+    print(f"User: {FOLLOW_UP_PROMPT}")
+    print(f"Agent: {follow_up.output_text}")
+    print(f"Response ID: {follow_up.id}")
 
 
 if __name__ == "__main__":

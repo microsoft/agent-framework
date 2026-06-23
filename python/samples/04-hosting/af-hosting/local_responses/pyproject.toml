@@ -13,7 +13,10 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["openai>=1.99"]
+dev = [
+    "agent-framework-openai",
+    "openai>=1.99",
+]
 
 [tool.uv]
 package = false
@@ -21,3 +24,4 @@ package = false
 [tool.uv.sources]
 agent-framework-hosting = { git = "https://github.com/microsoft/agent-framework.git", branch = "main", subdirectory = "python/packages/hosting" }
 agent-framework-hosting-responses = { git = "https://github.com/microsoft/agent-framework.git", branch = "main", subdirectory = "python/packages/hosting-responses" }
+agent-framework-openai = { git = "https://github.com/microsoft/agent-framework.git", branch = "main", subdirectory = "python/packages/openai" }

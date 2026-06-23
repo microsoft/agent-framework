@@ -34,7 +34,7 @@ before the workflow starts.
 
 ```bash
 export FOUNDRY_PROJECT_ENDPOINT=https://<your-project>.services.ai.azure.com
-export FOUNDRY_MODEL=gpt-5.4-nano
+export FOUNDRY_MODEL=gpt-5-nano
 az login
 
 uv sync
@@ -63,6 +63,9 @@ uv sync --group dev
 # Structured brief via the OpenAI SDK (Responses API):
 uv run python call_server.py \
     '{"topic": "electric SUV", "style": "playful", "audience": "young families"}'
+
+# The client intentionally omits `model`; the host chooses the backing
+# deployment from FOUNDRY_MODEL.
 
 # Plain topic (style/audience default to "modern" / "general"):
 uv run python call_server.py "electric SUV"

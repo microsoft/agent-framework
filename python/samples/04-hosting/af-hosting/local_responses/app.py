@@ -11,8 +11,9 @@ What the hook does
 On every Responses request the hook receives the ``ChannelRequest`` that
 the channel built from the inbound HTTP body. It:
 
-- strips ``store`` (this agent owns persistence) and ``temperature``
-  (the configured model may not honor it),
+- strips ``model`` (the host owns the backing deployment), ``store``
+  (this agent owns persistence), and ``temperature`` (the configured
+  model may not honor it),
 - forces a ``reasoning`` effort + summary preset so the deployed surface
   is consistent regardless of what the caller sent.
 
@@ -26,7 +27,7 @@ Run
     uv sync
     az login
     export FOUNDRY_PROJECT_ENDPOINT=https://<your-project>.services.ai.azure.com
-    export FOUNDRY_MODEL=gpt-5.4-nano
+    export FOUNDRY_MODEL=gpt-5-nano
     uv run hypercorn app:app --bind 0.0.0.0:8000
 
 Or use the ``__main__`` block (single-process Hypercorn) for quick
@@ -70,13 +71,25 @@ def lookup_weather(
     return reports.get(location, f"{location} is sunny with a high of {high_temp}°C.")
 
 
-def responses_hook(request: ChannelRequest, **_: object) -> ChannelRequest:
+# the run hook defines what you want to allow the user to passthrough when they call your host
+# since the responses clients can call with all of the responses options,
+# you can decide with this run_hook which of those: are rejected
+# which are passed through, which are altered, which are added.
+# In this sample below, we are removing, model, temperature and store if set
+# and we add reasoning, but note that this could also be set on the Agent itself
+# the difference is that this option is specific to the Responses channel
+# so if you want to differentiate between options over channels
+# you would set the option in the run_hook, if it needs to be the same (like store)
+# you would set it in the agent.
+def run_hook(request: ChannelRequest, **_: object) -> ChannelRequest:
     """Strip caller-supplied options the host should own and force a
     reasoning preset."""
     options = dict(request.options or {})
 
-    # The agent's default_options own ``store``; the model may not honor
-    # ``temperature``. Strip both so the caller can't override.
+    # The host owns the backing deployment; the agent's default_options
+    # own ``store``; the model may not honor ``temperature``. Strip them
+    # so the caller can't override.
+    options.pop("model", None)
     options.pop("temperature", None)
     options.pop("store", None)
 
@@ -87,6 +100,7 @@ def responses_hook(request: ChannelRequest, **_: object) -> ChannelRequest:
 
 
 def build_host() -> AgentFrameworkHost:
+    # Here we define how our agent should run, with tools, options, etc:
     agent = Agent(
         client=FoundryChatClient(credential=DefaultAzureCredential()),
         name="WeatherAgent",
@@ -100,7 +114,7 @@ def build_host() -> AgentFrameworkHost:
     )
     return AgentFrameworkHost(
         target=agent,
-        channels=[ResponsesChannel(run_hook=responses_hook)],
+        channels=[ResponsesChannel(run_hook=run_hook)],
         debug=True,
     )
 
