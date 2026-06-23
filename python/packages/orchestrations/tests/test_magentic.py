@@ -2,7 +2,7 @@
 
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Sequence
+from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
@@ -156,11 +156,11 @@ class StubAgent(BaseAgent):
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+    ) -> Any:
         if stream:
             return self._run_stream()
 
-        async def _run() -> AgentResponse:
+        async def _run() -> AgentResponse[Any]:
             response = Message("assistant", [self._reply_text], author_name=self.name)
             return AgentResponse(messages=[response])
 
@@ -473,17 +473,17 @@ class StubManagerAgent(BaseAgent):
         stream: bool = False,
         session: Any = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+    ) -> Any:
         if stream:
             return self._run_stream()
 
-        async def _run() -> AgentResponse:
+        async def _run() -> AgentResponse[Any]:
             return AgentResponse(messages=[Message("assistant", ["ok"])])
 
         return _run()
 
     async def _run_stream(self) -> AsyncIterable[AgentResponseUpdate]:
-        yield AgentResponseUpdate(message_deltas=[Message("assistant", ["ok"])])
+        yield AgentResponseUpdate(contents=[Content.from_text(text="ok")])
 
 
 async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
@@ -496,7 +496,7 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
         return Message("assistant", ["GIVEN OR VERIFIED FACTS\n- fact1"])
 
     # First, patch to produce facts then plan
-    mgr._complete = fake_complete_plan  # type: ignore[attr-defined]
+    mgr._complete = fake_complete_plan  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
 
     ctx = MagenticContext(task="T", participant_descriptions={"A": "desc"})
     combined = await mgr.plan(ctx.clone())
@@ -511,7 +511,7 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
             return Message("assistant", ["- new step"])
         return Message("assistant", ["GIVEN OR VERIFIED FACTS\n- updated"])
 
-    mgr._complete = fake_complete_replan  # type: ignore[attr-defined]
+    mgr._complete = fake_complete_replan  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
     combined2 = await mgr.replan(ctx.clone())
     assert "updated" in combined2.text or "new step" in combined2.text
 
@@ -531,7 +531,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
         )
         return Message("assistant", [json_text])
 
-    mgr._complete = fake_complete_ok  # type: ignore[attr-defined]
+    mgr._complete = fake_complete_ok  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
     ledger = await mgr.create_progress_ledger(ctx.clone())
     assert ledger.next_speaker.answer == "alice"
 
@@ -539,7 +539,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
     async def fake_complete_bad(messages: list[Message], **kwargs: Any) -> Message:
         return Message("assistant", ["not-json"])
 
-    mgr._complete = fake_complete_bad  # type: ignore[attr-defined]
+    mgr._complete = fake_complete_bad  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
     with pytest.raises(RuntimeError):
         await mgr.create_progress_ledger(ctx.clone())
 
@@ -583,11 +583,11 @@ class StubThreadAgent(BaseAgent):
     def __init__(self, name: str | None = None) -> None:
         super().__init__(name=name or "agentA")
 
-    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs) -> Any:  # type: ignore[override]
         if stream:
             return self._run_stream()
 
-        async def _run():
+        async def _run() -> AgentResponse[Any]:
             return AgentResponse(messages=[Message("assistant", ["thread-ok"], author_name=self.name)])
 
         return _run()
@@ -611,11 +611,11 @@ class StubAssistantsAgent(BaseAgent):
         super().__init__(name="agentA")
         self.client = StubAssistantsClient()  # type name contains 'AssistantsClient'
 
-    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs) -> Any:  # type: ignore[override]
         if stream:
             return self._run_stream()
 
-        async def _run():
+        async def _run() -> AgentResponse[Any]:
             return AgentResponse(messages=[Message("assistant", ["assistants-ok"], author_name=self.name)])
 
         return _run()
@@ -1193,10 +1193,10 @@ async def test_standard_manager_propagates_session_to_agent():
             stream: bool = False,
             session: Any = None,
             **kwargs: Any,
-        ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+        ) -> Any:
             captured_sessions.append(session)
 
-            async def _run() -> AgentResponse:
+            async def _run() -> AgentResponse[Any]:
                 return AgentResponse(messages=[Message("assistant", ["ok"])])
 
             return _run()

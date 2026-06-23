@@ -74,7 +74,7 @@ class _ConnectedMCPTool(MCPTool):
                 )
             )
 
-    def get_mcp_client(self) -> contextlib.AbstractAsyncContextManager[Any]:
+    def get_mcp_client(self) -> contextlib.AbstractAsyncContextManager[Any]:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
         raise NotImplementedError
 
 
@@ -169,7 +169,8 @@ def test_chat_client_agent_uses_client_model_attribute(chat_client_base) -> None
 def test_chat_client_agent_prefers_default_model_over_client_model(chat_client_base) -> None:
     chat_client_base.model = "legacy-model"  # type: ignore[attr-defined]
 
-    agent = Agent(client=chat_client_base, default_options={"model": "claude-model"})
+    default_options: ChatOptions = {"model": "claude-model"}
+    agent = Agent(client=chat_client_base, default_options=default_options)
 
     assert agent.default_options["model"] == "claude-model"
     assert "model_id" not in agent.default_options
@@ -221,7 +222,7 @@ async def test_chat_client_agent_init_with_name(
 
 def test_agent_init_rejects_direct_additional_properties(client: SupportsChatGetResponse) -> None:
     with pytest.raises(TypeError):
-        Agent(client=client, legacy_key="legacy-value")
+        Agent(client=client, legacy_key="legacy-value")  # type: ignore[call-arg]  # pyrefly: ignore[unexpected-keyword]  # ty: ignore[unknown-argument]
 
 
 async def test_chat_client_agent_run(client: SupportsChatGetResponse) -> None:
@@ -250,7 +251,7 @@ async def test_chat_client_agent_streaming_response_format_from_default_options(
         greeting: str
 
     json_text = '{"greeting": "Hello"}'
-    client.streaming_responses.append(  # type: ignore[attr-defined]
+    client.streaming_responses.append(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[Content.from_text(json_text)],
@@ -260,7 +261,7 @@ async def test_chat_client_agent_streaming_response_format_from_default_options(
         ]
     )
 
-    agent = Agent(client=client, default_options={"response_format": Greeting})
+    agent = Agent(client=client, default_options={"response_format": Greeting})  # type: ignore[arg-type, typeddict-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     stream = agent.run("Hello", stream=True)
     async for _ in stream:
         pass
@@ -282,7 +283,7 @@ async def test_chat_client_agent_streaming_response_format_from_run_options(
         greeting: str
 
     json_text = '{"greeting": "Hi"}'
-    client.streaming_responses.append(  # type: ignore[attr-defined]
+    client.streaming_responses.append(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[Content.from_text(json_text)],
@@ -309,11 +310,11 @@ async def test_chat_client_agent_response_format_dict_from_default_options(
 ) -> None:
     """AgentResponse.value should parse JSON dicts from default_options response_format."""
     json_text = json.dumps({"greeting": "Hello"})
-    client.responses.append(ChatResponse(messages=Message(role="assistant", contents=[json_text])))  # type: ignore[attr-defined]
+    client.responses.append(ChatResponse(messages=Message(role="assistant", contents=[json_text])))  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     agent = Agent(
-        client=client,
-        default_options={"response_format": {"type": "object", "properties": {"greeting": {"type": "string"}}}},
+        client=client,  # ty: ignore[invalid-argument-type]
+        default_options={"response_format": {"type": "object", "properties": {"greeting": {"type": "string"}}}},  # pyrefly: ignore[bad-argument-type]
     )
     result = await agent.run("Hello")
 
@@ -328,7 +329,7 @@ async def test_chat_client_agent_streaming_response_format_dict_from_run_options
 ) -> None:
     """Agent streaming should preserve mapping response_format and parse the final value as a dict."""
     json_text = json.dumps({"greeting": "Hi"})
-    client.streaming_responses.append(  # type: ignore[attr-defined]
+    client.streaming_responses.append(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[Content.from_text(json_text)],
@@ -373,7 +374,7 @@ async def test_chat_client_agent_prepare_session_and_messages(
     session = AgentSession()
     session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID] = {"messages": [message]}
 
-    session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    session_context, _ = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Test"])],
     )
@@ -394,7 +395,7 @@ async def test_prepare_session_does_not_mutate_agent_chat_options(
     base_tools = agent.default_options["tools"]
     session = agent.create_session()
 
-    _, prepared_chat_options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, prepared_chat_options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Test"])],
     )
@@ -412,7 +413,7 @@ async def test_prepare_run_context_handles_function_kwargs(
     agent = Agent(client=chat_client_base)
     session = agent.create_session()
 
-    ctx = await agent._prepare_run_context(  # type: ignore[reportPrivateUsage]
+    ctx = await agent._prepare_run_context(  # pyright: ignore[reportPrivateUsage]
         messages="Hello",
         session=session,
         tools=None,
@@ -451,7 +452,7 @@ async def test_chat_agent_persists_history_per_service_call(
             Message(role="assistant", contents=["Earlier answer"]),
         ]
     }
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -484,7 +485,7 @@ async def test_chat_agent_persists_history_per_service_call(
 
     assert result.text == "It is sunny in Seattle."
     assert result.response_id is None
-    assert chat_client_base.call_count == 2
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert provider_state["get_call_count"] == 2
     assert provider_state["save_call_count"] == 2
     assert stored_messages[-1].text == "It is sunny in Seattle."
@@ -507,7 +508,7 @@ async def test_chat_agent_persists_history_per_service_call_streaming(
             Message(role="assistant", contents=["Earlier answer"]),
         ]
     }
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[
@@ -549,7 +550,7 @@ async def test_chat_agent_persists_history_per_service_call_streaming(
 
     assert result.text == "It is sunny in Seattle."
     assert result.response_id is None
-    assert chat_client_base.call_count == 2
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert provider_state["get_call_count"] == 2
     assert provider_state["save_call_count"] == 2
     assert stored_messages[-1].text == "It is sunny in Seattle."
@@ -567,7 +568,7 @@ async def test_streaming_per_service_call_persistence_hides_response_id_from_aft
 
     session = AgentSession()
     session.state[provider.source_id] = {"messages": []}
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[
@@ -620,11 +621,11 @@ async def test_per_service_call_persistence_uses_real_service_storage_when_clien
     def lookup_weather(location: str) -> str:
         return f"Weather in {location}: sunny"
 
-    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
+    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     session = AgentSession()
     session.state[provider.source_id] = {"messages": []}
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -660,7 +661,7 @@ async def test_per_service_call_persistence_uses_real_service_storage_when_clien
 
     assert result.text == "It is sunny in Seattle."
     assert result.response_id == "resp_call_2"
-    assert chat_client_base.call_count == 2
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     # The service owns the conversation, so the provider never loads (issue #5798).
     assert "get_call_count" not in provider_state
     # Persistence is owned by the per-service-call middleware: it persists once per service call
@@ -681,7 +682,7 @@ async def test_service_storage_updates_session_handle_per_service_call_before_no
     def lookup_weather(location: str) -> str:
         return f"Weather in {location}: sunny"
 
-    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
+    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     session = AgentSession()
     session.state[provider.source_id] = {"messages": []}
@@ -729,7 +730,7 @@ async def test_service_storage_updates_session_handle_per_service_call_before_st
     def lookup_weather(location: str) -> str:
         return f"Weather in {location}: sunny"
 
-    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
+    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     session = AgentSession()
     session.state[provider.source_id] = {"messages": []}
@@ -788,7 +789,7 @@ async def test_service_storage_updates_session_handle_per_service_call_before_st
 async def test_chat_agent_without_per_service_call_persistence_preserves_response_id(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(role="assistant", contents=["Hello"]),
             response_id="resp_call_1",
@@ -809,10 +810,10 @@ async def test_per_service_call_persistence_rejects_real_service_conversation_id
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
     provider = _RecordingHistoryProvider()
-    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
+    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     session = AgentSession()
     session.state[provider.source_id] = {"messages": []}
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(role="assistant", contents=["Hello"]),
             conversation_id="resp_service_managed",
@@ -857,7 +858,7 @@ async def test_chat_client_agent_run_with_session(chat_client_base: SupportsChat
         messages=[Message(role="assistant", contents=[Content.from_text("test response")])],
         conversation_id="123",
     )
-    chat_client_base.run_responses = [mock_response]
+    chat_client_base.run_responses = [mock_response]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     agent = Agent(
         client=chat_client_base,
         tools={"type": "code_interpreter"},
@@ -873,7 +874,7 @@ async def test_chat_client_agent_run_with_session(chat_client_base: SupportsChat
 async def test_chat_client_agent_updates_existing_session_id_non_streaming(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=[Message(role="assistant", contents=[Content.from_text("test response")])],
             conversation_id="resp_new_123",
@@ -890,7 +891,7 @@ async def test_chat_client_agent_updates_existing_session_id_non_streaming(
 async def test_chat_client_agent_update_session_id_streaming_uses_conversation_id(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[Content.from_text("stream part 1")],
@@ -922,7 +923,7 @@ async def test_chat_client_agent_update_session_id_streaming_uses_conversation_i
 async def test_chat_client_agent_updates_existing_session_id_streaming(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[Content.from_text("stream part 1")],
@@ -953,7 +954,7 @@ async def test_chat_client_agent_updates_existing_session_id_streaming(
 async def test_chat_client_agent_update_session_id_streaming_does_not_use_response_id(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[Content.from_text("stream response without conversation id")],
@@ -985,7 +986,7 @@ async def test_chat_client_agent_streaming_session_id_set_without_get_final_resp
     user iterates the stream and then makes a follow-up call without calling
     get_final_response().
     """
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[Content.from_text("part 1")],
@@ -1024,7 +1025,7 @@ async def test_chat_client_agent_streaming_session_history_saved_without_get_fin
     """
     from agent_framework._sessions import InMemoryHistoryProvider
 
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[Content.from_text("Hello Alice!")],
@@ -1104,7 +1105,7 @@ async def test_chat_client_agent_author_name_as_agent_name(
 async def test_chat_client_agent_author_name_is_used_from_response(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=[
                 Message(
@@ -1164,7 +1165,7 @@ async def test_chat_agent_context_providers_after_run(
 ) -> None:
     """Test that context providers' after_run is called during agent run."""
     mock_provider = MockContextProvider()
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=[Message(role="assistant", contents=[Content.from_text("test response")])],
             conversation_id="test-thread-id",
@@ -1206,7 +1207,7 @@ async def test_chat_agent_context_instructions_in_messages(
     )
 
     # We need to test the _prepare_session_and_messages method directly
-    session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    session_context, _ = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=None, input_messages=[Message(role="user", contents=["Hello"])]
     )
     messages = session_context.get_messages(include_input=True)
@@ -1231,7 +1232,7 @@ async def test_chat_agent_no_context_instructions(
         context_providers=[mock_provider],
     )
 
-    session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    session_context, _ = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=None, input_messages=[Message(role="user", contents=["Hello"])]
     )
     messages = session_context.get_messages(include_input=True)
@@ -1267,7 +1268,7 @@ async def test_chat_agent_context_providers_with_service_session_id(
 ) -> None:
     """Test context providers with service-managed session."""
     mock_provider = MockContextProvider()
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=[Message(role="assistant", contents=[Content.from_text("test response")])],
             conversation_id="service-thread-123",
@@ -1469,7 +1470,7 @@ async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGet
         captured_session = kwargs.get("session")
         return original_run(*args, **kwargs)
 
-    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
 
     await tool.invoke(
         context=FunctionInvocationContext(
@@ -1480,6 +1481,7 @@ async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGet
     )
 
     assert captured_session is parent_session
+    assert captured_session is not None
     assert captured_session.session_id == "parent-session-123"
     assert captured_session.state["shared_key"] == "shared_value"
 
@@ -1499,7 +1501,7 @@ async def test_chat_agent_as_tool_propagate_session_false_by_default(client: Sup
         captured_session = kwargs.get("session")
         return original_run(*args, **kwargs)
 
-    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
 
     await tool.invoke(
         context=FunctionInvocationContext(
@@ -1530,7 +1532,7 @@ async def test_chat_agent_as_tool_propagate_session_shares_state(client: Support
             captured_session.state["counter"] += 1
         return original_run(*args, **kwargs)
 
-    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
 
     await tool.invoke(
         context=FunctionInvocationContext(
@@ -1834,7 +1836,7 @@ async def test_chat_agent_tool_choice_agent_level_used_when_run_level_not_specif
     async def capturing_inner(
         *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
     ) -> ChatResponse:
-        captured_options.append(options)
+        captured_options.append(options)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         return await original_inner(messages=messages, options=options, **kwargs)
 
     chat_client_base._inner_get_response = capturing_inner
@@ -1865,7 +1867,7 @@ async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(chat_cli
     async def capturing_inner(
         *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
     ) -> ChatResponse:
-        captured_options.append(options)
+        captured_options.append(options)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         return await original_inner(messages=messages, options=options, **kwargs)
 
     chat_client_base._inner_get_response = capturing_inner
@@ -1878,7 +1880,7 @@ async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(chat_cli
     )
 
     # Run with explicitly passing None (same as not specifying)
-    await agent.run("Hello", options={"tool_choice": None})
+    await agent.run("Hello", options={"tool_choice": None})  # ty: ignore[no-matching-overload]  # type: ignore[typeddict-item]
 
     # Verify the client received tool_choice="auto" from agent-level
     assert len(captured_options) >= 1
@@ -2261,8 +2263,8 @@ def test_sanitize_agent_name_replaces_invalid_chars():
     """Test _sanitize_agent_name replaces invalid characters."""
     result = _sanitize_agent_name("Agent Name!")
     # Should replace spaces and special chars with underscores
-    assert " " not in result
-    assert "!" not in result
+    assert " " not in result  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert "!" not in result  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 # endregion
@@ -2317,7 +2319,7 @@ async def test_agent_get_session_with_service_session_id(
 def test_agent_session_from_dict(chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool):
     """Test AgentSession.from_dict restores a session from serialized state."""
     # Create serialized session state
-    serialized_state = {
+    serialized_state = {  # type: ignore[var-annotated]
         "type": "session",
         "session_id": "test-session",
         "service_session_id": None,
@@ -2377,7 +2379,7 @@ async def test_chat_agent_context_provider_adds_tools_when_agent_has_none(
     assert agent.default_options.get("tools") == []
 
     # Run the agent and verify context tools are added
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=None, input_messages=[Message(role="user", contents=["Hello"])]
     )
 
@@ -2406,7 +2408,7 @@ async def test_chat_agent_context_provider_adds_instructions_when_agent_has_none
     assert agent.default_options.get("instructions") is None
 
     # Run the agent and verify context instructions are available
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=None, input_messages=[Message(role="user", contents=["Hello"])]
     )
 
@@ -2432,7 +2434,7 @@ async def test_chat_agent_context_provider_adds_middleware_when_agent_has_none(
 
     agent = Agent(client=chat_client_base, context_providers=[MiddlewareContextProvider()])
 
-    session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    session_context, _ = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=None,
         input_messages=[Message(role="user", contents=["Hello"])],
     )
@@ -2451,7 +2453,7 @@ async def test_stores_by_default_skips_inmemory_injection(
     from agent_framework._sessions import InMemoryHistoryProvider
 
     # Simulate a client that stores by default
-    client.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
+    client.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     agent = Agent(client=client)
     session = agent.create_session()
@@ -2483,7 +2485,7 @@ async def test_stores_by_default_with_store_false_injects_inmemory(
     """Client with STORES_BY_DEFAULT=True but store=False should still inject InMemoryHistoryProvider."""
     from agent_framework._sessions import InMemoryHistoryProvider
 
-    client.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
+    client.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     agent = Agent(client=client)
     session = agent.create_session()
@@ -2519,10 +2521,10 @@ async def test_stores_by_default_with_store_false_in_default_options_injects_inm
     """
     from agent_framework._sessions import InMemoryHistoryProvider
 
-    client.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
+    client.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     # Set store=False at agent initialization via default_options, not at run-time
-    agent = Agent(client=client, default_options={"store": False})
+    agent = Agent(client=client, default_options={"store": False})  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     session = agent.create_session()
 
     # Run without any per-run options override
@@ -2546,9 +2548,9 @@ async def test_shared_local_storage_cross_provider_responses_history_does_not_le
 
     responses_client = OpenAIChatClient(model="test-model", api_key="test-key")
     responses_agent = Agent(
-        client=responses_client,
+        client=responses_client,  # ty: ignore[invalid-argument-type]
         tools=[search_hotels],
-        default_options={"store": False},
+        default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
     )
     session = responses_agent.create_session()
 
@@ -2669,7 +2671,7 @@ async def test_as_tool_raises_on_user_input_request(client: SupportsChatGetRespo
     consent_content = Content.from_oauth_consent_request(
         consent_link="https://login.microsoftonline.com/consent",
     )
-    client.streaming_responses = [  # type: ignore[attr-defined]
+    client.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [ChatResponseUpdate(contents=[consent_content], role="assistant")],
     ]
 
@@ -2772,7 +2774,7 @@ class _PscSpyChatClient(MockBaseChatClient):
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        self.STORES_BY_DEFAULT = stores_by_default  # type: ignore[attr-defined]
+        self.STORES_BY_DEFAULT = stores_by_default  # type: ignore[attr-defined, misc]  # ty: ignore[invalid-attribute-access]
         self._provider = provider
         self._script = list(script) if script is not None else [("text", "ok")]
         self._echo_conversation_id = echo_conversation_id
@@ -2787,8 +2789,9 @@ class _PscSpyChatClient(MockBaseChatClient):
         return bool(store)
 
     def _next_contents(self) -> list[Content]:
-        turn = self._script.pop(0) if self._script else ("text", "ok")
+        turn: tuple[str, ...] = self._script.pop(0) if self._script else ("text", "ok")
         if turn[0] == "call":
+            assert len(turn) == 4
             _, call_id, name, args = turn
             return [Content.from_function_call(call_id=call_id, name=name, arguments=args)]
         return [Content.from_text(turn[1])]

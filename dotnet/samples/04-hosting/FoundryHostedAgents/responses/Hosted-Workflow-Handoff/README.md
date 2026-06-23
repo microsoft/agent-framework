@@ -7,7 +7,7 @@ A hosted agent server demonstrating two patterns in a single app:
 
 Both agents are served over the Responses protocol. The server also exposes interactive web demos at `/tool-demo` and `/workflow-demo`.
 
-> Unlike the other samples in this folder, this one connects to an **Azure OpenAI** resource directly (not an Azure AI Foundry project endpoint).
+> Unlike the other samples in this folder, this one connects to an **Azure OpenAI** resource directly (not a Foundry project endpoint).
 
 ## Prerequisites
 

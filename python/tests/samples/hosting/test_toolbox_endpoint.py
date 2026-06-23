@@ -6,7 +6,6 @@ Covers both 04_foundry_toolbox/main.py and 06_files/main.py which share the same
 implementation of _resolve_toolbox_endpoint().
 """
 
-import importlib
 import importlib.util
 import sys
 from pathlib import Path
@@ -36,8 +35,10 @@ _RESPONSES_DIR = (
 
 def _load_sample(subdir: str, module_alias: str):
     spec = importlib.util.spec_from_file_location(module_alias, _RESPONSES_DIR / subdir / "main.py")
-    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    assert spec is not None
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
     return mod
 
 

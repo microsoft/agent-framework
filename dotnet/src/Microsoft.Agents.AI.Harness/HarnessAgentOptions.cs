@@ -183,20 +183,22 @@ public sealed class HarnessAgentOptions
     public int? MaximumIterationsPerRequest { get; set; }
 
     /// <summary>
-    /// Gets or sets a value indicating whether the <see cref="ToolApprovalAgent"/> wrapper is disabled.
+    /// Gets or sets a value indicating whether the <see cref="ToolApprovalAgent"/> auto-approval middleware is disabled.
     /// </summary>
     /// <remarks>
-    /// When <see langword="false"/> (the default), the agent is wrapped with tool approval middleware
-    /// that supports "don't ask again" auto-approval rules.
+    /// This disables the tool auto-approval functionality only, keeping the tool approval flow requiring approval (for example,
+    /// <see cref="ApprovalRequiredAIFunction"/> tools). This setting controls whether the agent is wrapped with the
+    /// <see cref="ToolApprovalAgent"/> middleware that supports "don't ask again" and auto-approval rules.
+    /// When <see langword="false"/> (the default), the middleware is added.
     /// </remarks>
-    public bool DisableToolApproval { get; set; }
+    public bool DisableToolAutoApproval { get; set; }
 
     /// <summary>
     /// Gets or sets the options for the <see cref="ToolApprovalAgent"/> middleware.
     /// </summary>
     /// <remarks>
     /// When <see langword="null"/>, the <see cref="ToolApprovalAgent"/> uses default settings.
-    /// This property has no effect when <see cref="DisableToolApproval"/> is <see langword="true"/>.
+    /// This property has no effect when <see cref="DisableToolAutoApproval"/> is <see langword="true"/>.
     /// </remarks>
     public ToolApprovalAgentOptions? ToolApprovalAgentOptions { get; set; }
 

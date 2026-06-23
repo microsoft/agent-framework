@@ -19,9 +19,9 @@ from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from azure.core.credentials import TokenCredential
@@ -349,7 +349,7 @@ def _resolve_azure_credential_to_token_provider(
     if isinstance(credential, AsyncTokenCredential):
         return get_async_bearer_token_provider(credential, AZURE_OPENAI_TOKEN_SCOPE)
     if isinstance(credential, TokenCredential):
-        return get_bearer_token_provider(credential, AZURE_OPENAI_TOKEN_SCOPE)  # type: ignore[arg-type]
+        return get_bearer_token_provider(credential, AZURE_OPENAI_TOKEN_SCOPE)
     raise ValueError(
         "The 'credential' parameter must be an Azure TokenCredential, AsyncTokenCredential, or a "
         "callable token provider."

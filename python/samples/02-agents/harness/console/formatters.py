@@ -316,46 +316,46 @@ class TodoToolFormatter(ToolCallFormatter):
 
 
 class ModeToolFormatter(ToolCallFormatter):
-    """Formats AgentMode_* tool calls, showing the target mode for Set operations."""
+    """Formats mode_* tool calls, showing the target mode for set operations."""
 
     def can_format(self, call: Content) -> bool:
-        """Match AgentMode_* tool calls."""
-        return call.name is not None and call.name.startswith("AgentMode_")
+        """Match mode_* tool calls."""
+        return call.name is not None and call.name.startswith("mode_")
 
     def format_detail(self, call: Content) -> str | None:
-        """Format based on the specific AgentMode operation."""
-        if call.name == "AgentMode_Set":
+        """Format based on the specific mode operation."""
+        if call.name == "mode_set":
             value = get_argument_value(call, "mode")
             return f"({value})" if value else None
         return None
 
 
 class BackgroundAgentToolFormatter(ToolCallFormatter):
-    """Formats BackgroundAgents_* tool calls with human-readable details
+    """Formats background_agents_* tool calls with human-readable details
     for task start, continue, wait, and result retrieval operations.
     """
 
     def can_format(self, call: Content) -> bool:
-        """Match BackgroundAgents_* tool calls."""
-        return call.name is not None and call.name.startswith("BackgroundAgents_")
+        """Match background_agents_* tool calls."""
+        return call.name is not None and call.name.startswith("background_agents_")
 
     def format_detail(self, call: Content) -> str | None:
-        """Format based on the specific BackgroundAgents operation."""
-        if call.name == "BackgroundAgents_StartTask":
+        """Format based on the specific background_agents operation."""
+        if call.name == "background_agents_start_task":
             return self._format_start_background_task(call)
-        if call.name == "BackgroundAgents_WaitForFirstCompletion":
-            return self._format_id_list(call, "taskIds", "Wait for")
-        if call.name == "BackgroundAgents_GetTaskResults":
-            return self._format_single_id(call, "taskId")
-        if call.name == "BackgroundAgents_ContinueTask":
+        if call.name == "background_agents_wait_for_first_completion":
+            return self._format_id_list(call, "task_ids", "Wait for")
+        if call.name == "background_agents_get_task_results":
+            return self._format_single_id(call, "task_id")
+        if call.name == "background_agents_continue_task":
             return self._format_continue_task(call)
-        if call.name == "BackgroundAgents_ClearCompletedTask":
-            return self._format_single_id(call, "taskId")
+        if call.name == "background_agents_clear_completed_task":
+            return self._format_single_id(call, "task_id")
         return None
 
     def _format_start_background_task(self, call: Content) -> str | None:
-        """Format StartTask with agent name and description."""
-        agent_name = get_argument_value(call, "agentName")
+        """Format start_task with agent name and description."""
+        agent_name = get_argument_value(call, "agent_name")
         description = get_argument_value(call, "description")
 
         if agent_name is None and description is None:
@@ -394,8 +394,8 @@ class BackgroundAgentToolFormatter(ToolCallFormatter):
         return None
 
     def _format_continue_task(self, call: Content) -> str | None:
-        """Format ContinueTask with task ID and optional text."""
-        task_id = get_argument_value(call, "taskId")
+        """Format continue_task with task ID and optional text."""
+        task_id = get_argument_value(call, "task_id")
         text = get_argument_value(call, "text")
 
         if not isinstance(task_id, int):
@@ -412,28 +412,28 @@ class BackgroundAgentToolFormatter(ToolCallFormatter):
 
 
 class FileMemoryToolFormatter(ToolCallFormatter):
-    """Formats FileMemory_* tool calls, showing file names and search patterns
+    """Formats file_memory_* tool calls, showing file names and search patterns
     with tree-view corners for save operations.
     """
 
     def can_format(self, call: Content) -> bool:
-        """Match FileMemory_* tool calls."""
-        return call.name is not None and call.name.startswith("FileMemory_")
+        """Match file_memory_* tool calls."""
+        return call.name is not None and call.name.startswith("file_memory_")
 
     def format_detail(self, call: Content) -> str | None:
-        """Format based on the specific FileMemory operation."""
-        if call.name == "FileMemory_SaveFile":
+        """Format based on the specific file_memory operation."""
+        if call.name == "file_memory_save_file":
             return self._format_save_file(call)
-        if call.name in ("FileMemory_ReadFile", "FileMemory_DeleteFile"):
-            value = get_argument_value(call, "fileName")
+        if call.name in ("file_memory_read_file", "file_memory_delete_file"):
+            value = get_argument_value(call, "file_name")
             return f"({value})" if value else None
-        if call.name == "FileMemory_SearchFiles":
+        if call.name == "file_memory_search_files":
             return self._format_search_files(call)
         return None
 
     def _format_save_file(self, call: Content) -> str | None:
-        """Format SaveFile with file name and description indicator."""
-        file_name = get_argument_value(call, "fileName")
+        """Format save_file with file name and description indicator."""
+        file_name = get_argument_value(call, "file_name")
         description = get_argument_value(call, "description")
 
         if not file_name:
@@ -444,9 +444,9 @@ class FileMemoryToolFormatter(ToolCallFormatter):
         return f"\n   └─ {file_name}"
 
     def _format_search_files(self, call: Content) -> str | None:
-        """Format SearchFiles with regex pattern and optional file pattern."""
-        pattern = get_argument_value(call, "regexPattern")
-        file_pattern = get_argument_value(call, "filePattern")
+        """Format search_files with regex pattern and optional file pattern."""
+        pattern = get_argument_value(call, "regex_pattern")
+        file_pattern = get_argument_value(call, "file_pattern")
 
         if not pattern:
             return None

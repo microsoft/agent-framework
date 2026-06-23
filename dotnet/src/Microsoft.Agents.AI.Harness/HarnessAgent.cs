@@ -57,7 +57,7 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// <strong>Agent decorators (each enabled by default, individually disableable):</strong>
 /// <list type="bullet">
-/// <item><description><see cref="ToolApprovalAgent"/> — "don't ask again" tool approval rules enabling safe unattended execution. Disable with <see cref="HarnessAgentOptions.DisableToolApproval"/>.</description></item>
+/// <item><description><see cref="ToolApprovalAgent"/> — "don't ask again" tool approval rules enabling safe unattended execution. Disable with <see cref="HarnessAgentOptions.DisableToolAutoApproval"/>.</description></item>
 /// <item><description><see cref="OpenTelemetryAgent"/> — OpenTelemetry instrumentation following semantic conventions for generative AI. Disable with <see cref="HarnessAgentOptions.DisableOpenTelemetry"/>.</description></item>
 /// <item><description><see cref="LoopAgent"/> — re-invokes the agent until the configured evaluators are satisfied. Applied as the outermost decorator (so each iteration is a complete agent run) and only when <see cref="HarnessAgentOptions.LoopEvaluators"/> supplies at least one evaluator; otherwise omitted.</description></item>
 /// </list>
@@ -155,7 +155,7 @@ public sealed class HarnessAgent : DelegatingAIAgent
             }
         }
 
-        if (options?.DisableToolApproval is not true)
+        if (options?.DisableToolAutoApproval is not true)
         {
             builder.UseToolApproval(options?.ToolApprovalAgentOptions);
         }

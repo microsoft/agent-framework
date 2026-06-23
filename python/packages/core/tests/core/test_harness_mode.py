@@ -69,10 +69,10 @@ def test_agent_mode_context_provider_validates_configuration_and_is_experimental
     with pytest.raises(ValueError, match="Invalid mode"):
         AgentModeProvider(default_mode="ship")
 
-    assert AgentModeProvider.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert get_agent_mode.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert set_agent_mode.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert ".. warning:: Experimental" in AgentModeProvider.__doc__
+    assert AgentModeProvider.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert get_agent_mode.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert set_agent_mode.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert ".. warning:: Experimental" in AgentModeProvider.__doc__  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
     assert get_agent_mode.__doc__ is not None
     assert ".. warning:: Experimental" in get_agent_mode.__doc__
     assert set_agent_mode.__doc__ is not None
@@ -89,7 +89,7 @@ async def test_agent_mode_context_provider_normalizes_custom_modes(
     )
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Start drafting"])],
     )
@@ -121,7 +121,7 @@ async def test_agent_mode_context_provider_serializes_tool_outputs_as_json(
     provider = AgentModeProvider(default_mode=mode_name, mode_descriptions={mode_name: "Preview edits."})
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Preview edits"])],
     )
@@ -130,10 +130,10 @@ async def test_agent_mode_context_provider_serializes_tool_outputs_as_json(
     get_mode_tool = _tool_by_name(tools, "mode_get")
     set_mode_tool = _tool_by_name(tools, "mode_set")
 
-    initial_mode = await get_mode_tool.invoke()
+    initial_mode = await get_mode_tool.invoke()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert json.loads(initial_mode[0].text) == {"mode": mode_name}
 
-    set_result = await set_mode_tool.invoke(arguments={"mode": mode_name})
+    set_result = await set_mode_tool.invoke(arguments={"mode": mode_name})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert json.loads(set_result[0].text) == {"mode": mode_name, "message": f"Mode changed to '{mode_name}'."}
 
 
@@ -145,7 +145,7 @@ async def test_agent_mode_context_provider_updates_agent_mode(
     provider = AgentModeProvider()
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Start planning"])],
     )
@@ -162,10 +162,10 @@ async def test_agent_mode_context_provider_updates_agent_mode(
     get_mode_tool = _tool_by_name(tools, "mode_get")
     set_mode_tool = _tool_by_name(tools, "mode_set")
 
-    initial_mode = await get_mode_tool.invoke()
+    initial_mode = await get_mode_tool.invoke()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert json.loads(initial_mode[0].text) == {"mode": "plan"}
 
-    set_result = await set_mode_tool.invoke(arguments={"mode": "execute"})
+    set_result = await set_mode_tool.invoke(arguments={"mode": "execute"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert json.loads(set_result[0].text) == {"mode": "execute", "message": "Mode changed to 'execute'."}
     assert get_agent_mode(session, source_id=provider.source_id) == "execute"
     assert set_agent_mode(session, "plan", source_id=provider.source_id) == "plan"
@@ -222,12 +222,12 @@ async def test_agent_mode_provider_injects_user_message_after_external_change(
 
     # First run: agent uses mode_set tool to switch to execute. The tool path must NOT queue a
     # notification because the agent already saw its own tool call in the chat history.
-    _, first_options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, first_options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Plan first."])],
     )
     set_mode_tool = _tool_by_name(first_options["tools"], "mode_set")
-    await set_mode_tool.invoke(arguments={"mode": "execute"})
+    await set_mode_tool.invoke(arguments={"mode": "execute"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert "previous_mode_for_notification" not in session.state[provider.source_id]
 
     # Now an external caller (e.g., a /mode slash command) switches the mode back to plan.
@@ -235,7 +235,7 @@ async def test_agent_mode_provider_injects_user_message_after_external_change(
     assert session.state[provider.source_id]["previous_mode_for_notification"] == "execute"
 
     # Next run: the provider should inject a user message announcing the change and clear the flag.
-    second_context, second_options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    second_context, second_options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Carry on."])],
     )
@@ -252,7 +252,7 @@ async def test_agent_mode_provider_injects_user_message_after_external_change(
     assert "previous_mode_for_notification" not in session.state[provider.source_id]
 
     # Third run with no further external change must not re-inject the notification.
-    third_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    third_context, _ = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Status?"])],
     )

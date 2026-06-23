@@ -18,8 +18,15 @@ namespace Microsoft.Agents.AI;
 /// <item><b>Tool-level</b>: When <see cref="Arguments"/> is <see langword="null"/>,
 /// all calls to the tool identified by <see cref="ToolName"/> are auto-approved.</item>
 /// <item><b>Tool+arguments</b>: When <see cref="Arguments"/> is non-null,
-/// only calls to the specified tool with exactly matching argument values are auto-approved.</item>
+/// only calls to the specified tool with exactly matching argument values are auto-approved.
+/// A non-null but <b>empty</b> dictionary matches only calls that supply no arguments; it does
+/// not widen into a tool-level rule.</item>
 /// </list>
+/// </para>
+/// <para>
+/// <see langword="null"/> is therefore reserved exclusively for tool-level approval. An
+/// argument-scoped approval (including one created from a no-argument call) is always stored
+/// as a non-null dictionary so it cannot be silently broadened to all invocations of the tool.
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
@@ -34,7 +41,8 @@ internal sealed class ToolApprovalRule
     /// <summary>
     /// Gets or sets the specific argument values that must match for this rule to apply.
     /// When <see langword="null"/>, the rule applies to all invocations of the tool
-    /// regardless of arguments.
+    /// regardless of arguments. A non-null but empty dictionary applies only to
+    /// invocations that supply no arguments.
     /// </summary>
     /// <remarks>
     /// Argument values are stored as their JSON-serialized string representations

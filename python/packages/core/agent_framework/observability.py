@@ -35,9 +35,9 @@ from . import __version__ as version_info
 from ._settings import load_settings
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.sdk._logs.export import LogRecordExporter
@@ -408,14 +408,14 @@ def _create_otlp_exporters(
     if protocol == "grpc":
         # Import all gRPC exporters
         try:
-            from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (  # type: ignore[reportMissingImports]
-                OTLPLogExporter as GRPCLogExporter,  # type: ignore[reportUnknownVariableType]
+            from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (
+                OTLPLogExporter as GRPCLogExporter,
             )
-            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (  # type: ignore[reportMissingImports]
-                OTLPMetricExporter as GRPCMetricExporter,  # type: ignore[reportUnknownVariableType]
+            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+                OTLPMetricExporter as GRPCMetricExporter,
             )
-            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (  # type: ignore[reportMissingImports]
-                OTLPSpanExporter as GRPCSpanExporter,  # type: ignore[reportUnknownVariableType]
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+                OTLPSpanExporter as GRPCSpanExporter,
             )
         except ImportError as exc:
             raise ImportError(
@@ -425,21 +425,21 @@ def _create_otlp_exporters(
 
         if actual_logs_endpoint:
             exporters.append(
-                GRPCLogExporter(  # type: ignore[reportUnknownArgumentType]
+                GRPCLogExporter(
                     endpoint=actual_logs_endpoint,
                     headers=actual_logs_headers if actual_logs_headers else None,
                 )
             )
         if actual_traces_endpoint:
             exporters.append(
-                GRPCSpanExporter(  # type: ignore[reportUnknownArgumentType]
+                GRPCSpanExporter(
                     endpoint=actual_traces_endpoint,
                     headers=actual_traces_headers if actual_traces_headers else None,
                 )
             )
         if actual_metrics_endpoint:
             exporters.append(
-                GRPCMetricExporter(  # type: ignore[reportUnknownArgumentType]
+                GRPCMetricExporter(
                     endpoint=actual_metrics_endpoint,
                     headers=actual_metrics_headers if actual_metrics_headers else None,
                 )
@@ -1519,18 +1519,26 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 duration_state["duration"] = perf_counter() - start_time
 
             try:
-                result_stream = cast(
-                    ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
-                    super_get_response(
-                        messages=messages,
-                        stream=True,
-                        options=opts,
-                        compaction_strategy=compaction_strategy,
-                        tokenizer=tokenizer,
-                        function_invocation_kwargs=function_invocation_kwargs,
-                        client_kwargs=merged_client_kwargs,
-                    ),
-                )
+                # Activate the chat span across the synchronous setup phase so spans
+                # created by the underlying client while constructing the stream are
+                # parented under it. The per-pull ``_activate_span`` registered below
+                # covers iteration; this covers anything the subclass does between
+                # being called and returning the ResponseStream. Attach/detach are
+                # paired within this sync block, so there is no cross-context
+                # detach risk (the span itself is ended later in cleanup hooks).
+                with _activate_span(span):
+                    result_stream = cast(
+                        ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
+                        super_get_response(
+                            messages=messages,
+                            stream=True,
+                            options=opts,
+                            compaction_strategy=compaction_strategy,
+                            tokenizer=tokenizer,
+                            function_invocation_kwargs=function_invocation_kwargs,
+                            client_kwargs=merged_client_kwargs,
+                        ),
+                    )
             except Exception as exception:
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
                 _close_span()
@@ -1647,7 +1655,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                         finish_reason=finish_reason,
                         output=True,
                     )
-                return response  # type: ignore[return-value,no-any-return]
+                return response
 
         return _get_response()
 
@@ -1719,7 +1727,7 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
                 operation_duration_histogram=self.duration_histogram,
                 duration=duration,
             )
-            return result  # type: ignore[no-any-return]
+            return result
 
 
 class AgentTelemetryLayer:
@@ -1800,11 +1808,21 @@ class AgentTelemetryLayer:
                 duration_state["duration"] = perf_counter() - start_time
 
             try:
-                run_result: object = execute()
+                # Activate the agent span across the synchronous setup phase so spans
+                # created by the underlying agent while constructing the stream are
+                # parented under it. The per-pull ``_activate_span`` registered below
+                # covers iteration; this covers anything the subclass does between
+                # being called and returning the ResponseStream (subclasses that
+                # instead return an Awaitable defer their work into the first pull,
+                # where the per-pull activation already applies). Attach/detach are
+                # paired within this sync block, so there is no cross-context detach
+                # risk (the span itself is ended later in cleanup hooks).
+                with _activate_span(span):
+                    run_result: object = execute()
                 if isinstance(run_result, ResponseStream):
                     result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = run_result  # pyright: ignore[reportUnknownVariableType]
                 elif isinstance(run_result, Awaitable):
-                    result_stream = ResponseStream.from_awaitable(run_result)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+                    result_stream = ResponseStream.from_awaitable(run_result)  # type: ignore[arg-type]
                 else:
                     raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
             except Exception as exception:
@@ -1906,7 +1924,7 @@ class AgentTelemetryLayer:
                                     messages=response.messages,
                                     output=True,
                                 )
-                        return response  # type: ignore[return-value,no-any-return]
+                        return response
                     except Exception as exception:
                         capture_exception(span=span, exception=exception, timestamp=time_ns())
                         raise

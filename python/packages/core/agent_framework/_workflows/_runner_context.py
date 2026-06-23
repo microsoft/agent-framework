@@ -326,7 +326,7 @@ class InProcRunnerContext:
         while True:
             try:
                 events.append(self._event_queue.get_nowait())
-            except asyncio.QueueEmpty:  # type: ignore[attr-defined]
+            except asyncio.QueueEmpty:
                 break
         return events
 
