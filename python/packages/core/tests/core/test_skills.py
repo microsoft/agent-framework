@@ -1917,6 +1917,19 @@ class TestDiscoverSkillDirectories:
         assert len(dirs) == 1
         assert str(sub.absolute()) in dirs[0]
 
+    def test_stops_searching_below_skill_boundary(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / "parent-skill"
+        nested_skill_dir = skill_dir / "nested-skill"
+        nested_skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("---\nname: parent-skill\ndescription: d\n---\n", encoding="utf-8")
+        (nested_skill_dir / "SKILL.md").write_text(
+            "---\nname: nested-skill\ndescription: d\n---\n", encoding="utf-8"
+        )
+
+        dirs = FileSkillsSource._discover_skill_directories([str(tmp_path)])
+
+        assert dirs == [str(skill_dir.absolute())]
+
     def test_skips_empty_path_string(self) -> None:
         dirs = FileSkillsSource._discover_skill_directories(["", "   "])
         assert dirs == []
