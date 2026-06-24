@@ -1,18 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Local client for the local_telegram sample.
+"""Local Responses-endpoint client for the local_multi_channel sample.
 
-POSTs to the ``/responses`` endpoint exposed by ``app.py`` using the standard
-``openai`` SDK.
+POSTs to the ``/responses`` endpoint using the OpenAI SDK.
 
-The advanced server's ``responses_hook`` keys per-user history off the
-OpenAI ``safety_identifier`` field, so we pass ``safety_identifier=`` here.
+The ``responses_hook`` on the server keys per-user history off the OpenAI
+``safety_identifier`` field. Pass ``--previous-response-id`` to resume an
+existing AgentSession by its isolation key — this works across channels, so
+you can resume a Telegram chat by passing its isolation key::
 
-Pass ``--previous-response-id <id>`` to resume an existing AgentSession by
-its isolation key. Because the server uses ``previous_response_id`` directly
-as the ``AgentSession`` id, you can resume any session written by any
-channel — for example a Telegram chat at
-``--previous-response-id telegram:8741188429``.
+    uv run python call_server.py --previous-response-id telegram:8741188429 "What did we discuss?"
 
 Start the server first (in another shell)::
 

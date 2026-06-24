@@ -1,33 +1,40 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Telegram-only hosting sample.
+"""Multi-channel hosting sample: Responses + Telegram.
 
-A single agent connected to a Telegram bot via ``TelegramChannel``.
+Demonstrates running the same agent behind two channels at once:
 
-- ``lookup_weather`` tool demonstrates streaming and tool invocation end-to-end.
-- ``FileHistoryProvider`` persists per-chat history across restarts.
-- ``run_hook`` strips caller-supplied model options (the host owns model
-  selection) and raises reasoning effort for a richer Telegram persona.
-- Slash commands: ``/start``, ``/help``, ``/new``, ``/whoami``,
-  ``/weather <city>``.
+- ``ResponsesChannel`` — exposes an OpenAI-compatible ``/responses`` endpoint
+  so any OpenAI-SDK client can call the agent over HTTP. The ``responses_hook``
+  strips caller-supplied options the host owns and keys each session off the
+  OpenAI ``safety_identifier`` field.
+
+- ``TelegramChannel`` — connects the same agent to a Telegram bot. The
+  ``telegram_hook`` raises reasoning effort for a richer Telegram persona.
+  Because both channels share the same ``FileHistoryProvider``, a Telegram chat
+  and a Responses caller can resume the *same* conversation: pass the Telegram
+  isolation key (e.g. ``telegram:8741188429``) as ``previous_response_id`` on
+  the Responses endpoint.
 
 Required env: ``FOUNDRY_PROJECT_ENDPOINT``, ``FOUNDRY_MODEL``,
 ``TELEGRAM_BOT_TOKEN``. Auth uses ``DefaultAzureCredential``.
 
 Run
 ---
-``app`` is a module-level Starlette ASGI app::
+``app`` is a module-level Starlette ASGI app. Recommended production launch is
+**Hypercorn**::
 
-    uv sync
-    az login
-    export FOUNDRY_PROJECT_ENDPOINT=https://<your-project>.services.ai.azure.com
-    export FOUNDRY_MODEL=gpt-4o
-    export TELEGRAM_BOT_TOKEN=...
-    uv run hypercorn app:app --bind 0.0.0.0:8000
+    hypercorn app:app --bind 0.0.0.0:8000 --workers 4
 
-Or use the ``__main__`` block for quick local iteration::
+The ``__main__`` block uses ``host.serve(...)`` (single-process Hypercorn) for
+quick local iteration::
 
     uv run python app.py
+
+Note
+----
+``FileHistoryProvider`` uses in-process file-write locking. It is fine for this
+sample but swap it for a cross-process store in production.
 """
 
 from __future__ import annotations
@@ -44,7 +51,9 @@ from agent_framework_hosting import (
     ChannelCommand,
     ChannelCommandContext,
     ChannelRequest,
+    ChannelSession,
 )
+from agent_framework_hosting_responses import ResponsesChannel
 from agent_framework_hosting_telegram import TelegramChannel, telegram_isolation_key
 from azure.identity.aio import DefaultAzureCredential
 
@@ -56,7 +65,7 @@ SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # --------------------------------------------------------------------------- #
-# Tool
+# Shared tool
 # --------------------------------------------------------------------------- #
 
 
@@ -75,12 +84,39 @@ def lookup_weather(
 
 
 # --------------------------------------------------------------------------- #
-# Run hook
+# Channel hooks
 # --------------------------------------------------------------------------- #
 
 
-def run_hook(request: ChannelRequest, **_: object) -> ChannelRequest:
-    """Strip caller-supplied options the host owns and raise reasoning effort."""
+def responses_hook(request: ChannelRequest, *, protocol_request: dict | None = None, **_: object) -> ChannelRequest:
+    """Strip caller-supplied options the host should own and key the session.
+
+    - Removes ``model``, ``store``, and ``temperature`` so callers cannot
+      override the host's choices.
+    - Keys each session off the inbound ``previous_response_id`` (if present)
+      so any caller can resume an existing AgentSession — including one written
+      by the Telegram channel (e.g. ``previous_response_id="telegram:8741188429"``).
+    - Falls back to a ``responses:<safety_identifier>`` key when no
+      ``previous_response_id`` is supplied.
+    """
+    options = dict(request.options or {})
+    options.pop("model", None)
+    options.pop("temperature", None)
+    options.pop("store", None)
+
+    body = protocol_request or {}
+
+    if request.session is not None and request.session.isolation_key:
+        session = request.session
+    else:
+        safety_id = body.get("safety_identifier") or "anonymous"
+        session = ChannelSession(isolation_key=f"responses:{safety_id}")
+
+    return replace(request, session=session, options=options or None)
+
+
+def telegram_hook(request: ChannelRequest, **_: object) -> ChannelRequest:
+    """Raise reasoning effort for the Telegram persona."""
     options = dict(request.options or {})
     options.pop("model", None)
     options["reasoning"] = {"effort": "high", "summary": "detailed"}
@@ -97,10 +133,10 @@ def _isolation_key(ctx: ChannelCommandContext) -> str:
 
 
 def make_commands(host_ref: dict[str, AgentFrameworkHost]) -> list[ChannelCommand]:
-    """Build slash commands that close over the host so ``/new`` can reset state."""
+    """Build commands that close over the host so ``/new`` can reset state."""
 
     async def handle_start(ctx: ChannelCommandContext) -> None:
-        await ctx.reply("Hi! I'm a weather assistant.\nCommands: /new, /whoami, /weather <city>, /help.")
+        await ctx.reply("Hi! I'm a multi-channel weather agent.\nCommands: /new, /whoami, /weather <city>, /help.")
 
     async def handle_help(ctx: ChannelCommandContext) -> None:
         await ctx.reply(
@@ -154,13 +190,14 @@ def build_host() -> AgentFrameworkHost:
     host = AgentFrameworkHost(
         target=agent,
         channels=[
+            ResponsesChannel(run_hook=responses_hook),
             TelegramChannel(
                 bot_token=os.environ["TELEGRAM_BOT_TOKEN"],
                 webhook_url=os.environ.get("TELEGRAM_WEBHOOK_URL"),
                 secret_token=os.environ.get("TELEGRAM_WEBHOOK_SECRET"),
                 parse_mode="Markdown",
                 commands=make_commands(host_ref),
-                run_hook=run_hook,
+                run_hook=telegram_hook,
             ),
         ],
         debug=True,
