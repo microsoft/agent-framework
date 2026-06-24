@@ -129,7 +129,7 @@ class DurableAIAgentWorker:
 
         # Register the entity class with the worker
         # The worker.add_entity method takes a class
-        entity_registered: str = self._worker.add_entity(entity_class)  # pyright: ignore[reportUnknownMemberType]
+        entity_registered: str = self._worker.add_entity(entity_class)
 
         logger.debug(
             "[DurableAIAgentWorker] Successfully registered entity class %s for agent: %s",
@@ -225,7 +225,7 @@ class DurableAIAgentWorker:
         executor_activity.__name__ = activity_name
         executor_activity.__qualname__ = activity_name
 
-        self._worker.add_activity(executor_activity)  # type: ignore[arg-type]
+        self._worker.add_activity(executor_activity)
         logger.debug("[DurableAIAgentWorker] Registered activity: %s", activity_name)
 
     def _register_workflow_orchestrator(self) -> None:
