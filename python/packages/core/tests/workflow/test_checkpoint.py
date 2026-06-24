@@ -355,7 +355,7 @@ async def test_workflow_checkpoint_ancestry_preserved_after_resume():
 
     class FinishExecutor(Executor):
         @handler
-        async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:
+        async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
             await ctx.yield_output(message + "-done")
 
     storage = InMemoryCheckpointStorage()
