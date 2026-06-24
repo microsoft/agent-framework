@@ -55,6 +55,24 @@ public sealed class OpenAIChatCompletionsSerializationTests : ConformanceTestBas
     }
 
     [Fact]
+    public void Serialize_RequestWithMultipleStopSequences_WritesStringArray()
+    {
+        // Arrange
+        string originalJson = LoadChatCompletionsTraceFile("basic/request.json");
+        CreateChatCompletion request = JsonSerializer.Deserialize(originalJson, ChatCompletions.ChatCompletionsJsonContext.Default.CreateChatCompletion)!;
+        request.Stop = StopSequences.FromSequences(["END", "STOP"]);
+
+        // Act
+        string json = JsonSerializer.Serialize(request, ChatCompletions.ChatCompletionsJsonContext.Default.CreateChatCompletion);
+        using JsonDocument document = JsonDocument.Parse(json);
+
+        // Assert
+        JsonElement stop = document.RootElement.GetProperty("stop");
+        Assert.Equal(JsonValueKind.Array, stop.ValueKind);
+        Assert.Equal(["END", "STOP"], stop.EnumerateArray().Select(e => e.GetString()));
+    }
+
+    [Fact]
     public void Deserialize_BasicRequest_HasMessages()
     {
         // Arrange
