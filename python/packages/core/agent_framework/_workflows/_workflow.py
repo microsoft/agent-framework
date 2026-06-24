@@ -371,12 +371,6 @@ class Workflow(DictConvertible):
         # so a subsequent ``run()`` is allowed.
         self._active_run: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
 
-        # Identifies which run currently owns the runtime checkpoint storage override
-        # on the RunnerContext (keyed by that run's ``_active_run`` weakref). Used to
-        # scope clearing so a deferred async-generator finalizer from a dropped run
-        # cannot clobber a successor run's storage.
-        self._runtime_storage_owner: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
-
     @property
     def status(self) -> WorkflowRunState:
         """Return the current run-level status of this workflow instance.
@@ -767,7 +761,6 @@ class Workflow(DictConvertible):
         # its async-generator finalizer ran. Clear it so this run starts clean and does
         # not silently inherit the prior run's runtime checkpoint storage.
         self._runner.context.clear_runtime_checkpoint_storage()
-        self._runtime_storage_owner = None
 
         response_stream = ResponseStream[WorkflowEvent, WorkflowRunResult](
             self._run_core(
@@ -813,12 +806,9 @@ class Workflow(DictConvertible):
         # here it already points at our own ``ResponseStream``.
         my_active_run = self._active_run
 
-        # Enable runtime checkpointing if storage provided, and record that this run
-        # owns the override so the ownership-guarded clear in the finally only fires
-        # for this run (and a deferred finalizer can't clear a successor's storage).
+        # Enable runtime checkpointing if storage provided.
         if checkpoint_storage is not None:
             self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
-            self._runtime_storage_owner = my_active_run
 
         try:
             # Async validation: a fresh-message run is only allowed when the
@@ -861,20 +851,23 @@ class Workflow(DictConvertible):
                     continue
                 yield event
         finally:
-            # Clear the active-run weakref so a subsequent ``run()`` is allowed,
-            # but only if the slot still holds *our* weakref. If the caller
-            # dropped this stream after partial iteration and a new ``run()``
-            # already installed its own weakref before our async-gen finalizer
-            # ran, ``self._active_run`` now points at the successor; clearing
-            # it would silently break the successor's concurrency guard.
-            if self._active_run is my_active_run:
+            # Whether this run is still the active one (no successor ``run()`` has
+            # installed a new weakref since we started). Captured once because the
+            # active-run clear below mutates ``self._active_run``. Used to scope both
+            # the run-lock release and the runtime-storage clear so a dropped run's
+            # deferred finalizer cannot clobber a successor run's state.
+            owns_run = self._active_run is my_active_run
+            if owns_run:
+                # Clear the active-run weakref so a subsequent ``run()`` is allowed.
+                # If the caller dropped this stream after partial iteration and a new
+                # ``run()`` already installed its own weakref before our async-gen
+                # finalizer ran, ``self._active_run`` points at the successor and we
+                # leave it untouched to preserve the successor's concurrency guard.
                 self._active_run = None
-            # Only clear the runtime checkpoint storage if this run still owns it. A
-            # dropped run's deferred finalizer must not clear a successor run's storage
-            # (mirrors the ``_active_run`` ownership guard above).
-            if checkpoint_storage is not None and self._runtime_storage_owner is my_active_run:
+            if checkpoint_storage is not None and owns_run:
+                # Only clear the runtime checkpoint storage if this run still owns it,
+                # so a dropped run's deferred finalizer can't clear a successor's storage.
                 self._runner.context.clear_runtime_checkpoint_storage()
-                self._runtime_storage_owner = None
 
     @staticmethod
     def _finalize_events(
