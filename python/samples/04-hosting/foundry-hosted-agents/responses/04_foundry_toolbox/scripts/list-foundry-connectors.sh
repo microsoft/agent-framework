@@ -60,17 +60,16 @@ fi
 URI="https://${REGION}.api.azureml.ms/asset-gallery/v1.0/tools"
 
 # Base filters; optionally narrow to a single connector by annotations/name.
-FILTERS='[
-    { "field": "entityContainerId", "operator": "eq", "values": ["connectors-registry-prod-bl"] },
-    { "field": "type",              "operator": "eq", "values": ["tools"] },
-    { "field": "kind",              "operator": "eq", "values": ["Versioned"] },
-    { "field": "labels",            "operator": "eq", "values": ["latest"] }'
-if [[ -n "$CONNECTOR_NAME" ]]; then
-  FILTERS+=',
-    { "field": "annotations/name",  "operator": "eq", "values": ["'"$CONNECTOR_NAME"'"] }'
-fi
-FILTERS+='
-  ]'
+FILTERS=$(jq -nc --arg connector "$CONNECTOR_NAME" '
+   [
+     {"field":"entityContainerId","operator":"eq","values":["connectors-registry-prod-bl"]},
+     {"field":"type",            "operator":"eq","values":["tools"]},
+     {"field":"kind",            "operator":"eq","values":["Versioned"]},
+     {"field":"labels",          "operator":"eq","values":["latest"]}
+   ] + ( ($connector | length) > 0
+         ? [{"field":"annotations/name","operator":"eq","values":[$connector]}]
+         : [] )
+ ')
 
 BODY=$(cat <<EOF
 {
