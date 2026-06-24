@@ -67,9 +67,10 @@ public sealed class OpenAIChatCompletionsSerializationTests : ConformanceTestBas
         using JsonDocument document = JsonDocument.Parse(json);
 
         // Assert
-        JsonElement stop = document.RootElement.GetProperty("stop");
-        Assert.Equal(JsonValueKind.Array, stop.ValueKind);
-        Assert.Equal(["END", "STOP"], stop.EnumerateArray().Select(e => e.GetString()));
+JsonElement stop = document.RootElement.GetProperty("stop");
+Assert.Equal(JsonValueKind.Array, stop.ValueKind);
+string[] stopValues = stop.EnumerateArray().Select(static e => e.GetString()!).ToArray();
+Assert.Equal(["END", "STOP"], stopValues);
     }
 
     [Fact]
