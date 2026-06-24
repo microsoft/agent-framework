@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import gc
 import tempfile
 from collections.abc import AsyncIterable, Awaitable, Sequence
 from dataclasses import dataclass, field
@@ -26,6 +27,7 @@ from agent_framework import (
     WorkflowContext,
     WorkflowConvergenceException,
     WorkflowEvent,
+    WorkflowException,
     WorkflowMessage,
     WorkflowRunState,
     handler,
@@ -759,8 +761,7 @@ async def test_workflow_concurrent_execution_prevention():
 
     # Try to start a second concurrent execution - this should fail
     with pytest.raises(
-        RuntimeError,
-        match="Workflow is already running. Concurrent executions are not allowed.",
+        WorkflowException, match="Workflow is already running; concurrent runs are not allowed on the same instance."
     ):
         await workflow.run(NumberMessage(data=0))
 
@@ -795,8 +796,7 @@ async def test_workflow_concurrent_execution_prevention_streaming():
 
     # Try to start a second concurrent execution - this should fail
     with pytest.raises(
-        RuntimeError,
-        match="Workflow is already running. Concurrent executions are not allowed.",
+        WorkflowException, match="Workflow is already running; concurrent runs are not allowed on the same instance."
     ):
         await workflow.run(NumberMessage(data=0))
 
@@ -828,14 +828,12 @@ async def test_workflow_concurrent_execution_prevention_mixed_methods():
 
     # Try different execution methods - all should fail
     with pytest.raises(
-        RuntimeError,
-        match="Workflow is already running. Concurrent executions are not allowed.",
+        WorkflowException, match="Workflow is already running; concurrent runs are not allowed on the same instance."
     ):
         await workflow.run(NumberMessage(data=0))
 
     with pytest.raises(
-        RuntimeError,
-        match="Workflow is already running. Concurrent executions are not allowed.",
+        WorkflowException, match="Workflow is already running; concurrent runs are not allowed on the same instance."
     ):
         async for _ in workflow.run(NumberMessage(data=0), stream=True):
             break
@@ -846,6 +844,154 @@ async def test_workflow_concurrent_execution_prevention_mixed_methods():
     # Now all methods should work again
     result = await workflow.run(NumberMessage(data=0))
     assert result.get_final_state() == WorkflowRunState.IDLE
+
+
+async def test_workflow_sequential_runs_after_completion() -> None:
+    """A completed run must release the runner so the next ``run`` succeeds.
+
+    This is the happy-path counterpart to the concurrent-run guard tests:
+    those tests verify that a *concurrent* run is rejected, but they do not
+    verify that the lock is actually released afterwards. This test
+    exercises that release path explicitly across the three call shapes
+    (non-streaming, streaming-iterated, streaming-via-get_final_response)
+    and across multiple consecutive turns to catch lock leaks.
+    """
+    executor = IncrementExecutor(id="seq_executor", limit=3, increment=1)
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    # Non-streaming -> non-streaming
+    r1 = await workflow.run(NumberMessage(data=0))
+    assert r1.get_final_state() == WorkflowRunState.IDLE
+
+    r2 = await workflow.run(NumberMessage(data=0))
+    assert r2.get_final_state() == WorkflowRunState.IDLE
+
+    # Non-streaming -> streaming-iterated
+    stream_events: list[WorkflowEvent] = []
+    async for event in workflow.run(NumberMessage(data=0), stream=True):
+        stream_events.append(event)
+    assert any(e.type == "status" and e.state == WorkflowRunState.IDLE for e in stream_events)
+
+    # Streaming -> streaming via get_final_response (no manual iteration)
+    r3 = await workflow.run(NumberMessage(data=0), stream=True).get_final_response()
+    assert r3.get_final_state() == WorkflowRunState.IDLE
+
+    # Streaming -> non-streaming (back to the start)
+    r4 = await workflow.run(NumberMessage(data=0))
+    assert r4.get_final_state() == WorkflowRunState.IDLE
+
+
+async def test_workflow_unconsumed_stream_releases_run_lock() -> None:
+    """An unconsumed stream must not leak the run lock.
+
+    ``Workflow.run`` reserves the runner *synchronously* so that concurrent
+    callers are rejected immediately. The reservation is normally released
+    by ``_run_core``'s ``finally`` once the stream is iterated. If the
+    caller never iterates the stream, a GC-time finalizer must release the
+    reservation instead - otherwise every subsequent ``Workflow.run`` call
+    on this instance would fail with the concurrent-run error.
+    """
+    executor = IncrementExecutor(id="unconsumed_stream_exec", limit=3, increment=1)
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    # Build a stream and immediately drop it without iterating.
+    stream = workflow.run(NumberMessage(data=0), stream=True)
+    assert stream is not None  # silence unused-variable warnings; stream is GC'd below
+    del stream
+    gc.collect()
+    # Yield to the event loop so any scheduled finalizer work can run.
+    await asyncio.sleep(0)
+
+    # The runner should be back to IDLE; a fresh run must succeed.
+    result = await workflow.run(NumberMessage(data=0))
+    assert result.get_final_state() == WorkflowRunState.IDLE
+
+
+async def test_workflow_unawaited_run_coroutine_releases_run_lock() -> None:
+    """An un-awaited non-streaming ``run()`` coroutine must also not leak the lock.
+
+    ``Workflow.run`` (non-streaming) returns a coroutine produced by
+    ``ResponseStream.get_final_response``. The underlying ResponseStream is
+    held alive by that coroutine, so dropping the coroutine without
+    awaiting it must still release the reservation via the same GC-time
+    fallback used for unconsumed streams.
+    """
+    executor = IncrementExecutor(id="unawaited_run_exec", limit=3, increment=1)
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    coro = workflow.run(NumberMessage(data=0))
+    # Closing suppresses the "coroutine was never awaited" warning. We cast to
+    # ``Any`` because the typed return is ``Awaitable[...]``; in practice it is
+    # a coroutine that exposes ``close``.
+    cast(Any, coro).close()
+    del coro
+    gc.collect()
+    await asyncio.sleep(0)
+
+    result = await workflow.run(NumberMessage(data=0))
+    assert result.get_final_state() == WorkflowRunState.IDLE
+
+
+async def test_workflow_partial_stream_does_not_clobber_successor_active_run() -> None:
+    """A stale ``_run_core`` finalizer must not clear a successor's run lock.
+
+    Repro for the GC-finalizer race the user reported:
+
+    1. Start stream A and consume one event so its body is suspended at a
+       ``yield``. Its ``finally`` is now armed and will run when the
+       generator is closed.
+    2. Drop stream A and ``gc.collect``. The ``_active_run`` weakref's
+       referent is gone, so a subsequent ``run()`` will pass the
+       concurrency guard - but stream A's async-gen finalizer hasn't
+       actually executed yet (``aclose`` is scheduled on the loop).
+    3. Synchronously start stream B; ``run()`` installs a fresh weakref
+       in ``_active_run``.
+    4. Yield to the loop so stream A's stale ``finally`` runs. Without
+       the identity check it unconditionally writes
+       ``self._active_run = None``, silently disabling the concurrency
+       guard for stream B.
+    """
+    executor = IncrementExecutor(id="stale_finalizer_exec", limit=100, increment=1)
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    # Step 1: drive stream A's body until it's suspended at its first yield.
+    stream_a = workflow.run(NumberMessage(data=0), stream=True)
+    aiter_a = stream_a.__aiter__()
+    await aiter_a.__anext__()
+
+    # Step 2: drop stream A; GC invalidates the weakref and schedules
+    # async-gen close, but does not run the close inline.
+    del stream_a
+    del aiter_a
+    gc.collect()
+
+    # Step 3: synchronously start stream B *before* yielding to the loop,
+    # so the stale ``aclose`` for stream A hasn't fired yet.
+    stream_b = workflow.run(NumberMessage(data=0), stream=True)
+    ref_b = workflow._active_run  # type: ignore[attr-defined]
+    assert ref_b is not None and ref_b() is stream_b
+
+    # Step 4: yield enough times for stream A's scheduled aclose to drive
+    # its body through ``GeneratorExit`` and into its ``finally``.
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    # With the fix, stream B's reservation is still in place. Without it,
+    # ``_active_run`` was clobbered to ``None`` and a concurrent run would
+    # be (incorrectly) accepted.
+    assert workflow._active_run is ref_b  # type: ignore[attr-defined]
+    with pytest.raises(
+        WorkflowException,
+        match="Workflow is already running; concurrent runs are not allowed on the same instance.",
+    ):
+        await workflow.run(NumberMessage(data=0))
+
+    # Tear down stream B without iterating it (its body never started, so
+    # closing it is a no-op for workflow state).
+    del stream_b
+    del ref_b
+    gc.collect()
+    await asyncio.sleep(0)
 
 
 class _StreamingTestAgent(BaseAgent):
