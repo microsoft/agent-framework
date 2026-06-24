@@ -3,6 +3,7 @@
 import asyncio
 import os
 from collections.abc import Callable
+from urllib.parse import urlsplit
 
 import httpx
 from agent_framework import Agent, MCPStreamableHTTPTool
@@ -18,17 +19,33 @@ load_dotenv()
 def resolve_toolbox_endpoint() -> str:
     """Resolve the toolbox MCP endpoint URL.
 
-    Prefers the explicit ``FOUNDRY_TOOLBOX_ENDPOINT`` env var; falls back to
-    constructing the URL from ``FOUNDRY_PROJECT_ENDPOINT`` and ``TOOLBOX_NAME``
-    (the variables injected by the Foundry hosting scaffolding after ``azd provision``).
+    Prefers the explicit ``TOOLBOX_ENDPOINT`` env var (set in ``agent.yaml`` and
+    via ``azd env set TOOLBOX_ENDPOINT`` after the toolbox is created); falls back
+    to constructing the URL from ``FOUNDRY_PROJECT_ENDPOINT`` and ``TOOLBOX_NAME``.
     """
-    if (endpoint := os.environ.get("FOUNDRY_TOOLBOX_ENDPOINT")) is not None:
+    if (endpoint := os.environ.get("TOOLBOX_ENDPOINT")) is not None:
         if not endpoint:
-            raise ValueError("FOUNDRY_TOOLBOX_ENDPOINT is set but empty")
+            raise ValueError("TOOLBOX_ENDPOINT is set but empty")
         return endpoint
     project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"].rstrip("/")
     toolbox_name = os.environ["TOOLBOX_NAME"]
     return f"{project_endpoint}/toolboxes/{toolbox_name}/mcp?api-version=v1"
+
+
+def _toolbox_name_from_endpoint(endpoint: str) -> str:
+    """Extract the toolbox name from a toolbox MCP endpoint URL.
+
+    Handles both the versioned (``.../toolboxes/<name>/versions/<n>/mcp``) and
+    unversioned (``.../toolboxes/<name>/mcp``) endpoint shapes that Foundry
+    produces. Falls back to ``"toolbox"`` when the path has no ``toolboxes``
+    segment.
+    """
+    segments = urlsplit(endpoint).path.split("/")
+    if "toolboxes" in segments:
+        idx = segments.index("toolboxes")
+        if idx + 1 < len(segments) and segments[idx + 1]:
+            return segments[idx + 1]
+    return "toolbox"
 
 
 class ToolboxAuth(httpx.Auth):
@@ -48,11 +65,11 @@ async def main():
     # Create the toolbox
     token_provider = get_bearer_token_provider(credential, "https://ai.azure.com/.default")
 
-    # Resolve the endpoint once and derive the tool name from the same source: when
-    # ``TOOLBOX_NAME`` isn't explicitly set, parse it out of the resolved URL so the
-    # tool's local name and the upstream toolbox always agree.
+    # Resolve the endpoint once and derive a friendly tool name from it. When
+    # ``TOOLBOX_NAME`` isn't set, extract the toolbox name from the URL path so
+    # the tool's local name matches the upstream toolbox.
     toolbox_endpoint = resolve_toolbox_endpoint()
-    toolbox_name = os.environ.get("TOOLBOX_NAME") or toolbox_endpoint.rsplit("/mcp", 1)[0].rsplit("/", 1)[-1]
+    toolbox_name = os.environ.get("TOOLBOX_NAME") or _toolbox_name_from_endpoint(toolbox_endpoint)
 
     async with httpx.AsyncClient(
         auth=ToolboxAuth(token_provider),
