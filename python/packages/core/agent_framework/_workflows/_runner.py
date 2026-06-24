@@ -106,77 +106,83 @@ class Runner:
 
     async def run_until_convergence(self) -> AsyncGenerator[WorkflowEvent, None]:
         """Run the workflow until no more messages are sent."""
-        # Emit any events already produced prior to entering loop
-        if await self._ctx.has_events():
-            logger.info("Yielding pre-loop events")
-            for event in await self._ctx.drain_events():
-                yield event
-
-        # Create a checkpoint before a run starts. Checkpoints are usually considered to be created at the
-        # end of an iteration, we can think of this checkpoint as being created at the end of "superstep 0"
-        # which captures the states after which the start executor has run. Note that we execute the start
-        # executor outside of the main iteration loop.
-        if await self._ctx.has_messages() and not self._resumed_from_checkpoint:
-            await self.create_checkpoint_if_enabled()
-
-        while self._iteration < self._max_iterations:
-            logger.info(f"Starting superstep {self._iteration + 1}")
-            yield WorkflowEvent.superstep_started(iteration=self._iteration + 1)
-
-            # Run iteration concurrently with live event streaming: we poll
-            # for new events while the iteration coroutine progresses.
-            iteration_task = asyncio.create_task(self._run_iteration())
-            try:
-                while not iteration_task.done():
-                    try:
-                        # Wait briefly for any new event; timeout allows progress checks
-                        event = await asyncio.wait_for(self._ctx.next_event(), timeout=0.05)
-                        yield event
-                    except asyncio.TimeoutError:
-                        # Periodically continue to let iteration advance
-                        continue
-            except asyncio.CancelledError:
-                # Propagate cancellation to the iteration task to avoid orphaned work
-                iteration_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await iteration_task
-                raise
-
-            # Propagate errors from iteration, but first surface any pending events
-            try:
-                await iteration_task
-            except Exception:
-                # Make sure failure-related events (like ExecutorFailedEvent) are surfaced
-                if await self._ctx.has_events():
-                    for event in await self._ctx.drain_events():
-                        yield event
-                raise
-            self._iteration += 1
-
-            # Drain any straggler events emitted at tail end
+        try:
+            # Emit any events already produced prior to entering loop
             if await self._ctx.has_events():
+                logger.info("Yielding pre-loop events")
                 for event in await self._ctx.drain_events():
                     yield event
 
-            logger.info(f"Completed superstep {self._iteration}")
+            # Create a checkpoint before a run starts. Checkpoints are usually considered to be created at the
+            # end of an iteration, we can think of this checkpoint as being created at the end of "superstep 0"
+            # which captures the states after which the start executor has run. Note that we execute the start
+            # executor outside of the main iteration loop.
+            if await self._ctx.has_messages() and not self._resumed_from_checkpoint:
+                await self.create_checkpoint_if_enabled()
 
-            # Commit pending state changes at superstep boundary
-            self._state.commit()
+            while self._iteration < self._max_iterations:
+                logger.info(f"Starting superstep {self._iteration + 1}")
+                yield WorkflowEvent.superstep_started(iteration=self._iteration + 1)
 
-            # Create checkpoint after each superstep iteration
-            await self.create_checkpoint_if_enabled()
+                # Run iteration concurrently with live event streaming: we poll
+                # for new events while the iteration coroutine progresses.
+                iteration_task = asyncio.create_task(self._run_iteration())
+                try:
+                    while not iteration_task.done():
+                        try:
+                            # Wait briefly for any new event; timeout allows progress checks
+                            event = await asyncio.wait_for(self._ctx.next_event(), timeout=0.05)
+                            yield event
+                        except asyncio.TimeoutError:
+                            # Periodically continue to let iteration advance
+                            continue
+                except asyncio.CancelledError:
+                    # Propagate cancellation to the iteration task to avoid orphaned work
+                    iteration_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await iteration_task
+                    raise
 
-            yield WorkflowEvent.superstep_completed(iteration=self._iteration)
+                # Propagate errors from iteration, but first surface any pending events
+                try:
+                    await iteration_task
+                except Exception:
+                    # Make sure failure-related events (like ExecutorFailedEvent) are surfaced
+                    if await self._ctx.has_events():
+                        for event in await self._ctx.drain_events():
+                            yield event
+                    raise
+                self._iteration += 1
 
-            # Check for convergence: no more messages to process
-            if not await self._ctx.has_messages():
-                break
+                # Drain any straggler events emitted at tail end
+                if await self._ctx.has_events():
+                    for event in await self._ctx.drain_events():
+                        yield event
 
-        logger.info(f"Workflow completed after {self._iteration} supersteps")
-        self._resumed_from_checkpoint = False  # Reset resume flag for next run
+                logger.info(f"Completed superstep {self._iteration}")
 
-        if self._iteration >= self._max_iterations and await self._ctx.has_messages():
-            raise WorkflowConvergenceException(f"Runner did not converge after {self._max_iterations} iterations.")
+                # Commit pending state changes at superstep boundary
+                self._state.commit()
+
+                # Create checkpoint after each superstep iteration
+                await self.create_checkpoint_if_enabled()
+
+                yield WorkflowEvent.superstep_completed(iteration=self._iteration)
+
+                # Check for convergence: no more messages to process
+                if not await self._ctx.has_messages():
+                    break
+
+            logger.info(f"Workflow completed after {self._iteration} supersteps")
+
+            if self._iteration >= self._max_iterations and await self._ctx.has_messages():
+                raise WorkflowConvergenceException(f"Runner did not converge after {self._max_iterations} iterations.")
+        finally:
+            # Reset the resume flag so stale resume state never leaks into the next run on this
+            # instance - even if convergence raised before completing (e.g. an executor failure
+            # during a resumed run). Otherwise the next fresh run would skip the "superstep 0"
+            # checkpoint and parent later checkpoints to the stale resume point.
+            self._resumed_from_checkpoint = False
 
     async def _run_iteration(self) -> None:
         """Run a single iteration of the workflow.

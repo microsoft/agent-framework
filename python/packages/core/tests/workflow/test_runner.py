@@ -1058,6 +1058,68 @@ async def test_runner_drains_events_on_iteration_exception():
     assert len(output_events) >= 1
 
 
+async def test_runner_resumed_flag_reset_after_failed_resumed_run():
+    """A failed *resumed* run must not leak the resume flag into the next run.
+
+    The resume flag gates the initial "superstep 0" checkpoint (it is skipped on a
+    resumed run). It used to be cleared only on the success path, so an executor
+    failure during a resumed run left it ``True`` and the next fresh run skipped its
+    superstep-0 checkpoint, parenting later checkpoints to the stale resume point.
+    The flag is now cleared in a ``finally`` so this holds even when convergence
+    raises.
+
+    This also verifies checkpoint creation on the re-run: the resumed (failed) run
+    creates no superstep-0 checkpoint, while the subsequent fresh run does.
+    """
+    storage = InMemoryCheckpointStorage()
+    ctx = CheckpointingContext(storage)
+    executor_a = PassthroughExecutor(id="executor_a")
+    executor_b = ExecutorThatFailsWithEvents(id="executor_b", runner_ctx=ctx, fail_on_iteration=1)
+
+    edges = [SingleEdgeGroup(executor_a.id, executor_b.id)]
+    executors: dict[str, Executor] = {executor_a.id: executor_a, executor_b.id: executor_b}
+    state = State()
+
+    runner = Runner(edges, executors, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    # Simulate a resumed run; this marks the runner as resumed so the next run skips
+    # the superstep-0 checkpoint.
+    resumed_checkpoint = WorkflowCheckpoint(
+        checkpoint_id="resumed-cp",
+        workflow_name="test_name",
+        graph_signature_hash="test_hash",
+        iteration_count=0,
+    )
+    runner._mark_resumed(resumed_checkpoint)  # pyright: ignore[reportPrivateUsage]
+    assert runner._resumed_from_checkpoint is True  # pyright: ignore[reportPrivateUsage]
+
+    # Run the resumed turn; executor_b fails mid-iteration before any superstep
+    # checkpoint is created.
+    await executor_a.execute(MockMessage(data=0), ["START"], state, ctx)
+    with pytest.raises(RuntimeError, match="Executor failed with pending events"):
+        async for _ in runner.run_until_convergence():
+            pass
+
+    # The fix: the resume flag is cleared even though the run raised.
+    assert runner._resumed_from_checkpoint is False  # pyright: ignore[reportPrivateUsage]
+    # The resumed (failed) run created no superstep-0 checkpoint (it was skipped).
+    assert await storage.list_checkpoints(workflow_name="test_name") == []
+
+    # Re-run as a fresh turn: with the flag correctly reset, the runner now creates
+    # the initial superstep-0 checkpoint (iteration_count == 0) before failing again.
+    runner.reset_iteration_count()
+    await executor_a.execute(MockMessage(data=0), ["START"], state, ctx)
+    with pytest.raises(RuntimeError, match="Executor failed with pending events"):
+        async for _ in runner.run_until_convergence():
+            pass
+
+    checkpoints = await storage.list_checkpoints(workflow_name="test_name")
+    assert any(cp.iteration_count == 0 for cp in checkpoints), (
+        "Fresh run after a failed resumed run must create the superstep-0 checkpoint; "
+        "a leaked resume flag would have skipped it"
+    )
+
+
 class SlowEventEmittingExecutor(Executor):
     """An executor that emits events with delays to test straggler event draining."""
 
