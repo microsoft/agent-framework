@@ -1169,10 +1169,15 @@ class AgentFrameworkHost:
         # stream in an adapter that holds the binding open across the
         # iteration lifecycle.
         binder = self._bind_request_context(request)
+        # Capture the request-parent OTel context BEFORE ``target.run``.
+        # Python evaluates positional args before keyword args, so doing
+        # this inline in the ``_BoundResponseStream(...)`` call would run
+        # ``target.run(...)`` first and may capture a shifted context.
+        otel_context_snapshot = _capture_current_otel_context()
         return _BoundResponseStream(  # type: ignore[return-value]
             self.target.run(self._wrap_input(request), stream=True, **run_kwargs),
             binder,
-            otel_context_snapshot=_capture_current_otel_context(),
+            otel_context_snapshot=otel_context_snapshot,
         )
 
     def _resolve_checkpoint_storage(self, request: ChannelRequest) -> CheckpointStorage | None:

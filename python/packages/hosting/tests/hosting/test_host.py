@@ -1253,6 +1253,52 @@ class TestBoundResponseStream:
         assert final.text == "chunk"
         assert agent.seen_span_ids == [parent_ctx.span_id, parent_ctx.span_id]
 
+    async def test_run_stream_captures_otel_context_before_target_run(self, monkeypatch: Any) -> None:
+        """Guard the evaluation-order pitfall called out in review.
+
+        ``_invoke_stream`` must capture OTel context before calling
+        ``target.run(...)``. If that order flips, deferred streaming can bind to
+        the wrong parent context.
+        """
+
+        from agent_framework_hosting import _host as host_module
+
+        order: list[str] = []
+
+        def _capture() -> None:
+            order.append("capture")
+            return
+
+        monkeypatch.setattr(host_module, "_capture_current_otel_context", _capture)
+
+        class _OrderAgent:
+            id = "order-agent"
+            name: str | None = "OrderAgent"
+            description: str | None = "Records call order."
+
+            def run(self, messages: Any = None, *, stream: bool = False, **kwargs: Any) -> Any:
+                order.append("run")
+
+                async def _gen() -> AsyncIterator[AgentResponseUpdate]:
+                    yield AgentResponseUpdate(contents=[Content.from_text("chunk")], role="assistant")
+
+                async def _finalize(items: Sequence[AgentResponseUpdate]) -> AgentResponse:  # noqa: RUF029
+                    return AgentResponse.from_updates(items)
+
+                return ResponseStream(_gen(), finalizer=_finalize)
+
+        ch = _RecordingChannel(name="responses")
+        host = AgentFrameworkHost(target=cast(Any, _OrderAgent()), channels=[ch])
+        _ = host.app
+        assert ch.context is not None
+
+        stream = await ch.context.run_stream(
+            ChannelRequest(channel="responses", operation="op", input="hi", stream=True),
+        )
+        await cast(Any, stream).aclose()
+
+        assert order[:2] == ["capture", "run"]
+
 
 # --------------------------------------------------------------------------- #
 # `_wrap_input` — list[Message] LAST-message metadata stamping                 #
