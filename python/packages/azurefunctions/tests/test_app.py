@@ -1480,6 +1480,29 @@ class TestAgentFunctionAppWorkflow:
         ):
             AgentFunctionApp(workflows=[_wf("a"), _wf("b")])
 
+    def test_init_rejects_case_insensitive_duplicate_workflow_name(self) -> None:
+        """Workflow names that differ only by case collide and are rejected.
+
+        The route ownership guard folds case, so hosting both ``orders`` and
+        ``Orders`` would let one workflow's routes reach the other's instances.
+        """
+        from agent_framework import Executor
+
+        def _wf(name: str, executor_id: str) -> Mock:
+            ex = Mock(spec=Executor)
+            ex.id = executor_id
+            wf = Mock()
+            wf.name = name
+            wf.executors = {executor_id: ex}
+            return wf
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="case-insensitively"),
+        ):
+            AgentFunctionApp(workflows=[_wf("orders", "a"), _wf("Orders", "b")])
+
     def test_init_rejects_mapping_key_mismatch(self) -> None:
         """A workflows mapping whose key disagrees with Workflow.name is rejected."""
         mock_workflow = Mock()

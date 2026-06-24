@@ -166,7 +166,21 @@ class TestCollectHostedWorkflows:
         inner_b = _workflow("shared", {"y": _activity_executor("y")})  # different instance, same name
         outer = _workflow("outer", {"a": _subworkflow_executor("a", inner_a), "b": _subworkflow_executor("b", inner_b)})
 
-        with pytest.raises(ValueError, match="different workflows"):
+        with pytest.raises(ValueError, match="collides"):
+            list(collect_hosted_workflows(outer))
+
+    def test_rejects_case_insensitive_name_collision(self) -> None:
+        """Two different instances whose names differ only by case collide and raise.
+
+        The route ownership guard compares the durable orchestration name
+        case-insensitively, so case-only name variants must be rejected here or one
+        workflow's routes could operate on the other's instances.
+        """
+        inner_a = _workflow("shared", {"x": _activity_executor("x")})
+        inner_b = _workflow("Shared", {"y": _activity_executor("y")})  # case-only difference
+        outer = _workflow("outer", {"a": _subworkflow_executor("a", inner_a), "b": _subworkflow_executor("b", inner_b)})
+
+        with pytest.raises(ValueError, match="collides"):
             list(collect_hosted_workflows(outer))
 
     def test_same_instance_reused_is_deduped_not_rejected(self) -> None:

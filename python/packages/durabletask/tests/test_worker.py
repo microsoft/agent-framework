@@ -271,6 +271,17 @@ class TestMultiWorkflowRegistration:
         with pytest.raises(ValueError, match="already registered"):
             agent_worker.configure_workflow(self._agent_workflow("orders", "b"))
 
+    def test_rejects_case_insensitive_duplicate_workflow_name(self, agent_worker: DurableAIAgentWorker) -> None:
+        """Workflow names that differ only by case collide and are rejected.
+
+        The route ownership guard folds case, so allowing both ``orders`` and
+        ``Orders`` would let one workflow's surface reach the other's instances.
+        """
+        agent_worker.configure_workflow(self._agent_workflow("orders", "a"))
+
+        with pytest.raises(ValueError, match="case-insensitively"):
+            agent_worker.configure_workflow(self._agent_workflow("Orders", "b"))
+
     def test_rejects_auto_generated_workflow_name(self, agent_worker: DurableAIAgentWorker) -> None:
         """A workflow with an auto-generated WorkflowBuilder name is rejected."""
         import uuid

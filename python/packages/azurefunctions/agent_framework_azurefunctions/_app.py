@@ -251,9 +251,9 @@ class AgentFunctionApp(DFAppBase):
         self._agent_metadata = {}
         self._workflows: dict[str, Workflow] = {}
         # Every workflow whose orchestration has been registered (top-level plus
-        # nested sub-workflows), keyed by name -> the registered instance, so a shared
-        # sub-workflow is registered once while two different workflows that collide on
-        # a name are rejected.
+        # nested sub-workflows), keyed by case-folded name -> the registered instance,
+        # so a shared sub-workflow is registered once while two different workflows
+        # whose names collide (including case-only differences) are rejected.
         self._registered_orchestrations: dict[str, Workflow] = {}
         self.enable_health_check = enable_health_check
         self.enable_http_endpoints = enable_http_endpoints
@@ -334,8 +334,11 @@ class AgentFunctionApp(DFAppBase):
                 same name is already registered.
         """
         validate_workflow_name(workflow.name)
-        if workflow.name in self._workflows:
-            raise ValueError(f"Workflow '{workflow.name}' is already registered on this app.")
+        if any(name.casefold() == workflow.name.casefold() for name in self._workflows):
+            raise ValueError(
+                f"Workflow '{workflow.name}' is already registered on this app "
+                "(workflow names are compared case-insensitively)."
+            )
 
         # Validate the whole composition (top-level plus every nested sub-workflow)
         # up front, so an invalid/auto-generated nested name (or an executor id that
@@ -353,13 +356,14 @@ class AgentFunctionApp(DFAppBase):
         # nested sub-workflow (deduped by name; a different workflow reusing a name is
         # rejected).
         for hosted in hosted_workflows:
-            existing = self._registered_orchestrations.get(hosted.name)
+            existing = self._registered_orchestrations.get(hosted.name.casefold())
             if existing is not None:
                 if existing is not hosted:
                     raise ValueError(
-                        f"A different workflow named '{hosted.name}' is already registered on this "
-                        f"app. A workflow name maps to a single durable orchestration "
-                        f"('dafx-{hosted.name}'); rename one of them."
+                        f"A different workflow named '{hosted.name}' collides with already-registered "
+                        f"'{existing.name}' on this app. A workflow name maps to a single durable "
+                        f"orchestration ('dafx-{hosted.name}'), compared case-insensitively; rename one "
+                        "of them."
                     )
                 continue
             self._register_workflow_primitives(hosted)
@@ -371,7 +375,7 @@ class AgentFunctionApp(DFAppBase):
     def _register_workflow_primitives(self, workflow: Workflow) -> None:
         """Register one workflow's entities, activities, and orchestrator (no routes)."""
         validate_workflow_name(workflow.name)
-        self._registered_orchestrations[workflow.name] = workflow
+        self._registered_orchestrations[workflow.name.casefold()] = workflow
 
         logger.debug("[AgentFunctionApp] Registering workflow '%s'", workflow.name)
         plan = plan_workflow_registration(workflow)
