@@ -38,7 +38,6 @@ from dotenv import load_dotenv
 
 MCP_URL = "https://api.githubcopilot.com/mcp/"
 MCP_HEADERS = {"X-MCP-Features": "ifc_labels"}  # Opt-in to server-side IFC label emission in _meta
-FOUNDRY_MODEL = os.getenv("FOUNDRY_MODEL", "o4-mini")
 
 _AGENT_INSTRUCTIONS = (
     "You are a helpful GitHub assistant. Use tools to answer accurately. "
@@ -54,13 +53,13 @@ async def main() -> None:
     load_dotenv()
 
     github_pat = os.getenv("GITHUB_PAT")
-    endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT")
-    if not github_pat or not endpoint:
-        raise RuntimeError("GITHUB_PAT and FOUNDRY_PROJECT_ENDPOINT environment variables are required.")
+    if not github_pat:
+        raise RuntimeError("GITHUB_PAT environment variable is required.")
 
+    foundry_model = os.getenv("FOUNDRY_MODEL", "o4-mini")
     credential = AzureCliCredential()
-    main_client = FoundryChatClient(project_endpoint=endpoint, model=FOUNDRY_MODEL, credential=credential)
-    quarantine_client = FoundryChatClient(project_endpoint=endpoint, model="gpt-4o-mini", credential=credential)
+    main_client = FoundryChatClient(model=foundry_model, credential=credential)
+    quarantine_client = FoundryChatClient(model="gpt-4o-mini", credential=credential)
 
     async with AsyncExitStack() as stack:
         # Wrap the remote MCP URL as local tools so FIDES can label inputs/outputs
