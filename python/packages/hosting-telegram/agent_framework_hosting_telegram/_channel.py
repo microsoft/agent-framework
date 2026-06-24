@@ -2,7 +2,7 @@
 
 """Built-in channel: Telegram (polling + webhook transports).
 
-Inspired by PR #5393's Telegram sample. Two transports are supported:
+Two transports are supported:
 
 - ``polling`` (default when no ``webhook_url`` is set): the channel runs a
   background ``getUpdates`` long-poll loop. No public URL required —
@@ -160,6 +160,59 @@ class TelegramChannel:
         stream_update_hook: ChannelStreamUpdateHook | None = None,
         stream_edit_min_interval: float = 0.4,
     ) -> None:
+        """Create a Telegram channel.
+
+        Keyword Args:
+            bot_token: Telegram Bot API token obtained from BotFather.
+            path: URL path at which the webhook route is mounted (default
+                ``"/telegram/webhook"``). Only used in webhook transport.
+            commands: Slash commands to register with the bot via
+                ``setMyCommands`` on startup.
+            register_native_commands: When ``True`` (default), the commands
+                list is sent to Telegram's ``setMyCommands`` API so they
+                appear in the Telegram UI.
+            run_hook: Optional :class:`ChannelRunHook` called before each
+                agent invocation. Use it to pre-process inputs or inject
+                context (e.g. strip unsupported options). When omitted, a
+                safe default hook that discards unknown options is applied.
+            response_hook: Optional :class:`ChannelResponseHook` called
+                after the agent finishes. Use it to post-process or log
+                outputs.
+            api_base: Telegram Bot API base URL. Defaults to
+                ``"https://api.telegram.org"``. Override for local API
+                server setups.
+            webhook_url: Public HTTPS URL to register with Telegram when
+                using webhook transport. Required when
+                ``transport="webhook"``; ignored in polling mode.
+            secret_token: Optional token sent by Telegram as the
+                ``X-Telegram-Bot-Api-Secret-Token`` header on every webhook
+                call. When set, the channel rejects requests whose token
+                does not match.
+            delete_webhook_on_shutdown: When ``True``, call
+                ``deleteWebhook`` on shutdown. Useful for graceful
+                teardown in development. Defaults to ``False``.
+            parse_mode: Telegram ``parse_mode`` applied to outgoing messages
+                (e.g. ``"HTML"`` or ``"MarkdownV2"``). Interim streaming
+                edits always use plain text to avoid parse errors on
+                partial markup.
+            send_typing_action: When ``True`` (default), re-issue a
+                ``sendChatAction("typing")`` every 4 seconds while the
+                agent is running so the typing indicator stays visible.
+            transport: Delivery transport. ``"auto"`` (default) selects
+                ``"webhook"`` when ``webhook_url`` is supplied, otherwise
+                ``"polling"``.
+            polling_timeout: Long-poll timeout in seconds for
+                ``getUpdates``. Defaults to ``30``.
+            stream: Default streaming mode for agent invocations. When
+                ``True`` (default), responses are sent progressively via
+                message edits. When ``False``, the full response is sent
+                once the agent finishes.
+            stream_update_hook: Optional hook called with each streaming
+                update before it is processed.
+            stream_edit_min_interval: Minimum seconds between consecutive
+                Telegram ``editMessageText`` calls. Defaults to ``0.4`` to
+                stay well under Telegram's per-chat rate limits.
+        """
         self.path = path
         self._token = bot_token
         self._commands = list(commands)
@@ -704,10 +757,10 @@ class TelegramChannel:
 
         try:
             async for update in stream:
-                chunk = getattr(update, "text", None)
-                if chunk:
-                    accumulated += chunk
-                    wake.set()
+                for content in update.contents:
+                    if content.type == "text" and content.text:
+                        accumulated += content.text
+                        wake.set()
         except Exception:
             logger.exception("Telegram streaming consumption failed")
         finally:

@@ -467,18 +467,29 @@ class TestWebhookShutdownTeardown:
 
 @dataclass
 class _FakeStreamUpdate:
-    text: str
+    contents: list[Content] = field(default_factory=list)
+
+    @classmethod
+    def from_text(cls, text: str) -> _FakeStreamUpdate:
+        return cls(contents=[Content.from_text(text=text)])
+
+    @classmethod
+    def from_image(cls, uri: str, media_type: str = "image/png") -> _FakeStreamUpdate:
+        return cls(contents=[Content.from_uri(uri=uri, media_type=media_type)])
 
 
 class _FakeResponseStream:
-    def __init__(self, chunks: list[str], final: _FakeAgentResponse) -> None:
+    def __init__(self, chunks: list[str | _FakeStreamUpdate], final: _FakeAgentResponse) -> None:
         self._chunks = chunks
         self._final = final
 
     def __aiter__(self) -> Any:
         async def _gen() -> Any:
             for chunk in self._chunks:
-                yield _FakeStreamUpdate(text=chunk)
+                if isinstance(chunk, str):
+                    yield _FakeStreamUpdate.from_text(chunk)
+                else:
+                    yield chunk
 
         return _gen()
 
@@ -528,3 +539,26 @@ class TestStreamingBehavior:
         await ch._stream_to_chat(8, request, cast(Any, stream))  # pyright: ignore[reportPrivateUsage]
 
         send_chat_action.assert_not_awaited()
+
+    async def test_streaming_multimodal_updates_do_not_accumulate_as_text(self) -> None:
+        """Non-text stream updates (e.g. images) must not corrupt the text accumulator."""
+        ch, _ = _make_telegram()
+        send_photo = AsyncMock()
+        object.__setattr__(ch, "_send_photo", send_photo)
+
+        image_update = _FakeStreamUpdate.from_image("https://example.com/img.png")
+        final = _FakeAgentResponse(
+            text="caption",
+            messages=[
+                Message(
+                    "assistant",
+                    [Content.from_uri(uri="https://example.com/img.png", media_type="image/png")],
+                )
+            ],
+        )
+        stream = _FakeResponseStream(["text chunk", image_update], final)
+        request = ChannelRequest(channel="telegram", operation="message.create", input="hi", stream=True)
+        await ch._stream_to_chat(9, request, cast(Any, stream))  # pyright: ignore[reportPrivateUsage]
+
+        # Image from the final response must be forwarded.
+        send_photo.assert_awaited_once_with(9, "https://example.com/img.png")
