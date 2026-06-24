@@ -20,6 +20,7 @@ from agent_framework import (
     Content,
     Executor,
     FileCheckpointStorage,
+    InProcRunnerContext,
     Message,
     ResponseStream,
     WorkflowBuilder,
@@ -1008,8 +1009,10 @@ async def test_workflow_stale_runtime_checkpoint_storage_not_inherited() -> None
         executor = IncrementExecutor(id="stale_storage_exec", limit=3, increment=1)
         workflow = WorkflowBuilder(start_executor=executor).build()
 
+        assert isinstance(workflow._runner.context, InProcRunnerContext)  # pyright: ignore[reportPrivateUsage]
+
         # Simulate a leftover runtime override from a dropped prior run.
-        workflow._runner.context.set_runtime_checkpoint_storage(leftover_storage)  # type: ignore[attr-defined]
+        workflow._runner.context.set_runtime_checkpoint_storage(leftover_storage)  # pyright: ignore[reportPrivateUsage]
 
         # A fresh run without its own checkpoint_storage must not use the leftover.
         result = await workflow.run(NumberMessage(data=0))
@@ -1017,7 +1020,7 @@ async def test_workflow_stale_runtime_checkpoint_storage_not_inherited() -> None
 
         checkpoints = await leftover_storage.list_checkpoints(workflow_name=workflow.name)
         assert checkpoints == [], "Stale runtime checkpoint storage must not be inherited by a new run"
-        assert workflow._runner.context._runtime_checkpoint_storage is None  # type: ignore[attr-defined]
+        assert workflow._runner.context._runtime_checkpoint_storage is None  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_workflow_partial_stream_does_not_clobber_successor_runtime_storage() -> None:
@@ -1037,13 +1040,15 @@ async def test_workflow_partial_stream_does_not_clobber_successor_runtime_storag
         storage_b = FileCheckpointStorage(temp_dir_b)
         executor = IncrementExecutor(id="storage_finalizer_exec", limit=100, increment=1)
         workflow = WorkflowBuilder(start_executor=executor).build()
-        context = workflow._runner.context  # type: ignore[attr-defined]
+        context = workflow._runner.context  # pyright: ignore[reportPrivateUsage]
+
+        assert isinstance(context, InProcRunnerContext)
 
         # Step 1: drive stream A's body to its first yield so it set storage_a.
         stream_a = workflow.run(NumberMessage(data=0), checkpoint_storage=storage_a, stream=True)
         aiter_a = stream_a.__aiter__()
         await aiter_a.__anext__()
-        assert context._runtime_checkpoint_storage is storage_a
+        assert context._runtime_checkpoint_storage is storage_a  # pyright: ignore[reportPrivateUsage]
 
         # Step 2: drop stream A; the weakref dies and async-gen close is scheduled
         # but not run inline.
@@ -1056,7 +1061,7 @@ async def test_workflow_partial_stream_does_not_clobber_successor_runtime_storag
         stream_b = workflow.run(NumberMessage(data=0), checkpoint_storage=storage_b, stream=True)
         aiter_b = stream_b.__aiter__()
         await aiter_b.__anext__()
-        assert context._runtime_checkpoint_storage is storage_b
+        assert context._runtime_checkpoint_storage is storage_b  # pyright: ignore[reportPrivateUsage]
 
         # Step 4: yield enough for stream A's scheduled aclose to drive its body
         # through ``GeneratorExit`` and into its ``finally``.
@@ -1065,7 +1070,7 @@ async def test_workflow_partial_stream_does_not_clobber_successor_runtime_storag
 
         # With the ownership guard, stream B's override survives. Without it, A's
         # stale finalizer would have cleared it.
-        assert context._runtime_checkpoint_storage is storage_b
+        assert context._runtime_checkpoint_storage is storage_b  # pyright: ignore[reportPrivateUsage]
 
         # Tear down stream B.
         del stream_b
