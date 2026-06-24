@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import re
 from asyncio import CancelledError
+from dataclasses import replace
 from typing import Any, cast
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -71,6 +72,16 @@ def _value_to_parts(value: Any) -> list[Part]:
     return [Part(text=str(value))]
 
 
+def _strip_options_hook(request: ChannelRequest, **_: Any) -> ChannelRequest:
+    """Default run hook: remove all parsed options before reaching the agent.
+
+    When no custom ``run_hook`` is configured this prevents untrusted A2A
+    callers from injecting generation parameters. Supply a custom hook to
+    forward or transform specific options.
+    """
+    return replace(request, options=None)
+
+
 class HostAgentExecutor(AgentExecutor):
     """A2A executor that drives the hosted target through :class:`ChannelContext`."""
 
@@ -95,6 +106,9 @@ class HostAgentExecutor(AgentExecutor):
                 published as A2A task artifacts; otherwise the full reply is
                 published as a single working-state message.
             run_hook: Optional :data:`ChannelRunHook` applied to the request.
+                When omitted, a default hook that strips all caller-supplied
+                options is applied so untrusted A2A callers cannot inject
+                generation parameters.
             response_hook: Optional :data:`ChannelResponseHook` applied to the
                 originating final response.
         """
@@ -102,7 +116,7 @@ class HostAgentExecutor(AgentExecutor):
         self._ctx = context
         self._channel_name = channel_name
         self._streaming = streaming
-        self._run_hook = run_hook
+        self._run_hook: ChannelRunHook = run_hook if run_hook is not None else _strip_options_hook
         self._response_hook = response_hook
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -195,11 +209,7 @@ class HostAgentExecutor(AgentExecutor):
             channel_name=self._channel_name,
         )
         async for update in stream:
-            contents: list[Content] = list(getattr(update, "contents", None) or [])
-            parts = _contents_to_parts(contents)
-            text = getattr(update, "text", None)
-            if not parts and isinstance(text, str) and text:
-                parts = [Part(text=text)]
+            parts = _contents_to_parts(update.contents)
             if not parts:
                 continue
             await updater.add_artifact(

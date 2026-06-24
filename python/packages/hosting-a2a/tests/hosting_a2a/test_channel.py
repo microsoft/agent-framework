@@ -358,3 +358,16 @@ def test_contents_to_parts_conversion() -> None:
     assert parts[0].text == "hello"
     assert parts[1].url == "https://x/y.png"
     assert parts[2].raw == b"AAAA"
+
+
+async def test_default_hook_strips_options_when_no_run_hook_supplied() -> None:
+    """When no run_hook is provided, the default hook strips all options."""
+    ctx = _FakeContext(reply="ok")
+    executor = HostAgentExecutor(cast(Any, ctx), channel_name="a2a", run_hook=None)
+    queue = _RecordingEventQueue()
+    request_context = _FakeRequestContext(context_id="ctx-default-hook", text="hello")
+
+    await executor.execute(cast(Any, request_context), queue)
+
+    assert len(ctx.requests) == 1
+    assert ctx.requests[0].options is None
