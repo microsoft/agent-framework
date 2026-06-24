@@ -2,15 +2,12 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Configuration options for <see cref="AgentMcpSkillsSource"/>.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentMcpSkillsSourceOptions
 {
     /// <summary>

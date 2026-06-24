@@ -458,6 +458,87 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         Assert.Equal("archived-skill", skill.Frontmatter.Name);
     }
 
+    [Fact]
+    public async Task GetSkillsAsync_EntryMissingName_SkillSkippedAsync()
+    {
+        // Arrange - an archive index entry with a null/empty name is not actionable.
+        await using var server = new InMemoryMcpServer(builder => builder.WithResources<MissingNameServer>());
+        await using var client = await server.CreateClientAsync();
+        var options = new AgentMcpSkillsSourceOptions { ArchiveSkillsDirectory = this._extractionRoot };
+        var source = new AgentMcpSkillsSource(client, options);
+
+        // Act
+        var skills = await source.GetSkillsAsync();
+
+        // Assert - the invalid entry is skipped; no skills are surfaced.
+        Assert.Empty(skills);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_EntryWithInvalidNameChars_SkillSkippedAsync()
+    {
+        // Arrange - a name containing path separator characters is not a valid directory name.
+        await using var server = new InMemoryMcpServer(builder => builder.WithResources<InvalidNameCharsServer>());
+        await using var client = await server.CreateClientAsync();
+        var options = new AgentMcpSkillsSourceOptions { ArchiveSkillsDirectory = this._extractionRoot };
+        var source = new AgentMcpSkillsSource(client, options);
+
+        // Act
+        var skills = await source.GetSkillsAsync();
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_EntryMissingUrl_SkillSkippedAsync()
+    {
+        // Arrange - an archive entry without a url cannot be downloaded.
+        await using var server = new InMemoryMcpServer(builder => builder.WithResources<MissingUrlServer>());
+        await using var client = await server.CreateClientAsync();
+        var options = new AgentMcpSkillsSourceOptions { ArchiveSkillsDirectory = this._extractionRoot };
+        var source = new AgentMcpSkillsSource(client, options);
+
+        // Act
+        var skills = await source.GetSkillsAsync();
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ArchiveWithUnsupportedFormat_SkillSkippedAsync()
+    {
+        // Arrange - the archive payload does not match any known format (no magic bytes, no matching
+        // media type, no recognized URL extension).
+        await using var server = new InMemoryMcpServer(builder => builder.WithResources<UnsupportedFormatServer>());
+        await using var client = await server.CreateClientAsync();
+        var options = new AgentMcpSkillsSourceOptions { ArchiveSkillsDirectory = this._extractionRoot };
+        var source = new AgentMcpSkillsSource(client, options);
+
+        // Act
+        var skills = await source.GetSkillsAsync();
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ArchiveReturnsTextNotBlob_SkillSkippedAsync()
+    {
+        // Arrange - the archive resource returns text content instead of a binary blob.
+        await using var server = new InMemoryMcpServer(builder => builder.WithResources<TextOnlyArchiveServer>());
+        await using var client = await server.CreateClientAsync();
+        var options = new AgentMcpSkillsSourceOptions { ArchiveSkillsDirectory = this._extractionRoot };
+        var source = new AgentMcpSkillsSource(client, options);
+
+        // Act
+        var skills = await source.GetSkillsAsync();
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
     public void Dispose()
     {
         try
@@ -685,6 +766,71 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
               "skills": []
             }
             """;
+    }
+
+    [McpServerResourceType]
+    private sealed class MissingNameServer
+    {
+        [McpServerResource(UriTemplate = "skill://index.json", Name = "index", MimeType = "application/json")]
+        public static string Index() => """
+            {
+              "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+              "skills": [
+                { "name": "", "type": "archive", "description": "No name.", "url": "skill://archives/x.zip" }
+              ]
+            }
+            """;
+    }
+
+    [McpServerResourceType]
+    private sealed class InvalidNameCharsServer
+    {
+        [McpServerResource(UriTemplate = "skill://index.json", Name = "index", MimeType = "application/json")]
+        public static string Index() => """
+            {
+              "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+              "skills": [
+                { "name": "../escape", "type": "archive", "description": "Bad name.", "url": "skill://archives/x.zip" }
+              ]
+            }
+            """;
+    }
+
+    [McpServerResourceType]
+    private sealed class MissingUrlServer
+    {
+        [McpServerResource(UriTemplate = "skill://index.json", Name = "index", MimeType = "application/json")]
+        public static string Index() => """
+            {
+              "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+              "skills": [
+                { "name": "good-name", "type": "archive", "description": "No url.", "url": "" }
+              ]
+            }
+            """;
+    }
+
+    [McpServerResourceType]
+    private sealed class UnsupportedFormatServer
+    {
+        [McpServerResource(UriTemplate = "skill://index.json", Name = "index", MimeType = "application/json")]
+        public static string Index() => ArchiveIndex("bad-format", "skill://archives/bad-format.bin");
+
+        [McpServerResource(UriTemplate = "skill://archives/bad-format.bin", Name = "archive", MimeType = "application/octet-stream")]
+        public static BlobResourceContents Archive() => BlobResourceContents.FromBytes(
+            Encoding.UTF8.GetBytes("not an archive"),
+            "skill://archives/bad-format.bin",
+            "application/octet-stream");
+    }
+
+    [McpServerResourceType]
+    private sealed class TextOnlyArchiveServer
+    {
+        [McpServerResource(UriTemplate = "skill://index.json", Name = "index", MimeType = "application/json")]
+        public static string Index() => ArchiveIndex("text-skill", "skill://archives/text-skill.zip");
+
+        [McpServerResource(UriTemplate = "skill://archives/text-skill.zip", Name = "archive", MimeType = "application/zip")]
+        public static string Archive() => "this is not binary";
     }
 
 #pragma warning restore CA1812
