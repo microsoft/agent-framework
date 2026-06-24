@@ -12,6 +12,7 @@ from agent_framework import (
     Agent,
     AgentContext,
     AgentMiddleware,
+    AgentModeProvider,
     AgentResponse,
     AgentSession,
     BackgroundTaskInfo,
@@ -28,7 +29,9 @@ from agent_framework import (
     TodoItem,
     TodoProvider,
     background_tasks_running,
+    set_agent_mode,
     todos_remaining,
+    todos_remaining_message,
 )
 from agent_framework._harness._loop import (
     DEFAULT_JUDGE_MAX_ITERATIONS,
@@ -958,36 +961,6 @@ async def test_additional_instructions_injected_as_system_message() -> None:
 # region provider helpers
 
 
-async def test_todos_remaining_helper_reflects_store_state() -> None:
-    provider = TodoProvider()
-    session = AgentSession()
-    predicate = todos_remaining(provider)
-
-    # No items yet -> nothing to continue for.
-    assert await _resolve_should_continue_result(predicate(session=session)) is False
-
-    await provider.store.save_state(
-        session,
-        [TodoItem(id=1, title="open item", is_complete=False)],
-        next_id=2,
-        source_id=provider.source_id,
-    )
-    assert await _resolve_should_continue_result(predicate(session=session)) is True
-
-    await provider.store.save_state(
-        session,
-        [TodoItem(id=1, title="open item", is_complete=True)],
-        next_id=2,
-        source_id=provider.source_id,
-    )
-    assert await _resolve_should_continue_result(predicate(session=session)) is False
-
-
-async def test_todos_remaining_helper_without_session() -> None:
-    predicate = todos_remaining(TodoProvider())
-    assert await _resolve_should_continue_result(predicate(session=None)) is False
-
-
 def test_background_tasks_running_helper_reflects_state() -> None:
     from agent_framework import BackgroundAgentsProvider
 
@@ -1037,6 +1010,128 @@ def test_background_tasks_running_helper_without_session() -> None:
     provider = BackgroundAgentsProvider([_DummyAgent()])  # type: ignore[list-item]  # ty: ignore[invalid-argument-type]
     predicate = background_tasks_running(provider)
     assert predicate(session=None) is False
+
+
+# region todos_remaining / todos_remaining_message helpers
+
+
+class _FakeHarnessAgent:
+    """Minimal stand-in for a harness agent exposing built-in context providers."""
+
+    def __init__(self, *providers: Any) -> None:
+        self.context_providers = list(providers)
+
+
+async def _save_todos(provider: TodoProvider, session: AgentSession, items: list[TodoItem]) -> None:
+    await provider.store.save_state(
+        session,
+        items,
+        next_id=len(items) + 1,
+        source_id=provider.source_id,
+    )
+
+
+async def test_todos_remaining_reflects_store_state() -> None:
+    provider = TodoProvider()
+    session = AgentSession()
+    agent = _FakeHarnessAgent(provider)
+    predicate = todos_remaining()
+
+    # No items yet -> nothing to continue for.
+    assert await _resolve_should_continue_result(predicate(session=session, agent=agent)) is False
+
+    await _save_todos(provider, session, [TodoItem(id=1, title="open", is_complete=False)])
+    assert await _resolve_should_continue_result(predicate(session=session, agent=agent)) is True
+
+    await _save_todos(provider, session, [TodoItem(id=1, title="open", is_complete=True)])
+    assert await _resolve_should_continue_result(predicate(session=session, agent=agent)) is False
+
+
+async def test_todos_remaining_requires_session_agent_and_provider() -> None:
+    provider = TodoProvider()
+    session = AgentSession()
+    await _save_todos(provider, session, [TodoItem(id=1, title="open", is_complete=False)])
+
+    predicate = todos_remaining()
+    # Missing session or agent -> False.
+    assert await _resolve_should_continue_result(predicate(session=None, agent=_FakeHarnessAgent(provider))) is False
+    assert await _resolve_should_continue_result(predicate(session=session, agent=None)) is False
+    # Agent without a TodoProvider -> False.
+    assert await _resolve_should_continue_result(predicate(session=session, agent=_FakeHarnessAgent())) is False
+
+
+async def test_todos_remaining_mode_gating() -> None:
+    provider = TodoProvider()
+    mode_provider = AgentModeProvider()
+    session = AgentSession()
+    agent = _FakeHarnessAgent(provider, mode_provider)
+    await _save_todos(provider, session, [TodoItem(id=1, title="open", is_complete=False)])
+
+    predicate = todos_remaining(looping_modes=["execute"])
+
+    # Default mode is "plan" -> not in allowed modes -> False even with open todos.
+    assert await _resolve_should_continue_result(predicate(session=session, agent=agent)) is False
+
+    set_agent_mode(session, "execute")
+    assert await _resolve_should_continue_result(predicate(session=session, agent=agent)) is True
+
+    # Case-insensitive matching.
+    predicate_upper = todos_remaining(looping_modes=["EXECUTE"])
+    assert await _resolve_should_continue_result(predicate_upper(session=session, agent=agent)) is True
+
+
+async def test_todos_remaining_modes_none_ignores_mode() -> None:
+    provider = TodoProvider()
+    mode_provider = AgentModeProvider()
+    session = AgentSession()
+    agent = _FakeHarnessAgent(provider, mode_provider)
+    await _save_todos(provider, session, [TodoItem(id=1, title="open", is_complete=False)])
+
+    predicate = todos_remaining(looping_modes=None)
+    # "plan" mode still loops because no mode gating is applied.
+    assert await _resolve_should_continue_result(predicate(session=session, agent=agent)) is True
+
+
+def test_todos_remaining_rejects_empty_modes() -> None:
+    with pytest.raises(ValueError):
+        todos_remaining(looping_modes=[])
+
+
+async def test_todos_remaining_message_lists_open_items() -> None:
+    provider = TodoProvider()
+    session = AgentSession()
+    agent = _FakeHarnessAgent(provider)
+    await _save_todos(
+        provider,
+        session,
+        [
+            TodoItem(id=1, title="first", is_complete=False),
+            TodoItem(id=2, title="second", is_complete=True),
+            TodoItem(id=3, title="third", is_complete=False),
+        ],
+    )
+
+    message = await todos_remaining_message(session=session, agent=agent)
+    assert message is not None
+    assert "2 open todo item(s)" in message
+    assert "- first" in message
+    assert "- third" in message
+    assert "second" not in message
+
+
+async def test_todos_remaining_message_returns_none_when_unavailable() -> None:
+    provider = TodoProvider()
+    session = AgentSession()
+    agent = _FakeHarnessAgent(provider)
+
+    # No session / agent.
+    assert await todos_remaining_message(session=None, agent=agent) is None
+    assert await todos_remaining_message(session=session, agent=None) is None
+    # Agent without a TodoProvider.
+    assert await todos_remaining_message(session=session, agent=_FakeHarnessAgent()) is None
+    # All todos complete -> nothing to remind about.
+    await _save_todos(provider, session, [TodoItem(id=1, title="done", is_complete=True)])
+    assert await todos_remaining_message(session=session, agent=agent) is None
 
 
 # region streaming behavior
@@ -1136,3 +1231,95 @@ async def test_streaming_middleware_termination_stops_cleanly() -> None:
     assert terminator.calls == 2
     assert "only" in final.text
     assert any("only" in (u.text or "") for u in updates)
+
+
+# region approval escape hatch
+
+
+def _approval_request_content() -> Content:
+    """Build a pending tool-approval request content (as a downstream approval middleware would)."""
+    return Content.from_function_approval_request(
+        id="call-1",
+        function_call=Content.from_function_call(call_id="call-1", name="write_file"),
+    )
+
+
+class _ApprovalChatClient(BaseChatClient[ChatOptions[None]]):
+    """A minimal client that returns a pending approval request on its first call, text thereafter."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.call_count = 0
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool = False,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        first = self.call_count == 0
+        contents: list[Any] = [_approval_request_content()] if first else [Content.from_text("done")]
+        if stream:
+
+            async def _gen() -> AsyncIterable[ChatResponseUpdate]:
+                self.call_count += 1
+                yield ChatResponseUpdate(contents=contents, role="assistant", finish_reason="stop")
+
+            return ResponseStream(_gen(), finalizer=lambda updates: ChatResponse.from_updates(updates))
+
+        async def _get() -> ChatResponse:
+            self.call_count += 1
+            return ChatResponse(messages=Message(role="assistant", contents=contents))
+
+        return _get()
+
+
+def test_has_pending_approval_request_detects_request() -> None:
+    response = AgentResponse(messages=[Message(role="assistant", contents=[_approval_request_content()])])
+    assert AgentLoopMiddleware._has_pending_approval_request(response) is True
+
+
+def test_has_pending_approval_request_false_for_plain_response() -> None:
+    response = AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+    assert AgentLoopMiddleware._has_pending_approval_request(response) is False
+    assert AgentLoopMiddleware._has_pending_approval_request(None) is False
+
+
+async def test_non_streaming_escape_hatch_stops_on_pending_approval() -> None:
+    client = _ApprovalChatClient()
+    calls: list[int] = []
+
+    def should_continue(*, iteration: int, **kwargs: Any) -> bool:
+        calls.append(iteration)
+        return True
+
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(should_continue, max_iterations=5)])
+
+    response = await agent.run("write a file")
+
+    # The loop stops after the first iteration because it carries a pending approval request,
+    # before should_continue is evaluated and without injecting next_message.
+    assert client.call_count == 1
+    assert calls == []
+    assert AgentLoopMiddleware._has_pending_approval_request(response) is True
+
+
+async def test_streaming_escape_hatch_stops_on_pending_approval() -> None:
+    client = _ApprovalChatClient()
+    calls: list[int] = []
+
+    def should_continue(*, iteration: int, **kwargs: Any) -> bool:
+        calls.append(iteration)
+        return True
+
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(should_continue, max_iterations=5)])
+
+    stream = agent.run("write a file", stream=True)
+    _ = [update async for update in stream]
+    final = await stream.get_final_response()
+
+    assert client.call_count == 1
+    assert calls == []
+    assert AgentLoopMiddleware._has_pending_approval_request(final) is True

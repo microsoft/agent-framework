@@ -16,6 +16,7 @@ import time
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, cast
 
 import pytest
@@ -665,7 +666,7 @@ def test_parse_output_files_skips_symlink_to_host_file(tmp_path: Path, monkeypat
 
     contents = execute_code_module._parse_output_files(
         sandbox=object(),
-        output_dir=_OutputDirShim(output_root),
+        output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
         expect_output_files=False,
     )
 
@@ -691,7 +692,7 @@ def test_parse_output_files_rejects_intermediate_dir_symlink_from_listing(
 
     contents = execute_code_module._parse_output_files(
         sandbox=_SandboxWithListing(["output/sub/leak.txt"]),
-        output_dir=_OutputDirShim(output_root),
+        output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
         expect_output_files=False,
     )
 
@@ -720,7 +721,7 @@ def test_parse_output_files_collects_real_output_file(tmp_path: Path) -> None:
 
     contents = execute_code_module._parse_output_files(
         sandbox=object(),
-        output_dir=_OutputDirShim(output_root),
+        output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
         expect_output_files=True,
     )
 

@@ -120,6 +120,7 @@
   </Folder>
   <Folder Name="/Samples/02-agents/Harness/">
     <File Path="samples/02-agents/Harness/README.md" />
+    <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step01_MeetYourClaw/Claw_Step01_MeetYourClaw.csproj" />
     <Project Path="samples/02-agents/Harness/ConsoleReactiveComponents/ConsoleReactiveComponents.csproj" />
     <Project Path="samples/02-agents/Harness/ConsoleReactiveFramework/ConsoleReactiveFramework.csproj" />
     <Project Path="samples/02-agents/Harness/Harness_Shared_Console/Harness_Shared_Console.csproj" />
@@ -217,6 +218,7 @@
   <Folder Name="/Samples/02-agents/ModelContextProtocol/">
     <File Path="samples/02-agents/ModelContextProtocol/README.md" />
     <Project Path="samples/02-agents/ModelContextProtocol/Agent_MCP_LongRunningTask_Client/Agent_MCP_LongRunningTask_Client.csproj" />
+    <Project Path="samples/02-agents/ModelContextProtocol/Agent_MCP_PerRun_AuthHeaders/Agent_MCP_PerRun_AuthHeaders.csproj" />
     <Project Path="samples/02-agents/ModelContextProtocol/Agent_MCP_Server/Agent_MCP_Server.csproj" />
     <Project Path="samples/02-agents/ModelContextProtocol/Agent_MCP_Server_Auth/Agent_MCP_Server_Auth.csproj" />
     <Project Path="samples/02-agents/ModelContextProtocol/FoundryAgent_Hosted_MCP/FoundryAgent_Hosted_MCP.csproj" />

@@ -1004,39 +1004,6 @@ def normalize_tools(
     return normalized
 
 
-def _tools_to_dict(  # pyright: ignore[reportUnusedFunction]
-    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
-) -> list[str | dict[str, Any]] | None:
-    """Parse the tools to a dict.
-
-    Args:
-        tools: The tools to parse. Can be a single tool or a sequence of tools.
-
-    Returns:
-        A list of tool specifications as dictionaries, or None if no tools provided.
-    """
-    normalized_tools = normalize_tools(tools)
-    if not normalized_tools:
-        return None
-
-    results: list[str | dict[str, Any]] = []
-    for tool_item in normalized_tools:
-        if isinstance(tool_item, FunctionTool):
-            results.append(tool_item.to_json_schema_spec())
-            continue
-        if isinstance(tool_item, BaseModel):
-            results.append(tool_item.model_dump(exclude_none=True))
-            continue
-        if isinstance(tool_item, SerializationMixin):
-            results.append(tool_item.to_dict())
-            continue
-        if isinstance(tool_item, dict):
-            results.append(tool_item)  # type: ignore[reportUnknownArgumentType]
-            continue
-        logger.warning("Can't parse tool.")
-    return results
-
-
 # region AI Function Decorator
 
 
