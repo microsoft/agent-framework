@@ -680,7 +680,7 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-hosting", editable = "packages/hosting" },
-    { name = "mcp", specifier = ">=1.12,<2" },
+    { name = "mcp", specifier = ">=1.24.0,<2" },
     { name = "starlette", specifier = ">=0.37" },
 ]
 

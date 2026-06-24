@@ -8,7 +8,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import mcp.types as types
 import uvicorn
@@ -134,13 +134,14 @@ class _FakeContext:
 
 def _make_channel(ctx: _FakeContext, **kwargs: Any) -> MCPChannel:
     channel = MCPChannel(**kwargs)
-    channel.contribute(ctx)  # type: ignore[arg-type]
+    channel.contribute(cast(Any, ctx))
     return channel
 
 
 class _HostedAgent:
-    name = "HostedAssistant"
-    description = "A hosted test assistant."
+    id = "hosted-agent"
+    name: str | None = "HostedAssistant"
+    description: str | None = "A hosted test assistant."
 
     async def run(self, messages: Any = None, *, stream: bool = False, **_kwargs: Any) -> Any:
         text = messages.text if isinstance(messages, Message) else str(messages)
@@ -156,6 +157,12 @@ class _HostedAgent:
 
             return ResponseStream[AgentResponseUpdate, AgentResponse](_gen(), finalizer=_finalize)
         return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=f"host: {text}")])])
+
+    def create_session(self, *, session_id: str | None = None) -> Any:
+        return {"session_id": session_id}
+
+    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> Any:
+        return {"service_session_id": service_session_id, "session_id": session_id}
 
 
 @asynccontextmanager
@@ -181,10 +188,21 @@ async def _serve_app(app: ASGIApp, *, port: int) -> AsyncIterator[str]:
 # --------------------------------------------------------------------------- #
 
 
+def _text(block: types.ContentBlock) -> str:
+    assert isinstance(block, types.TextContent)
+    return block.text
+
+
+def _server(channel: MCPChannel) -> Any:
+    server = cast(Any, channel._server)  # pyright: ignore[reportPrivateUsage]
+    assert server is not None
+    return server
+
+
 async def test_list_tools_advertises_single_configured_tool() -> None:
     ctx = _FakeContext()
     channel = _make_channel(ctx, tool_name="ask", tool_description="Ask the assistant.")
-    async with create_connected_server_and_client_session(channel._server) as client:  # type: ignore[arg-type]
+    async with create_connected_server_and_client_session(_server(channel)) as client:
         result = await client.list_tools()
     assert len(result.tools) == 1
     tool = result.tools[0]
@@ -197,7 +215,7 @@ async def test_list_tools_advertises_single_configured_tool() -> None:
 async def test_initialize_uses_target_name_by_default() -> None:
     ctx = _FakeContext()
     channel = _make_channel(ctx)
-    async with create_connected_server_and_client_session(channel._server) as client:  # type: ignore[arg-type]
+    async with create_connected_server_and_client_session(_server(channel)) as client:
         result = await client.initialize()
     assert result.serverInfo.name == "Assistant"
 
@@ -205,7 +223,7 @@ async def test_initialize_uses_target_name_by_default() -> None:
 async def test_call_tool_routes_through_host_and_returns_text() -> None:
     ctx = _FakeContext(reply="hi back", chunks=["hi", " back"])
     channel = _make_channel(ctx, streaming=False)
-    async with create_connected_server_and_client_session(channel._server) as client:  # type: ignore[arg-type]
+    async with create_connected_server_and_client_session(_server(channel)) as client:
         result = await client.call_tool("run_agent", {"input": "hello", "session_id": "conv-1"})
     assert not result.isError
     assert isinstance(result.content[0], types.TextContent)
@@ -234,20 +252,20 @@ async def test_call_tool_returns_rich_content_and_structured_output() -> None:
         structured={"answer": 42},
     )
     channel = _make_channel(ctx, streaming=False)
-    async with create_connected_server_and_client_session(channel._server) as client:  # type: ignore[arg-type]
+    async with create_connected_server_and_client_session(_server(channel)) as client:
         result = await client.call_tool("run_agent", {"input": "hello"})
 
     assert result.structuredContent == {"answer": 42}
     assert [item.type for item in result.content] == ["text", "image", "audio", "resource", "resource_link"]
-    assert result.content[0].text == "text"  # type: ignore[union-attr]
+    assert _text(result.content[0]) == "text"
 
 
 async def test_call_tool_streaming_aggregates_chunks() -> None:
     ctx = _FakeContext(chunks=["foo", "bar", "baz"])
     channel = _make_channel(ctx, streaming=True)
-    async with create_connected_server_and_client_session(channel._server) as client:  # type: ignore[arg-type]
+    async with create_connected_server_and_client_session(_server(channel)) as client:
         result = await client.call_tool("run_agent", {"input": "hello"})
-    assert result.content[0].text == "foobarbaz"  # type: ignore[union-attr]
+    assert _text(result.content[0]) == "foobarbaz"
     # No session_id supplied -> no session / identity.
     assert ctx.requests[0].session is None
     assert ctx.requests[0].identity is None
@@ -256,10 +274,20 @@ async def test_call_tool_streaming_aggregates_chunks() -> None:
 async def test_call_tool_rejects_empty_input() -> None:
     ctx = _FakeContext()
     channel = _make_channel(ctx)
-    async with create_connected_server_and_client_session(channel._server) as client:  # type: ignore[arg-type]
+    async with create_connected_server_and_client_session(_server(channel)) as client:
         result = await client.call_tool("run_agent", {"input": ""})
     assert result.isError
-    assert "non-empty string" in result.content[0].text  # type: ignore[union-attr]
+    assert "non-empty string" in _text(result.content[0])
+    assert ctx.requests == []
+
+
+async def test_call_tool_rejects_unknown_tool_name() -> None:
+    ctx = _FakeContext()
+    channel = _make_channel(ctx)
+    async with create_connected_server_and_client_session(_server(channel)) as client:
+        result = await client.call_tool("unknown_tool", {"input": "hello"})
+    assert result.isError
+    assert "unknown tool" in _text(result.content[0])
     assert ctx.requests == []
 
 
@@ -272,7 +300,7 @@ async def test_run_hook_can_reshape_request() -> None:
         return dataclasses.replace(request, attributes={**dict(request.attributes), "hooked": True})
 
     channel = _make_channel(ctx, streaming=False, run_hook=_hook)
-    async with create_connected_server_and_client_session(channel._server) as client:  # type: ignore[arg-type]
+    async with create_connected_server_and_client_session(_server(channel)) as client:
         await client.call_tool("run_agent", {"input": "hello"})
     assert ctx.requests[0].attributes.get("hooked") is True
 
@@ -291,9 +319,9 @@ async def test_response_hook_can_shape_originating_reply() -> None:
         return HostedRunResult(_FakeResp(text="hooked"))
 
     channel = _make_channel(ctx, streaming=False, response_hook=_hook)
-    async with create_connected_server_and_client_session(channel._server) as client:  # type: ignore[arg-type]
+    async with create_connected_server_and_client_session(_server(channel)) as client:
         result = await client.call_tool("run_agent", {"input": "hello"})
-    assert result.content[0].text == "hooked"  # type: ignore[union-attr]
+    assert _text(result.content[0]) == "hooked"
 
 
 async def test_streaming_response_hook_shapes_final_reply() -> None:
@@ -308,9 +336,9 @@ async def test_streaming_response_hook_shapes_final_reply() -> None:
         return HostedRunResult(_FakeResp(text=f"{channel_name}:{request.channel}:{result.result.text}"))
 
     channel = _make_channel(ctx, streaming=True, response_hook=_hook)
-    async with create_connected_server_and_client_session(channel._server) as client:  # type: ignore[arg-type]
+    async with create_connected_server_and_client_session(_server(channel)) as client:
         result = await client.call_tool("run_agent", {"input": "hello"})
-    assert result.content[0].text == "mcp:mcp:raw"  # type: ignore[union-attr]
+    assert _text(result.content[0]) == "mcp:mcp:raw"
 
 
 def test_default_path_and_name() -> None:
@@ -333,17 +361,17 @@ def test_content_conversion_handles_non_text_shapes() -> None:
     assert _structured_content(StructuredValue(answer=42)) == {"answer": 42}
     assert _structured_content(circular) == {"value": "[[...]]"}
     assert _content_to_mcp(Content("data", uri="not-a-data-uri", media_type="application/octet-stream")) == []
-    assert _content_to_mcp(Content("text_reasoning", text="because"))[0].text == "because"  # type: ignore[union-attr]
+    assert _text(_content_to_mcp(Content("text_reasoning", text="because"))[0]) == "because"
     assert (
-        _content_to_mcp(Content.from_function_result("call-1", result=[Content.from_text("nested")]))[0].text
+        _text(_content_to_mcp(Content.from_function_result("call-1", result=[Content.from_text("nested")]))[0])
         == "nested"
-    )  # type: ignore[union-attr]
-    assert _content_to_mcp(Content.from_function_result("call-1", result={"x": 1}))[0].text == '{"x": 1}'  # type: ignore[union-attr]
-    assert _content_to_mcp(Content.from_error(message="bad"))[0].text == "bad"  # type: ignore[union-attr]
+    )
+    assert _text(_content_to_mcp(Content.from_function_result("call-1", result={"x": 1}))[0]) == '{"x": 1}'
+    assert _text(_content_to_mcp(Content.from_error(message="bad"))[0]) == "bad"
     assert _content_to_mcp(Content.from_function_call("call-1", "tool")) == []
-    assert _value_to_mcp(Message(role="assistant", contents=[Content.from_text("message")]))[0].text == "message"  # type: ignore[union-attr]
+    assert _text(_value_to_mcp(Message(role="assistant", contents=[Content.from_text("message")]))[0]) == "message"
     assert _value_to_mcp(b"bytes")[0].type == "resource"
-    assert _value_to_mcp({"x": 1})[0].text == '{"x": 1}'  # type: ignore[union-attr]
+    assert _text(_value_to_mcp({"x": 1})[0]) == '{"x": 1}'
 
 
 def test_result_conversion_handles_workflow_and_fallback_shapes() -> None:
@@ -361,21 +389,21 @@ def test_result_conversion_handles_workflow_and_fallback_shapes() -> None:
     channel = MCPChannel()
 
     workflow_result = channel._result_to_content(HostedRunResult(WorkflowResult()))
-    assert workflow_result.content[0].text == "workflow"  # type: ignore[union-attr]
+    assert _text(workflow_result.content[0]) == "workflow"
 
     text_result = channel._result_to_content(HostedRunResult(TextOnlyResult(text="fallback")))
-    assert text_result.content[0].text == "fallback"  # type: ignore[union-attr]
+    assert _text(text_result.content[0]) == "fallback"
 
     structured_result = channel._result_to_content(HostedRunResult(TextOnlyResult(text="", value={"x": 1})))
     assert structured_result.structuredContent == {"x": 1}
-    assert structured_result.content[0].text == '{\n  "x": 1\n}'  # type: ignore[union-attr]
+    assert _text(structured_result.content[0]) == '{\n  "x": 1\n}'
 
     empty_result = channel._result_to_content(HostedRunResult(TextOnlyResult(text="")))
-    assert empty_result.content[0].text == ""  # type: ignore[union-attr]
+    assert _text(empty_result.content[0]) == ""
 
 
 async def test_http_mcp_client_can_call_hosted_channel(unused_tcp_port: int) -> None:
-    host = AgentFrameworkHost(target=_HostedAgent(), channels=[MCPChannel(streaming=False)])
+    host = AgentFrameworkHost(target=cast(Any, _HostedAgent()), channels=[MCPChannel(streaming=False)])
 
     async with (
         _serve_app(host.app, port=unused_tcp_port) as base_url,
@@ -387,4 +415,4 @@ async def test_http_mcp_client_can_call_hosted_channel(unused_tcp_port: int) -> 
         result = await session.call_tool("run_agent", {"input": "hello", "session_id": "conv-1"})
 
     assert [tool.name for tool in tools.tools] == ["run_agent"]
-    assert result.content[0].text == "host: hello"  # type: ignore[union-attr]
+    assert _text(result.content[0]) == "host: hello"

@@ -302,14 +302,19 @@ class MCPChannel:
 
         @server.call_tool()
         async def _call_tool(name: str, arguments: Mapping[str, Any]) -> types.CallToolResult:  # pyright: ignore[reportUnusedFunction]
-            return await self._invoke_tool(arguments)
+            return await self._invoke_tool(name, arguments)
 
         return server
 
-    async def _invoke_tool(self, arguments: Mapping[str, Any]) -> types.CallToolResult:
+    async def _invoke_tool(self, tool_name: str, arguments: Mapping[str, Any]) -> types.CallToolResult:
         """Route a single ``tool/call`` through the host pipeline."""
         if self._ctx is None:  # pragma: no cover - guarded by Channel lifecycle
             raise RuntimeError("MCPChannel not initialized")
+        if tool_name != self._tool_name:
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text=f"Error: unknown tool '{tool_name}'.")],
+                isError=True,
+            )
 
         text_input = arguments.get("input")
         if not isinstance(text_input, str) or not text_input:
