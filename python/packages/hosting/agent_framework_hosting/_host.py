@@ -26,7 +26,7 @@ import logging
 import os
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
+from contextlib import AbstractContextManager, ExitStack, asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -42,6 +42,8 @@ from agent_framework import (
     Workflow,
     WorkflowEvent,
 )
+from opentelemetry import context as otel_context
+from opentelemetry import trace
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
@@ -187,6 +189,20 @@ async def _apply_response_hook(
     return out
 
 
+def _capture_current_otel_context() -> object | None:
+    """Capture the current OTel context when a valid span is active.
+
+    Streaming channels can defer target iteration until after the route handler
+    has returned (for example, `StreamingResponse`). Capturing the current OTel
+    context at stream-construction time lets the host restore strict parent-child
+    span linkage during deferred pulls and finalization.
+    """
+    current_span_context = trace.get_current_span().get_span_context()
+    if not current_span_context.is_valid:
+        return None
+    return otel_context.get_current()
+
+
 def _workflow_event_to_update(event: WorkflowEvent[Any]) -> AgentResponseUpdate | None:
     """Map a :class:`WorkflowEvent` to a channel-friendly :class:`AgentResponseUpdate`.
 
@@ -288,9 +304,16 @@ class _BoundResponseStream:
       already closed the stack.
     """
 
-    def __init__(self, inner: Any, stack: ExitStack) -> None:
+    def __init__(
+        self,
+        inner: Any,
+        stack: ExitStack,
+        *,
+        otel_context_snapshot: object | None = None,
+    ) -> None:
         self._inner = inner
         self._stack = stack
+        self._otel_context_snapshot = otel_context_snapshot
         self._closed = False
 
     def _close(self) -> None:
@@ -298,6 +321,18 @@ class _BoundResponseStream:
             return
         self._closed = True
         self._stack.close()
+
+    @contextmanager
+    def _activate_otel_context(self) -> Any:
+        """Re-activate the captured OTel parent context for deferred work."""
+        if self._otel_context_snapshot is None:
+            yield
+            return
+        token = otel_context.attach(cast("Any", self._otel_context_snapshot))
+        try:
+            yield
+        finally:
+            otel_context.detach(token)
 
     async def aclose(self) -> None:
         """Idempotently release the bound request context.
@@ -321,15 +356,23 @@ class _BoundResponseStream:
         return self._wrap()
 
     async def _wrap(self) -> AsyncIterator[Any]:
+        with self._activate_otel_context():
+            iterator = self._inner.__aiter__()
         try:
-            async for item in self._inner:
+            while True:
+                try:
+                    with self._activate_otel_context():
+                        item = await iterator.__anext__()
+                except StopAsyncIteration:
+                    break
                 yield item
         finally:
             self._close()
 
     async def get_final_response(self) -> Any:
         try:
-            return await self._inner.get_final_response()
+            with self._activate_otel_context():
+                return await self._inner.get_final_response()
         finally:
             self._close()
 
@@ -1129,6 +1172,7 @@ class AgentFrameworkHost:
         return _BoundResponseStream(  # type: ignore[return-value]
             self.target.run(self._wrap_input(request), stream=True, **run_kwargs),
             binder,
+            otel_context_snapshot=_capture_current_otel_context(),
         )
 
     def _resolve_checkpoint_storage(self, request: ChannelRequest) -> CheckpointStorage | None:
