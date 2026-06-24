@@ -1061,15 +1061,14 @@ async def test_runner_drains_events_on_iteration_exception():
 async def test_runner_resumed_flag_reset_after_failed_resumed_run():
     """A failed *resumed* run must not leak the resume flag into the next run.
 
-    The resume flag gates the initial "superstep 0" checkpoint (it is skipped on a
-    resumed run). It used to be cleared only on the success path, so an executor
-    failure during a resumed run left it ``True`` and the next fresh run skipped its
-    superstep-0 checkpoint, parenting later checkpoints to the stale resume point.
-    The flag is now cleared in a ``finally`` so this holds even when convergence
-    raises.
+    The resume flag suppresses the initial "superstep 0" (entry) checkpoint when resuming from an
+    iteration-0 checkpoint (which already exists and must not be recreated). It used to be cleared
+    only on the success path, so an executor failure during a resumed run left it ``True`` and the
+    next fresh run wrongly skipped its entry checkpoint. The flag is now cleared in a ``finally`` so
+    this holds even when convergence raises.
 
-    This also verifies checkpoint creation on the re-run: the resumed (failed) run
-    creates no superstep-0 checkpoint, while the subsequent fresh run does.
+    This also verifies checkpoint creation on the re-run: the resumed (failed) run creates no entry
+    checkpoint, while the subsequent fresh run does.
     """
     storage = InMemoryCheckpointStorage()
     ctx = CheckpointingContext(storage)
@@ -1117,6 +1116,111 @@ async def test_runner_resumed_flag_reset_after_failed_resumed_run():
     assert any(cp.iteration_count == 0 for cp in checkpoints), (
         "Fresh run after a failed resumed run must create the superstep-0 checkpoint; "
         "a leaked resume flag would have skipped it"
+    )
+
+
+async def test_runner_creates_entry_checkpoint_at_iteration_zero():
+    """A fresh run creates the entry (superstep-0) checkpoint at iteration 0 with no parent.
+
+    This is the baseline the lineage-consistency guard must preserve: when starting from iteration 0
+    with messages queued and not resumed, the entry checkpoint is created and begins a new lineage
+    (``previous_checkpoint_id is None``).
+    """
+    storage = InMemoryCheckpointStorage()
+    ctx = CheckpointingContext(storage)
+    # Terminal executor with no outgoing edges: the runner runs one superstep and converges.
+    source = MockExecutor(id="source")
+    state = State()
+    runner = Runner([], {source.id: source}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    assert runner._iteration == 0  # pyright: ignore[reportPrivateUsage]
+    assert runner._resumed_from_checkpoint is False  # pyright: ignore[reportPrivateUsage]
+
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=8), source_id=source.id))
+
+    async for _ in runner.run_until_convergence():
+        pass
+
+    checkpoints = await storage.list_checkpoints(workflow_name="test_name")
+    entry_checkpoints = [cp for cp in checkpoints if cp.iteration_count == 0]
+    assert len(entry_checkpoints) == 1, "A fresh run must create exactly one entry checkpoint at iteration 0"
+    assert entry_checkpoints[0].previous_checkpoint_id is None, (
+        "The entry checkpoint of a fresh run must begin a new lineage with no parent"
+    )
+
+
+async def test_runner_skips_entry_checkpoint_when_iteration_nonzero():
+    """The entry (superstep-0) checkpoint must only be created at iteration 0 to keep lineage consistent.
+
+    A re-run that did not reset the iteration count (and is not marked as resumed) must not write an
+    entry checkpoint carrying a non-zero ``iteration_count`` - doing so would place two checkpoints at
+    the same iteration in the lineage. The ``_iteration == 0`` guard suppresses the entry checkpoint in
+    this case while still allowing the normal per-superstep checkpoints to be created.
+    """
+    storage = InMemoryCheckpointStorage()
+    ctx = CheckpointingContext(storage)
+    # Terminal executor with no outgoing edges: the runner runs one superstep and converges.
+    source = MockExecutor(id="source")
+    state = State()
+    runner = Runner([], {source.id: source}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    # Simulate a re-run that kept its iteration count and is not marked as resumed.
+    runner._iteration = 5  # pyright: ignore[reportPrivateUsage]
+    assert runner._resumed_from_checkpoint is False  # pyright: ignore[reportPrivateUsage]
+
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=8), source_id=source.id))
+
+    async for _ in runner.run_until_convergence():
+        pass
+
+    checkpoints = await storage.list_checkpoints(workflow_name="test_name")
+    # No entry checkpoint at the pre-existing iteration count may be created.
+    assert all(cp.iteration_count != 5 for cp in checkpoints), (
+        "Entry checkpoint must not be created at a non-zero iteration; lineage would have a duplicate iteration"
+    )
+    # The normal post-superstep checkpoint is still created (iteration advanced to 6).
+    assert any(cp.iteration_count == 6 for cp in checkpoints)
+
+
+async def test_runner_resumed_from_iteration_zero_skips_entry_checkpoint():
+    """Resuming from an iteration-0 checkpoint must not recreate the entry checkpoint.
+
+    Here ``_iteration == 0`` is true, so the iteration guard alone would not suppress the entry
+    checkpoint; the resume flag is what prevents recreating the checkpoint that already exists at
+    iteration 0.
+    """
+    storage = InMemoryCheckpointStorage()
+    ctx = CheckpointingContext(storage)
+    source = MockExecutor(id="source")
+    state = State()
+    runner = Runner([], {source.id: source}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    # Resume from an iteration-0 checkpoint: iteration stays 0 but the run is marked as resumed.
+    resumed_checkpoint = WorkflowCheckpoint(
+        checkpoint_id="entry-cp",
+        workflow_name="test_name",
+        graph_signature_hash="test_hash",
+        iteration_count=0,
+    )
+    runner._mark_resumed(resumed_checkpoint)  # pyright: ignore[reportPrivateUsage]
+    assert runner._iteration == 0  # pyright: ignore[reportPrivateUsage]
+    assert runner._resumed_from_checkpoint is True  # pyright: ignore[reportPrivateUsage]
+
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=8), source_id=source.id))
+
+    async for _ in runner.run_until_convergence():
+        pass
+
+    # The pre-loop entry checkpoint is skipped; only the post-superstep checkpoint (iteration 1) is created,
+    # and it chains back to the resumed entry checkpoint.
+    checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name="test_name"),
+        key=lambda c: c.timestamp,
+    )
+    assert all(cp.checkpoint_id != "entry-cp" for cp in checkpoints), "Resumed entry checkpoint must not be recreated"
+    assert checkpoints, "The resumed run must still create its post-superstep checkpoint"
+    assert checkpoints[0].previous_checkpoint_id == "entry-cp", (
+        "The first post-resume checkpoint must chain back to the resumed entry checkpoint"
     )
 
 

@@ -117,7 +117,7 @@ class Runner:
             # end of an iteration, we can think of this checkpoint as being created at the end of "superstep 0"
             # which captures the states after which the start executor has run. Note that we execute the start
             # executor outside of the main iteration loop.
-            if await self._ctx.has_messages() and not self._resumed_from_checkpoint:
+            if await self._ctx.has_messages() and self._iteration == 0 and not self._resumed_from_checkpoint:
                 await self.create_checkpoint_if_enabled()
 
             while self._iteration < self._max_iterations:
@@ -180,8 +180,7 @@ class Runner:
         finally:
             # Reset the resume flag so stale resume state never leaks into the next run on this
             # instance - even if convergence raised before completing (e.g. an executor failure
-            # during a resumed run). Otherwise the next fresh run would skip the "superstep 0"
-            # checkpoint and parent later checkpoints to the stale resume point.
+            # during a resumed run).
             self._resumed_from_checkpoint = False
 
     async def _run_iteration(self) -> None:
