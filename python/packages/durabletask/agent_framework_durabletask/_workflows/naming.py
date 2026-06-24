@@ -20,8 +20,7 @@ Naming scheme (the orchestration name is aligned byte-for-byte with .NET's
 The orchestration name is the identifier the Durable Task tooling/UI surfaces, so
 it matches .NET exactly. The inner activity/entity names are scoped by workflow in
 Python (unlike .NET's bare ``dafx-{executorId}``) so two co-hosted workflows that
-reuse an executor id cannot collide. See
-``docs/design/durabletask-multiworkflow-and-subworkflows.md`` for the rationale.
+reuse an executor id cannot collide.
 """
 
 from __future__ import annotations
