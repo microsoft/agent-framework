@@ -113,7 +113,9 @@ class TestSubworkflowRequestIdQualification:
     def test_nested_qualification_round_trips(self) -> None:
         deep = qualify_subworkflow_request_id("mid", 0, qualify_subworkflow_request_id("leaf", 1, "deep"))
         assert deep == "mid~0~leaf~1~deep"
-        executor_id, ordinal, remainder = split_subworkflow_request_id(deep)
+        hop = split_subworkflow_request_id(deep)
+        assert hop is not None
+        executor_id, ordinal, remainder = hop
         assert (executor_id, ordinal) == ("mid", 0)
         assert split_subworkflow_request_id(remainder) == ("leaf", 1, "deep")
 

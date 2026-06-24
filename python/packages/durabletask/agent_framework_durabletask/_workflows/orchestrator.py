@@ -940,7 +940,7 @@ def run_workflow_orchestrator(
         # superstep. A single WorkflowExecutor node can receive several messages in one
         # superstep and dispatch one child each, so the value is a list indexed by
         # dispatch order; the read side qualifies nested pending requests by
-        # (executorId, ordinal) so every child stays addressable (B2 single-surface HITL).
+        # (executorId, ordinal) so every child stays addressable behind one top-level surface.
         if subworkflows:
             status["subworkflows"] = subworkflows
         ctx.set_custom_status(status)

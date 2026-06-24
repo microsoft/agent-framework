@@ -14,8 +14,8 @@ Naming scheme (the orchestration name is aligned byte-for-byte with .NET's
 ``WorkflowNamingHelper``)::
 
     orchestration:       dafx-{workflowName}
-    non-agent activity:  dafx-{workflowName}-{executorId}   (wired up in Phase 1)
-    agent entity:        dafx-{workflowName}-{executorId}   (wired up in Phase 1)
+    non-agent activity:  dafx-{workflowName}-{executorId}
+    agent entity:        dafx-{workflowName}-{executorId}
 
 The orchestration name is the identifier the Durable Task tooling/UI surfaces, so
 it matches .NET exactly. The inner activity/entity names are scoped by workflow in
@@ -49,7 +49,7 @@ __all__ = [
 DURABLE_NAME_PREFIX = "dafx-"
 
 # Separator used to qualify a nested sub-workflow's pending HITL request when it is
-# bubbled up to the top-level instance (B2 single-surface addressing). A qualified id
+# bubbled up to the top-level instance (one top-level addressing surface). A qualified id
 # is a path of ``{executorId}~{ordinal}`` hops ending in the leaf's bare request id,
 # e.g. ``review~0~approve~1~<requestId>``. Both hosts and the client must agree on it
 # so a qualified id round-trips: the read side prepends hops; the respond side peels

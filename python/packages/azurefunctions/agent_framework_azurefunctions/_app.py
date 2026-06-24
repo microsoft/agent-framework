@@ -551,7 +551,7 @@ class AgentFunctionApp(DFAppBase):
             # nested sub-workflow are bubbled up here with a qualified requestId
             # ({executorId}~{ordinal}~{requestId}, nested deeper for deeper levels); the
             # respondUrl always targets this top-level instance, so the caller has a
-            # single addressing surface (B2).
+            # single addressing surface.
             custom_status = status.custom_status
             if isinstance(custom_status, dict):
                 gathered = await self._gather_pending_hitl_requests(client, cast("dict[str, Any]", custom_status))
@@ -642,7 +642,7 @@ class AgentFunctionApp(DFAppBase):
 
     async def _gather_pending_hitl_requests(
         self,
-        client: "df.DurableOrchestrationClient",
+        client: df.DurableOrchestrationClient,
         custom_status: dict[str, Any],
         *,
         prefix: str = "",
@@ -694,7 +694,7 @@ class AgentFunctionApp(DFAppBase):
 
     async def _resolve_hitl_target(
         self,
-        client: "df.DurableOrchestrationClient",
+        client: df.DurableOrchestrationClient,
         instance_id: str,
         request_id: str,
     ) -> tuple[str, str] | None:

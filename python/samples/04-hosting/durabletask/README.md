@@ -20,7 +20,7 @@ This directory contains samples for durable agent hosting using the Durable Task
 - **[09_workflow_hitl](09_workflow_hitl/)**: A workflow that pauses for human approval using `ctx.request_info` / `@response_handler`, with the client discovering and answering the pending request.
 - **[10_workflow_streaming](10_workflow_streaming/)**: Stream a hosted workflow's events as typed `WorkflowEvent` objects by polling the orchestration's custom status.
 - **[11_subworkflow](11_subworkflow/)**: Compose workflows by embedding an inner `Workflow` as a node via `WorkflowExecutor`. On the durable host the inner workflow runs as its own child orchestration, and a single `configure_workflow` call registers both.
-- **[12_subworkflow_hitl](12_subworkflow_hitl/)**: A human-in-the-loop pause that lives **inside a sub-workflow**. The nested request surfaces to the client with a qualified request id (`{executor}::{requestId}`) behind a single top-level addressing surface.
+- **[12_subworkflow_hitl](12_subworkflow_hitl/)**: A human-in-the-loop pause that lives **inside a sub-workflow**. The nested request surfaces to the client with a qualified request id (`{executor}~{ordinal}~{requestId}`) behind a single top-level addressing surface.
 
 ## Running the Samples
 

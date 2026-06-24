@@ -2,11 +2,11 @@
 
 This sample demonstrates a **nested** human-in-the-loop pause: the `request_info`
 happens inside an **inner workflow** that an outer workflow embeds via
-`WorkflowExecutor`. It combines composition (sample 11 on the durabletask host) with
-HITL (sample 12) and runs on Azure Durable Functions.
+`WorkflowExecutor`. It runs on Azure Durable Functions and is the Azure Functions
+counterpart of the durabletask `12_subworkflow_hitl` sample.
 
-Unlike sample 12, this sample hosts **no AI agents**, so it needs only Azurite and
-the Durable Task Scheduler emulator — no model credentials.
+This sample hosts **no AI agents**, so it needs only Azurite and the Durable Task
+Scheduler emulator, with no model credentials.
 
 ## Overview
 
