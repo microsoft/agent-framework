@@ -135,7 +135,7 @@ def _assemble_context_providers(
     disable_file_access: bool,
     file_access_store: AgentFileStore | None,
     skills_provider: SkillsProvider | None,
-    skills_paths: Sequence[str] | None,
+    skills_paths: str | Path | Sequence[str | Path] | None,
     background_agents: Sequence[SupportsAgentRun] | None,
     background_agents_instructions: str | None,
     shell_context_provider: ContextProvider | None,
