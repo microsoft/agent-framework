@@ -33,11 +33,7 @@ var mcpTool = ResponseTool.CreateMcpTool(
 // Optional: authenticate the MCP server through a Foundry project connection.
 // The connection stores credentials, so the platform injects them at request time and no inline token is sent.
 // The public Microsoft Learn MCP server above needs no authentication, so this is shown for illustration only.
-//
-// Option A (native, on the raw McpTool used by the server-side definition below):
-//   mcpTool.ProjectConnectionId = "my-foundry-connection"; // from Azure.AI.Projects.Agents
-//
-// Option B (client-side AITool path), use the Foundry factory overload:
+// Use the FoundryAITool.CreateMcpTool overload that takes a projectConnectionId:
 //   AITool tool = FoundryAITool.CreateMcpTool(
 //       serverLabel: "github",
 //       serverUri: new Uri("https://api.githubcopilot.com/mcp"),

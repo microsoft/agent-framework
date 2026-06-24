@@ -2,6 +2,7 @@
 
 using System;
 using System.ClientModel.Primitives;
+using System.Collections.Generic;
 using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
@@ -47,5 +48,46 @@ public class FoundryAIToolTests
         string json = ModelReaderWriter.Write(mcpTool, ModelReaderWriterOptions.Json).ToString();
         Assert.Contains("\"project_connection_id\":\"my-foundry-connection\"", json);
         Assert.Contains("\"server_url\":\"https://api.githubcopilot.com/mcp\"", json);
+    }
+
+    [Fact]
+    public void CreateMcpTool_WithoutProjectConnectionId_DoesNotEmitProjectConnectionId()
+    {
+        // Arrange & Act
+        AITool tool = FoundryAITool.CreateMcpTool(
+            serverLabel: "github",
+            serverUri: new Uri("https://api.githubcopilot.com/mcp"));
+
+        // Assert
+        var mcpTool = Assert.IsType<McpTool>(tool.GetService(typeof(McpTool)));
+        Assert.Null(mcpTool.ProjectConnectionId);
+        string json = ModelReaderWriter.Write(mcpTool, ModelReaderWriterOptions.Json).ToString();
+        Assert.DoesNotContain("project_connection_id", json);
+    }
+
+    [Fact]
+    public void CreateMcpTool_WithProjectConnectionIdAndOtherSettings_PreservesAllSettings()
+    {
+        // Arrange
+        const string ConnectionId = "my-foundry-connection";
+        const string Token = "my-token";
+
+        // Act
+        AITool tool = FoundryAITool.CreateMcpTool(
+            serverLabel: "github",
+            serverUri: new Uri("https://api.githubcopilot.com/mcp"),
+            authorizationToken: Token,
+            serverDescription: "GitHub MCP",
+            headers: new Dictionary<string, string> { ["X-Custom"] = "value" },
+            allowedTools: new McpToolFilter { ToolNames = { "search_issues" } },
+            projectConnectionId: ConnectionId);
+
+        // Assert
+        var mcpTool = Assert.IsType<McpTool>(tool.GetService(typeof(McpTool)));
+        Assert.Equal(ConnectionId, mcpTool.ProjectConnectionId);
+        Assert.Equal(Token, mcpTool.AuthorizationToken);
+        Assert.Equal("GitHub MCP", mcpTool.ServerDescription);
+        Assert.Contains("X-Custom", mcpTool.Headers);
+        Assert.Contains("search_issues", mcpTool.AllowedTools.ToolNames);
     }
 }

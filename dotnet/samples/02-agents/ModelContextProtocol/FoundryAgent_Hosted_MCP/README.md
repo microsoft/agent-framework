@@ -21,36 +21,17 @@ A hosted MCP server can authenticate through a Foundry **project connection** in
 authorization token or headers. The connection stores the credentials and the platform injects them
 at request time. This mirrors the Python `FoundryChatClient.get_mcp_tool(..., project_connection_id=...)`.
 
-Two equivalent ways to attach a connection in .NET:
+Use the `FoundryAITool.CreateMcpTool` overload that takes a `projectConnectionId`:
 
-- **Client AITool path** — use the Foundry factory overload, which packages the pass-through into one call:
+```csharp
+using Microsoft.Agents.AI.Foundry;
+using OpenAI.Responses;
 
-  ```csharp
-  using Microsoft.Agents.AI.Foundry;
-  using OpenAI.Responses;
+AITool tool = FoundryAITool.CreateMcpTool(
+    serverLabel: "github",
+    serverUri: new Uri("https://api.githubcopilot.com/mcp"),
+    projectConnectionId: "my-foundry-connection",
+    toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval));
+```
 
-  AITool tool = FoundryAITool.CreateMcpTool(
-      serverLabel: "github",
-      serverUri: new Uri("https://api.githubcopilot.com/mcp"),
-      projectConnectionId: "my-foundry-connection",
-      toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval));
-  ```
-
-- **Native McpTool path** — set `ProjectConnectionId` directly on the OpenAI `McpTool` (the extension
-  ships in `Azure.AI.Projects.Agents`). This is also the workaround that works today without the
-  overload, since `FoundryAITool.FromResponseTool` / `.AsAITool()` passes the tool through untouched:
-
-  ```csharp
-  using Azure.AI.Projects.Agents;
-  using OpenAI.Responses;
-
-  McpTool mcp = ResponseTool.CreateMcpTool(
-      serverLabel: "github",
-      serverUri: new Uri("https://api.githubcopilot.com/mcp"),
-      toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval));
-  mcp.ProjectConnectionId = "my-foundry-connection";
-
-  AITool tool = FoundryAITool.FromResponseTool(mcp);
-  ```
-
-Both emit `project_connection_id` on the MCP tool sent to Foundry.
+The resulting tool sends `project_connection_id` on the MCP tool to Foundry.
