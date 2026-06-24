@@ -14,7 +14,7 @@ import json
 import sys
 import threading
 import time
-from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Generator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -97,7 +97,7 @@ skip_if_hyperlight_integration_tests_disabled = pytest.mark.skipif(
 
 
 @fixture
-def span_exporter(monkeypatch) -> InMemorySpanExporter:
+def span_exporter(monkeypatch) -> Generator[InMemorySpanExporter]:
     env_vars = [
         "ENABLE_INSTRUMENTATION",
         "ENABLE_SENSITIVE_DATA",
@@ -139,7 +139,7 @@ def span_exporter(monkeypatch) -> InMemorySpanExporter:
         if not hasattr(current_tracer_provider, "add_span_processor"):
             raise RuntimeError("Tracer provider does not support adding span processors.")
 
-        current_tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+        cast(Any, current_tracer_provider).add_span_processor(SimpleSpanProcessor(exporter))
         yield exporter
         exporter.clear()
 
