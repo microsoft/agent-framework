@@ -508,6 +508,31 @@ class TestStreamingBehavior:
             timeout=1.0,
         )  # pyright: ignore[reportPrivateUsage]
 
+    async def test_streaming_falls_back_to_send_text_when_final_edit_fails(self) -> None:
+        ch, _ = _make_telegram()
+        ch._send_typing_action = False  # pyright: ignore[reportPrivateUsage]
+
+        placeholder_response = MagicMock()
+        placeholder_response.raise_for_status = MagicMock()
+        placeholder_response.json = MagicMock(return_value={"result": {"message_id": 11}})
+        failed_edit_response = MagicMock()
+        failed_edit_response.status_code = 429
+
+        http_mock = cast(Any, ch._http)
+        assert http_mock is not None
+        http_mock.post = AsyncMock(side_effect=[placeholder_response, failed_edit_response])
+
+        reply_with_result = AsyncMock()
+        object.__setattr__(ch, "_reply_with_result", reply_with_result)
+
+        final = _FakeAgentResponse(text="final response")
+        stream = _FakeResponseStream([], final)
+        request = ChannelRequest(channel="telegram", operation="message.create", input="hello", stream=True)
+        await ch._stream_to_chat(6, request, cast(Any, stream))  # pyright: ignore[reportPrivateUsage]
+
+        assert reply_with_result.await_count == 1
+        assert reply_with_result.await_args.kwargs["send_text"] is True
+
     async def test_streaming_sends_images_from_final_result(self) -> None:
         ch, _ = _make_telegram()
         send_photo = AsyncMock()

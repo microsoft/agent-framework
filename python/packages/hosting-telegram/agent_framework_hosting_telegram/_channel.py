@@ -786,6 +786,7 @@ class TelegramChannel:
         final_text = (getattr(final, "text", None) or accumulated or last_sent)[:_TELEGRAM_MAX_TEXT_LEN]
         text_sent_via_edit = bool(last_sent)
         if message_id is not None and final_text and final_text != last_sent:
+            text_sent_via_edit = False
             payload: dict[str, Any] = {
                 "chat_id": chat_id,
                 "message_id": message_id,
@@ -799,8 +800,15 @@ class TelegramChannel:
                 # so the user still sees the answer.
                 if response.status_code == 400 and self._parse_mode:
                     payload.pop("parse_mode", None)
-                    await http.post(f"{self._api}/editMessageText", json=payload)
-                text_sent_via_edit = True
+                    response = await http.post(f"{self._api}/editMessageText", json=payload)
+                status_code = getattr(response, "status_code", None)
+                if isinstance(status_code, int) and 200 <= status_code < 300:
+                    text_sent_via_edit = True
+                else:
+                    logger.warning(
+                        "Telegram final edit returned status %s; falling back to sendMessage",
+                        status_code,
+                    )
             except Exception:  # pragma: no cover
                 logger.exception("Telegram final edit failed")
 
