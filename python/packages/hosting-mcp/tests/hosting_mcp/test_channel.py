@@ -41,14 +41,24 @@ class _FakeUpdate:
 
 
 class _FakeStream:
-    def __init__(self, chunks: list[str], final: _FakeResp | None = None) -> None:
+    def __init__(
+        self,
+        chunks: list[str],
+        final: _FakeResp | None = None,
+        updates: list[_FakeUpdate] | None = None,
+    ) -> None:
         self._chunks = chunks
         self._final = final or _FakeResp(text="".join(chunks))
+        self._updates = updates
 
     def __aiter__(self) -> AsyncIterator[_FakeUpdate]:
         async def _gen() -> AsyncIterator[_FakeUpdate]:
-            for c in self._chunks:
-                yield _FakeUpdate(text=c)
+            if self._updates is not None:
+                for u in self._updates:
+                    yield u
+            else:
+                for c in self._chunks:
+                    yield _FakeUpdate(text=c, contents=[Content.from_text(text=c)])
 
         return _gen()
 
@@ -72,12 +82,14 @@ class _FakeContext:
         chunks: list[str] | None = None,
         contents: list[Content] | None = None,
         structured: Any | None = None,
+        stream_updates: list[_FakeUpdate] | None = None,
     ) -> None:
         self.target = _FakeTarget()
         self._reply = reply
         self._chunks = chunks or [reply]
         self._contents = contents or [Content.from_text(text=reply)]
         self._structured = structured
+        self._stream_updates = stream_updates
         self.requests: list[ChannelRequest] = []
 
     async def run(
@@ -129,7 +141,7 @@ class _FakeContext:
                 result = await maybe_result
             else:
                 result = maybe_result
-        return _FakeStream(self._chunks, final=result.result)
+        return _FakeStream(self._chunks, final=result.result, updates=self._stream_updates)
 
 
 def _make_channel(ctx: _FakeContext, **kwargs: Any) -> MCPChannel:
@@ -416,3 +428,36 @@ async def test_http_mcp_client_can_call_hosted_channel(unused_tcp_port: int) -> 
 
     assert [tool.name for tool in tools.tools] == ["run_agent"]
     assert _text(result.content[0]) == "host: hello"
+
+
+async def test_streaming_non_text_contents_not_forwarded_as_progress() -> None:
+    """Non-text content items in stream updates must not produce progress text."""
+    image_update = _FakeUpdate(
+        text="",
+        contents=[Content.from_uri(uri="https://example.com/img.png", media_type="image/png")],
+    )
+    text_update = _FakeUpdate(text="text chunk", contents=[Content.from_text(text="text chunk")])
+    ctx = _FakeContext(stream_updates=[text_update, image_update])
+    channel = _make_channel(ctx, streaming=True)
+
+    async with create_connected_server_and_client_session(_server(channel)) as client:
+        result = await client.call_tool("run_agent", {"input": "query"})
+
+    # Should not error — image update silently skipped, text update forwarded as progress.
+    assert not result.isError
+
+
+async def test_default_hook_strips_options_when_no_run_hook_supplied() -> None:
+    """When no run_hook is configured, caller-supplied options must be stripped."""
+
+    ctx = _FakeContext(reply="ok")
+    channel = _make_channel(ctx, streaming=False)  # no run_hook
+
+    async with create_connected_server_and_client_session(_server(channel)) as client:
+        # The MCP tool call does not pass options directly, but we can verify
+        # the channel applied its default hook by checking stored requests.
+        await client.call_tool("run_agent", {"input": "hello"})
+
+    assert len(ctx.requests) == 1
+    # Default hook must have stripped options.
+    assert ctx.requests[0].options is None

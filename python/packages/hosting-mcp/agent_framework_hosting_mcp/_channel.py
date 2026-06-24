@@ -23,7 +23,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from typing import Any, cast
 
 import mcp.types as types
@@ -171,6 +171,16 @@ def _value_to_mcp(value: Any) -> list[types.ContentBlock]:
     return [types.TextContent(type="text", text=json.dumps(_json_safe(value), default=str))]
 
 
+def _strip_options_hook(request: ChannelRequest, **_: Any) -> ChannelRequest:
+    """Default run hook: remove all parsed options before reaching the agent.
+
+    When no custom ``run_hook`` is configured this prevents untrusted MCP
+    callers from injecting generation parameters. Supply a custom hook to
+    forward or transform specific options.
+    """
+    return replace(request, options=None)
+
+
 class MCPChannel:
     """Exposes the hosted target as a single MCP tool over Streamable HTTP.
 
@@ -217,7 +227,9 @@ class MCPChannel:
                 ``True`` the transport does not retain per-session state between
                 requests.
             run_hook: Optional :data:`ChannelRunHook` invoked with the parsed
-                :class:`ChannelRequest` before the target runs.
+                :class:`ChannelRequest` before the target runs. When omitted,
+                a default hook that strips all caller-supplied options is
+                applied so untrusted clients cannot inject generation parameters.
             response_hook: Optional :data:`ChannelResponseHook` invoked before
                 the channel serializes an originating reply into tool content.
         """
@@ -230,7 +242,7 @@ class MCPChannel:
         self._streaming = streaming
         self._json_response = json_response
         self._stateless = stateless
-        self._hook = run_hook
+        self._hook: ChannelRunHook = run_hook if run_hook is not None else _strip_options_hook
         self._ctx: ChannelContext | None = None
         self._server: Server[Any, Any] | None = None
         self._session_manager: StreamableHTTPSessionManager | None = None
@@ -370,13 +382,13 @@ class MCPChannel:
             channel_name=self.name,
         )
         async for update in stream:
-            chunk = getattr(update, "text", None)
-            if not chunk:
+            text_chunk = "".join(c.text or "" for c in update.contents if c.type == "text")
+            if not text_chunk:
                 continue
             if progress_token is not None:
                 progress += 1.0
                 try:
-                    await self._send_progress(progress_token, progress, chunk, request_id)
+                    await self._send_progress(progress_token, progress, text_chunk, request_id)
                 except Exception:  # pragma: no cover - progress is best-effort
                     logger.exception("MCPChannel progress notification failed")
         return HostedRunResult(await stream.get_final_response())

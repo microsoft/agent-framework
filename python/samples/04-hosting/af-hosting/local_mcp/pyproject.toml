@@ -1,0 +1,21 @@
+[project]
+name = "agent-framework-hosting-sample-local-mcp"
+version = "0.0.1"
+description = "MCP channel hosting sample: WeatherAgent served as an MCP tool, consumed by a second agent via MCPStreamableHTTPTool."
+requires-python = ">=3.10"
+dependencies = [
+    "agent-framework-foundry",
+    "agent-framework-hosting",
+    "agent-framework-hosting-mcp",
+    "azure-identity",
+    "aiohttp>=3.13.5",
+    "hypercorn>=0.17",
+    "httpx>=0.27",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+agent-framework-hosting = { git = "https://github.com/microsoft/agent-framework.git", branch = "main", subdirectory = "python/packages/hosting" }
+agent-framework-hosting-mcp = { git = "https://github.com/microsoft/agent-framework.git", branch = "main", subdirectory = "python/packages/hosting-mcp" }
