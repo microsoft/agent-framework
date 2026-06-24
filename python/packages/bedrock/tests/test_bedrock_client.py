@@ -187,3 +187,12 @@ def test_parse_usage_surfaces_cache_tokens() -> None:
     assert details["input_token_count"] == 10
     assert details["cache_read_input_token_count"] == 8
     assert details["cache_creation_input_token_count"] == 3
+
+
+def test_parse_usage_returns_none_when_no_recognized_keys() -> None:
+    """A truthy usage payload with no recognized keys yields None, not an empty mapping."""
+    client = _make_client()
+
+    assert client._parse_usage({"unexpected": 1}) is None
+    assert client._parse_usage({}) is None
+    assert client._parse_usage(None) is None

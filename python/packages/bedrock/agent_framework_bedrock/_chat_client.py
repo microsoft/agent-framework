@@ -694,7 +694,7 @@ class BedrockChatClient(
             details["cache_read_input_token_count"] = cache_read
         if (cache_write := usage.get("cacheWriteInputTokens")) is not None:
             details["cache_creation_input_token_count"] = cache_write
-        return details
+        return details or None
 
     def _parse_message_contents(self, content_blocks: Sequence[dict[str, Any]]) -> list[Any]:
         contents: list[Any] = []
