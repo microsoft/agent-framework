@@ -135,7 +135,11 @@ def span_exporter(monkeypatch) -> InMemorySpanExporter:
         patch("agent_framework.observability.configure_otel_providers"),
     ):
         exporter = InMemorySpanExporter()
-        tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+        current_tracer_provider = trace.get_tracer_provider()
+        if not hasattr(current_tracer_provider, "add_span_processor"):
+            raise RuntimeError("Tracer provider does not support adding span processors.")
+
+        current_tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
         yield exporter
         exporter.clear()
 
