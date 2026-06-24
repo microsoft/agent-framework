@@ -6,10 +6,11 @@ using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
-using GitHub.Copilot.SDK;
+using GitHub.Copilot;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -29,6 +30,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     private readonly string _description;
     private readonly SessionConfig? _sessionConfig;
     private readonly bool _ownsClient;
+    private readonly JsonSerializerOptions _jsonSerializerOptions;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="GitHubCopilotAgent"/> class.
@@ -39,13 +41,15 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
+    /// <param name="jsonSerializerOptions">Optional JSON serializer options. Defaults to <see cref="GitHubCopilotJsonUtilities.DefaultOptions"/>.</param>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
         SessionConfig? sessionConfig = null,
         bool ownsClient = false,
         string? id = null,
         string? name = null,
-        string? description = null)
+        string? description = null,
+        JsonSerializerOptions? jsonSerializerOptions = null)
     {
         _ = Throw.IfNull(copilotClient);
 
@@ -55,6 +59,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         this._id = id;
         this._name = name ?? DefaultName;
         this._description = description ?? DefaultDescription;
+        this._jsonSerializerOptions = jsonSerializerOptions ?? GitHubCopilotJsonUtilities.DefaultOptions;
     }
 
     /// <summary>
@@ -67,6 +72,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="description">The description of the agent.</param>
     /// <param name="tools">The tools to make available to the agent.</param>
     /// <param name="instructions">Optional instructions to append as a system message.</param>
+    /// <param name="jsonSerializerOptions">Optional JSON serializer options. Defaults to <see cref="GitHubCopilotJsonUtilities.DefaultOptions"/>.</param>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
         bool ownsClient = false,
@@ -74,14 +80,16 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         string? name = null,
         string? description = null,
         IList<AITool>? tools = null,
-        string? instructions = null)
+        string? instructions = null,
+        JsonSerializerOptions? jsonSerializerOptions = null)
         : this(
             copilotClient,
             GetSessionConfig(tools, instructions),
             ownsClient,
             id,
             name,
-            description)
+            description,
+            jsonSerializerOptions)
     {
     }
 
@@ -145,11 +153,12 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         // Ensure the client is started
         await this.EnsureClientStartedAsync(cancellationToken).ConfigureAwait(false);
 
-        // Create or resume a session with streaming enabled
+        // Create or resume a session with streaming enabled by default
         SessionConfig sessionConfig = this._sessionConfig != null
             ? CopySessionConfig(this._sessionConfig)
             : new SessionConfig { Streaming = true };
 
+        bool isStreaming = sessionConfig.Streaming ?? true;
         CopilotSession copilotSession;
         if (typedSession.SessionId is not null)
         {
@@ -169,7 +178,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             Channel<AgentResponseUpdate> channel = Channel.CreateUnbounded<AgentResponseUpdate>();
 
             // Subscribe to session events
-            using IDisposable subscription = copilotSession.On(evt =>
+            using IDisposable subscription = copilotSession.On<SessionEvent>(evt =>
             {
                 switch (evt)
                 {
@@ -178,7 +187,15 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                         break;
 
                     case AssistantMessageEvent assistantMessage:
-                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(assistantMessage));
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(assistantMessage, isStreaming));
+                        break;
+
+                    case ToolExecutionStartEvent toolStart:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(toolStart));
+                        break;
+
+                    case ToolExecutionCompleteEvent toolComplete:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(toolComplete));
                         break;
 
                     case AssistantUsageEvent usageEvent:
@@ -210,7 +227,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                 string prompt = string.Join("\n", messages.Select(m => m.Text));
 
                 // Handle DataContent as attachments
-                (List<UserMessageAttachmentFile>? attachments, tempDir) = await ProcessDataContentAttachmentsAsync(
+                (List<AttachmentFile>? attachments, tempDir) = await ProcessDataContentAttachmentsAsync(
                     messages,
                     cancellationToken).ConfigureAwait(false);
 
@@ -262,10 +279,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
     private async Task EnsureClientStartedAsync(CancellationToken cancellationToken)
     {
-        if (this._copilotClient.State != ConnectionState.Connected)
-        {
-            await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
-        }
+        await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private ResumeSessionConfig CreateResumeConfig()
@@ -274,37 +288,20 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     }
 
     /// <summary>
-    /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new instance
-    /// with <see cref="SessionConfig.Streaming"/> set to <c>true</c>.
+    /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new instance,
+    /// preserving <see cref="SessionConfigBase.Streaming"/> from the source (defaulting to <c>true</c> if unset).
     /// </summary>
     internal static SessionConfig CopySessionConfig(SessionConfig source)
     {
-        return new SessionConfig
-        {
-            Model = source.Model,
-            ReasoningEffort = source.ReasoningEffort,
-            Tools = source.Tools,
-            SystemMessage = source.SystemMessage,
-            AvailableTools = source.AvailableTools,
-            ExcludedTools = source.ExcludedTools,
-            Provider = source.Provider,
-            OnPermissionRequest = source.OnPermissionRequest,
-            OnUserInputRequest = source.OnUserInputRequest,
-            Hooks = source.Hooks,
-            WorkingDirectory = source.WorkingDirectory,
-            ConfigDir = source.ConfigDir,
-            McpServers = source.McpServers,
-            CustomAgents = source.CustomAgents,
-            SkillDirectories = source.SkillDirectories,
-            DisabledSkills = source.DisabledSkills,
-            InfiniteSessions = source.InfiniteSessions,
-            Streaming = true
-        };
+        SessionConfig copy = source.Clone();
+        copy.Streaming = source.Streaming ?? true;
+        return copy;
     }
 
     /// <summary>
     /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new
-    /// <see cref="ResumeSessionConfig"/> with <see cref="ResumeSessionConfig.Streaming"/> set to <c>true</c>.
+    /// <see cref="ResumeSessionConfig"/>, preserving <see cref="SessionConfigBase.Streaming"/>
+    /// from the source (defaulting to <c>true</c> if unset).
     /// </summary>
     internal static ResumeSessionConfig CopyResumeSessionConfig(SessionConfig? source)
     {
@@ -321,13 +318,13 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             OnUserInputRequest = source?.OnUserInputRequest,
             Hooks = source?.Hooks,
             WorkingDirectory = source?.WorkingDirectory,
-            ConfigDir = source?.ConfigDir,
+            ConfigDirectory = source?.ConfigDirectory,
             McpServers = source?.McpServers,
             CustomAgents = source?.CustomAgents,
             SkillDirectories = source?.SkillDirectories,
             DisabledSkills = source?.DisabledSkills,
             InfiniteSessions = source?.InfiniteSessions,
-            Streaming = true
+            Streaming = source?.Streaming ?? true
         };
     }
 
@@ -346,12 +343,18 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         };
     }
 
-    internal AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantMessageEvent assistantMessage)
+    /// <summary>
+    /// Converts an <see cref="AssistantMessageEvent"/> to an <see cref="AgentResponseUpdate"/>.
+    /// When streaming is enabled, text was already delivered via delta events, so only raw metadata is emitted.
+    /// When streaming is disabled, the full message text is emitted as <see cref="TextContent"/>.
+    /// </summary>
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantMessageEvent assistantMessage, bool isStreaming)
     {
-        AIContent content = new()
-        {
-            RawRepresentation = assistantMessage
-        };
+        // When streaming, text was already delivered via AssistantMessageDeltaEvent.
+        // When not streaming, this is the only opportunity to emit the response text.
+        AIContent content = isStreaming
+            ? new AIContent { RawRepresentation = assistantMessage }
+            : new TextContent(assistantMessage.Data?.Content ?? string.Empty) { RawRepresentation = assistantMessage };
 
         return new AgentResponseUpdate(ChatRole.Assistant, [content])
         {
@@ -360,6 +363,79 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             MessageId = assistantMessage.Data?.MessageId,
             CreatedAt = assistantMessage.Timestamp
         };
+    }
+
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(ToolExecutionStartEvent toolStart)
+    {
+        IDictionary<string, object?>? arguments = this.ParseArguments(toolStart.Data?.Arguments);
+
+        FunctionCallContent content = new(
+            toolStart.Data?.ToolCallId ?? string.Empty,
+            toolStart.Data?.ToolName ?? string.Empty,
+            arguments)
+        {
+            RawRepresentation = toolStart
+        };
+
+        return new AgentResponseUpdate(ChatRole.Assistant, [content])
+        {
+            AgentId = this.Id,
+            CreatedAt = toolStart.Timestamp
+        };
+    }
+
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(ToolExecutionCompleteEvent toolComplete)
+    {
+        object? result = toolComplete.Data?.Success == true
+            ? toolComplete.Data?.Result?.Content
+            : toolComplete.Data?.Error?.Message ?? "Tool execution failed";
+
+        FunctionResultContent content = new(
+            toolComplete.Data?.ToolCallId ?? string.Empty,
+            result)
+        {
+            RawRepresentation = toolComplete
+        };
+
+        return new AgentResponseUpdate(ChatRole.Tool, [content])
+        {
+            AgentId = this.Id,
+            CreatedAt = toolComplete.Timestamp
+        };
+    }
+
+    private IDictionary<string, object?>? ParseArguments(object? arguments)
+    {
+        if (arguments is null)
+        {
+            return null;
+        }
+
+        if (arguments is JsonElement jsonElement)
+        {
+            if (jsonElement.ValueKind == JsonValueKind.Null || jsonElement.ValueKind == JsonValueKind.Undefined)
+            {
+                return null;
+            }
+
+            var typeInfo = (JsonTypeInfo<Dictionary<string, object?>>)this._jsonSerializerOptions.GetTypeInfo(typeof(Dictionary<string, object?>));
+
+            try
+            {
+                return JsonSerializer.Deserialize(jsonElement.GetRawText(), typeInfo);
+            }
+            catch (JsonException)
+            {
+                return new Dictionary<string, object?> { ["value"] = jsonElement.ToString() };
+            }
+        }
+
+        if (arguments is IDictionary<string, object?> dict)
+        {
+            return dict;
+        }
+
+        return new Dictionary<string, object?> { ["value"] = arguments.ToString() };
     }
 
     private AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantUsageEvent usageEvent)
@@ -394,10 +470,10 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
         AdditionalPropertiesDictionary<long>? additionalCounts = null;
 
-        if (usageEvent.Data.CacheWriteTokens is double cacheWriteTokens)
+        if (usageEvent.Data.CacheWriteTokens is long cacheWriteTokens)
         {
             additionalCounts ??= [];
-            additionalCounts[nameof(AssistantUsageData.CacheWriteTokens)] = (long)cacheWriteTokens;
+            additionalCounts[nameof(AssistantUsageData.CacheWriteTokens)] = cacheWriteTokens;
         }
 
         if (usageEvent.Data.Cost is double cost)
@@ -406,10 +482,10 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             additionalCounts[nameof(AssistantUsageData.Cost)] = (long)cost;
         }
 
-        if (usageEvent.Data.Duration is double duration)
+        if (usageEvent.Data.Duration is TimeSpan duration)
         {
             additionalCounts ??= [];
-            additionalCounts[nameof(AssistantUsageData.Duration)] = (long)duration;
+            additionalCounts[nameof(AssistantUsageData.Duration)] = (long)duration.TotalMilliseconds;
         }
 
         return additionalCounts;
@@ -432,7 +508,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
     private static SessionConfig? GetSessionConfig(IList<AITool>? tools, string? instructions)
     {
-        List<AIFunction>? mappedTools = tools is { Count: > 0 } ? tools.OfType<AIFunction>().ToList() : null;
+        List<AIFunctionDeclaration>? mappedTools = tools is { Count: > 0 } ? tools.OfType<AIFunctionDeclaration>().ToList() : null;
         SystemMessageConfig? systemMessage = instructions is not null ? new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = instructions } : null;
 
         if (mappedTools is null && systemMessage is null)
@@ -443,11 +519,11 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         return new SessionConfig { Tools = mappedTools, SystemMessage = systemMessage };
     }
 
-    private static async Task<(List<UserMessageAttachmentFile>? Attachments, string? TempDir)> ProcessDataContentAttachmentsAsync(
+    private static async Task<(List<AttachmentFile>? Attachments, string? TempDir)> ProcessDataContentAttachmentsAsync(
         IEnumerable<ChatMessage> messages,
         CancellationToken cancellationToken)
     {
-        List<UserMessageAttachmentFile>? attachments = null;
+        List<AttachmentFile>? attachments = null;
         string? tempDir = null;
         foreach (ChatMessage message in messages)
         {
@@ -461,7 +537,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                     string tempFilePath = await dataContent.SaveToAsync(tempDir, cancellationToken).ConfigureAwait(false);
 
                     attachments ??= [];
-                    attachments.Add(new UserMessageAttachmentFile
+                    attachments.Add(new AttachmentFile
                     {
                         Path = tempFilePath,
                         DisplayName = Path.GetFileName(tempFilePath)

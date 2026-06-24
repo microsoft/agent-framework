@@ -70,7 +70,7 @@ load_dotenv()
 # Simulated Repository Data
 # =============================================================================
 
-REPOSITORIES = {
+REPOSITORIES: dict[str, Any] = {
     "public-docs": {
         "visibility": "public",
         "files": {

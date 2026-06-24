@@ -50,6 +50,7 @@ class ExperimentalFeature(str, Enum):
     on enum membership or attribute presence over time.
     """
 
+    DECLARATIVE_AGENTS = "DECLARATIVE_AGENTS"
     EVALS = "EVALS"
     FILE_HISTORY = "FILE_HISTORY"
     FIDES = "FIDES"
@@ -57,6 +58,9 @@ class ExperimentalFeature(str, Enum):
     FOUNDRY_PREVIEW_TOOLS = "FOUNDRY_PREVIEW_TOOLS"
     FUNCTIONAL_WORKFLOWS = "FUNCTIONAL_WORKFLOWS"
     HARNESS = "HARNESS"
+    MCP_LONG_RUNNING_TASKS = "MCP_LONG_RUNNING_TASKS"
+    MCP_SKILLS = "MCP_SKILLS"
+    PROGRESSIVE_TOOLS = "PROGRESSIVE_TOOLS"
     SKILLS = "SKILLS"
     TO_PROMPT_AGENT = "TO_PROMPT_AGENT"
 
@@ -275,7 +279,7 @@ def _add_runtime_warning(
                 raise TypeError(f"{cls.__name__}() takes no arguments")
             return original_new(cls)
 
-        experimental_class.__new__ = staticmethod(__new__)  # type: ignore[assignment]
+        experimental_class.__new__ = staticmethod(__new__)
 
         original_init_subclass: Any = experimental_class.__init_subclass__
         if isinstance(original_init_subclass, MethodType):
@@ -304,7 +308,7 @@ def _add_runtime_warning(
                 )
                 return original_init_subclass(*args, **kwargs)
 
-            experimental_class.__init_subclass__ = init_subclass_wrapper  # type: ignore[assignment]
+            experimental_class.__init_subclass__ = init_subclass_wrapper
 
         return cast(FeatureStageT, experimental_class)
 

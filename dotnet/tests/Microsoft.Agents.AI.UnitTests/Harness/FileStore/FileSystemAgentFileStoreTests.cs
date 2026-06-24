@@ -2,6 +2,7 @@
 
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
@@ -331,6 +332,107 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
         // Act & Assert — a known ReDoS pattern with backtracking
         await Assert.ThrowsAsync<RegexMatchTimeoutException>(() =>
             this._store.SearchFilesAsync("", "(a+)+$"));
+    }
+
+    [Fact]
+    public async Task SearchFilesAsync_Recursive_FindsDescendantsAsync()
+    {
+        // Arrange
+        await this._store.WriteFileAsync("notes.md", "Match here");
+        await this._store.WriteFileAsync("reports/q1.md", "Match here too");
+        await this._store.WriteFileAsync("reports/2024/q2.md", "Match here as well");
+
+        // Act
+        var results = await this._store.SearchFilesAsync("", "Match", filePattern: null, recursive: true);
+
+        // Assert
+        Assert.Equal(3, results.Count);
+        var names = string.Join(",", results.Select(r => r.FileName).OrderBy(n => n, StringComparer.Ordinal));
+        Assert.Equal("notes.md,reports/2024/q2.md,reports/q1.md", names);
+    }
+
+    [Fact]
+    public async Task SearchFilesAsync_Recursive_GlobScopesToSubtreeAsync()
+    {
+        // Arrange
+        await this._store.WriteFileAsync("notes.md", "Match here");
+        await this._store.WriteFileAsync("reports/q1.md", "Match here too");
+        await this._store.WriteFileAsync("reports/2024/q2.md", "Match here as well");
+
+        // Act
+        var results = await this._store.SearchFilesAsync("", "Match", filePattern: "reports/**", recursive: true);
+
+        // Assert
+        Assert.Equal(2, results.Count);
+        var names = string.Join(",", results.Select(r => r.FileName).OrderBy(n => n, StringComparer.Ordinal));
+        Assert.Equal("reports/2024/q2.md,reports/q1.md", names);
+    }
+
+    [Fact]
+    public async Task SearchFilesAsync_Recursive_GlobMatchesNestedExtensionAsync()
+    {
+        // Arrange
+        await this._store.WriteFileAsync("notes.md", "Match here");
+        await this._store.WriteFileAsync("reports/q1.txt", "Match here too");
+        await this._store.WriteFileAsync("reports/2024/q2.md", "Match here as well");
+
+        // Act
+        var results = await this._store.SearchFilesAsync("", "Match", filePattern: "**/*.md", recursive: true);
+
+        // Assert
+        Assert.Equal(2, results.Count);
+        var names = string.Join(",", results.Select(r => r.FileName).OrderBy(n => n, StringComparer.Ordinal));
+        Assert.Equal("notes.md,reports/2024/q2.md", names);
+    }
+
+    [Fact]
+    public async Task ListDirectoriesAsync_ReturnsDirectChildSubdirectoriesAsync()
+    {
+        // Arrange
+        await this._store.WriteFileAsync("root.md", "x");
+        await this._store.WriteFileAsync("reports/q1.md", "x");
+        await this._store.WriteFileAsync("reports/2024/q2.md", "x");
+        await this._store.WriteFileAsync("images/logo.txt", "x");
+
+        // Act
+        var directories = await this._store.ListDirectoriesAsync("");
+
+        // Assert
+        var sorted = string.Join(",", directories.OrderBy(d => d, StringComparer.Ordinal));
+        Assert.Equal("images,reports", sorted);
+    }
+
+    [Fact]
+    public async Task ListDirectoriesAsync_NestedDirectory_ReturnsChildrenAsync()
+    {
+        // Arrange
+        await this._store.WriteFileAsync("reports/q1.md", "x");
+        await this._store.WriteFileAsync("reports/2024/q2.md", "x");
+        await this._store.WriteFileAsync("reports/2025/q3.md", "x");
+
+        // Act
+        var directories = await this._store.ListDirectoriesAsync("reports");
+
+        // Assert
+        var sorted = string.Join(",", directories.OrderBy(d => d, StringComparer.Ordinal));
+        Assert.Equal("2024,2025", sorted);
+    }
+
+    [Fact]
+    public async Task ListDirectoriesAsync_NonExistentDirectory_ReturnsEmptyAsync()
+    {
+        // Act
+        var directories = await this._store.ListDirectoriesAsync("no-dir");
+
+        // Assert
+        Assert.Empty(directories);
+    }
+
+    [Fact]
+    public async Task ListDirectoriesAsync_DotDotSegment_ThrowsAsync()
+    {
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(() => this._store.ListDirectoriesAsync("../other"));
     }
 
     #endregion
@@ -800,6 +902,79 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
             }
 
             File.Delete(outsideFile);
+        }
+    }
+
+    [Fact]
+    public async Task SearchFilesAsync_Recursive_SkipsSymlinkedSubdirectoryAsync()
+    {
+        // Arrange — a symlinked directory under root should be skipped by recursive search.
+        string outsideDir = Path.Combine(Path.GetTempPath(), "symlink_recursive_target_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outsideDir);
+        File.WriteAllText(Path.Combine(outsideDir, "leak.txt"), "RECURSIVE_SECRET_CONTENT");
+
+        string linkDir = Path.Combine(this._rootDir, "linked-sub");
+
+        try
+        {
+            if (!TryCreateDirectorySymbolicLink(linkDir, outsideDir))
+            {
+                return;
+            }
+
+            await this._store.WriteFileAsync("normal/visible.txt", "RECURSIVE_VISIBLE_CONTENT");
+
+            // Act — recursive search should not descend into the symlinked directory.
+            var results = await this._store.SearchFilesAsync("", "RECURSIVE", filePattern: null, recursive: true);
+
+            // Assert — only the non-symlinked file is found.
+            Assert.Single(results);
+            Assert.Equal("normal/visible.txt", results[0].FileName);
+        }
+        finally
+        {
+            if (Directory.Exists(linkDir))
+            {
+                Directory.Delete(linkDir);
+            }
+
+            Directory.Delete(outsideDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ListDirectoriesAsync_ExcludesSymlinkedDirectoryAsync()
+    {
+        // Arrange — a symlinked directory under root should not be listed.
+        string outsideDir = Path.Combine(Path.GetTempPath(), "symlink_listdir_target_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outsideDir);
+
+        string linkDir = Path.Combine(this._rootDir, "linked-listing");
+
+        try
+        {
+            if (!TryCreateDirectorySymbolicLink(linkDir, outsideDir))
+            {
+                return;
+            }
+
+            await this._store.WriteFileAsync("real-dir/file.txt", "x");
+
+            // Act
+            var directories = await this._store.ListDirectoriesAsync("");
+
+            // Assert — the symlinked directory is excluded, the real one is present.
+            Assert.DoesNotContain("linked-listing", directories);
+            Assert.Contains("real-dir", directories);
+        }
+        finally
+        {
+            if (Directory.Exists(linkDir))
+            {
+                Directory.Delete(linkDir);
+            }
+
+            Directory.Delete(outsideDir, recursive: true);
         }
     }
 #endif

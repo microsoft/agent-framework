@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -297,12 +298,14 @@ internal sealed class WorkflowSession : AgentSession
     /// interface assignment succeeds.
     /// </summary>
     [UnconditionalSuppressMessage("Trimming", "IL2057:Unrecognized value passed to the parameter of method", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2073:Members annotated with 'DynamicallyAccessedMembersAttribute' require dynamic access", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
     private static bool TryGetRequestEnvelope(ExternalRequest request, [NotNullWhen(true)] out IExternalRequestEnvelope? envelope)
     {
         envelope = null;
 
         TypeId requestType = request.PortInfo.RequestType;
-        Type? concreteType = Type.GetType($"{requestType.TypeName}, {requestType.AssemblyName}", throwOnError: false);
+        Type? concreteType = ResolveTypeLenient(requestType);
         if (concreteType is null || !typeof(IExternalRequestEnvelope).IsAssignableFrom(concreteType))
         {
             return false;
@@ -316,6 +319,20 @@ internal sealed class WorkflowSession : AgentSession
         envelope = env;
         return true;
     }
+
+    /// <summary>Caches <see cref="ResolveTypeLenient"/> results keyed by <see cref="TypeId"/>.</summary>
+    private static readonly ConcurrentDictionary<TypeId, Type?> s_envelopeTypeCache = new();
+
+    /// <summary>
+    /// Resolves a <see cref="TypeId"/> to a loaded <see cref="Type"/> using partial-name binding,
+    /// which matches any loaded assembly with the same simple name regardless of version. Results
+    /// are cached.
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2057:Unrecognized value passed to the parameter of method", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
+    internal static Type? ResolveTypeLenient(TypeId typeId)
+        => s_envelopeTypeCache.GetOrAdd(typeId, static id =>
+            Type.GetType($"{id.NormalizedTypeName}, {id.SimpleAssemblyName}", throwOnError: false));
 
     /// <summary>
     /// Creates the workflow-facing request content surfaced in response updates.

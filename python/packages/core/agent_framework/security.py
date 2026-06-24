@@ -550,7 +550,7 @@ class LabeledMessage(Message):
         if isinstance(content, str):
             contents = [content]
         elif isinstance(content, list):
-            contents = cast(list[Any], content)  # type: ignore[redundant-cast]
+            contents = cast(list[Any], content)
         else:
             contents = [str(content)] if content is not None else []
 
@@ -1067,7 +1067,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                 for v in value_dict.values():
                     _extract_labels_recursive(v)
             elif isinstance(value, (list, tuple)):
-                value_items = cast(list[Any] | tuple[Any, ...], value)  # type: ignore[redundant-cast]
+                value_items = cast(list[Any] | tuple[Any, ...], value)
                 # Recurse into list/tuple items
                 for item in value_items:
                     _extract_labels_recursive(item)
@@ -1126,7 +1126,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         import json as _json
 
         if isinstance(result, list):
-            result_list = cast(list[Any], result)  # type: ignore[redundant-cast]
+            result_list = cast(list[Any], result)
             if all(isinstance(c, Content) for c in result_list):
                 return cast(list[Content], result_list)
         if isinstance(result, Content):

@@ -2,6 +2,8 @@
 
 """Tests for _agent_run.py helper functions and FlowState."""
 
+from typing import cast
+
 import pytest
 from ag_ui.core import (
     CustomEvent,
@@ -42,6 +44,12 @@ from agent_framework_ag_ui._run_common import (
     _extract_resume_payload,
     _has_only_tool_calls,
 )
+
+
+def _message_role(message: object) -> object:
+    if isinstance(message, dict):
+        return cast(dict[str, object], message).get("role")
+    return getattr(message, "role", None)
 
 
 class TestBuildSafeMetadata:
@@ -276,8 +284,8 @@ class TestCreateStateContextMessage:
         assert result is not None
         assert result.role == "system"
         assert len(result.contents) == 1
-        assert "Hello world" in result.contents[0].text
-        assert "Current state" in result.contents[0].text
+        assert "Hello world" in result.contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+        assert "Current state" in result.contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 class TestInjectStateContext:
@@ -321,13 +329,13 @@ class TestInjectStateContext:
         assert len(result) == 3
         # System message first
         assert result[0].role == "system"
-        assert "helpful" in result[0].contents[0].text
+        assert "helpful" in result[0].contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
         # State context second
         assert result[1].role == "system"
-        assert "Current state" in result[1].contents[0].text
+        assert "Current state" in result[1].contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
         # User message last
         assert result[2].role == "user"
-        assert "Hello" in result[2].contents[0].text
+        assert "Hello" in result[2].contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 # Additional tests for _agent_run.py functions
@@ -517,9 +525,9 @@ def test_emit_tool_result_serializes_non_string_result():
     events = _emit_tool_result(content, flow, predictive_handler=None)
     result_event = next(event for event in events if getattr(event, "type", None) == "TOOL_CALL_RESULT")
 
-    assert isinstance(result_event.content, str)
-    assert '"ok": true' in result_event.content
-    assert flow.tool_results[0]["content"] == result_event.content
+    assert isinstance(result_event.content, str)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert '"ok": true' in result_event.content  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert flow.tool_results[0]["content"] == result_event.content  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 def test_emit_content_usage_emits_custom_usage_event():
@@ -531,8 +539,8 @@ def test_emit_content_usage_emits_custom_usage_event():
 
     assert len(events) == 1
     assert events[0].type == "CUSTOM"
-    assert events[0].name == "usage"
-    assert events[0].value["total_token_count"] == 5
+    assert events[0].name == "usage"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert events[0].value["total_token_count"] == 5  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 def test_emit_approval_request_populates_interrupt_metadata():
@@ -772,6 +780,7 @@ def test_malformed_json_in_confirm_args_skips_confirmation():
     valid_arguments = '{"content": "hello"}'
     tool_call_valid = {"function": {"name": "write_doc", "arguments": valid_arguments}}
     should_skip_confirmation = False
+    function_arguments: dict[str, object] | None = None
     try:
         function_arguments = json.loads(tool_call_valid.get("function", {}).get("arguments", "{}"))
     except json.JSONDecodeError:
@@ -915,7 +924,7 @@ async def test_run_agent_stream_accumulates_multiple_confirm_interrupts():
     """
     import json
 
-    from conftest import StubAgent
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
     from agent_framework_ag_ui import AgentFrameworkAgent
 
@@ -1026,11 +1035,11 @@ class TestEmitMcpToolCall:
 
         assert len(events) == 2
         assert events[0].type == "TOOL_CALL_START"
-        assert events[0].tool_call_id == "mcp_call_1"
-        assert events[0].tool_call_name == "search"
+        assert events[0].tool_call_id == "mcp_call_1"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert events[0].tool_call_name == "search"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert events[1].type == "TOOL_CALL_ARGS"
-        assert events[1].tool_call_id == "mcp_call_1"
-        assert "weather" in events[1].delta
+        assert events[1].tool_call_id == "mcp_call_1"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert "weather" in events[1].delta  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def test_tracks_in_flow_state(self):
         """MCP tool call is tracked in flow.pending_tool_calls and tool_calls_by_id."""
@@ -1059,7 +1068,7 @@ class TestEmitMcpToolCall:
 
         events = _emit_mcp_tool_call(content, flow)
 
-        assert events[0].tool_call_name == "list_files"
+        assert events[0].tool_call_name == "list_files"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def test_no_arguments_skips_args_event(self):
         """No arguments produces only ToolCallStart, no ToolCallArgs."""
@@ -1082,9 +1091,9 @@ class TestEmitMcpToolCall:
         events = _emit_mcp_tool_call(content, flow)
 
         assert len(events) >= 1
-        assert events[0].tool_call_id is not None
-        assert events[0].tool_call_id != ""
-        assert events[0].tool_call_name == "test_tool"
+        assert events[0].tool_call_id is not None  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert events[0].tool_call_id != ""  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert events[0].tool_call_name == "test_tool"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def test_missing_tool_name_falls_back_to_mcp_tool(self):
         """When tool_name is None, the fallback 'mcp_tool' is used."""
@@ -1094,7 +1103,7 @@ class TestEmitMcpToolCall:
         events = _emit_mcp_tool_call(content, flow)
 
         assert len(events) >= 1
-        assert events[0].tool_call_name == "mcp_tool"
+        assert events[0].tool_call_name == "mcp_tool"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 class TestEmitMcpToolResult:
@@ -1112,10 +1121,10 @@ class TestEmitMcpToolResult:
 
         assert len(events) == 2
         assert events[0].type == "TOOL_CALL_END"
-        assert events[0].tool_call_id == "mcp_call_1"
+        assert events[0].tool_call_id == "mcp_call_1"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert events[1].type == "TOOL_CALL_RESULT"
-        assert events[1].tool_call_id == "mcp_call_1"
-        assert "Weather" in events[1].content
+        assert events[1].tool_call_id == "mcp_call_1"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert "Weather" in events[1].content  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def test_tracks_in_flow_state(self):
         """MCP tool result is tracked in flow.tool_results and tool_calls_ended."""
@@ -1152,8 +1161,8 @@ class TestEmitMcpToolResult:
         events = _emit_mcp_tool_result(content, flow)
 
         result_event = events[1]
-        assert isinstance(result_event.content, str)
-        assert '"key": "value"' in result_event.content
+        assert isinstance(result_event.content, str)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert '"key": "value"' in result_event.content  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def test_output_none_falls_back_to_empty_string(self):
         """When output is None (default), the result content is an empty string."""
@@ -1164,7 +1173,7 @@ class TestEmitMcpToolResult:
 
         assert len(events) == 2
         assert events[1].type == "TOOL_CALL_RESULT"
-        assert events[1].content == ""
+        assert events[1].content == ""  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def test_resets_flow_state_like_emit_tool_result(self):
         """MCP tool result performs same FlowState cleanup as _emit_tool_result."""
@@ -1301,10 +1310,10 @@ class TestEmitTextReasoning:
         events = _emit_text_reasoning(content)
 
         assert len(events) == 5
-        assert events[0].message_id is not None
-        assert events[0].message_id != ""
+        assert events[0].message_id is not None  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert events[0].message_id != ""  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         # All events share the same message_id
-        assert events[1].message_id == events[0].message_id
+        assert events[1].message_id == events[0].message_id  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 class TestEmitContentMcpRouting:
@@ -1323,7 +1332,7 @@ class TestEmitContentMcpRouting:
 
         assert len(events) >= 1
         assert events[0].type == "TOOL_CALL_START"
-        assert events[0].tool_call_name == "test_tool"
+        assert events[0].tool_call_name == "test_tool"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def test_routes_mcp_server_tool_result(self):
         """_emit_content dispatches mcp_server_tool_result to _emit_mcp_tool_result."""
@@ -1398,7 +1407,7 @@ class TestReasoningInSnapshot:
 
         snapshot = _build_messages_snapshot(flow, [])
 
-        roles = [m.get("role") if isinstance(m, dict) else getattr(m, "role", None) for m in snapshot.messages]
+        roles = [_message_role(m) for m in snapshot.messages]
         assert "reasoning" in roles
 
     def test_snapshot_preserves_reasoning_encrypted_value(self):
@@ -1418,11 +1427,7 @@ class TestReasoningInSnapshot:
 
         snapshot = _build_messages_snapshot(flow, [])
 
-        reasoning_msgs = [
-            m
-            for m in snapshot.messages
-            if (m.get("role") if isinstance(m, dict) else getattr(m, "role", None)) == "reasoning"
-        ]
+        reasoning_msgs = [m for m in snapshot.messages if _message_role(m) == "reasoning"]
         assert len(reasoning_msgs) == 1
         msg = reasoning_msgs[0]
         if isinstance(msg, dict):
@@ -1463,7 +1468,7 @@ class TestReasoningInSnapshot:
 
         # user -> assistant text -> reasoning
         assert len(snapshot.messages) == 3
-        roles = [m.get("role") if isinstance(m, dict) else getattr(m, "role", None) for m in snapshot.messages]
+        roles = [_message_role(m) for m in snapshot.messages]
         assert roles == ["user", "assistant", "reasoning"]
 
     def test_reasoning_accumulates_incremental_deltas(self):
@@ -1629,7 +1634,7 @@ class TestReasoningInSnapshot:
         close = _close_reasoning_block(flow)
 
         # events1: Start(block1) + MsgStart(block1) + Content(block1)
-        assert events1[0].message_id == "block1"
+        assert events1[0].message_id == "block1"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         # events2: MsgEnd(block1) + End(block1) + Start(block2) + MsgStart(block2) + Content(block2)
         assert isinstance(events2[0], ReasoningMessageEndEvent)
         assert events2[0].message_id == "block1"
@@ -1675,7 +1680,7 @@ class TestReasoningEventRole:
 
 async def test_session_id_matches_thread_id():
     """Session created by run_agent_stream uses the client thread_id as session_id."""
-    from conftest import StubAgent
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
     from agent_framework_ag_ui import AgentFrameworkAgent
 
@@ -1696,7 +1701,7 @@ async def test_session_id_matches_thread_id():
 
 async def test_session_id_matches_camel_case_thread_id():
     """Session uses threadId (camelCase) as session_id when snake_case is absent."""
-    from conftest import StubAgent
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
     from agent_framework_ag_ui import AgentFrameworkAgent
 
@@ -1717,7 +1722,7 @@ async def test_session_id_matches_camel_case_thread_id():
 
 async def test_session_id_matches_thread_id_with_service_session():
     """Session uses thread_id as session_id even when use_service_session is enabled."""
-    from conftest import StubAgent
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
     from agent_framework_ag_ui import AgentFrameworkAgent
 
@@ -1741,7 +1746,7 @@ async def test_session_id_generated_when_no_thread_id():
     """Session gets a generated UUID as session_id when no thread_id is provided."""
     import uuid
 
-    from conftest import StubAgent
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
     from agent_framework_ag_ui import AgentFrameworkAgent
 
@@ -1764,7 +1769,7 @@ async def test_service_session_no_thread_id_generates_uuid():
     """With use_service_session=True and no thread_id, session_id is a UUID and service_session_id is None."""
     import uuid
 
-    from conftest import StubAgent
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
     from agent_framework_ag_ui import AgentFrameworkAgent
 

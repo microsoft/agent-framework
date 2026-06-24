@@ -150,7 +150,7 @@ class TestAGUIRequest:
 
     def test_agui_request_minimal(self) -> None:
         """Test creating AGUIRequest with only required fields."""
-        request = AGUIRequest(messages=[{"role": "user", "content": "Hello"}])
+        request = AGUIRequest.model_validate({"messages": [{"role": "user", "content": "Hello"}]})
 
         assert len(request.messages) == 1
         assert request.messages[0]["content"] == "Hello"
@@ -164,15 +164,17 @@ class TestAGUIRequest:
 
     def test_agui_request_all_fields(self) -> None:
         """Test creating AGUIRequest with all fields populated."""
-        request = AGUIRequest(
-            messages=[{"role": "user", "content": "Hello"}],
-            run_id="run-123",
-            thread_id="thread-456",
-            state={"counter": 0},
-            tools=[{"name": "search", "description": "Search tool"}],
-            context=[{"type": "document", "content": "Some context"}],
-            forwarded_props={"custom_key": "custom_value"},
-            parent_run_id="parent-run-789",
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "run_id": "run-123",
+                "thread_id": "thread-456",
+                "state": {"counter": 0},
+                "tools": [{"name": "search", "description": "Search tool"}],
+                "context": [{"type": "document", "content": "Some context"}],
+                "forwarded_props": {"custom_key": "custom_value"},
+                "parent_run_id": "parent-run-789",
+            }
         )
 
         assert request.run_id == "run-123"
@@ -185,12 +187,14 @@ class TestAGUIRequest:
 
     def test_agui_request_camel_case_aliases(self) -> None:
         """Test AGUIRequest accepts camelCase aliases from AG-UI HTTP clients."""
-        request = AGUIRequest(
-            messages=[{"role": "user", "content": "Hello"}],
-            runId="run-camel-1",
-            threadId="thread-camel-1",
-            forwardedProps={"k": "v"},
-            parentRunId="parent-camel-1",
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "runId": "run-camel-1",
+                "threadId": "thread-camel-1",
+                "forwardedProps": {"k": "v"},
+                "parentRunId": "parent-camel-1",
+            }
         )
 
         assert request.run_id == "run-camel-1"
@@ -200,10 +204,12 @@ class TestAGUIRequest:
 
     def test_agui_request_model_dump_excludes_none(self) -> None:
         """Test that model_dump(exclude_none=True) excludes None fields."""
-        request = AGUIRequest(
-            messages=[{"role": "user", "content": "test"}],
-            tools=[{"name": "my_tool"}],
-            context=[{"id": "ctx1"}],
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "test"}],
+                "tools": [{"name": "my_tool"}],
+                "context": [{"id": "ctx1"}],
+            }
         )
 
         dumped = request.model_dump(exclude_none=True)
@@ -223,12 +229,14 @@ class TestAGUIRequest:
         This is critical for the fix - ensuring tools, context, forwarded_props,
         and parent_run_id are not stripped during request validation.
         """
-        request = AGUIRequest(
-            messages=[{"role": "user", "content": "test"}],
-            tools=[{"name": "client_tool", "parameters": {"type": "object"}}],
-            context=[{"type": "snippet", "content": "code here"}],
-            forwarded_props={"auth_token": "secret", "user_id": "user-1"},
-            parent_run_id="parent-456",
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "test"}],
+                "tools": [{"name": "client_tool", "parameters": {"type": "object"}}],
+                "context": [{"type": "snippet", "content": "code here"}],
+                "forwarded_props": {"auth_token": "secret", "user_id": "user-1"},
+                "parent_run_id": "parent-456",
+            }
         )
 
         dumped = request.model_dump(exclude_none=True)
@@ -241,9 +249,11 @@ class TestAGUIRequest:
 
     def test_agui_request_available_interrupts_alias_round_trip(self) -> None:
         """availableInterrupts should deserialize, while dumps remain snake_case."""
-        request = AGUIRequest(
-            messages=[{"role": "user", "content": "Hello"}],
-            availableInterrupts=[{"id": "req_1", "value": {"choice": "A"}}],
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "availableInterrupts": [{"id": "req_1", "value": {"choice": "A"}}],
+            }
         )
 
         assert request.available_interrupts == [{"id": "req_1", "value": {"choice": "A"}}]

@@ -31,7 +31,8 @@ from random import randrange
 from typing import Annotated
 
 from agent_framework import Content, tool
-from agent_framework.github import GitHubCopilotAgent
+from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
+from copilot.session import PermissionHandler
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -48,37 +49,42 @@ def get_weather_detail(location: Annotated[str, "The city and state, e.g. San Fr
     )
 
 
-def prompt_for_approval(call: Content) -> bool:
-    """Synchronous approval prompt.
+async def prompt_for_approval(call: Content) -> bool:
+    """Async approval callback that prompts the user interactively.
 
     The callback receives a ``FunctionCallContent`` so the operator can review
     the tool name and arguments before deciding. Returning ``True`` allows the
     call; returning ``False`` denies it and a tool-error is returned to the
     model.
+
+    Uses ``asyncio.to_thread`` so the event loop is not blocked by ``input()``.
     """
-    print(f"\n[Function Approval Request]\n  Tool: {call.name}\n  Arguments: {call.arguments}")
-    response = input("Approve this tool call? (y/n): ").strip().lower()
+    print(f"\n  [Function Approval Request]\n  Tool: {call.name}\n  Arguments: {call.arguments}")
+    response = (await asyncio.to_thread(input, "  Approve this tool call? (y/n): ")).strip().lower()
     return response in ("y", "yes")
 
 
-async def prompt_for_approval_async(call: Content) -> bool:
-    """Async approval prompt.
+def auto_approve(call: Content) -> bool:
+    """Synchronous approval callback that always approves.
 
-    Use an async callback when approval requires I/O (e.g. an HTTP call to a
-    review service or queueing the request to a UI). ``input()`` is wrapped
-    with ``asyncio.to_thread`` so the event loop is not blocked.
+    Use a sync callback for simple, non-blocking decisions that don't require
+    I/O (e.g. checking an allow-list of tool names).
     """
-    print(f"\n[Function Approval Request - async]\n  Tool: {call.name}\n  Arguments: {call.arguments}")
-    response = await asyncio.to_thread(input, "Approve this tool call? (y/n): ")
-    return response.strip().lower() in ("y", "yes")
+    print(f"\n  [Function Approval Request]\n  Tool: {call.name}\n  Arguments: {call.arguments}")
+    print("  -> Auto-approved")
+    return True
 
 
-async def run_with_sync_callback() -> None:
-    print("\n=== GitHub Copilot Agent: synchronous approval callback ===")
-    agent = GitHubCopilotAgent(
+async def run_with_interactive_callback() -> None:
+    """Demonstrates an interactive approval prompt before tool execution."""
+    print("\n=== GitHub Copilot Agent: interactive approval callback ===")
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         instructions="You are a helpful weather assistant.",
         tools=[get_weather_detail],
-        default_options={"on_function_approval": prompt_for_approval},
+        default_options=GitHubCopilotOptions(
+            on_function_approval=prompt_for_approval,
+            on_permission_request=PermissionHandler.approve_all,
+        ),
     )
     async with agent:
         query = "Give me the detailed weather for Seattle."
@@ -87,12 +93,16 @@ async def run_with_sync_callback() -> None:
         print(f"Agent: {result}")
 
 
-async def run_with_async_callback() -> None:
-    print("\n=== GitHub Copilot Agent: asynchronous approval callback ===")
-    agent = GitHubCopilotAgent(
+async def run_with_auto_approve_callback() -> None:
+    """Demonstrates a synchronous callback that always approves."""
+    print("\n=== GitHub Copilot Agent: synchronous auto-approve callback ===")
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         instructions="You are a helpful weather assistant.",
         tools=[get_weather_detail],
-        default_options={"on_function_approval": prompt_for_approval_async},
+        default_options=GitHubCopilotOptions(
+            on_function_approval=auto_approve,
+            on_permission_request=PermissionHandler.approve_all,
+        ),
     )
     async with agent:
         query = "Give me the detailed weather for Tokyo."
@@ -109,9 +119,10 @@ async def run_without_callback() -> None:
     or try a different approach instead of silently failing.
     """
     print("\n=== GitHub Copilot Agent: no callback configured (deny by default) ===")
-    agent = GitHubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         instructions="You are a helpful weather assistant.",
         tools=[get_weather_detail],
+        default_options=GitHubCopilotOptions(on_permission_request=PermissionHandler.approve_all),
     )
     async with agent:
         query = "Give me the detailed weather for Paris."
@@ -122,8 +133,8 @@ async def run_without_callback() -> None:
 
 async def main() -> None:
     print("=== GitHub Copilot Agent: Function approval enforcement ===")
-    await run_with_sync_callback()
-    await run_with_async_callback()
+    await run_with_interactive_callback()
+    await run_with_auto_approve_callback()
     await run_without_callback()
 
 

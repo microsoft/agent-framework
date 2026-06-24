@@ -162,7 +162,10 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
         string skillFilePath = Path.Combine(directory, SkillFileName);
         if (File.Exists(skillFilePath))
         {
+            // Once a SKILL.md is found, this directory is the skill root.
+            // Subdirectories are part of this skill and should not be treated as independent skill roots.
             results.Add(Path.GetFullPath(directory));
+            return;
         }
 
         if (currentDepth >= MaxSkillDirectorySearchDepth)

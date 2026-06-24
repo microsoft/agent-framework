@@ -140,7 +140,7 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
     if origin in [list, set]:
         return isinstance(data, origin) and (
             not args or all(any(is_instance_of(item, arg) for arg in args) for item in data)  # type: ignore[misc]
-        )  # type: ignore
+        )
 
     # Case 4: target_type is a tuple
     if origin is tuple:

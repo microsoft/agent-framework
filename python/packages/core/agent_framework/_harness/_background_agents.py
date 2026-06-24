@@ -111,12 +111,8 @@ class BackgroundTaskInfo(SerializationMixin):
 class _RuntimeState:
     """Non-serializable per-session runtime state for background tasks."""
 
-    in_flight_tasks: dict[int, asyncio.Task[AgentResponse[Any]]] = field(
-        default_factory=lambda: {}  # pyright: ignore[reportUnknownLambdaType]
-    )
-    background_sessions: dict[int, AgentSession] = field(
-        default_factory=lambda: {}  # pyright: ignore[reportUnknownLambdaType]
-    )
+    in_flight_tasks: dict[int, asyncio.Task[AgentResponse[Any]]] = field(default_factory=lambda: {})
+    background_sessions: dict[int, AgentSession] = field(default_factory=lambda: {})
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +345,8 @@ class BackgroundAgentsProvider(ContextProvider):
             _save_provider_state(session, provider_state, source_id=source_id)
             return f"Background task {task_id} started on agent '{agent_name}'."
 
+        background_agents_start_task._invoke_sync_on_event_loop = True  # pyright: ignore[reportPrivateUsage]
+
         @tool(name="background_agents_wait_for_first_completion", approval_mode="never_require")
         async def background_agents_wait_for_first_completion(task_ids: list[int]) -> str:
             """Block until the first of the specified background tasks completes. Returns the completed task's ID."""
@@ -470,6 +468,8 @@ class BackgroundAgentsProvider(ContextProvider):
 
             _save_provider_state(session, provider_state, source_id=source_id)
             return f"Task {task_id} continued with new input."
+
+        background_agents_continue_task._invoke_sync_on_event_loop = True  # pyright: ignore[reportPrivateUsage]
 
         @tool(name="background_agents_clear_completed_task", approval_mode="never_require")
         def background_agents_clear_completed_task(task_id: int) -> str:

@@ -27,7 +27,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
 #else
     private const string BuildConfiguration = "Release";
 #endif
-    private static readonly HttpClient s_sharedHttpClient = new();
+    private static readonly HttpClient s_sharedHttpClient = new() { Timeout = TimeSpan.FromMinutes(3) };
     private static readonly IConfiguration s_configuration =
         new ConfigurationBuilder()
             .AddEnvironmentVariables()
@@ -844,6 +844,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             throw new InvalidOperationException("The required AZURE_OPENAI_DEPLOYMENT_NAME env variable is not set.");
 
         // Set required environment variables for the function app (see local.settings.json for required settings)
+        startInfo.EnvironmentVariables["FUNCTIONS_WORKER_RUNTIME"] = "dotnet-isolated";
         startInfo.EnvironmentVariables["AZURE_OPENAI_ENDPOINT"] = openAiEndpoint;
         startInfo.EnvironmentVariables["AZURE_OPENAI_DEPLOYMENT_NAME"] = openAiDeployment;
         startInfo.EnvironmentVariables["DURABLE_TASK_SCHEDULER_CONNECTION_STRING"] =

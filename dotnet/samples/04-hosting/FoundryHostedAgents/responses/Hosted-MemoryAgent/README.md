@@ -1,4 +1,4 @@
-# Hosted-MemoryAgent
+﻿# Hosted-MemoryAgent
 
 A hosted Foundry agent that uses **FoundryMemoryProvider** to remember user-private details across
 requests and across sessions, scoped per end user via the Foundry platform's isolation keys. The
@@ -17,7 +17,7 @@ This sample exists to demonstrate two things together:
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- An Azure AI Foundry project with at least one chat model deployment and one embedding model deployment
+- A Foundry project with at least one chat model deployment and one embedding model deployment
 - Azure CLI logged in (`az login`)
 
 ## Configuration
@@ -31,8 +31,8 @@ cp .env.example .env
 Required:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project>
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_PROJECT_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project>
+FOUNDRY_MODEL=gpt-4o
 AZURE_AI_EMBEDDING_DEPLOYMENT_NAME=text-embedding-ada-002
 AZURE_AI_MEMORY_STORE_ID=hosted-memory-sample
 AGENT_NAME=hosted-memory-agent
@@ -138,6 +138,34 @@ pwsh ./scripts/smoke.ps1
 The script publishes the project, builds the image, runs the container with two distinct
 `HOSTED_USER_ISOLATION_KEY` values, drives a multi-turn conversation per user, asserts that each
 user only sees their own memories, and exits non-zero on failure.
+
+## Deploying to Foundry (azd spec)
+
+This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent spec (`agent.yaml`) for deployment to Foundry.
+
+Initialize an `azd` project from this sample's manifest:
+
+```bash
+mkdir hosted-memory-agent && cd hosted-memory-agent
+azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-MemoryAgent/agent.manifest.yaml
+```
+
+Then deploy:
+
+```bash
+azd deploy
+```
+
+If you need to override defaults, set deployment-time environment variables in the `azd` environment before deploying:
+
+```bash
+azd env set AGENT_NAME hosted-memory-agent
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-4o
+```
+
+For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+
+---
 
 ## NuGet package users
 

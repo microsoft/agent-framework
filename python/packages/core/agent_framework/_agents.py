@@ -56,13 +56,13 @@ from .exceptions import AgentInvalidRequestException, AgentInvalidResponseExcept
 from .observability import AgentTelemetryLayer
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 12):
-    pass  # type: ignore # pragma: no cover
+    pass
 else:
-    pass  # type: ignore[import] # pragma: no cover
+    pass  # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import Self, TypedDict  # pragma: no cover
 else:
@@ -92,12 +92,16 @@ OptionsCoT = TypeVar(
 def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Merge two options dicts, with override values taking precedence.
 
+    ``None`` is treated as "unset": ``None`` overrides are skipped so they don't clobber a base
+    value, and the merged result is stripped of any remaining ``None`` values in a final pass so
+    unset options are never forwarded (e.g. an unset ``store`` is left for the service to default).
+
     Args:
         base: The base options dict.
         override: The override options dict (values take precedence).
 
     Returns:
-        A new merged options dict.
+        A new merged options dict containing no ``None`` values.
     """
     result = dict(base)
 
@@ -123,7 +127,7 @@ def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
             result["instructions"] = f"{result['instructions']}\n{value}"
         else:
             result[key] = value
-    return result
+    return {key: value for key, value in result.items() if value is not None}
 
 
 def _sanitize_agent_name(agent_name: str | None) -> str | None:
@@ -460,6 +464,9 @@ class BaseAgent(SerializationMixin):
         if provider_session is None and self.context_providers:
             provider_session = AgentSession()
 
+        # When per-service-call persistence is enabled, the per-service-call middleware owns
+        # HistoryProvider persistence (in both the local and service-managed cases), so skip
+        # them on the once-per-run path to avoid double persistence.
         per_service_call_history_required = self.require_per_service_call_history_persistence and any(
             isinstance(provider, HistoryProvider) for provider in self.context_providers
         )
@@ -575,7 +582,7 @@ class BaseAgent(SerializationMixin):
 # region Agent
 
 
-class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
+class RawAgent(BaseAgent, Generic[OptionsCoT]):
     """A Chat Client Agent without middleware or telemetry layers.
 
     This is the core chat agent implementation. For most use cases,
@@ -686,11 +693,16 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             description: A brief description of the agent's purpose.
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
-            require_per_service_call_history_persistence: When True, history providers are invoked
-                around each model call instead of once per ``run()`` when the service
-                is not already storing history. If service-side storage is active for
-                the run, the agent skips local history providers and relies on the
-                service-managed conversation instead.
+            require_per_service_call_history_persistence: When True (and a HistoryProvider is
+                present), the provider always persists history via per-service-call middleware,
+                regardless of whether the client stores history server-side. If the client does
+                not store history, the middleware also loads providers around each model call and
+                drives the function loop with a local conversation; if it does, loading is skipped
+                (the service-managed conversation is the source of truth) and the middleware only
+                persists. A warning is logged for providers with ``load_messages=True`` when
+                loading is skipped because service-side storage is active. When no HistoryProvider
+                is present, this flag has no effect (no middleware is installed and nothing is
+                persisted).
             default_options: A TypedDict containing chat options. When using a typed agent like
                 ``Agent[OpenAIChatOptions]``, this enables IDE autocomplete for
                 provider-specific options including temperature, max_tokens, model,
@@ -791,22 +803,20 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         self,
         *,
         session: AgentSession | None,
-        options: Mapping[str, Any] | None,
+        conversation_id: str | None,
         service_stores_history: bool,
     ) -> list[HistoryProvider]:
         history_providers = self._get_history_providers()
         if not self.require_per_service_call_history_persistence or not history_providers:
             return []
 
-        conversation_id = (
-            session.service_session_id
-            if session and session.service_session_id
-            else cast(str | None, (options or {}).get("conversation_id") or self.default_options.get("conversation_id"))
-        )
-        if service_stores_history:
-            return []
-
-        if conversation_id is not None:
+        # A live service-managed session id takes precedence over the resolved conversation id.
+        if session and session.service_session_id:
+            conversation_id = session.service_session_id
+        # Without service-side storage the middleware persists locally and drives the function
+        # loop with a local sentinel, which cannot be reconciled with an existing service-managed
+        # conversation. When the service stores history, an existing conversation id is expected.
+        if conversation_id is not None and not service_stores_history:
             raise AgentInvalidRequestException(
                 "require_per_service_call_history_persistence cannot be used "
                 "with an existing service-managed conversation."
@@ -1118,7 +1128,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         response_format: Any | None = None,
     ) -> AgentResponse[Any]:
         """Finalize response updates into a single AgentResponse."""
-        return AgentResponse.from_updates(  # pyright: ignore[reportUnknownVariableType]
+        return AgentResponse.from_updates(
             updates,
             output_format_type=response_format,
         )
@@ -1167,18 +1177,34 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
         input_messages = normalize_messages(messages)
 
-        # `store` in runtime or agent options takes precedence over client-level storage
-        # indicators. An explicit `store=False` forces local (in-memory) history injection,
-        # even if the client is configured to use service-side storage by default.
-        store_ = opts.get("store", self.default_options.get("store", getattr(self.client, "STORES_BY_DEFAULT", False)))
+        # Combine agent-level defaults with runtime options up front so the decisions below read
+        # `store` from a single place rather than introspecting both dicts. _merge_options applies
+        # the same precedence used for the actual client call (runtime wins; unset/None falls back
+        # to the agent default).
+        effective_options = _merge_options(self.default_options, opts)
+
+        # `store` in runtime or agent options takes precedence over the client's default
+        # storage behavior. An explicit `store=False` forces local (in-memory) history
+        # injection even when the client stores server-side by default; an explicit
+        # `store=True` forces service-side storage. A `store=None`/unset value means the
+        # service falls back to its own default.
+        explicit_store = effective_options.get("store")
+        # Internal behavior hint: will the service own history for this run? Only when the
+        # user left `store` unset do we fall back to the client's STORES_BY_DEFAULT.
+        service_stores_history = (
+            explicit_store if explicit_store is not None else getattr(self.client, "STORES_BY_DEFAULT", False)
+        )
+        # Resolve conversation_id from the same combined view so an agent-level default is honored
+        # when the runtime omits it (a live session id still takes precedence below).
+        effective_conversation_id = effective_options.get("conversation_id")
         # Auto-inject InMemoryHistoryProvider when session is provided, no context providers
         # registered, and no service-side storage indicators
         if (
             session is not None
             and not self.context_providers
             and not session.service_session_id
-            and not opts.get("conversation_id")
-            and not store_
+            and not effective_conversation_id
+            and not service_stores_history
         ):
             self.context_providers.append(InMemoryHistoryProvider())
 
@@ -1188,9 +1214,29 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
         per_service_call_history_providers = self._resolve_per_service_call_history_providers(
             session=active_session,
-            options=opts,
-            service_stores_history=bool(store_),
+            conversation_id=effective_conversation_id,
+            service_stores_history=service_stores_history,
         )
+
+        # When require_per_service_call_history_persistence is set together with a
+        # HistoryProvider, the per-service-call middleware (installed below) always persists
+        # the provider. ``service_stores_history`` only selects how the middleware behaves:
+        # - service does not store: the middleware also loads providers and drives the function
+        #   loop with a local sentinel conversation id, or
+        # - service stores: the middleware skips loading (the service owns history) and simply
+        #   persists each service call while the real conversation id flows through.
+        # In the service-managed case loading is skipped, so warn for providers that expect to load.
+        history_providers = self._get_history_providers()
+        if self.require_per_service_call_history_persistence and history_providers and service_stores_history:
+            for provider in history_providers:
+                if provider.load_messages:
+                    logger.warning(
+                        "HistoryProvider '%s' has load_messages=True but the chat client stores history "
+                        "server-side; skipping local history load and relying on the service-managed "
+                        "conversation. Set store=False to load from the provider, or load_messages=False "
+                        "to silence this warning.",
+                        provider.source_id,
+                    )
 
         session_context, chat_options = await self._prepare_session_and_messages(
             session=active_session,
@@ -1223,7 +1269,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     duplicate_error_message=mcp_duplicate_message,
                 )
             else:
-                _append_unique_tools(final_tools, [tool])  # type: ignore[list-item]
+                _append_unique_tools(final_tools, [tool])
 
         for mcp_server in self.mcp_tools:
             if not mcp_server.is_connected:
@@ -1265,8 +1311,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         }
         if model is not None:
             run_opts["model"] = model
-        # Remove None values and merge with chat_options
-        run_opts = {k: v for k, v in run_opts.items() if v is not None}
+        # _merge_options strips unset (None) options, so e.g. an unset `store` is not forwarded
+        # and the service decides its own default.
         co = _merge_options(chat_options, run_opts)
 
         # Build session_messages from session context: context messages + input messages
@@ -1280,6 +1326,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 agent=self,
                 session=active_session,
                 providers=per_service_call_history_providers,
+                service_stores_history=service_stores_history,
             )
             existing_middleware = effective_client_kwargs.get("middleware")
             if isinstance(existing_middleware, Sequence) and not isinstance(existing_middleware, (str, bytes)):
@@ -1319,7 +1366,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             "input_messages": input_messages,
             "session_messages": session_messages,
             "agent_name": agent_name,
-            "suppress_response_id": bool(per_service_call_history_providers),
+            "suppress_response_id": bool(per_service_call_history_providers) and not service_stores_history,
             "chat_options": co,
             "compaction_strategy": compaction_strategy or self.compaction_strategy,
             "tokenizer": tokenizer or self.tokenizer,
@@ -1413,11 +1460,15 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             options=options or {},
         )
 
+        # When per-service-call persistence is enabled, the per-service-call middleware owns
+        # HistoryProvider loading (it loads locally when the service does not store history, or
+        # relies on the service when it does), so skip them on the once-per-run before_run path.
         per_service_call_history_required = self.require_per_service_call_history_persistence and bool(
             self._get_history_providers()
         )
 
-        # Run before_run providers (forward order, skip HistoryProvider when per-service-call persistence owns history)
+        # Run before_run providers (forward order, skip HistoryProvider when per-service-call
+        # persistence owns loading)
         for provider in self.context_providers:
             if per_service_call_history_required and isinstance(provider, HistoryProvider):
                 continue
@@ -1426,7 +1477,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             if provider_session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.before_run(
-                agent=self,  # type: ignore[arg-type]
+                agent=self,
                 session=provider_session,
                 context=session_context,
                 state=provider_session.state.setdefault(provider.source_id, {}),
@@ -1492,7 +1543,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         if kwargs:
             server_args.update(kwargs)
 
-        server: Server[Any] = Server(**server_args)  # type: ignore[call-arg]
+        server: Server[Any] = Server(**server_args)
 
         agent_tool = self.as_tool(name=self._get_agent_name())
 
@@ -1506,7 +1557,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 except Exception as e:
                     logger.error("Failed to send log message to server: %s", e)
 
-        @server.list_tools()  # type: ignore
+        @server.list_tools()
         async def _list_tools() -> list[types.Tool]:  # type: ignore
             """List all tools in the agent."""
             schema = agent_tool.parameters()
@@ -1520,7 +1571,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             await _log(level="debug", data=f"Agent tool: {agent_tool}")
             return [tool]
 
-        @server.call_tool()  # type: ignore
+        @server.call_tool()
         async def _call_tool(  # type: ignore
             name: str, arguments: dict[str, Any]
         ) -> Sequence[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource]:
@@ -1552,18 +1603,18 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             # Convert result to MCP content.
             # Currently only text items are forwarded over MCP; rich content
             # (images, audio) is not yet supported in the MCP server path.
-            mcp_content: list[types.TextContent | types.ImageContent | types.EmbeddedResource] = []  # type: ignore[attr-defined]
+            mcp_content: list[types.TextContent | types.ImageContent | types.EmbeddedResource] = []
             for c in result:
                 if c.type == "text" and c.text:
-                    mcp_content.append(types.TextContent(type="text", text=c.text))  # type: ignore[attr-defined]
+                    mcp_content.append(types.TextContent(type="text", text=c.text))
                 elif c.type in ("data", "uri"):
                     logger.warning(
                         "MCP server does not yet forward rich content (images, audio) "
                         "in tool results. Rich content items will be omitted."
                     )
-            return mcp_content or [types.TextContent(type="text", text="")]  # type: ignore[attr-defined]
+            return mcp_content or [types.TextContent(type="text", text="")]
 
-        @server.set_logging_level()  # type: ignore
+        @server.set_logging_level()
         async def _set_logging_level(level: types.LoggingLevel) -> None:  # type: ignore
             """Set the logging level for the server."""
             logger.setLevel(LOG_LEVEL_MAPPING[level])
@@ -1661,9 +1712,9 @@ class Agent(
         """Run the agent."""
         super_run = cast(
             "Callable[..., Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]]",
-            super().run,  # type: ignore[misc]
+            super().run,
         )
-        return super_run(  # type: ignore[no-any-return]
+        return super_run(
             messages=messages,
             stream=stream,
             session=session,

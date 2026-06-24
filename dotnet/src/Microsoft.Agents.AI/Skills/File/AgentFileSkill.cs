@@ -48,17 +48,19 @@ public sealed class AgentFileSkill : AgentSkill
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Returns the raw SKILL.md content. When the skill has scripts, a
-    /// <c>&lt;scripts&gt;&lt;script name="..."&gt;&lt;parameters_schema&gt;...&lt;/parameters_schema&gt;&lt;/script&gt;&lt;/scripts&gt;</c>
-    /// block is appended with a per-script entry describing the expected argument format.
-    /// The result is cached after the first access.
+    /// Returns the raw SKILL.md content with an <c>&lt;available_resources&gt;</c> and an
+    /// <c>&lt;available_scripts&gt;</c> block appended, so the model gets an authoritative list for each
+    /// category. A category with no entries is appended as a self-closing element (e.g.
+    /// <c>&lt;available_scripts /&gt;</c>) so the model knows none are available and does not hallucinate
+    /// their names. The result is cached after the first access.
     /// </remarks>
     public override ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)
     {
-        var content = this._content ??= this._scripts is { Count: > 0 }
-            ? this._originalContent + AgentInlineSkillContentBuilder.BuildScriptsBlock(this._scripts)
-            : this._originalContent;
-        return new(content);
+        this._content ??=
+            this._originalContent
+            + "\n" + AgentInlineSkillContentBuilder.BuildAvailableResourcesBlock(this._resources)
+            + "\n" + AgentInlineSkillContentBuilder.BuildAvailableScriptsBlock(this._scripts);
+        return new(this._content);
     }
 
     /// <summary>

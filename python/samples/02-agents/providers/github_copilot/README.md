@@ -23,7 +23,7 @@ The following environment variables can be configured:
 | `GITHUB_COPILOT_MODEL` | Model to use (e.g., "gpt-5", "claude-sonnet-4") | Server default |
 | `GITHUB_COPILOT_TIMEOUT` | Request timeout in seconds | `60` |
 | `GITHUB_COPILOT_LOG_LEVEL` | CLI log level | `info` |
-| `GITHUB_COPILOT_COPILOT_HOME` | Directory for CLI session state and config | `~/.copilot` |
+| `GITHUB_COPILOT_BASE_DIRECTORY` | Directory for CLI session state and config | `~/.copilot` |
 
 ## Observability
 

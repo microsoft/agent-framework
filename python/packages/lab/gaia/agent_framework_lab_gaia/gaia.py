@@ -33,7 +33,7 @@ class _OrjsonModule(Protocol):
 @lru_cache(maxsize=1)
 def _get_orjson() -> _OrjsonModule | None:
     try:
-        import orjson as runtime_orjson  # pyright: ignore[reportMissingImports]
+        import orjson as runtime_orjson
     except ImportError:
         return None
     return cast(_OrjsonModule, runtime_orjson)
@@ -273,7 +273,7 @@ def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max
 
     for p in parquet_files:
         try:
-            import pyarrow.parquet as pq  # type: ignore[reportMissingImports]
+            import pyarrow.parquet as pq
 
             pq_any = cast(Any, pq)
             table: Any = pq_any.read_table(p)
