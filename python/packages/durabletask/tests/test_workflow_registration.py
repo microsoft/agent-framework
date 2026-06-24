@@ -18,7 +18,6 @@ from agent_framework_durabletask import (
     collect_hosted_workflows,
     plan_workflow_registration,
 )
-from agent_framework_durabletask._workflows.orchestrator import WORKFLOW_ORCHESTRATOR_NAME
 
 
 def _agent_executor(executor_id: str, agent_name: str) -> Mock:
@@ -63,7 +62,6 @@ class TestPlanWorkflowRegistration:
 
         assert plan.agent_executors == [agent_exec]
         assert plan.activity_executors == []
-        assert plan.orchestrator_name == WORKFLOW_ORCHESTRATOR_NAME
 
     def test_non_agent_executor_classified_as_activity(self) -> None:
         """A plain Executor is classified as an activity."""

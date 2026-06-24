@@ -34,8 +34,6 @@ from dataclasses import dataclass
 
 from agent_framework import AgentExecutor, Executor, Workflow, WorkflowExecutor
 
-from .orchestrator import WORKFLOW_ORCHESTRATOR_NAME
-
 
 @dataclass
 class WorkflowRegistrationPlan:
@@ -54,16 +52,11 @@ class WorkflowRegistrationPlan:
             workflows are driven as durable child orchestrations. The node itself
             is *not* registered as an activity; its inner workflow is registered
             separately (see :func:`collect_hosted_workflows`).
-        orchestrator_name: Deprecated fixed orchestrator name. Hosts derive the
-            actual per-workflow name via
-            :func:`~agent_framework_durabletask._workflows.naming.workflow_orchestrator_name`;
-            this field is retained for source compatibility only.
     """
 
     agent_executors: list[AgentExecutor]
     activity_executors: list[Executor]
     subworkflow_executors: list[WorkflowExecutor]
-    orchestrator_name: str
 
 
 def plan_workflow_registration(workflow: Workflow) -> WorkflowRegistrationPlan:
@@ -74,8 +67,8 @@ def plan_workflow_registration(workflow: Workflow) -> WorkflowRegistrationPlan:
 
     Returns:
         A :class:`WorkflowRegistrationPlan` describing the agent executors
-        (entities), sub-workflow executors (child orchestrations), the remaining
-        non-agent executors (activities), and the orchestrator name.
+        (entities), sub-workflow executors (child orchestrations), and the
+        remaining non-agent executors (activities).
     """
     agent_executors: list[AgentExecutor] = []
     activity_executors: list[Executor] = []
@@ -93,7 +86,6 @@ def plan_workflow_registration(workflow: Workflow) -> WorkflowRegistrationPlan:
         agent_executors=agent_executors,
         activity_executors=activity_executors,
         subworkflow_executors=subworkflow_executors,
-        orchestrator_name=WORKFLOW_ORCHESTRATOR_NAME,
     )
 
 

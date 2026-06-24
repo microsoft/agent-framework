@@ -63,7 +63,7 @@ from ._workflows.naming import (
     workflow_name_from_orchestrator,
     workflow_orchestrator_name,
 )
-from ._workflows.orchestrator import WORKFLOW_ORCHESTRATOR_NAME, run_workflow_orchestrator
+from ._workflows.orchestrator import run_workflow_orchestrator
 from ._workflows.registration import WorkflowRegistrationPlan, collect_hosted_workflows, plan_workflow_registration
 from ._workflows.runner_context import CapturingRunnerContext
 from ._workflows.serialization import deserialize_workflow_output
@@ -85,7 +85,6 @@ __all__ = [
     "THREAD_ID_HEADER",
     "WAIT_FOR_RESPONSE_FIELD",
     "WAIT_FOR_RESPONSE_HEADER",
-    "WORKFLOW_ORCHESTRATOR_NAME",
     "AgentCallbackContext",
     "AgentEntity",
     "AgentEntityStateProviderMixin",

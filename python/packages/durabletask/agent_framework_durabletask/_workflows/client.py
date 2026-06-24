@@ -315,13 +315,10 @@ class DurableWorkflowClient:
                     raise ValueError(f"Instance '{instance_id}' does not belong to the targeted workflow.")
                 ownership_checked = True
 
-            if state is not None and state.serialized_custom_status:
-                try:
-                    status = json.loads(state.serialized_custom_status)
-                except (json.JSONDecodeError, TypeError):
-                    status = None
-                if isinstance(status, dict):
-                    events = cast("dict[str, Any]", status).get("events")
+            if state is not None:
+                status = self._parse_custom_status(state.serialized_custom_status)
+                if status is not None:
+                    events = status.get("events")
                     if isinstance(events, list):
                         typed_events = cast("list[dict[str, Any]]", events)
                         while cursor < len(typed_events):
@@ -370,6 +367,22 @@ class DurableWorkflowClient:
 
         return self._collect_pending_hitl_requests(state.serialized_custom_status)
 
+    @staticmethod
+    def _parse_custom_status(serialized_custom_status: str | None) -> dict[str, Any] | None:
+        """Parse a serialized custom status into a dict, or ``None`` if unusable.
+
+        Returns ``None`` for an empty/absent status or any value that is not a JSON
+        object (the only shape the orchestrator ever writes), so callers can treat
+        "no usable status" uniformly.
+        """
+        if not serialized_custom_status:
+            return None
+        try:
+            parsed = json.loads(serialized_custom_status)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return cast("dict[str, Any]", parsed) if isinstance(parsed, dict) else None
+
     def _collect_pending_hitl_requests(self, serialized_custom_status: str) -> list[dict[str, Any]]:
         """Collect an orchestration's pending requests plus any nested sub-workflow ones.
 
@@ -381,13 +394,9 @@ class DurableWorkflowClient:
         trusted, having come from the parent's status), so no per-child ownership check
         is applied.
         """
-        try:
-            custom_status = json.loads(serialized_custom_status)
-        except (json.JSONDecodeError, TypeError):
+        status_dict = self._parse_custom_status(serialized_custom_status)
+        if status_dict is None:
             return []
-        if not isinstance(custom_status, dict):
-            return []
-        status_dict = cast(dict[str, Any], custom_status)
 
         requests: list[dict[str, Any]] = []
 
@@ -502,15 +511,10 @@ class DurableWorkflowClient:
         selects the child at ``ordinal`` (its dispatch order this superstep).
         """
         state = self._client.get_orchestration_state(instance_id)
-        if state is None or not state.serialized_custom_status:
+        custom_status = self._parse_custom_status(state.serialized_custom_status if state else None)
+        if custom_status is None:
             return None
-        try:
-            custom_status = json.loads(state.serialized_custom_status)
-        except (json.JSONDecodeError, TypeError):
-            return None
-        if not isinstance(custom_status, dict):
-            return None
-        subworkflows = cast(dict[str, Any], custom_status).get("subworkflows")
+        subworkflows = custom_status.get("subworkflows")
         if not isinstance(subworkflows, dict):
             return None
         children_raw = cast(dict[str, Any], subworkflows).get(executor_id)
