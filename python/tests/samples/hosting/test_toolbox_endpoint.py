@@ -1,12 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Unit tests for _resolve_toolbox_endpoint() in the foundry-hosted-agents response samples.
+"""Unit tests for resolve_toolbox_endpoint() in the foundry-hosted-agents response samples.
 
 Covers both 04_foundry_toolbox/main.py and 06_files/main.py which share the same
-implementation of _resolve_toolbox_endpoint().
+implementation of resolve_toolbox_endpoint().
 """
 
-import importlib
 import importlib.util
 import sys
 from pathlib import Path
@@ -50,49 +49,49 @@ _files_mod = _load_sample("06_files", "files_main")
 # ---------------------------------------------------------------------------
 @pytest.fixture(params=["04_foundry_toolbox", "06_files"])
 def resolve_endpoint(request):
-    """Return _resolve_toolbox_endpoint from the requested sample module."""
+    """Return resolve_toolbox_endpoint from the requested sample module."""
     mod = _toolbox_mod if request.param == "04_foundry_toolbox" else _files_mod
-    return mod._resolve_toolbox_endpoint
+    return mod.resolve_toolbox_endpoint
 
 
 class TestResolveToolboxEndpoint:
     def test_explicit_endpoint_returned_as_is(self, resolve_endpoint, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("FOUNDRY_TOOLBOX_ENDPOINT", "https://example.com/mcp")
+        monkeypatch.setenv("TOOLBOX_ENDPOINT", "https://example.com/mcp")
         monkeypatch.delenv("FOUNDRY_PROJECT_ENDPOINT", raising=False)
         monkeypatch.delenv("TOOLBOX_NAME", raising=False)
 
         assert resolve_endpoint() == "https://example.com/mcp"
 
     def test_empty_string_raises_value_error(self, resolve_endpoint, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("FOUNDRY_TOOLBOX_ENDPOINT", "")
+        monkeypatch.setenv("TOOLBOX_ENDPOINT", "")
 
-        with pytest.raises(ValueError, match="FOUNDRY_TOOLBOX_ENDPOINT is set but empty"):
+        with pytest.raises(ValueError, match="TOOLBOX_ENDPOINT is set but empty"):
             resolve_endpoint()
 
     def test_fallback_constructs_url_from_project_vars(self, resolve_endpoint, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.delenv("FOUNDRY_TOOLBOX_ENDPOINT", raising=False)
+        monkeypatch.delenv("TOOLBOX_ENDPOINT", raising=False)
         monkeypatch.setenv("FOUNDRY_PROJECT_ENDPOINT", "https://project.azure.com/")
         monkeypatch.setenv("TOOLBOX_NAME", "my-toolbox")
 
         result = resolve_endpoint()
 
-        assert result == "https://project.azure.com/toolsets/my-toolbox/mcp?api-version=v1"
+        assert result == "https://project.azure.com/toolboxes/my-toolbox/mcp?api-version=v1"
 
     def test_fallback_strips_trailing_slash_from_project_endpoint(
         self, resolve_endpoint, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.delenv("FOUNDRY_TOOLBOX_ENDPOINT", raising=False)
+        monkeypatch.delenv("TOOLBOX_ENDPOINT", raising=False)
         monkeypatch.setenv("FOUNDRY_PROJECT_ENDPOINT", "https://project.azure.com///")
         monkeypatch.setenv("TOOLBOX_NAME", "my-toolbox")
 
         result = resolve_endpoint()
 
-        assert result == "https://project.azure.com/toolsets/my-toolbox/mcp?api-version=v1"
+        assert result == "https://project.azure.com/toolboxes/my-toolbox/mcp?api-version=v1"
 
-    def test_neither_variable_group_set_raises_key_error(self, resolve_endpoint, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.delenv("FOUNDRY_TOOLBOX_ENDPOINT", raising=False)
+    def test_neither_variable_group_set_raises_value_error(self, resolve_endpoint, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("TOOLBOX_ENDPOINT", raising=False)
         monkeypatch.delenv("FOUNDRY_PROJECT_ENDPOINT", raising=False)
         monkeypatch.delenv("TOOLBOX_NAME", raising=False)
 
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError, match="Either set TOOLBOX_ENDPOINT"):
             resolve_endpoint()
