@@ -194,6 +194,32 @@ public static class FoundryAITool
         => ResponseTool.CreateMcpTool(serverLabel, connectorId, authorizationToken, serverDescription, headers, allowedTools, toolCallApprovalPolicy).AsAITool();
 
     /// <summary>
+    /// Creates an <see cref="AITool"/> for a hosted MCP server that authenticates through a Foundry project connection.
+    /// </summary>
+    /// <remarks>
+    /// The project connection stores the authentication and connection details for the MCP server, so the platform
+    /// injects credentials at request time and no inline authorization token or headers are sent. This mirrors the
+    /// Python <c>FoundryChatClient.get_mcp_tool(..., project_connection_id=...)</c> factory.
+    /// </remarks>
+    /// <param name="serverLabel">The label for the MCP server.</param>
+    /// <param name="serverUri">The URI of the MCP server.</param>
+    /// <param name="projectConnectionId">The Foundry project connection ID that stores authentication for the MCP server.</param>
+    /// <param name="serverDescription">Optional server description.</param>
+    /// <param name="allowedTools">Optional filter for allowed tools.</param>
+    /// <param name="toolCallApprovalPolicy">Optional tool call approval policy.</param>
+    /// <returns>An <see cref="AITool"/> for MCP server tools backed by a Foundry project connection.</returns>
+    public static AITool CreateMcpTool(string serverLabel, Uri serverUri, string projectConnectionId, string? serverDescription = null, McpToolFilter? allowedTools = null, McpToolCallApprovalPolicy? toolCallApprovalPolicy = null)
+    {
+        McpTool tool = ResponseTool.CreateMcpTool(serverLabel, serverUri, authorizationToken: null, serverDescription, headers: null, allowedTools, toolCallApprovalPolicy);
+
+        // ProjectConnectionId is a Foundry extension (Azure.AI.Projects.Agents) that patches "project_connection_id"
+        // onto the MCP tool. The credentials live in the connection, so no inline token or headers are forwarded.
+        tool.ProjectConnectionId = projectConnectionId;
+
+        return tool.AsAITool();
+    }
+
+    /// <summary>
     /// Creates an <see cref="AITool"/> for code interpreter.
     /// </summary>
     /// <param name="container">The container configuration for the code interpreter.</param>
