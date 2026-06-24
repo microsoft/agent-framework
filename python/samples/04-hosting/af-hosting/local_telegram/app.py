@@ -11,7 +11,7 @@ Builds on ``app.py`` to demonstrate:
   the ``AgentSession`` id — so a Responses caller can resume a Telegram
   chat by passing ``previous_response_id="telegram:<chat_id>"`` (or any
   other isolation key written by another channel),
-- a ``TelegramChannel`` ``run_hook`` that bumps ``temperature`` for a
+- a ``TelegramChannel`` ``run_hook`` that raises reasoning effort for a
   chattier Telegram persona,
 - a richer Telegram command catalog including a ``/new`` command that resets
   the cached session for the chat.
@@ -74,7 +74,7 @@ SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 def lookup_weather(
     location: Annotated[str, "The city to look up weather for."],
 ) -> str:
-    """Return a deterministic weather report for a city."""
+    """Return a pseudo-random weather report for a city."""
     high_temp = randint(5, 25)
     reports = {
         "Seattle": f"Seattle is rainy with a high of {high_temp}°C.",
@@ -95,7 +95,8 @@ def responses_hook(request: ChannelRequest, *, protocol_request: dict | None = N
     The spec calls this out as the developer's runtime escape hatch over the
     uniform ``ChannelRequest`` envelope. Things this hook does:
 
-    - **strip** ``store`` and ``temperature`` (the agent owns persistence via ``FileHistoryProvider``),
+    - **strip** ``model``, ``store`` and ``temperature`` (the host owns model
+      selection and persistence via ``FileHistoryProvider``),
     - **inject a session** keyed on the request body. The OpenAI Responses
       ``previous_response_id`` field doubles as our isolation key — the
       ``ResponsesChannel`` already lifts it onto ``request.session``, so any
@@ -108,6 +109,7 @@ def responses_hook(request: ChannelRequest, *, protocol_request: dict | None = N
     options = dict(request.options or {})
 
     # this agent will only run with models that do not support Temperature, so removing it.
+    options.pop("model", None)
     options.pop("temperature", None)
     options.pop("store", None)
 
@@ -129,7 +131,7 @@ def responses_hook(request: ChannelRequest, *, protocol_request: dict | None = N
 
 
 def telegram_hook(request: ChannelRequest, **_: object) -> ChannelRequest:
-    """Telegram users get a chattier model — bump temperature on every turn."""
+    """Telegram users get richer summaries by increasing reasoning effort."""
     options = dict(request.options or {})
     options["reasoning"] = {"effort": "high", "summary": "detailed"}
     return replace(request, options=options)

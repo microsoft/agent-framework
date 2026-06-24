@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Literal
@@ -442,7 +443,7 @@ class TelegramChannel:
         """
         if self._secret_token is not None:
             received = request.headers.get("x-telegram-bot-api-secret-token")
-            if received != self._secret_token:
+            if not hmac.compare_digest(received or "", self._secret_token):
                 logger.warning("Telegram webhook secret token mismatch — rejecting update")
                 return JSONResponse({"ok": False, "error": "invalid secret"}, status_code=401)
 
@@ -483,12 +484,15 @@ class TelegramChannel:
         chat_id = (message.get("chat") or {}).get("id")
         text = message.get("text") or message.get("caption")
         has_media = any(k in message for k in ("photo", "document", "voice", "audio", "video"))
-        if chat_id is None or (not isinstance(text, str) and not has_media):
+        if not isinstance(chat_id, int) or (not isinstance(text, str) and not has_media):
             return  # Nothing actionable.
 
         # Native command dispatch — bypasses the agent.
         if isinstance(text, str) and text.startswith("/"):
-            command_name = text[1:].split()[0].split("@", 1)[0]
+            command_text = text[1:].strip()
+            if not command_text:
+                return
+            command_name = command_text.split()[0].split("@", 1)[0]
             handler = next((c for c in self._commands if c.name == command_name), None)
             if handler is not None:
                 channel_request = ChannelRequest(
@@ -544,7 +548,7 @@ class TelegramChannel:
             except Exception:  # pragma: no cover - defensive
                 logger.exception("answerCallbackQuery failed")
 
-        if chat_id is None or not isinstance(data, str):
+        if not isinstance(chat_id, int) or not isinstance(data, str):
             return
 
         channel_request = ChannelRequest(
@@ -653,20 +657,24 @@ class TelegramChannel:
 
         async def edit_worker() -> None:
             nonlocal last_sent, last_edit_at
-            while not (worker_done.is_set() and accumulated == last_sent):
+            while not (worker_done.is_set() and accumulated[:_TELEGRAM_MAX_TEXT_LEN] == last_sent):
                 await wake.wait()
                 wake.clear()
-                if message_id is None or accumulated == last_sent:
+                if message_id is None:
+                    if worker_done.is_set():
+                        return
+                    continue
+                if accumulated[:_TELEGRAM_MAX_TEXT_LEN] == last_sent:
+                    if worker_done.is_set():
+                        return
                     continue
                 elapsed = time.monotonic() - last_edit_at
                 if elapsed < self._stream_edit_min_interval:
-                    try:
-                        await asyncio.wait_for(wake.wait(), timeout=self._stream_edit_min_interval - elapsed)
-                        wake.clear()
-                    except asyncio.TimeoutError:
-                        pass
+                    await asyncio.sleep(self._stream_edit_min_interval - elapsed)
                 snapshot = accumulated[:_TELEGRAM_MAX_TEXT_LEN]
                 if snapshot == last_sent:
+                    if worker_done.is_set():
+                        return
                     continue
                 # Interim edits go out as plain text — partial Markdown/HTML
                 # is invalid mid-stream and Telegram returns 400.
@@ -690,7 +698,9 @@ class TelegramChannel:
 
         await send_initial_placeholder()
         edit_task = asyncio.create_task(edit_worker(), name="telegram-edit-worker")
-        typing_task = asyncio.create_task(typing_worker(), name="telegram-typing-worker")
+        typing_task = (
+            asyncio.create_task(typing_worker(), name="telegram-typing-worker") if self._send_typing_action else None
+        )
 
         try:
             async for update in stream:
@@ -707,9 +717,10 @@ class TelegramChannel:
                 await edit_task
             except Exception:  # pragma: no cover
                 logger.exception("Telegram edit worker crashed")
-            typing_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await typing_task
+            if typing_task is not None:
+                typing_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await typing_task
 
         # Always finalize so context providers / history hooks run.
         try:
@@ -720,6 +731,7 @@ class TelegramChannel:
 
         # Final edit applies parse_mode (if configured) to the full text.
         final_text = (getattr(final, "text", None) or accumulated or last_sent)[:_TELEGRAM_MAX_TEXT_LEN]
+        text_sent_via_edit = bool(last_sent)
         if message_id is not None and final_text and final_text != last_sent:
             payload: dict[str, Any] = {
                 "chat_id": chat_id,
@@ -729,21 +741,22 @@ class TelegramChannel:
             if self._parse_mode:
                 payload["parse_mode"] = self._parse_mode
             try:
-                response = await self._http.post(f"{self._api}/editMessageText", json=payload)
+                response = await http.post(f"{self._api}/editMessageText", json=payload)
                 # If parse_mode rejected the final edit, retry as plain text
                 # so the user still sees the answer.
                 if response.status_code == 400 and self._parse_mode:
                     payload.pop("parse_mode", None)
-                    await self._http.post(f"{self._api}/editMessageText", json=payload)
+                    await http.post(f"{self._api}/editMessageText", json=payload)
+                text_sent_via_edit = True
             except Exception:  # pragma: no cover
                 logger.exception("Telegram final edit failed")
 
-        # If nothing ever streamed (no text chunks at all), fall back to the
-        # full result so images / tool outputs still reach the user.
-        if not accumulated:
-            await self._reply_with_result(chat_id, final)
+        # Forward final multimodal payload (photos, structured artifacts). When
+        # we already rendered text via streaming edits, suppress a second text
+        # sendMessage to avoid duplicate output.
+        await self._reply_with_result(chat_id, final, send_text=not text_sent_via_edit)
 
-    async def _reply_with_result(self, chat_id: int, result: Any) -> None:
+    async def _reply_with_result(self, chat_id: int, result: Any, *, send_text: bool = True) -> None:
         """Forward an AgentRunResponse back to Telegram.
 
         Sends any image attachments on the last assistant message as photos,
@@ -768,9 +781,9 @@ class TelegramChannel:
                     sent_photo = True
 
         text = getattr(result, "text", None)
-        if text:
+        if send_text and text:
             await self._send(chat_id, text)
-        elif not sent_photo:
+        elif send_text and not sent_photo:
             await self._send(chat_id, "(no response)")
 
     async def _send(self, chat_id: int, text: str, **extra: Any) -> None:

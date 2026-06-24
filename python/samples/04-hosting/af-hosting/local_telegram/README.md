@@ -1,8 +1,8 @@
 # local_telegram — `@tool`, file-backed history, hooks, Telegram
 
-Builds on `foundry_hosted_agent/` with the hooks and config most real apps need:
+Builds on the `local_responses/` sample with the hooks and config most real apps need:
 
-- A `@tool`-decorated function call (`get_weather`) so streaming and tool
+- A `@tool`-decorated function call (`lookup_weather`) so streaming and tool
   invocation are exercised end-to-end.
 - `FileHistoryProvider(./storage/sessions)` so per-user/per-chat history
   survives restarts.
@@ -49,6 +49,6 @@ uv run python call_server.py --previous-response-id telegram:8741188429 "What di
 ```
 
 > This sample is **local-only** — it shows the `agent-framework-hosting`
-> server stack as a standalone process. For a Foundry-Hosted-Agents-compatible
-> packaging (Dockerfile + `agent.yaml` + `azure.yaml`), see
-> [`foundry_hosted_agent/`](../foundry_hosted_agent).
+> server stack as a standalone process. For Foundry-hosting deployment
+> guidance (including container packaging), see
+> [`../../../../packages/foundry_hosting/README.md`](../../../../packages/foundry_hosting/README.md).

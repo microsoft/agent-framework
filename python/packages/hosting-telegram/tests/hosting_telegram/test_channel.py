@@ -12,10 +12,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Awaitable, Mapping
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
+from agent_framework import Content, Message
 from agent_framework_hosting import (
     AgentFrameworkHost,
     ChannelCommand,
@@ -99,15 +100,22 @@ class TestParseTelegramMessage:
 @dataclass
 class _FakeAgentResponse:
     text: str
+    messages: list[Message] = field(default_factory=list)
 
 
 class _FakeAgent:
     def __init__(self, reply: str = "ok") -> None:
+        self.id = "fake-agent"
+        self.name: str | None = "Fake Agent"
+        self.description: str | None = "Test fake agent"
         self._reply = reply
         self.runs: list[Any] = []
 
     def create_session(self, *, session_id: str | None = None) -> Any:
         return {"session_id": session_id}
+
+    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> Any:
+        return {"service_session_id": service_session_id, "session_id": session_id}
 
     def run(self, messages: Any = None, *, stream: bool = False, **kwargs: Any) -> Any:
         self.runs.append({"messages": messages, "stream": stream, "kwargs": kwargs})
@@ -138,7 +146,7 @@ def _make_telegram(
     fake_http.post = AsyncMock(return_value=response_mock)
     fake_http.get = AsyncMock(return_value=response_mock)
     fake_http.aclose = AsyncMock()
-    ch._http = fake_http
+    object.__setattr__(ch, "_http", fake_http)
     return ch, agent
 
 
@@ -155,6 +163,30 @@ class TestTelegramWebhook:
             )
         assert r.status_code == 200
         assert agent.runs, "expected the agent to be invoked"
+
+    def test_slash_only_text_is_ignored(self) -> None:
+        ch, agent = _make_telegram()
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post(
+                "/telegram/webhook",
+                json={"update_id": 1, "message": {"chat": {"id": 99}, "text": "/"}},
+                headers={"x-telegram-bot-api-secret-token": "s3cr3t"},
+            )
+        assert r.status_code == 200
+        assert not agent.runs
+
+    def test_non_int_chat_id_is_ignored(self) -> None:
+        ch, agent = _make_telegram()
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post(
+                "/telegram/webhook",
+                json={"update_id": 1, "message": {"chat": {"id": "99"}, "text": "hello"}},
+                headers={"x-telegram-bot-api-secret-token": "s3cr3t"},
+            )
+        assert r.status_code == 200
+        assert not agent.runs
 
     def test_empty_path_mounts_at_app_root(self) -> None:
         ch, agent = _make_telegram(path="")
@@ -210,13 +242,14 @@ class TestTelegramWebhook:
                     return await shaped
                 return shaped
 
-        ch._ctx = _Ctx()  # type: ignore[assignment] # pyright: ignore[reportPrivateUsage]
+        object.__setattr__(ch, "_ctx", _Ctx())
 
         request = ChannelRequest(channel="telegram", operation="message.create", input="hi", stream=False)
         await ch._dispatch(99, request)  # pyright: ignore[reportPrivateUsage]
 
-        assert ch._http is not None
-        args, kwargs = ch._http.post.call_args  # type: ignore[attr-defined]
+        http_mock = cast(Any, ch._http)
+        assert http_mock is not None
+        args, kwargs = http_mock.post.call_args
         assert args[0].endswith("/sendMessage")
         assert kwargs["json"]["text"] == "HI"
         assert seen_kwargs
@@ -243,7 +276,7 @@ class TestCommand:
         fake_http.post = AsyncMock(return_value=response_mock)
         fake_http.get = AsyncMock(return_value=response_mock)
         fake_http.aclose = AsyncMock()
-        ch._http = fake_http
+        object.__setattr__(ch, "_http", fake_http)
         host = AgentFrameworkHost(target=_FakeAgent(), channels=[ch])
 
         with TestClient(host.app) as client:
@@ -275,7 +308,7 @@ class TestPerChatOrdering:
                 await slow_event.wait()
             order.append(uid)
 
-        ch._process_update = fake_process  # type: ignore[method-assign]
+        object.__setattr__(ch, "_process_update", cast(Any, fake_process))
 
         ch._enqueue_update({"update_id": 1, "message": {"chat": {"id": 100}, "text": "first"}})
         ch._enqueue_update({"update_id": 2, "message": {"chat": {"id": 100}, "text": "second"}})
@@ -308,7 +341,7 @@ class TestPerChatOrdering:
             if uid == 1:
                 await gate_a.wait()
 
-        ch._process_update = fake_process  # type: ignore[method-assign]
+        object.__setattr__(ch, "_process_update", cast(Any, fake_process))
 
         ch._enqueue_update({"update_id": 1, "message": {"chat": {"id": 1}, "text": "a"}})
         ch._enqueue_update({"update_id": 2, "message": {"chat": {"id": 2}, "text": "b"}})
@@ -345,7 +378,7 @@ class TestWebhookAckBeforeRun:
             agent_started.set()
             await agent_release.wait()
 
-        ch._process_update = fake_process  # type: ignore[method-assign]
+        object.__setattr__(ch, "_process_update", cast(Any, fake_process))
 
         async def receive() -> Any:
             payload = b'{"update_id":1,"message":{"chat":{"id":42},"text":"hi"}}'
@@ -386,7 +419,7 @@ class TestShutdownDrainsWorkers:
         async def stuck(update: Mapping[str, Any]) -> None:
             await forever.wait()
 
-        ch._process_update = stuck  # type: ignore[method-assign]
+        object.__setattr__(ch, "_process_update", cast(Any, stuck))
         ch._enqueue_update({"update_id": 9, "message": {"chat": {"id": 1}, "text": "a"}})
         await asyncio.sleep(0)
         assert ch._chat_workers and ch._update_tasks
@@ -396,7 +429,7 @@ class TestShutdownDrainsWorkers:
         assert not ch._update_tasks
 
 
-def _deletewebhook_called(http_mock: MagicMock) -> bool:
+def _deletewebhook_called(http_mock: Any) -> bool:
     return any(call.args and str(call.args[0]).endswith("/deleteWebhook") for call in http_mock.post.call_args_list)
 
 
@@ -406,8 +439,10 @@ class TestWebhookShutdownTeardown:
         ch, _ = _make_telegram()
         assert ch._transport == "webhook"
         await ch._on_shutdown()
-        assert not _deletewebhook_called(ch._http)  # type: ignore[arg-type]
-        ch._http.aclose.assert_awaited()  # type: ignore[union-attr]
+        http_mock = cast(Any, ch._http)
+        assert http_mock is not None
+        assert not _deletewebhook_called(http_mock)
+        http_mock.aclose.assert_awaited()
 
     async def test_shutdown_deletes_webhook_when_opted_in(self) -> None:
         """Opt-in: ``delete_webhook_on_shutdown=True`` performs best-effort teardown."""
@@ -424,7 +459,72 @@ class TestWebhookShutdownTeardown:
         fake_http.post = AsyncMock(return_value=response_mock)
         fake_http.get = AsyncMock(return_value=response_mock)
         fake_http.aclose = AsyncMock()
-        ch._http = fake_http
+        object.__setattr__(ch, "_http", fake_http)
         await ch._on_shutdown()
         assert _deletewebhook_called(fake_http)
         fake_http.aclose.assert_awaited()
+
+
+@dataclass
+class _FakeStreamUpdate:
+    text: str
+
+
+class _FakeResponseStream:
+    def __init__(self, chunks: list[str], final: _FakeAgentResponse) -> None:
+        self._chunks = chunks
+        self._final = final
+
+    def __aiter__(self) -> Any:
+        async def _gen() -> Any:
+            for chunk in self._chunks:
+                yield _FakeStreamUpdate(text=chunk)
+
+        return _gen()
+
+    async def get_final_response(self) -> _FakeAgentResponse:
+        return self._final
+
+
+class TestStreamingBehavior:
+    async def test_streaming_long_text_does_not_hang(self) -> None:
+        ch, _ = _make_telegram()
+        long_text = "x" * 5000
+        stream = _FakeResponseStream([long_text], _FakeAgentResponse(text=long_text))
+        request = ChannelRequest(channel="telegram", operation="message.create", input="hello", stream=True)
+        await asyncio.wait_for(
+            ch._stream_to_chat(1, request, cast(Any, stream)),
+            timeout=1.0,
+        )  # pyright: ignore[reportPrivateUsage]
+
+    async def test_streaming_sends_images_from_final_result(self) -> None:
+        ch, _ = _make_telegram()
+        send_photo = AsyncMock()
+        object.__setattr__(ch, "_send_photo", send_photo)
+
+        final = _FakeAgentResponse(
+            text="hello",
+            messages=[
+                Message(
+                    "assistant",
+                    [Content.from_uri(uri="https://example.com/cat.png", media_type="image/png")],
+                )
+            ],
+        )
+        stream = _FakeResponseStream(["hello"], final)
+        request = ChannelRequest(channel="telegram", operation="message.create", input="hello", stream=True)
+        await ch._stream_to_chat(7, request, cast(Any, stream))  # pyright: ignore[reportPrivateUsage]
+
+        send_photo.assert_awaited_once_with(7, "https://example.com/cat.png")
+
+    async def test_streaming_honors_send_typing_action_toggle(self) -> None:
+        ch, _ = _make_telegram()
+        ch._send_typing_action = False  # pyright: ignore[reportPrivateUsage]
+        send_chat_action = AsyncMock()
+        object.__setattr__(ch, "_send_chat_action", send_chat_action)
+
+        stream = _FakeResponseStream(["hello"], _FakeAgentResponse(text="hello"))
+        request = ChannelRequest(channel="telegram", operation="message.create", input="hello", stream=True)
+        await ch._stream_to_chat(8, request, cast(Any, stream))  # pyright: ignore[reportPrivateUsage]
+
+        send_chat_action.assert_not_awaited()

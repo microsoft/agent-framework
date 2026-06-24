@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Local client for the advanced agent — POSTs to the ``/responses`` endpoint
-exposed by ``server/advanced_app.py`` using the standard ``openai`` SDK.
+"""Local client for the local_telegram sample.
+
+POSTs to the ``/responses`` endpoint exposed by ``app.py`` using the standard
+``openai`` SDK.
 
 The advanced server's ``responses_hook`` keys per-user history off the
 OpenAI ``safety_identifier`` field, so we pass ``safety_identifier=`` here.
@@ -14,12 +16,12 @@ channel — for example a Telegram chat at
 
 Start the server first (in another shell)::
 
-    cd server && uv run python advanced_app.py
+    uv run python app.py
 
 Then::
 
-    python call_server.py "What is the weather in Tokyo?"
-    python call_server.py --previous-response-id telegram:8741188429 "What did we discuss?"
+    uv run python call_server.py "What is the weather in Tokyo?"
+    uv run python call_server.py --previous-response-id telegram:8741188429 "What did we discuss?"
 """
 
 from __future__ import annotations
