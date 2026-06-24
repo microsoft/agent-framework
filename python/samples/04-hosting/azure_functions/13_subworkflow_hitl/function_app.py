@@ -1,21 +1,20 @@
 # Copyright (c) Microsoft. All rights reserved.
+"""Composed workflow whose Human-in-the-Loop pause lives in a nested sub-workflow.
 
-"""Worker hosting a composed workflow whose Human-in-the-Loop pause lives in a sub-workflow.
+This sample combines composition with human-in-the-loop on Azure Durable
+Functions: the HITL ``request_info`` happens **inside an inner workflow** that an
+outer workflow embeds via ``WorkflowExecutor``. On the durable host the inner
+workflow runs as its own child orchestration, so its pending request is recorded on
+the *child* instance. The parent records the child instance id in its custom status,
+which lets the host surface the nested request behind a single top-level addressing
+surface.
 
-This sample combines composition (``11_subworkflow``) with human-in-the-loop
-(``09_workflow_hitl``): the HITL ``request_info`` happens **inside an inner
-workflow** that an outer workflow embeds via ``WorkflowExecutor``. On the durable
-host the inner workflow runs as its own child orchestration, so its pending request
-is recorded on the *child* instance. The parent records the child instance id in its
-custom status, which lets the client discover the nested request behind a single
-top-level addressing surface.
+``AgentFunctionApp`` walks the composition and registers a durable orchestration for
+each workflow, but exposes HTTP routes only for the **top-level** workflow:
 
-``DurableAIAgentWorker.configure_workflow`` walks the composition and registers a
-durable orchestration for each workflow:
-
-- ``dafx-moderation_pipeline`` - the outer workflow.
+- ``dafx-moderation_pipeline`` - the outer workflow (HTTP routes).
 - ``dafx-human_review`` - the inner workflow (run as a child orchestration), which
-  contains the HITL pause.
+  contains the HITL pause (no direct routes).
 
 Composition layout::
 
@@ -25,20 +24,21 @@ Composition layout::
              review_gate (executor: request_info -> response_handler)
         -> publish (executor)
 
-The client sees the inner pending request with a **qualified** request id
-(``review_sub~0~{requestId}``) and posts the response back to the *top-level*
-instance; the host routes it to the owning child orchestration automatically.
+The status endpoint surfaces the inner pending request with a **qualified** request
+id (``review_sub~0~{requestId}``); the caller posts the response back to the
+*top-level* instance and the host routes it to the owning child orchestration
+automatically.
+
+This sample hosts **no AI agents**, so it needs only the Durable Task Scheduler and
+Azurite (no model credentials).
 
 Prerequisites:
-- Start a Durable Task Scheduler (e.g. the DTS emulator on ``localhost:8080``).
-  (This sample uses no AI agents, so no model credentials are required.)
-
-Run the worker (this process), then run ``client.py`` in another process.
+- Start Azurite: ``azurite --silent --location .``
+- Start a Durable Task Scheduler emulator on ``localhost:8080``.
+- Run: ``func start``
 """
 
-import asyncio
 import logging
-import os
 from dataclasses import dataclass
 
 from agent_framework import (
@@ -50,16 +50,10 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from agent_framework.azure import DurableAIAgentWorker
-from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
-from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+from agent_framework_azurefunctions import AgentFunctionApp
 from pydantic import BaseModel
 from typing_extensions import Never
 
-load_dotenv()
-
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 INNER_WORKFLOW_NAME = "human_review"
@@ -91,7 +85,7 @@ class HumanApprovalRequest:
 
 
 class HumanApprovalResponse(BaseModel):
-    """Response the external client sends back via the HITL response endpoint/method."""
+    """Response the external client sends back via the HITL response endpoint."""
 
     approved: bool
     reviewer_notes: str = ""
@@ -200,7 +194,7 @@ class PublishExecutor(Executor):
         await ctx.yield_output(message)
 
 
-def create_workflow() -> Workflow:
+def _create_workflow() -> Workflow:
     """Build the outer ``moderation_pipeline`` workflow embedding the HITL sub-workflow."""
     inner_workflow = create_inner_workflow()
 
@@ -219,56 +213,58 @@ def create_workflow() -> Workflow:
     )
 
 
-def get_worker(
-    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
-) -> DurableTaskSchedulerWorker:
-    """Create a configured DurableTaskSchedulerWorker."""
-    taskhub_name = taskhub or os.getenv("TASKHUB", "default")
-    endpoint_url = endpoint or os.getenv("ENDPOINT", "http://localhost:8080")
-
-    credential = None if endpoint_url == "http://localhost:8080" else AzureCliCredential()
-
-    return DurableTaskSchedulerWorker(
-        host_address=endpoint_url,
-        secure_channel=endpoint_url != "http://localhost:8080",
-        taskhub=taskhub_name,
-        token_credential=credential,
-        log_handler=log_handler,
-    )
+# ============================================================================
+# Application Entry Point
+# ============================================================================
 
 
-def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
-    """Register the outer workflow and its nested HITL sub-workflow on the worker."""
-    agent_worker = DurableAIAgentWorker(worker)
+def launch(durable: bool = True) -> AgentFunctionApp | None:
+    """Launch the function app or DevUI.
 
-    workflow = create_workflow()
-    # A single call registers the outer workflow plus the nested human_review
-    # sub-workflow (each as its own durable orchestration).
-    agent_worker.configure_workflow(workflow)
-    logger.info(
-        "✓ Configured workflow '%s' with embedded HITL sub-workflow '%s'",
-        OUTER_WORKFLOW_NAME,
-        INNER_WORKFLOW_NAME,
-    )
+    Args:
+        durable: If True, returns AgentFunctionApp for Azure Functions.
+                 If False, launches DevUI for local MAF development.
+    """
+    if durable:
+        # Azure Functions mode. The app automatically provides per-workflow HITL
+        # endpoints for the top-level workflow ("moderation_pipeline"):
+        # - POST /api/workflow/moderation_pipeline/run
+        # - GET  /api/workflow/moderation_pipeline/status/{instanceId}
+        #        (surfaces the nested request as review_sub~0~{requestId})
+        # - POST /api/workflow/moderation_pipeline/respond/{instanceId}/{requestId}
+        # - GET  /api/health
+        workflow = _create_workflow()
+        return AgentFunctionApp(workflow=workflow, enable_health_check=True)
 
-    return agent_worker
+    # Pure MAF mode with DevUI for local development.
+    from pathlib import Path
+
+    from agent_framework.devui import serve
+    from dotenv import load_dotenv
+
+    env_path = Path(__file__).parent / ".env"
+    load_dotenv(dotenv_path=env_path)
+
+    logger.info("Starting Sub-workflow HITL Sample in MAF mode")
+    logger.info("Available at: http://localhost:8097")
+    logger.info("\nThis workflow demonstrates:")
+    logger.info("- Human-in-the-loop inside a nested sub-workflow (WorkflowExecutor)")
+    logger.info("- Qualified request ids (review_sub~0~{requestId}) behind a single surface")
+    logger.info("\nFlow: Intake -> WorkflowExecutor(human_review: ReviewGate HITL) -> Publish")
+
+    workflow = _create_workflow()
+    serve(entities=[workflow], port=8097, auto_open=True)
+
+    return None
 
 
-async def main() -> None:
-    """Start the worker and block until interrupted."""
-    worker = get_worker()
-    setup_worker(worker)
-
-    logger.info("Worker is ready and listening for work items. Press Ctrl+C to stop.")
-    try:
-        worker.start()
-        while True:
-            await asyncio.sleep(1)
-    except KeyboardInterrupt:
-        logger.info("Worker shutdown initiated")
-
-    logger.info("Worker stopped")
+# Default: Azure Functions mode
+# Run with `python function_app.py --maf` for pure MAF mode with DevUI
+app = launch(durable=True)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import sys
+
+    if "--maf" in sys.argv:
+        launch(durable=False)

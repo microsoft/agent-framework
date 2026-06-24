@@ -44,13 +44,15 @@ from agent_framework_durabletask import (
 )
 from agent_framework_durabletask._workflows.naming import (
     SUBWORKFLOW_REQUEST_SEPARATOR,
+    split_subworkflow_request_id,
+    validate_executor_id,
     validate_workflow_name,
     workflow_executor_activity_name,
     workflow_orchestrator_name,
     workflow_scoped_executor_id,
 )
 from agent_framework_durabletask._workflows.registration import collect_hosted_workflows
-from agent_framework_durabletask._workflows.serialization import strip_pickle_markers
+from agent_framework_durabletask._workflows.serialization import strip_pickle_markers, strip_subworkflow_markers
 
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
@@ -249,8 +251,10 @@ class AgentFunctionApp(DFAppBase):
         self._agent_metadata = {}
         self._workflows: dict[str, Workflow] = {}
         # Every workflow whose orchestration has been registered (top-level plus
-        # nested sub-workflows), so a shared sub-workflow is registered once.
-        self._registered_orchestrations: set[str] = set()
+        # nested sub-workflows), keyed by name -> the registered instance, so a shared
+        # sub-workflow is registered once while two different workflows that collide on
+        # a name are rejected.
+        self._registered_orchestrations: dict[str, Workflow] = {}
         self.enable_health_check = enable_health_check
         self.enable_http_endpoints = enable_http_endpoints
         self.enable_mcp_tool_trigger = enable_mcp_tool_trigger
@@ -334,18 +338,29 @@ class AgentFunctionApp(DFAppBase):
             raise ValueError(f"Workflow '{workflow.name}' is already registered on this app.")
 
         # Validate the whole composition (top-level plus every nested sub-workflow)
-        # up front, so an invalid/auto-generated nested name fails before any
+        # up front, so an invalid/auto-generated nested name (or an executor id that
+        # would break durable naming / nested-HITL addressing) fails before any
         # registration side effects leave the app partially configured.
         hosted_workflows = list(collect_hosted_workflows(workflow))
         for hosted in hosted_workflows:
             validate_workflow_name(hosted.name)
+            for executor_id in hosted.executors:
+                validate_executor_id(executor_id)
 
         self._workflows[workflow.name] = workflow
 
         # Register orchestration primitives for the top-level workflow and every
-        # nested sub-workflow (deduped by name).
+        # nested sub-workflow (deduped by name; a different workflow reusing a name is
+        # rejected).
         for hosted in hosted_workflows:
-            if hosted.name in self._registered_orchestrations:
+            existing = self._registered_orchestrations.get(hosted.name)
+            if existing is not None:
+                if existing is not hosted:
+                    raise ValueError(
+                        f"A different workflow named '{hosted.name}' is already registered on this "
+                        f"app. A workflow name maps to a single durable orchestration "
+                        f"('dafx-{hosted.name}'); rename one of them."
+                    )
                 continue
             self._register_workflow_primitives(hosted)
 
@@ -356,7 +371,7 @@ class AgentFunctionApp(DFAppBase):
     def _register_workflow_primitives(self, workflow: Workflow) -> None:
         """Register one workflow's entities, activities, and orchestrator (no routes)."""
         validate_workflow_name(workflow.name)
-        self._registered_orchestrations.add(workflow.name)
+        self._registered_orchestrations[workflow.name] = workflow
 
         logger.debug("[AgentFunctionApp] Registering workflow '%s'", workflow.name)
         plan = plan_workflow_registration(workflow)
@@ -473,6 +488,12 @@ class AgentFunctionApp(DFAppBase):
                     return self._build_error_response("Request body is required")
                 client_input = raw_body.decode("utf-8")
 
+            # Neutralize a forged sub-workflow envelope before scheduling: only an
+            # internal child dispatch (post trust boundary) may carry those reserved
+            # keys, so stripping them here keeps untrusted input off the orchestrator's
+            # trusted-deserialization path (see strip_subworkflow_markers).
+            client_input = strip_subworkflow_markers(client_input)
+
             instance_id = await client.start_new(orchestrator_name, client_input=client_input)
 
             base_url = self._build_base_url(req.url)
@@ -528,8 +549,9 @@ class AgentFunctionApp(DFAppBase):
 
             # Add pending HITL requests info if available. Requests originating in a
             # nested sub-workflow are bubbled up here with a qualified requestId
-            # ({executorId}::{requestId}); the respondUrl always targets this top-level
-            # instance, so the caller has a single addressing surface (B2).
+            # ({executorId}~{ordinal}~{requestId}, nested deeper for deeper levels); the
+            # respondUrl always targets this top-level instance, so the caller has a
+            # single addressing surface (B2).
             custom_status = status.custom_status
             if isinstance(custom_status, dict):
                 gathered = await self._gather_pending_hitl_requests(client, cast("dict[str, Any]", custom_status))
@@ -587,7 +609,7 @@ class AgentFunctionApp(DFAppBase):
             # See strip_pickle_markers() docstring for details on the attack vector.
             response_data = strip_pickle_markers(response_data)
 
-            # A qualified requestId ({executorId}::{requestId}) addresses a request that
+            # A qualified requestId ({executorId}~{ordinal}~{requestId}) addresses a request that
             # originated in a nested sub-workflow: resolve it to the owning child
             # orchestration instance and the bare request id it is waiting on.
             resolved = await self._resolve_hitl_target(client, instance_id, request_id)
@@ -628,11 +650,13 @@ class AgentFunctionApp(DFAppBase):
         """Collect ``(qualifiedRequestId, requestData)`` pairs for an instance and its sub-workflows.
 
         ``custom_status`` is the already-fetched custom status of the instance at the
-        current level. Nested sub-workflows (listed in its ``subworkflows`` map) are
-        fetched by id and recursed into, accumulating an ``{executorId}::`` prefix so a
-        request deep in the tree carries its full path. Child instances come from the
-        trusted parent status, so no per-child ownership check is applied (the caller
-        validated the top-level instance).
+        current level. Nested sub-workflows (listed in its ``subworkflows`` map as
+        ``{executorId: [childInstanceId, ...]}``) are fetched by id and recursed into,
+        accumulating an ``{executorId}~{ordinal}~`` prefix so a request deep in the tree
+        carries its full path and a node with several children this superstep keeps each
+        child distinctly addressable. Child instances come from the trusted parent
+        status, so no per-child ownership check is applied (the caller validated the
+        top-level instance).
         """
         gathered: list[tuple[str, dict[str, Any]]] = []
 
@@ -640,23 +664,31 @@ class AgentFunctionApp(DFAppBase):
         if isinstance(pending, dict):
             for req_id, req_data in cast("dict[str, Any]", pending).items():
                 if isinstance(req_data, dict):
-                    gathered.append((f"{prefix}{req_id}", cast("dict[str, Any]", req_data)))
+                    typed = cast("dict[str, Any]", req_data)
+                    # Use the request's own id field (the event name the orchestrator
+                    # waits on), falling back to the map key; the durabletask client
+                    # qualifies against the same value so a qualified id round-trips.
+                    bare_id = typed.get("request_id", req_id)
+                    gathered.append((f"{prefix}{bare_id}", typed))
 
         subworkflows = custom_status.get("subworkflows")
         if isinstance(subworkflows, dict):
-            for executor_id, child_instance_id in cast("dict[str, Any]", subworkflows).items():
-                if not isinstance(child_instance_id, str):
-                    continue
-                child_status = await client.get_status(child_instance_id)
-                child_custom = child_status.custom_status if child_status else None
-                if isinstance(child_custom, dict):
-                    gathered.extend(
-                        await self._gather_pending_hitl_requests(
-                            client,
-                            cast("dict[str, Any]", child_custom),
-                            prefix=f"{prefix}{executor_id}{SUBWORKFLOW_REQUEST_SEPARATOR}",
+            sep = SUBWORKFLOW_REQUEST_SEPARATOR
+            for executor_id, child_ids in cast("dict[str, Any]", subworkflows).items():
+                children: list[Any] = cast("list[Any]", child_ids) if isinstance(child_ids, list) else []
+                for ordinal, child_instance_id in enumerate(children):
+                    if not isinstance(child_instance_id, str):
+                        continue
+                    child_status = await client.get_status(child_instance_id)
+                    child_custom = child_status.custom_status if child_status else None
+                    if isinstance(child_custom, dict):
+                        gathered.extend(
+                            await self._gather_pending_hitl_requests(
+                                client,
+                                cast("dict[str, Any]", child_custom),
+                                prefix=f"{prefix}{executor_id}{sep}{ordinal}{sep}",
+                            )
                         )
-                    )
 
         return gathered
 
@@ -668,16 +700,18 @@ class AgentFunctionApp(DFAppBase):
     ) -> tuple[str, str] | None:
         """Resolve a possibly-qualified request id to ``(owningInstanceId, bareRequestId)``.
 
-        An unqualified id targets ``instance_id`` directly. A qualified id
-        ``{executorId}::{rest}`` addresses a nested sub-workflow: the executor's child
-        instance id is read from this instance's ``subworkflows`` custom-status map and
-        the remainder resolved recursively. Returns ``None`` when a referenced
-        sub-workflow is not currently active (so the caller can return "not found").
+        An unqualified id (no well-formed hop) targets ``instance_id`` directly. A
+        qualified id ``{executorId}~{ordinal}~{rest}`` addresses a nested sub-workflow:
+        the executor's child instance id is read from this instance's ``subworkflows``
+        custom-status map (a list selected by ``ordinal``) and the remainder resolved
+        recursively. Returns ``None`` when a referenced sub-workflow child is not
+        currently active (so the caller can return "not found").
         """
-        if SUBWORKFLOW_REQUEST_SEPARATOR not in request_id:
+        hop = split_subworkflow_request_id(request_id)
+        if hop is None:
             return instance_id, request_id
 
-        executor_id, remainder = request_id.split(SUBWORKFLOW_REQUEST_SEPARATOR, 1)
+        executor_id, ordinal, remainder = hop
         status = await client.get_status(instance_id)
         custom_status = status.custom_status if status else None
         if not isinstance(custom_status, dict):
@@ -685,7 +719,13 @@ class AgentFunctionApp(DFAppBase):
         subworkflows = cast("dict[str, Any]", custom_status).get("subworkflows")
         if not isinstance(subworkflows, dict):
             return None
-        child_instance_id = cast("dict[str, Any]", subworkflows).get(executor_id)
+        children_raw = cast("dict[str, Any]", subworkflows).get(executor_id)
+        if not isinstance(children_raw, list):
+            return None
+        children = cast("list[Any]", children_raw)
+        if ordinal < 0 or ordinal >= len(children):
+            return None
+        child_instance_id = children[ordinal]
         if not isinstance(child_instance_id, str):
             return None
         return await self._resolve_hitl_target(client, child_instance_id, remainder)

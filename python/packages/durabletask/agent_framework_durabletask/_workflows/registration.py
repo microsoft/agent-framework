@@ -102,22 +102,36 @@ def collect_hosted_workflows(workflow: Workflow) -> Iterator[Workflow]:
 
     A host registers the orchestration primitives for each yielded workflow so a
     parent orchestration can invoke its sub-workflows as child orchestrations.
-    Workflows are deduped by :attr:`Workflow.name`: a sub-workflow reused across
-    the tree (or shared by two top-level workflows) is yielded once. The top-level
-    ``workflow`` is yielded first.
+    Workflows are deduped by :attr:`Workflow.name`: the *same* sub-workflow instance
+    reused across the tree (or shared by two top-level workflows) is yielded once,
+    which is the expected fan-out pattern. Two **different** workflow instances that
+    share a name are rejected, since both would resolve to one durable orchestration
+    (``dafx-{name}``) and silently shadow each other. The top-level ``workflow`` is
+    yielded first.
 
     Args:
         workflow: The top-level workflow to walk.
 
     Yields:
         Each distinct workflow in the nesting tree, parent before child.
+
+    Raises:
+        ValueError: If two different workflow instances in the tree share a name.
     """
-    seen: set[str] = set()
+    seen: dict[str, Workflow] = {}
 
     def _walk(current: Workflow) -> Iterator[Workflow]:
-        if current.name in seen:
+        existing = seen.get(current.name)
+        if existing is not None:
+            if existing is not current:
+                raise ValueError(
+                    f"Two different workflows are named '{current.name}'. A workflow name maps to a "
+                    f"single durable orchestration ('dafx-{current.name}'), so names must be unique "
+                    "within a hosted composition. Rename one, or reuse the same Workflow instance if "
+                    "they are meant to be the same sub-workflow."
+                )
             return
-        seen.add(current.name)
+        seen[current.name] = current
         yield current
         plan = plan_workflow_registration(current)
         for sub in plan.subworkflow_executors:

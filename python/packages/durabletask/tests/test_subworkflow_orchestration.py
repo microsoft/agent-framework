@@ -6,11 +6,11 @@ A ``WorkflowExecutor`` node runs its inner workflow as a durable child
 orchestration. These tests cover the host-side glue:
 
 * :func:`_prepare_subworkflow_task` wraps the node's message in a trusted-input
-  marker (carrying nesting depth) and schedules ``dafx-{innerName}``.
+  marker and schedules ``dafx-{innerName}``.
 * :func:`_process_subworkflow_result` turns the child's outputs into either
   routed messages (default) or parent outputs (``allow_direct_output``).
 * :func:`_try_unwrap_subworkflow_input` / :func:`_coerce_initial_input` reconstruct
-  the original typed object on the child side and bound recursion via depth.
+  the original typed object on the child side.
 """
 
 from unittest.mock import Mock
@@ -18,7 +18,6 @@ from unittest.mock import Mock
 from agent_framework import WorkflowExecutor
 
 from agent_framework_durabletask._workflows.orchestrator import (
-    SUBWORKFLOW_DEPTH_KEY,
     SUBWORKFLOW_INPUT_KEY,
     TaskType,
     _coerce_initial_input,
@@ -47,7 +46,7 @@ class TestPrepareSubworkflowTask:
         ctx.call_sub_orchestrator.return_value = "task-sentinel"
         executor = _subworkflow_executor("sub-node", "inner_wf")
 
-        task = _prepare_subworkflow_task(ctx, executor, "hello", "parent::sub-node::0", depth=0)
+        task = _prepare_subworkflow_task(ctx, executor, "hello", "parent::sub-node::0")
 
         assert task == "task-sentinel"
         ctx.call_sub_orchestrator.assert_called_once()
@@ -55,15 +54,14 @@ class TestPrepareSubworkflowTask:
         assert args[0] == "dafx-inner_wf"
         assert kwargs["instance_id"] == "parent::sub-node::0"
 
-    def test_wraps_message_in_marker_with_incremented_depth(self) -> None:
+    def test_wraps_message_in_marker(self) -> None:
         ctx = Mock()
         executor = _subworkflow_executor("sub-node", "inner_wf")
 
-        _prepare_subworkflow_task(ctx, executor, "payload", "child-id", depth=3)
+        _prepare_subworkflow_task(ctx, executor, "payload", "child-id")
 
         args, _ = ctx.call_sub_orchestrator.call_args
         child_input = args[1]
-        assert child_input[SUBWORKFLOW_DEPTH_KEY] == 4
         # The wrapped payload round-trips back to the original message.
         assert deserialize_value(child_input[SUBWORKFLOW_INPUT_KEY]) == "payload"
 
@@ -117,7 +115,7 @@ class TestSubworkflowInputUnwrap:
     """Child-side reconstruction of the parent-supplied marker payload."""
 
     def test_unwrap_detects_and_reconstructs_marker(self) -> None:
-        marker = {SUBWORKFLOW_INPUT_KEY: "wrapped", SUBWORKFLOW_DEPTH_KEY: 2}
+        marker = {SUBWORKFLOW_INPUT_KEY: "wrapped"}
 
         unwrapped, inner = _try_unwrap_subworkflow_input(marker)
 
@@ -138,6 +136,6 @@ class TestSubworkflowInputUnwrap:
         # reconstructed inner object directly, bypassing start-executor coercion.
         workflow = Mock()
         workflow.executors = {}
-        marker = {SUBWORKFLOW_INPUT_KEY: "inner-message", SUBWORKFLOW_DEPTH_KEY: 1}
+        marker = {SUBWORKFLOW_INPUT_KEY: "inner-message"}
 
         assert _coerce_initial_input(workflow, marker) == "inner-message"

@@ -1621,6 +1621,46 @@ class TestAgentFunctionAppSubworkflow:
         ):
             AgentFunctionApp(workflow=outer)
 
+    def test_different_subworkflow_sharing_a_name_is_rejected(self) -> None:
+        """Two different sub-workflow instances that share a name collide and are rejected."""
+        inner_a, _ = self._inner_agent_wf("shared", "agent_node")
+        inner_b, _ = self._inner_agent_wf("shared", "other_node")  # different instance, same name
+        from agent_framework import WorkflowExecutor
+
+        sub_a = Mock(spec=WorkflowExecutor)
+        sub_a.id = "a"
+        sub_a.workflow = inner_a
+        sub_b = Mock(spec=WorkflowExecutor)
+        sub_b.id = "b"
+        sub_b.workflow = inner_b
+        outer = Mock()
+        outer.name = "outer"
+        outer.executors = {"a": sub_a, "b": sub_b}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="different workflow"),
+        ):
+            AgentFunctionApp(workflow=outer)
+
+    def test_executor_id_with_reserved_separator_is_rejected(self) -> None:
+        """An executor id containing the nested-HITL separator is rejected at registration."""
+        from agent_framework import Executor
+
+        ex = Mock(spec=Executor)
+        ex.id = "bad~id"
+        wf = Mock()
+        wf.name = "orders"
+        wf.executors = {"bad~id": ex}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="reserved sub-workflow request separator"),
+        ):
+            AgentFunctionApp(workflow=wf)
+
 
 # NOTE: State snapshot/diff tests were moved to durabletask once the activity
 # execution body was extracted into the host-agnostic execute_workflow_activity.
@@ -1676,7 +1716,7 @@ class TestWorkflowOrchestrationScoping:
 
     Both endpoints address durable instances by ID only, but the durable client resolves
     IDs across every orchestration in the task hub (agent entities, user-registered
-    orchestrations, other apps on the same hub). ``_is_workflow_orchestration`` gates the
+    orchestrations, other apps on the same hub). ``_is_owned_orchestration`` gates the
     endpoints so a leaked instance ID for a different orchestration is treated as
     "not found" instead of leaking its status/HITL details or accepting injected events.
     """
@@ -1780,25 +1820,25 @@ class TestAgentFunctionAppSubworkflowHitl:
         client = self._client({"child-1": {"pending_requests": {"inner-1": {"source_executor_id": "inner"}}}})
         parent_status = {
             "pending_requests": {"top-1": {"source_executor_id": "outer"}},
-            "subworkflows": {"sub": "child-1"},
+            "subworkflows": {"sub": ["child-1"]},
         }
 
         gathered = await app._gather_pending_hitl_requests(client, parent_status)
 
         ids = {qid for qid, _ in gathered}
-        assert ids == {"top-1", "sub::inner-1"}
+        assert ids == {"top-1", "sub~0~inner-1"}
 
     async def test_gather_accumulates_deep_path(self) -> None:
         app = self._app()
         client = self._client({
-            "child-1": {"subworkflows": {"leaf": "child-2"}},
+            "child-1": {"subworkflows": {"leaf": ["child-2"]}},
             "child-2": {"pending_requests": {"deep": {"source_executor_id": "leaf_node"}}},
         })
-        parent_status = {"subworkflows": {"mid": "child-1"}}
+        parent_status = {"subworkflows": {"mid": ["child-1"]}}
 
         gathered = await app._gather_pending_hitl_requests(client, parent_status)
 
-        assert [qid for qid, _ in gathered] == ["mid::leaf::deep"]
+        assert [qid for qid, _ in gathered] == ["mid~0~leaf~0~deep"]
 
     async def test_resolve_unqualified_targets_same_instance(self) -> None:
         app = self._app()
@@ -1810,20 +1850,20 @@ class TestAgentFunctionAppSubworkflowHitl:
 
     async def test_resolve_qualified_targets_child_instance(self) -> None:
         app = self._app()
-        client = self._client({"parent": {"subworkflows": {"sub": "child-1"}}})
+        client = self._client({"parent": {"subworkflows": {"sub": ["child-1"]}}})
 
-        resolved = await app._resolve_hitl_target(client, "parent", "sub::req-9")
+        resolved = await app._resolve_hitl_target(client, "parent", "sub~0~req-9")
 
         assert resolved == ("child-1", "req-9")
 
     async def test_resolve_deeply_qualified_targets_leaf(self) -> None:
         app = self._app()
         client = self._client({
-            "parent": {"subworkflows": {"mid": "child-1"}},
-            "child-1": {"subworkflows": {"leaf": "child-2"}},
+            "parent": {"subworkflows": {"mid": ["child-1"]}},
+            "child-1": {"subworkflows": {"leaf": ["child-2"]}},
         })
 
-        resolved = await app._resolve_hitl_target(client, "parent", "mid::leaf::deep")
+        resolved = await app._resolve_hitl_target(client, "parent", "mid~0~leaf~0~deep")
 
         assert resolved == ("child-2", "deep")
 
@@ -1831,9 +1871,47 @@ class TestAgentFunctionAppSubworkflowHitl:
         app = self._app()
         client = self._client({"parent": {"state": "running"}})  # no subworkflows map
 
-        resolved = await app._resolve_hitl_target(client, "parent", "sub::req-9")
+        resolved = await app._resolve_hitl_target(client, "parent", "sub~0~req-9")
 
         assert resolved is None
+
+    async def test_multiple_children_of_one_executor_stay_addressable(self) -> None:
+        app = self._app()
+        client = self._client({
+            "parent": {"subworkflows": {"sub": ["child-1", "child-2"]}},
+            "child-1": {"pending_requests": {"r1": {"source_executor_id": "a"}}},
+            "child-2": {"pending_requests": {"r2": {"source_executor_id": "b"}}},
+        })
+        parent_status = {"subworkflows": {"sub": ["child-1", "child-2"]}}
+
+        gathered = await app._gather_pending_hitl_requests(client, parent_status)
+        assert {qid for qid, _ in gathered} == {"sub~0~r1", "sub~1~r2"}
+
+        # The second child (ordinal 1) resolves distinctly, not shadowed by the first.
+        resolved = await app._resolve_hitl_target(client, "parent", "sub~1~r2")
+        assert resolved == ("child-2", "r2")
+
+    async def test_nested_double_colon_leaf_round_trips(self) -> None:
+        app = self._app()
+        client = self._client({
+            "parent": {"subworkflows": {"sub": ["child-1"]}},
+            "child-1": {"pending_requests": {"auto::0": {"request_id": "auto::0", "source_executor_id": "fn"}}},
+        })
+        parent_status = {"subworkflows": {"sub": ["child-1"]}}
+
+        gathered = await app._gather_pending_hitl_requests(client, parent_status)
+        assert [qid for qid, _ in gathered] == ["sub~0~auto::0"]
+
+        resolved = await app._resolve_hitl_target(client, "parent", "sub~0~auto::0")
+        assert resolved == ("child-1", "auto::0")
+
+    async def test_top_level_double_colon_leaf_is_not_nested(self) -> None:
+        app = self._app()
+        client = self._client({})
+
+        resolved = await app._resolve_hitl_target(client, "parent", "auto::0")
+
+        assert resolved == ("parent", "auto::0")
 
 
 if __name__ == "__main__":

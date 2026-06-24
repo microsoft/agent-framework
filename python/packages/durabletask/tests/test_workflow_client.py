@@ -67,6 +67,23 @@ class TestStartWorkflow:
         _, kwargs = mock_client.schedule_new_orchestration.call_args
         assert kwargs["input"] == payload
 
+    def test_start_workflow_strips_forged_subworkflow_envelope(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """Reserved sub-workflow envelope keys in client input are stripped at the boundary.
+
+        Only an internal child dispatch may carry these keys; if untrusted input could,
+        it would smuggle a payload onto the orchestrator's trusted (pickle) path.
+        """
+        mock_client.schedule_new_orchestration.return_value = "i"
+        forged = {"__subworkflow_input__": {"__pickled__": "evil", "__type__": "x"}, "real": 1}
+
+        workflow_client.start_workflow(input=forged, workflow_name="orders")
+
+        _, kwargs = mock_client.schedule_new_orchestration.call_args
+        assert kwargs["input"] == {"real": 1}
+        assert "__subworkflow_input__" not in kwargs["input"]
+
     def test_start_workflow_forwards_instance_id(
         self, workflow_client: DurableWorkflowClient, mock_client: Mock
     ) -> None:
@@ -492,11 +509,11 @@ class TestSubworkflowHitl:
     def test_collects_nested_request_with_qualified_id(
         self, workflow_client: DurableWorkflowClient, mock_client: Mock
     ) -> None:
-        """A request pending in a child sub-workflow surfaces with an {executor}::{id} id."""
+        """A request pending in a child sub-workflow surfaces with an {executor}~{ordinal}~{id} id."""
         self._states(
             mock_client,
             {
-                "parent": {"state": "running", "subworkflows": {"sub": "child-1"}},
+                "parent": {"state": "running", "subworkflows": {"sub": ["child-1"]}},
                 "child-1": {
                     "state": "waiting_for_human_input",
                     "pending_requests": {"req-9": {"request_id": "req-9", "source_executor_id": "inner_node"}},
@@ -507,7 +524,7 @@ class TestSubworkflowHitl:
         requests = workflow_client.get_pending_hitl_requests("parent")
 
         assert len(requests) == 1
-        assert requests[0]["request_id"] == "sub::req-9"
+        assert requests[0]["request_id"] == "sub~0~req-9"
         assert requests[0]["source_executor_id"] == "inner_node"
 
     def test_collects_parent_and_nested_requests_together(
@@ -520,7 +537,7 @@ class TestSubworkflowHitl:
                 "parent": {
                     "state": "waiting_for_human_input",
                     "pending_requests": {"top-1": {"request_id": "top-1", "source_executor_id": "outer_node"}},
-                    "subworkflows": {"sub": "child-1"},
+                    "subworkflows": {"sub": ["child-1"]},
                 },
                 "child-1": {
                     "state": "waiting_for_human_input",
@@ -531,17 +548,17 @@ class TestSubworkflowHitl:
 
         ids = {r["request_id"] for r in workflow_client.get_pending_hitl_requests("parent")}
 
-        assert ids == {"top-1", "sub::inner-1"}
+        assert ids == {"top-1", "sub~0~inner-1"}
 
     def test_collects_deeply_nested_request_with_full_path(
         self, workflow_client: DurableWorkflowClient, mock_client: Mock
     ) -> None:
-        """Two levels of nesting accumulate a full {a}::{b}::{id} path."""
+        """Two levels of nesting accumulate a full {a}~{i}~{b}~{j}~{id} path."""
         self._states(
             mock_client,
             {
-                "parent": {"state": "running", "subworkflows": {"mid": "child-1"}},
-                "child-1": {"state": "running", "subworkflows": {"leaf": "child-2"}},
+                "parent": {"state": "running", "subworkflows": {"mid": ["child-1"]}},
+                "child-1": {"state": "running", "subworkflows": {"leaf": ["child-2"]}},
                 "child-2": {
                     "state": "waiting_for_human_input",
                     "pending_requests": {"deep": {"request_id": "deep", "source_executor_id": "leaf_node"}},
@@ -551,7 +568,7 @@ class TestSubworkflowHitl:
 
         requests = workflow_client.get_pending_hitl_requests("parent")
 
-        assert [r["request_id"] for r in requests] == ["mid::leaf::deep"]
+        assert [r["request_id"] for r in requests] == ["mid~0~leaf~0~deep"]
 
     def test_send_qualified_response_routes_to_child_instance(
         self, workflow_client: DurableWorkflowClient, mock_client: Mock
@@ -559,10 +576,10 @@ class TestSubworkflowHitl:
         """A qualified id resolves to the owning child instance and bare request id."""
         self._states(
             mock_client,
-            {"parent": {"state": "running", "subworkflows": {"sub": "child-1"}}},
+            {"parent": {"state": "running", "subworkflows": {"sub": ["child-1"]}}},
         )
 
-        workflow_client.send_hitl_response("parent", "sub::req-9", {"approved": True})
+        workflow_client.send_hitl_response("parent", "sub~0~req-9", {"approved": True})
 
         mock_client.raise_orchestration_event.assert_called_once()
         args, kwargs = mock_client.raise_orchestration_event.call_args
@@ -577,12 +594,12 @@ class TestSubworkflowHitl:
         self._states(
             mock_client,
             {
-                "parent": {"state": "running", "subworkflows": {"mid": "child-1"}},
-                "child-1": {"state": "running", "subworkflows": {"leaf": "child-2"}},
+                "parent": {"state": "running", "subworkflows": {"mid": ["child-1"]}},
+                "child-1": {"state": "running", "subworkflows": {"leaf": ["child-2"]}},
             },
         )
 
-        workflow_client.send_hitl_response("parent", "mid::leaf::deep", {"ok": 1})
+        workflow_client.send_hitl_response("parent", "mid~0~leaf~0~deep", {"ok": 1})
 
         args, kwargs = mock_client.raise_orchestration_event.call_args
         assert args[0] == "child-2"
@@ -595,7 +612,7 @@ class TestSubworkflowHitl:
         self._states(mock_client, {"parent": {"state": "running"}})  # no subworkflows map
 
         with pytest.raises(ValueError, match="No active sub-workflow"):
-            workflow_client.send_hitl_response("parent", "sub::req-9", {"approved": True})
+            workflow_client.send_hitl_response("parent", "sub~0~req-9", {"approved": True})
 
         mock_client.raise_orchestration_event.assert_not_called()
 
@@ -610,3 +627,66 @@ class TestSubworkflowHitl:
         args, kwargs = mock_client.raise_orchestration_event.call_args
         assert args[0] == "parent"
         assert kwargs["event_name"] == "req-1"
+
+    def test_multiple_children_of_one_executor_stay_addressable(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """Two children dispatched by one node are qualified by ordinal, not collapsed."""
+        self._states(
+            mock_client,
+            {
+                "parent": {"state": "running", "subworkflows": {"sub": ["child-1", "child-2"]}},
+                "child-1": {
+                    "state": "waiting_for_human_input",
+                    "pending_requests": {"r1": {"request_id": "r1", "source_executor_id": "a"}},
+                },
+                "child-2": {
+                    "state": "waiting_for_human_input",
+                    "pending_requests": {"r2": {"request_id": "r2", "source_executor_id": "b"}},
+                },
+            },
+        )
+
+        ids = {r["request_id"] for r in workflow_client.get_pending_hitl_requests("parent")}
+        assert ids == {"sub~0~r1", "sub~1~r2"}
+
+        # The second child (ordinal 1) is reachable, not shadowed by the first.
+        workflow_client.send_hitl_response("parent", "sub~1~r2", {"ok": 1})
+        args, kwargs = mock_client.raise_orchestration_event.call_args
+        assert args[0] == "child-2"
+        assert kwargs["event_name"] == "r2"
+
+    def test_nested_leaf_request_id_with_double_colon_round_trips(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """A functional sub-workflow's ``auto::N`` leaf id survives qualification and routing."""
+        self._states(
+            mock_client,
+            {
+                "parent": {"state": "running", "subworkflows": {"sub": ["child-1"]}},
+                "child-1": {
+                    "state": "waiting_for_human_input",
+                    "pending_requests": {"auto::0": {"request_id": "auto::0", "source_executor_id": "fn"}},
+                },
+            },
+        )
+
+        requests = workflow_client.get_pending_hitl_requests("parent")
+        assert [r["request_id"] for r in requests] == ["sub~0~auto::0"]
+
+        workflow_client.send_hitl_response("parent", "sub~0~auto::0", {"ok": 1})
+        args, kwargs = mock_client.raise_orchestration_event.call_args
+        assert args[0] == "child-1"
+        assert kwargs["event_name"] == "auto::0"
+
+    def test_top_level_auto_request_id_is_not_treated_as_nested(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """A top-level ``auto::N`` id (contains ``::`` but no ``~``) routes to the instance itself."""
+        self._states(mock_client, {"parent": {"state": "waiting_for_human_input"}})
+
+        workflow_client.send_hitl_response("parent", "auto::0", {"approved": True})
+
+        args, kwargs = mock_client.raise_orchestration_event.call_args
+        assert args[0] == "parent"
+        assert kwargs["event_name"] == "auto::0"

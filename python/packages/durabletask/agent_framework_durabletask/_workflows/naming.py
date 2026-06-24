@@ -30,8 +30,12 @@ import re
 
 __all__ = [
     "DURABLE_NAME_PREFIX",
+    "MAX_EXECUTOR_ID_LENGTH",
     "SUBWORKFLOW_REQUEST_SEPARATOR",
     "is_auto_generated_workflow_name",
+    "qualify_subworkflow_request_id",
+    "split_subworkflow_request_id",
+    "validate_executor_id",
     "validate_workflow_name",
     "workflow_executor_activity_name",
     "workflow_name_from_orchestrator",
@@ -44,14 +48,27 @@ __all__ = [
 # ``AgentSessionId.ENTITY_NAME_PREFIX``.
 DURABLE_NAME_PREFIX = "dafx-"
 
-# Separator joining an executor id to a (possibly already-qualified) request id when
-# a nested sub-workflow's pending HITL request is bubbled up to the top-level instance
-# (B2 single-surface addressing: ``{executorId}::{requestId}``). Both hosts and the
-# client must agree on this so a qualified id round-trips: the read side qualifies an
-# inner request with it; the respond side splits on it to route the response to the
-# owning child orchestration. Executor ids and framework request ids do not contain
-# this sequence, so the split is unambiguous.
-SUBWORKFLOW_REQUEST_SEPARATOR = "::"
+# Separator used to qualify a nested sub-workflow's pending HITL request when it is
+# bubbled up to the top-level instance (B2 single-surface addressing). A qualified id
+# is a path of ``{executorId}~{ordinal}`` hops ending in the leaf's bare request id,
+# e.g. ``review~0~approve~1~<requestId>``. Both hosts and the client must agree on it
+# so a qualified id round-trips: the read side prepends hops; the respond side peels
+# them to route the response to the owning child orchestration.
+#
+# ``~`` (RFC 3986 "unreserved", so URL-path-safe) is deliberately **not** ``::``:
+# core emits ``auto::{index}`` request ids for functional ``@workflow`` HITL, so a
+# ``::`` separator would mis-parse those leaf ids. ``~`` does not appear in core
+# request ids (uuid4 or ``auto::N``); executor ids are validated to exclude it (see
+# :func:`validate_executor_id`), so only the structural hops carry the separator.
+SUBWORKFLOW_REQUEST_SEPARATOR = "~"
+
+# Upper bound on an executor id's length when a workflow is hosted durably. The id is
+# interpolated into durable activity/entity names (``dafx-{workflow}-{executor}``) and,
+# for sub-workflow nodes, into recursively-nested child orchestration instance ids
+# (``{parent}::{executor}::{n}``). Capping it keeps those derived strings within typical
+# durable backend name/id limits; combined with the workflow-name cap, the worst-case
+# instance id stays bounded even for deeply-nested sub-workflows.
+MAX_EXECUTOR_ID_LENGTH = 128
 
 # A workflow name is interpolated into durable orchestration/activity/entity names
 # *and* into HTTP route segments (``workflow/{workflowName}/run``), so it must be
@@ -189,3 +206,95 @@ def is_auto_generated_workflow_name(workflow_name: str) -> bool:
         ``True`` if the name matches the auto-generated pattern.
     """
     return bool(_AUTO_GENERATED_NAME_RE.match(workflow_name))
+
+
+def validate_executor_id(executor_id: str) -> None:
+    """Validate that an executor id is safe to host durably.
+
+    An executor id is interpolated into durable activity/entity names and, for
+    sub-workflow nodes, into nested child-orchestration instance ids and the
+    qualified ids used to address nested human-in-the-loop requests. Two properties
+    must hold:
+
+    * It must not contain :data:`SUBWORKFLOW_REQUEST_SEPARATOR`. That sequence
+      separates the structural hops of a qualified nested-HITL request id, so an id
+      containing it would make a qualified id ambiguous and mis-route a response.
+    * It must be at most :data:`MAX_EXECUTOR_ID_LENGTH` characters, so the durable
+      names and (recursively nested) instance ids derived from it stay within typical
+      durable backend limits.
+
+    Args:
+        executor_id: The executor's id within a hosted workflow.
+
+    Raises:
+        ValueError: If the id is empty, contains the reserved separator, or is too
+            long.
+    """
+    if not executor_id:
+        raise ValueError("Executor id must be a non-empty string.")
+    if SUBWORKFLOW_REQUEST_SEPARATOR in executor_id:
+        raise ValueError(
+            f"Executor id '{executor_id}' contains the reserved sub-workflow request separator "
+            f"'{SUBWORKFLOW_REQUEST_SEPARATOR}', which is used to address nested human-in-the-loop "
+            "requests. Rename the executor so its id does not contain that sequence."
+        )
+    if len(executor_id) > MAX_EXECUTOR_ID_LENGTH:
+        raise ValueError(
+            f"Executor id '{executor_id[:32]}...' is too long ({len(executor_id)} > "
+            f"{MAX_EXECUTOR_ID_LENGTH}). Durable activity/entity names and nested instance ids are "
+            "derived from it; use a shorter id."
+        )
+
+
+def qualify_subworkflow_request_id(executor_id: str, ordinal: int, inner_request_id: str) -> str:
+    """Prepend one sub-workflow hop to a (possibly already-qualified) request id.
+
+    Produces ``{executor_id}~{ordinal}~{inner_request_id}``. ``ordinal`` selects the
+    specific child orchestration among several a single ``WorkflowExecutor`` node may
+    dispatch in one superstep, so two children of the same executor stay distinctly
+    addressable. ``inner_request_id`` is the child's bare leaf request id or its own
+    already-qualified path for deeper nesting.
+
+    Args:
+        executor_id: The sub-workflow node's executor id (separator-free; see
+            :func:`validate_executor_id`).
+        ordinal: The child's index in the parent's ``subworkflows`` status list.
+        inner_request_id: The request id (bare or qualified) within the child.
+
+    Returns:
+        The qualified request id one level higher.
+    """
+    sep = SUBWORKFLOW_REQUEST_SEPARATOR
+    return f"{executor_id}{sep}{ordinal}{sep}{inner_request_id}"
+
+
+def split_subworkflow_request_id(request_id: str) -> tuple[str, int, str] | None:
+    """Peel the outermost sub-workflow hop off a qualified request id.
+
+    The inverse of :func:`qualify_subworkflow_request_id` for a single level.
+    Returns ``(executor_id, ordinal, remainder)`` where ``remainder`` is the still
+    (possibly) qualified id one level deeper, or ``None`` when ``request_id`` carries
+    no well-formed hop -- i.e. it is a bare leaf request id that targets the current
+    instance directly. A leaf id may itself contain the separator (e.g. core's
+    ``auto::N`` does not, but a custom id could); because only structural hops use the
+    ``{executor}~{int-ordinal}~`` shape, a value whose second segment is not an integer
+    is treated as a bare leaf rather than a hop.
+
+    Args:
+        request_id: A bare or qualified request id.
+
+    Returns:
+        ``(executor_id, ordinal, remainder)`` for a qualified id, else ``None``.
+    """
+    sep = SUBWORKFLOW_REQUEST_SEPARATOR
+    if sep not in request_id:
+        return None
+    parts = request_id.split(sep, 2)
+    if len(parts) < 3:
+        return None
+    executor_id, ordinal_str, remainder = parts
+    try:
+        ordinal = int(ordinal_str)
+    except ValueError:
+        return None
+    return executor_id, ordinal, remainder

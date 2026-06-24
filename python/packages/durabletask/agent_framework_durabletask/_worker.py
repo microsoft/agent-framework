@@ -22,6 +22,7 @@ from ._entities import AgentEntity, DurableTaskEntityStateProvider
 from ._workflows.activity import execute_workflow_activity
 from ._workflows.dt_context import DurableTaskWorkflowContext
 from ._workflows.naming import (
+    validate_executor_id,
     validate_workflow_name,
     workflow_executor_activity_name,
     workflow_orchestrator_name,
@@ -89,8 +90,10 @@ class DurableAIAgentWorker:
         self._registered_agents: dict[str, SupportsAgentRun] = {}
         self._workflows: dict[str, Workflow] = {}
         # Every workflow whose orchestration has been registered (top-level plus nested
-        # sub-workflows), so a sub-workflow shared across the tree is registered once.
-        self._registered_orchestrations: set[str] = set()
+        # sub-workflows), keyed by name -> the registered instance, so a sub-workflow
+        # shared across the tree is registered once while two different workflows that
+        # collide on a name are rejected.
+        self._registered_orchestrations: dict[str, Workflow] = {}
         logger.debug("[DurableAIAgentWorker] Initialized with worker type: %s", type(worker).__name__)
 
     def add_agent(
@@ -229,18 +232,28 @@ class DurableAIAgentWorker:
             raise ValueError(f"Workflow '{workflow_name}' is already registered on this worker.")
 
         # Validate the whole composition (top-level plus every nested sub-workflow)
-        # up front, so an invalid/auto-generated nested name fails before any
+        # up front, so an invalid/auto-generated nested name (or an executor id that
+        # would break durable naming / nested-HITL addressing) fails before any
         # registration side effects leave the worker partially configured.
         hosted_workflows = list(collect_hosted_workflows(workflow))
         for hosted in hosted_workflows:
             validate_workflow_name(hosted.name)
+            for executor_id in hosted.executors:
+                validate_executor_id(executor_id)
 
         self._workflows[workflow_name] = workflow
 
         # Register the top-level workflow and every nested sub-workflow (deduped by
         # name), so the parent can drive sub-workflows as durable child orchestrations.
         for hosted in hosted_workflows:
-            if hosted.name in self._registered_orchestrations:
+            existing = self._registered_orchestrations.get(hosted.name)
+            if existing is not None:
+                if existing is not hosted:
+                    raise ValueError(
+                        f"A different workflow named '{hosted.name}' is already registered on this "
+                        f"worker. A workflow name maps to a single durable orchestration "
+                        f"('dafx-{hosted.name}'); rename one of them."
+                    )
                 continue
             self._register_single_workflow(hosted, callback)
 
@@ -256,7 +269,7 @@ class DurableAIAgentWorker:
         via ``plan_workflow_registration``.
         """
         validate_workflow_name(workflow.name)
-        self._registered_orchestrations.add(workflow.name)
+        self._registered_orchestrations[workflow.name] = workflow
         plan = plan_workflow_registration(workflow)
 
         # Register agent executors as durable entities, scoped by workflow name so

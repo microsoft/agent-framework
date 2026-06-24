@@ -17,7 +17,7 @@ request behind a **single top-level addressing surface**.
   - `dafx-moderation_pipeline` — the outer workflow.
   - `dafx-human_review` — the inner (HITL) workflow, run as a child orchestration.
 - **Qualified request ids:** the nested request surfaces to the client with a
-  qualified id (`review_sub::{requestId}`). The client posts the response against the
+  qualified id (`review_sub~0~{requestId}`). The client posts the response against the
   *top-level* instance id, and the host routes it to the owning child orchestration —
   so the caller never has to discover child instance ids.
 

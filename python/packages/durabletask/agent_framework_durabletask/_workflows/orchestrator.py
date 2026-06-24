@@ -52,6 +52,7 @@ from agent_framework._workflows._state import State
 from .context import WorkflowOrchestrationContext
 from .naming import workflow_executor_activity_name, workflow_orchestrator_name, workflow_scoped_executor_id
 from .serialization import (
+    SUBWORKFLOW_INPUT_KEY,
     deserialize_value,
     reconstruct_to_type,
     resolve_type,
@@ -71,15 +72,15 @@ SOURCE_ORCHESTRATOR = "__orchestrator__"
 SOURCE_HITL_RESPONSE = "__hitl_response__"
 
 # A WorkflowExecutor node runs its inner workflow as a durable child orchestration.
-# The parent passes the node's input wrapped in this marker so the child orchestrator
-# can tell a trusted sub-orchestration payload (serialized by the parent) apart from
-# untrusted top-level client input, and can track nesting depth to bound recursion.
-SUBWORKFLOW_INPUT_KEY = "__subworkflow_input__"
-SUBWORKFLOW_DEPTH_KEY = "__subworkflow_depth__"
-
-# Maximum sub-workflow nesting depth. Mutually-nested workflows (A hosts B hosts A)
-# would otherwise spawn child orchestrations without bound; this caps the tree.
-MAX_SUBWORKFLOW_DEPTH = 25
+# The parent wraps the node's input in SUBWORKFLOW_INPUT_KEY (defined alongside the
+# trust-boundary sanitizer in serialization.py) so the child orchestrator can tell a
+# trusted sub-orchestration payload apart from untrusted top-level client input.
+#
+# Nesting is intentionally *not* capped by a depth counter: a workflow graph cannot
+# express unbounded recursion (a WorkflowExecutor wraps a concrete Workflow instance,
+# so the nesting tree is finite and fixed at build time), and the recursively-derived
+# child instance ids grow with depth, so the durable backend's instance-id length
+# limit is the natural ceiling for any pathological construction.
 
 # Name of the auto-generated orchestrator registered by
 # ``DurableAIAgentWorker.configure_workflow`` (and the Azure Functions host).
@@ -295,20 +296,16 @@ def _prepare_subworkflow_task(
     executor: WorkflowExecutor,
     message: Any,
     child_instance_id: str,
-    depth: int,
 ) -> Any:
     """Prepare a child-orchestration task that runs a ``WorkflowExecutor``'s inner workflow.
 
     The inner workflow runs as its own durable orchestration (``dafx-{innerName}``),
     so its executors are independently durable/observable. The node's message is
     serialized and wrapped in a marker so the child orchestrator reconstructs the
-    original typed object (trusted internal input) and tracks nesting depth.
+    original typed object (trusted internal input).
     """
     inner_orchestration_name = workflow_orchestrator_name(executor.workflow.name)
-    child_input = {
-        SUBWORKFLOW_INPUT_KEY: serialize_value(message),
-        SUBWORKFLOW_DEPTH_KEY: depth + 1,
-    }
+    child_input = {SUBWORKFLOW_INPUT_KEY: serialize_value(message)}
     return ctx.call_sub_orchestrator(inner_orchestration_name, child_input, instance_id=child_instance_id)
 
 
@@ -757,7 +754,6 @@ def _prepare_all_tasks(
     workflow: Workflow,
     pending_messages: dict[str, list[tuple[Any, str]]],
     shared_state: dict[str, Any] | None,
-    depth: int,
     subworkflow_counter: list[int],
 ) -> tuple[list[Any], list[TaskMetadata], list[tuple[str, Any, str]]]:
     """Prepare all pending tasks for parallel execution.
@@ -775,8 +771,6 @@ def _prepare_all_tasks(
         pending_messages: Messages to deliver this superstep, grouped by target
             executor id, each paired with its source executor id.
         shared_state: Optional dict for cross-executor state sharing.
-        depth: This orchestration's sub-workflow nesting depth, propagated to child
-            orchestrations so recursion can be bounded.
         subworkflow_counter: A single-element mutable counter, persistent across
             supersteps, used to derive unique deterministic child instance ids.
     """
@@ -802,7 +796,7 @@ def _prepare_all_tasks(
                 child_instance_id = f"{ctx.instance_id}::{executor_id}::{subworkflow_counter[0]}"
                 subworkflow_counter[0] += 1
                 logger.debug("Preparing sub-workflow task: %s -> %s", executor_id, child_instance_id)
-                task = _prepare_subworkflow_task(ctx, executor, message, child_instance_id, depth)
+                task = _prepare_subworkflow_task(ctx, executor, message, child_instance_id)
                 all_tasks.append(task)
                 task_metadata_list.append(
                     TaskMetadata(
@@ -878,26 +872,12 @@ def run_workflow_orchestrator(
         workflow: The MAF Workflow instance to execute.
         initial_message: Initial message to send to the start executor. When this
             workflow runs as a sub-workflow, this is the parent-supplied marker
-            payload (see :data:`SUBWORKFLOW_INPUT_KEY`), which also carries the
-            nesting depth.
+            payload (see :data:`SUBWORKFLOW_INPUT_KEY`).
         shared_state: Optional dict for cross-executor state sharing.
 
     Returns:
         List of workflow outputs collected from executor activities.
     """
-    # When invoked as a child orchestration, the initial payload carries the nesting
-    # depth; bound recursion so mutually-nested workflows cannot spawn unbounded
-    # child orchestrations. (Top-level runs start at depth 0.)
-    depth = 0
-    if isinstance(initial_message, dict) and SUBWORKFLOW_INPUT_KEY in initial_message:
-        marker = cast("dict[str, Any]", initial_message)
-        depth = int(marker.get(SUBWORKFLOW_DEPTH_KEY, 0) or 0)
-        if depth > MAX_SUBWORKFLOW_DEPTH:
-            raise RuntimeError(
-                f"Sub-workflow nesting exceeded the maximum depth of {MAX_SUBWORKFLOW_DEPTH} "
-                f"(workflow '{workflow.name}'). Check for mutually-nested workflows."
-            )
-
     pending_messages: dict[str, list[tuple[Any, str]]] = {
         workflow.start_executor_id: [(_coerce_initial_input(workflow, initial_message), SOURCE_WORKFLOW_START)]
     }
@@ -942,7 +922,7 @@ def run_workflow_orchestrator(
     def publish_live_status(
         state: str,
         pending_requests: dict[str, Any] | None = None,
-        subworkflows: dict[str, str] | None = None,
+        subworkflows: dict[str, list[str]] | None = None,
     ) -> None:
         # Publish only on live execution so events are not re-emitted on replay
         # (the custom status set during the first execution already persisted).
@@ -956,10 +936,11 @@ def run_workflow_orchestrator(
             status["events"] = live_events
         if pending_requests is not None:
             status["pending_requests"] = pending_requests
-        # Map of {executorId: childInstanceId} for sub-workflows dispatched this
-        # superstep. The parent is suspended in task_all while a child waits for human
-        # input, so recording the child ids here lets the read side discover and
-        # qualify nested pending requests (B2 single-surface HITL).
+        # Map of {executorId: [childInstanceId, ...]} for sub-workflows dispatched this
+        # superstep. A single WorkflowExecutor node can receive several messages in one
+        # superstep and dispatch one child each, so the value is a list indexed by
+        # dispatch order; the read side qualifies nested pending requests by
+        # (executorId, ordinal) so every child stays addressable (B2 single-surface HITL).
         if subworkflows:
             status["subworkflows"] = subworkflows
         ctx.set_custom_status(status)
@@ -976,7 +957,7 @@ def run_workflow_orchestrator(
 
         # Phase 1: Prepare all tasks
         all_tasks, task_metadata_list, remaining_agent_messages = _prepare_all_tasks(
-            ctx, workflow, pending_messages, shared_state, depth, subworkflow_counter
+            ctx, workflow, pending_messages, shared_state, subworkflow_counter
         )
 
         # Agents and sub-workflows bypass the per-executor activity, so synthesize their
@@ -996,11 +977,13 @@ def run_workflow_orchestrator(
             # task_all. While a nested sub-workflow waits for human input, this parent
             # stays suspended here, so its custom status must already carry the child
             # ids for the read side to discover and qualify nested pending requests.
-            active_subworkflows = {
-                meta.executor_id: meta.child_instance_id
-                for meta in task_metadata_list
-                if meta.task_type == TaskType.SUBWORKFLOW and meta.child_instance_id is not None
-            }
+            # Grouped as {executorId: [childInstanceId, ...]} in dispatch order so a
+            # node that dispatches several children this superstep keeps each one
+            # addressable by its ordinal.
+            active_subworkflows: dict[str, list[str]] = {}
+            for meta in task_metadata_list:
+                if meta.task_type == TaskType.SUBWORKFLOW and meta.child_instance_id is not None:
+                    active_subworkflows.setdefault(meta.executor_id, []).append(meta.child_instance_id)
             if active_subworkflows:
                 publish_live_status("running", subworkflows=active_subworkflows)
             raw_results = yield ctx.task_all(all_tasks)

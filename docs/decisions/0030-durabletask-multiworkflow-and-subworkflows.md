@@ -74,10 +74,12 @@ The design has several semi-independent decision points; the considered alternat
 - **B1 — direct child addressing.** Expose child instance ids; the responder posts to `workflow/{innerName}/respond/{childInstanceId}/{requestId}`.
   - Good: simple host plumbing.
   - Bad: leaks child instance ids to the caller and changes the addressing surface per nesting depth.
-- **B2 — propagated single surface.** Bubble inner pending requests up into the parent custom status with qualified request ids (`{executorId}::{requestId}`); a response to the parent is routed by stripping the qualifier and raising the event on the owning child instance.
+- **B2 — propagated single surface.** Bubble inner pending requests up into the parent custom status with qualified request ids (`{executorId}~{ordinal}~{requestId}`); a response to the parent is routed by peeling one hop and raising the event on the owning child instance.
   - Good: one addressing surface for arbitrarily deep nesting; the caller always talks to the top-level run.
   - Good: consistent with the "always per-workflow, stable surface" decision.
+  - Good: the `~{ordinal}~` hop indexes the parent's `subworkflows` child list, so a node that dispatches several children in one superstep keeps each addressable.
   - Neutral: requires parent→child response plumbing in the host/client.
+  - Note: the separator is `~` (not `::`) because core emits `auto::{index}` request ids for functional `@workflow` HITL; `~` never appears in a core request id and is rejected in executor ids, so qualified ids round-trip unambiguously.
 
 ### Workflow agent addressing
 
@@ -94,8 +96,9 @@ The design has several semi-independent decision points; the considered alternat
 3. **Azure Functions route shape:** **always per-workflow routes** (`workflow/{name}/run|status|respond`).
 4. **Sub-workflow execution model:** **Model B** — child orchestration via `call_sub_orchestrator`, matching the .NET durable host.
 5. **Single-workflow migration:** **hard switch** to `dafx-{name}` with no runtime alias; `WORKFLOW_ORCHESTRATOR_NAME` stays as a deprecated source alias only.
-6. **Sub-workflow HITL addressing:** **B2** — propagate inner pending requests to the parent custom status with qualified request ids; the caller always responds to the top-level run.
+6. **Sub-workflow HITL addressing:** **B2** — propagate inner pending requests to the parent custom status with qualified request ids (`{executorId}~{ordinal}~{requestId}`); the caller always responds to the top-level run.
 7. **Workflow agent addressing:** register through the **same** `add_agent` primitive under the scoped name; reachable via `get_agent(name, workflow_name=...)`; no `workflow_agents=` kwarg. Agent conversation state stays isolated by the entity key (`ctx.instance_id`).
+8. **Hardening:** reject two **different** workflow instances that share a name (the same instance reused by several nodes is deduped); validate executor ids (separator-free, length-bounded); and strip the reserved sub-workflow envelope key from untrusted client input at the host boundary so a forged envelope cannot reach the trusted pickle path. Sub-workflow nesting is **not** capped by a depth counter — the nesting tree is finite at build time and the durable instance-id length limit is the natural ceiling (matching .NET, which imposes no limit).
 
 ### Consequences
 

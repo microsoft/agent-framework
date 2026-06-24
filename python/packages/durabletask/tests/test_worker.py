@@ -388,6 +388,49 @@ class TestSubworkflowRegistration:
         with pytest.raises(ValueError, match="invalid"):
             agent_worker.configure_workflow(outer)
 
+    def test_different_subworkflow_sharing_a_name_is_rejected(self, agent_worker: DurableAIAgentWorker) -> None:
+        """Two different sub-workflow instances that share a name collide and are rejected."""
+        from agent_framework import Executor, WorkflowExecutor
+
+        inner_a = self._inner_agent_workflow("shared", "agent_node")
+        inner_b = self._inner_agent_workflow("shared", "other_node")  # different instance, same name
+
+        sub_a = Mock(spec=WorkflowExecutor)
+        sub_a.id = "a"
+        sub_a.workflow = inner_a
+        sub_b = Mock(spec=WorkflowExecutor)
+        sub_b.id = "b"
+        sub_b.workflow = inner_b
+        router = Mock(spec=Executor)
+        router.id = "router"
+        outer = Mock()
+        outer.name = "outer"
+        outer.executors = {"a": sub_a, "b": sub_b, "router": router}
+
+        with pytest.raises(ValueError, match="different workflow|different workflows"):
+            agent_worker.configure_workflow(outer)
+
+    def test_executor_id_with_reserved_separator_is_rejected(self, agent_worker: DurableAIAgentWorker) -> None:
+        """An executor id containing the nested-HITL separator is rejected at registration."""
+        workflow = self._agent_workflow_with_executor_id("orders", "bad~id")
+
+        with pytest.raises(ValueError, match="reserved sub-workflow request separator"):
+            agent_worker.configure_workflow(workflow)
+
+    @staticmethod
+    def _agent_workflow_with_executor_id(name: str, executor_id: str) -> Mock:
+        from agent_framework import AgentExecutor
+
+        agent = Mock()
+        agent.name = "Assistant"
+        agent_executor = Mock(spec=AgentExecutor)
+        agent_executor.id = executor_id
+        agent_executor.agent = agent
+        workflow = Mock()
+        workflow.name = name
+        workflow.executors = {executor_id: agent_executor}
+        return workflow
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

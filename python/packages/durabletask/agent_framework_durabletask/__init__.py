@@ -58,6 +58,7 @@ from ._workflows.dt_context import DurableTaskWorkflowContext
 from ._workflows.naming import (
     DURABLE_NAME_PREFIX,
     is_auto_generated_workflow_name,
+    validate_executor_id,
     validate_workflow_name,
     workflow_name_from_orchestrator,
     workflow_orchestrator_name,
@@ -135,6 +136,7 @@ __all__ = [
     "plan_workflow_registration",
     "run_agent_coroutine",
     "run_workflow_orchestrator",
+    "validate_executor_id",
     "validate_workflow_name",
     "workflow_name_from_orchestrator",
     "workflow_orchestrator_name",

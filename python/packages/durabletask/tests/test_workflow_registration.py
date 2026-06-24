@@ -10,6 +10,7 @@ executor id the orchestrator dispatches to.
 
 from unittest.mock import Mock
 
+import pytest
 from agent_framework import AgentExecutor, Executor, WorkflowExecutor
 
 from agent_framework_durabletask import (
@@ -158,3 +159,19 @@ class TestCollectHostedWorkflows:
         top = _workflow("top_wf", {"m": _subworkflow_executor("m", mid)})
 
         assert [w.name for w in collect_hosted_workflows(top)] == ["top_wf", "mid_wf", "leaf_wf"]
+
+    def test_rejects_two_different_workflows_sharing_a_name(self) -> None:
+        """Two different sub-workflow instances with the same name collide and raise."""
+        inner_a = _workflow("shared", {"x": _activity_executor("x")})
+        inner_b = _workflow("shared", {"y": _activity_executor("y")})  # different instance, same name
+        outer = _workflow("outer", {"a": _subworkflow_executor("a", inner_a), "b": _subworkflow_executor("b", inner_b)})
+
+        with pytest.raises(ValueError, match="different workflows"):
+            list(collect_hosted_workflows(outer))
+
+    def test_same_instance_reused_is_deduped_not_rejected(self) -> None:
+        """The same sub-workflow instance referenced by two nodes (fan-out) is yielded once."""
+        inner = _workflow("shared", {"x": _activity_executor("x")})
+        outer = _workflow("outer", {"a": _subworkflow_executor("a", inner), "b": _subworkflow_executor("b", inner)})
+
+        assert [w.name for w in collect_hosted_workflows(outer)] == ["outer", "shared"]

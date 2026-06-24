@@ -184,7 +184,14 @@ in-flight instances**. Therefore:
   auto-generated `WorkflowBuilder-<uuid>` names at registration, mirroring .NET's
   assert-name-matches-key contract).
 - Names are validated/sanitized to the durable name charset.
-- Duplicate names within one host are rejected.
+- Duplicate names within one host are rejected: two **different** workflow
+  instances that share a name collide on one `dafx-{name}` orchestration and raise;
+  the **same** instance reused by several nodes (fan-out) is deduplicated and
+  registered once.
+- Executor ids are validated for durable hosting too: they must be separator-free
+  (the nested-HITL qualifier, below) and length-bounded, since they are
+  interpolated into durable activity/entity names and nested child-orchestration
+  instance ids.
 
 ### 4.3 Durable names (decision: scope workflow-internal names by workflow)
 
@@ -385,11 +392,19 @@ timeout coupling.
   result feeds back into edge routing exactly like an activity result (outputs →
   messages / final outputs).
 - **Deterministic child instance ids.** Derive
-  `f"{parent_instance_id}::{executor_id}"` (append a deterministic counter when a
-  `WorkflowExecutor` runs on multiple messages in a superstep, e.g. fan-out) for
-  discoverability and idempotent replay.
-- **Recursion bound.** Detect cycles and cap nesting depth (configurable) to
-  prevent unbounded sub-orchestration trees.
+  `f"{parent_instance_id}::{executor_id}::{counter}"` (the counter is monotonic
+  across supersteps, so a `WorkflowExecutor` that runs on multiple messages — e.g.
+  fan-out — gets a distinct, replay-stable id per child) for discoverability and
+  idempotent replay. (These are orchestration *instance* ids, distinct from the
+  HITL *request*-id qualifier below.)
+- **No artificial recursion cap.** Nesting depth is *not* bounded by a counter. A
+  `WorkflowExecutor` wraps a concrete `Workflow` instance, so the nesting tree is
+  finite and fixed at build time; there is no way to express unbounded runtime
+  recursion. The recursively-derived child instance ids grow with depth, so the
+  durable backend's instance-id length limit (together with the workflow-name and
+  executor-id caps) is the natural ceiling for any pathological construction — a
+  separate magic depth number would only reject legitimate deep compositions. This
+  also matches .NET, whose durable host imposes no depth limit.
 - **Result/output mapping.** Reuse the existing typed-output reconstruction
   (`deserialize_workflow_output`) on the child result before routing.
 
@@ -404,15 +419,16 @@ custom status. Two addressing options:
   requests with their child instance ids).
 - **B2 — propagated single surface (recommended, .NET-aligned philosophy).**
   Bubble inner pending requests up into the **parent** custom status with
-  **qualified request ids** (`{executor_path}::{requestId}`), mirroring .NET port
-  qualification. A response to the parent is routed by stripping the qualifier and
-  raising the event on the owning child instance. One addressing surface for
-  arbitrarily deep nesting, at the cost of parent→child response plumbing.
+  **qualified request ids** (`{executorId}~{ordinal}~{requestId}`, nested deeper for
+  deeper levels), mirroring .NET port qualification. A response to the parent is
+  routed by peeling one hop at a time and raising the event on the owning child
+  instance. One addressing surface for arbitrarily deep nesting, at the cost of
+  parent→child response plumbing.
 
 **Decision: B2 (propagated single surface).** Pending inner requests bubble up
 into the **parent** custom status with **qualified request ids**
-(`{executor_path}::{requestId}`), mirroring .NET port qualification. A response to
-the parent is routed by stripping the qualifier and raising the event on the
+(`{executorId}~{ordinal}~{requestId}`), mirroring .NET port qualification. A
+response to the parent is routed by peeling one hop and raising the event on the
 owning child instance. This gives one addressing surface for arbitrarily deep
 nesting (the caller always talks to the top-level run), at the cost of
 parent→child response plumbing. It is consistent with the "always per-workflow,
@@ -420,6 +436,21 @@ stable surface" routing decision: callers never need to discover child instance
 ids. B1 (direct child addressing) is the rejected alternative — simpler plumbing
 but leaks child instance ids into the caller and changes the surface per nesting
 depth.
+
+The `~{ordinal}~` hop carries the child's index in the parent's `subworkflows`
+status list (`{executorId: [childInstanceId, ...]}`), so a node that dispatches
+several children in one superstep keeps each child independently addressable. The
+separator is `~` (not `::`) because core emits `auto::{index}` request ids for
+functional `@workflow` HITL; a `::` separator would mis-parse those leaf ids,
+whereas `~` never appears in a core request id and is rejected in executor ids.
+
+**Trust boundary.** The sub-orchestration input envelope (which carries the
+trusted, parent-serialized child payload) uses a reserved key that the child
+orchestrator deserializes via pickle *without* the usual marker-stripping. A
+genuine envelope is only ever built internally after the trust boundary, so hosts
+strip that reserved key from untrusted client input before scheduling a run —
+preventing a forged envelope from smuggling a pickle payload onto the trusted
+deserialization path.
 
 ---
 
@@ -463,8 +494,8 @@ Each phase is independently shippable.
   `_is_owned_orchestration`. Unit tests + a two-workflow sample.
 - **Phase 3 — sub-workflows via child orchestrations.** Protocol
   `call_sub_orchestrator` + both adapters; planner `subworkflow_executors` +
-  recursive registration; orchestrator routing; deterministic child ids;
-  recursion bound. Unit + integration tests + a nested-workflow sample.
+  recursive registration; orchestrator routing; deterministic child ids. Unit +
+  integration tests + a nested-workflow sample.
 - **Phase 4 — sub-workflow HITL (B2).** Propagate inner pending requests to the
   parent custom status with qualified request ids; route a parent response to the
   owning child instance by stripping the qualifier. Tests + HITL sub-workflow

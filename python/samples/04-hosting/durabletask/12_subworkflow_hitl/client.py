@@ -7,7 +7,7 @@ The worker (``worker.py``) must be running first. This client:
 1. Starts the *outer* workflow with ``DurableWorkflowClient.start_workflow``.
 2. Polls ``get_pending_hitl_requests`` until a request appears. Because the HITL pause
    happens inside a sub-workflow, the request surfaces with a **qualified** request id
-   (``review_sub::{requestId}``).
+   (``review_sub~0~{requestId}``).
 3. Sends the decision with ``send_hitl_response`` against the *top-level* instance id and
    the qualified request id; the host routes it to the owning child orchestration.
 4. Reads the final output with ``await_workflow_output``.
@@ -84,7 +84,7 @@ def run_case(client: DurableWorkflowClient, submission: dict[str, Any], *, appro
 
     pending = _wait_for_hitl_request(client, instance_id)
     request = pending[0]
-    # The request id is qualified (e.g. "review_sub::<uuid>") because the pause lives
+    # The request id is qualified (e.g. "review_sub~0~<uuid>") because the pause lives
     # in a sub-workflow. We pass it back verbatim against the top-level instance id;
     # the host resolves it to the owning child orchestration.
     logger.info("Pending HITL request %s from %s", request["request_id"], request["source_executor_id"])

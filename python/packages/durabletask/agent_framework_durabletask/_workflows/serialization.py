@@ -108,6 +108,45 @@ def strip_pickle_markers(data: Any) -> Any:
 
 
 # ============================================================================
+# Sub-workflow envelope markers (trust boundary)
+# ============================================================================
+
+# A WorkflowExecutor node runs its inner workflow as a durable child orchestration.
+# The parent wraps the node's input in this envelope so the child orchestrator can
+# tell a trusted sub-orchestration payload (serialized by the parent, post-boundary,
+# via call_sub_orchestrator) apart from untrusted top-level client input.
+SUBWORKFLOW_INPUT_KEY = "__subworkflow_input__"
+
+
+def strip_subworkflow_markers(data: Any) -> Any:
+    """Remove the reserved sub-workflow envelope key from untrusted top-level input.
+
+    The orchestrator treats a top-level input dict carrying :data:`SUBWORKFLOW_INPUT_KEY`
+    as a *trusted* child-orchestration payload and reconstructs it with
+    :func:`deserialize_value` (pickle) **without** the usual
+    :func:`strip_pickle_markers` sanitization, because a genuine envelope is only ever
+    built internally (post trust boundary) by ``call_sub_orchestrator``. If untrusted
+    client input could carry that key, an attacker could smuggle a pickle payload
+    straight into ``pickle.loads`` (RCE).
+
+    Hosts therefore call this on client-supplied workflow input *before* scheduling the
+    orchestration, so the only way the orchestrator ever sees the envelope is from a
+    real internal child dispatch. Only the top-level key is removed (that is the only
+    position the orchestrator interprets it), leaving the rest of the caller's payload
+    untouched.
+    """
+    if not isinstance(data, dict):
+        return data
+    typed = cast(dict[str, Any], data)
+    if SUBWORKFLOW_INPUT_KEY not in typed:
+        return typed
+    logger.debug("Stripped reserved sub-workflow envelope key from untrusted input.")
+    cleaned = typed.copy()
+    cleaned.pop(SUBWORKFLOW_INPUT_KEY, None)
+    return cleaned
+
+
+# ============================================================================
 # Serialize / Deserialize
 # ============================================================================
 
