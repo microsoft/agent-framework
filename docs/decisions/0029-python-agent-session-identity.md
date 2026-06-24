@@ -44,23 +44,26 @@ later, that should be handled as a run-context/telemetry design, not as session 
 
 ### Concrete gap example
 
-The immediate implementation gap is in A2A durable session state shape: A2A needs
-three protocol-owned fields to continue correctly across turns (`context_id`,
-`task_id`, `task_state`), but a single string continuation field cannot carry that
-shape cleanly.
+At the protocol level, the durable continuation payload shapes are different:
 
-```python
-# What A2A needs to persist across turns
-session.service_session_id = A2AServiceSessionId(
-    context_id="ctx_123",                  # session/thread identity
-    task_id="task_789",                    # current task identity
-    task_state=TaskState.INPUT_REQUIRED,   # task lifecycle state
-)
+```json
+// A2A: future calls may need multiple durable protocol fields
+{
+  "context_id": "ctx_123",
+  "task_id": "task_789",
+  "task_state": "input_required"
+}
 ```
 
-This is why the ADR selects Option B: keep `service_session_id` as the
-service-owned continuation surface, but allow a richer typed shape when one string is
-not enough for the protocol's durable continuation state.
+```json
+// OpenAI Responses: future calls usually need one continuation value
+{
+  "previous_response_id": "resp_abc123"
+}
+```
+
+The gap is that A2A continuation state is multi-field while OpenAI continuation is
+typically single-field.
 
 ## Current implementation notes
 
@@ -239,11 +242,19 @@ session.state["a2a"] = {
 
 ## Decision
 
-Chosen direction: **split identity by lifecycle**.
+Chosen decision criteria for the future: **split identity by lifecycle**.
 
-Values that are needed by future calls must be durable session state. Values that only identify one response stay on the
-response/message. Values that resume unfinished work stay in `ContinuationToken`. Values that only correlate a protocol
-run should stay in the protocol wrapper or run/telemetry context, not in `AgentSession`.
+When a protocol emits an id/token, place it by answering "what lifecycle does this value serve?":
+
+- **Future-call continuation state** -> durable session state. Examples: A2A `context_id` + `task_id` + `task_state`;
+  OpenAI Responses `previous_response_id`/`conversation`.
+- **Single-result identity** -> response/message object only. Examples: OpenAI `resp_*`, A2A `message_id`,
+  A2A `artifact_id`.
+- **Resume unfinished work** -> `ContinuationToken` only. Example: a token carrying in-progress task resume data.
+- **Run-start-only request fields** -> run method arguments/options, not durable session state. Example: A2A
+  `reference_task_ids` for a specific follow-up/refinement request.
+- **Per-run correlation/telemetry** -> protocol wrapper or run context, not `AgentSession`. Example: wrapper-managed
+  `run_id` used only for tracing/events.
 
 Durable-state option decision: **Option B: Extend `service_session_id` with richer service-owned values**.
 This does **not** add a new top-level identity abstraction; it keeps continuation identity under
