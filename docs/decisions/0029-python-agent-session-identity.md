@@ -13,7 +13,7 @@ informed:
 
 Python `AgentSession` currently carries a local `session_id`, an optional opaque service continuation
 `service_session_id`, and provider state. `service_session_id` is any service-owned value that lets that service continue
-a conversation, session, or thread; chat clients happen to map it through the abstract `conversation_id` option, but
+a conversation, session, or thread; chat clients happen to map it through the abstract `conversation_id` ChatOption, but
 other agent types can use it differently. It is not a generic correlation field, and generic correlation should not
 require parsing or understanding that opaque service-owned value.
 
@@ -44,22 +44,23 @@ later, that should be handled as a run-context/telemetry design, not as session 
 
 ### Concrete gap example
 
-Today, the same string can represent different lifecycles depending on where it is used:
+The immediate implementation gap is in A2A durable session state shape: A2A needs
+three protocol-owned fields to continue correctly across turns (`context_id`,
+`task_id`, `task_state`), but a single string continuation field cannot carry that
+shape cleanly.
 
 ```python
-# Turn N
-response = await openai_agent.run("Summarize this", session=session)
-assert response.response_id.startswith("resp_")
-
-# Turn N+1
-session.service_session_id = response.response_id
-follow_up = await openai_agent.run("Now rewrite as bullets", session=session)
+# What A2A needs to persist across turns
+session.service_session_id = A2AServiceSessionId(
+    context_id="ctx_123",                  # session/thread identity
+    task_id="task_789",                    # current task identity
+    task_state=TaskState.INPUT_REQUIRED,   # task lifecycle state
+)
 ```
 
-`resp_*` is a message/response id for Turn N, but when it is carried into
-`session.service_session_id` for Turn N+1 it becomes a service continuation handle
-(`previous_response_id`). This ADR keeps that transition explicit instead of treating
-"session id", "response id", and "task id" as always interchangeable.
+This is why the ADR selects Option B: keep `service_session_id` as the
+service-owned continuation surface, but allow a richer typed shape when one string is
+not enough for the protocol's durable continuation state.
 
 ## Current implementation notes
 
@@ -76,8 +77,6 @@ follow_up = await openai_agent.run("Now rewrite as bullets", session=session)
 - For Responses API, the response id (`resp_*`) is also the response/message identity surfaced as
   `ChatResponse.response_id`; when used for continuation on the next request, it becomes the `previous_response_id`
   value.
-- In other words, a Responses `resp_*` value can be both: (1) the identity of the response that was produced, and
-  later (2) the service-owned continuation handle for the next turn. The lifecycle changes with usage.
 - Python A2A has not been released as stable yet, so its session factory or session shape can still be adjusted before
   release.
 
