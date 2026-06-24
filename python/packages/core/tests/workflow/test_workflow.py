@@ -994,6 +994,86 @@ async def test_workflow_partial_stream_does_not_clobber_successor_active_run() -
     await asyncio.sleep(0)
 
 
+async def test_workflow_stale_runtime_checkpoint_storage_not_inherited() -> None:
+    """A new run must not inherit a prior run's leftover runtime checkpoint storage.
+
+    If a run that set a runtime ``checkpoint_storage`` override is dropped before
+    its async-generator finalizer clears it, the override can linger on the
+    ``RunnerContext`` while ``_is_run_active()`` already reports False. ``run()``
+    defensively clears that stale override so a subsequent run that does not pass
+    its own ``checkpoint_storage`` does not silently checkpoint into it.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        leftover_storage = FileCheckpointStorage(temp_dir)
+        executor = IncrementExecutor(id="stale_storage_exec", limit=3, increment=1)
+        workflow = WorkflowBuilder(start_executor=executor).build()
+
+        # Simulate a leftover runtime override from a dropped prior run.
+        workflow._runner.context.set_runtime_checkpoint_storage(leftover_storage)  # type: ignore[attr-defined]
+
+        # A fresh run without its own checkpoint_storage must not use the leftover.
+        result = await workflow.run(NumberMessage(data=0))
+        assert result.get_final_state() == WorkflowRunState.IDLE
+
+        checkpoints = await leftover_storage.list_checkpoints(workflow_name=workflow.name)
+        assert checkpoints == [], "Stale runtime checkpoint storage must not be inherited by a new run"
+        assert workflow._runner.context._runtime_checkpoint_storage is None  # type: ignore[attr-defined]
+
+
+async def test_workflow_partial_stream_does_not_clobber_successor_runtime_storage() -> None:
+    """A stale ``_run_core`` finalizer must not clear a successor's runtime storage.
+
+    Same GC-finalizer race as
+    ``test_workflow_partial_stream_does_not_clobber_successor_active_run`` but for the
+    runtime checkpoint storage override: the dropped run's deferred ``finally`` must
+    only clear the override if it still owns it, otherwise it wipes the successor
+    run's storage.
+    """
+    with (
+        tempfile.TemporaryDirectory() as temp_dir_a,
+        tempfile.TemporaryDirectory() as temp_dir_b,
+    ):
+        storage_a = FileCheckpointStorage(temp_dir_a)
+        storage_b = FileCheckpointStorage(temp_dir_b)
+        executor = IncrementExecutor(id="storage_finalizer_exec", limit=100, increment=1)
+        workflow = WorkflowBuilder(start_executor=executor).build()
+        context = workflow._runner.context  # type: ignore[attr-defined]
+
+        # Step 1: drive stream A's body to its first yield so it set storage_a.
+        stream_a = workflow.run(NumberMessage(data=0), checkpoint_storage=storage_a, stream=True)
+        aiter_a = stream_a.__aiter__()
+        await aiter_a.__anext__()
+        assert context._runtime_checkpoint_storage is storage_a
+
+        # Step 2: drop stream A; the weakref dies and async-gen close is scheduled
+        # but not run inline.
+        del stream_a
+        del aiter_a
+        gc.collect()
+
+        # Step 3: synchronously start stream B with its own storage and drive it to
+        # its first yield so it set storage_b and took ownership of the override.
+        stream_b = workflow.run(NumberMessage(data=0), checkpoint_storage=storage_b, stream=True)
+        aiter_b = stream_b.__aiter__()
+        await aiter_b.__anext__()
+        assert context._runtime_checkpoint_storage is storage_b
+
+        # Step 4: yield enough for stream A's scheduled aclose to drive its body
+        # through ``GeneratorExit`` and into its ``finally``.
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+        # With the ownership guard, stream B's override survives. Without it, A's
+        # stale finalizer would have cleared it.
+        assert context._runtime_checkpoint_storage is storage_b
+
+        # Tear down stream B.
+        del stream_b
+        del aiter_b
+        gc.collect()
+        await asyncio.sleep(0)
+
+
 class _StreamingTestAgent(BaseAgent):
     """Test agent that supports both streaming and non-streaming modes."""
 

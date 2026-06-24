@@ -371,6 +371,12 @@ class Workflow(DictConvertible):
         # so a subsequent ``run()`` is allowed.
         self._active_run: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
 
+        # Identifies which run currently owns the runtime checkpoint storage override
+        # on the RunnerContext (keyed by that run's ``_active_run`` weakref). Used to
+        # scope clearing so a deferred async-generator finalizer from a dropped run
+        # cannot clobber a successor run's storage.
+        self._runtime_storage_owner: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
+
     @property
     def status(self) -> WorkflowRunState:
         """Return the current run-level status of this workflow instance.
@@ -756,6 +762,13 @@ class Workflow(DictConvertible):
                 "Workflow is already running; concurrent runs are not allowed on the same instance."
             )
 
+        # No run is active, so any runtime checkpoint storage override still set on the
+        # context is stale - left over from a prior run whose stream was dropped before
+        # its async-generator finalizer ran. Clear it so this run starts clean and does
+        # not silently inherit the prior run's runtime checkpoint storage.
+        self._runner.context.clear_runtime_checkpoint_storage()
+        self._runtime_storage_owner = None
+
         response_stream = ResponseStream[WorkflowEvent, WorkflowRunResult](
             self._run_core(
                 message=message,
@@ -790,10 +803,6 @@ class Workflow(DictConvertible):
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
         """
-        # Enable runtime checkpointing if storage provided
-        if checkpoint_storage is not None:
-            self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
-
         # Capture the weakref instance ``run()`` installed for *this* run. We
         # compare by object identity in the finally so a stale finalizer (e.g.
         # the caller dropped this stream after partial iteration, then started
@@ -803,6 +812,13 @@ class Workflow(DictConvertible):
         # this generator's body is first iterated, so by the time we read it
         # here it already points at our own ``ResponseStream``.
         my_active_run = self._active_run
+
+        # Enable runtime checkpointing if storage provided, and record that this run
+        # owns the override so the ownership-guarded clear in the finally only fires
+        # for this run (and a deferred finalizer can't clear a successor's storage).
+        if checkpoint_storage is not None:
+            self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
+            self._runtime_storage_owner = my_active_run
 
         try:
             # Async validation: a fresh-message run is only allowed when the
@@ -853,8 +869,12 @@ class Workflow(DictConvertible):
             # it would silently break the successor's concurrency guard.
             if self._active_run is my_active_run:
                 self._active_run = None
-            if checkpoint_storage is not None:
+            # Only clear the runtime checkpoint storage if this run still owns it. A
+            # dropped run's deferred finalizer must not clear a successor run's storage
+            # (mirrors the ``_active_run`` ownership guard above).
+            if checkpoint_storage is not None and self._runtime_storage_owner is my_active_run:
                 self._runner.context.clear_runtime_checkpoint_storage()
+                self._runtime_storage_owner = None
 
     @staticmethod
     def _finalize_events(
