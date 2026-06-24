@@ -42,6 +42,25 @@ AG-UI is out of scope for the decision. Its `thread_id` already maps to `AgentSe
 path, and `run_id` is wrapper-owned event correlation. If AG-UI run correlation needs framework telemetry integration
 later, that should be handled as a run-context/telemetry design, not as session identity.
 
+### Concrete gap example
+
+Today, the same string can represent different lifecycles depending on where it is used:
+
+```python
+# Turn N
+response = await openai_agent.run("Summarize this", session=session)
+assert response.response_id.startswith("resp_")
+
+# Turn N+1
+session.service_session_id = response.response_id
+follow_up = await openai_agent.run("Now rewrite as bullets", session=session)
+```
+
+`resp_*` is a message/response id for Turn N, but when it is carried into
+`session.service_session_id` for Turn N+1 it becomes a service continuation handle
+(`previous_response_id`). This ADR keeps that transition explicit instead of treating
+"session id", "response id", and "task id" as always interchangeable.
+
 ## Current implementation notes
 
 - A2A currently has `A2AAgentSession`, but `A2AAgent.create_session(...)` does not automatically return it.
@@ -57,6 +76,8 @@ later, that should be handled as a run-context/telemetry design, not as session 
 - For Responses API, the response id (`resp_*`) is also the response/message identity surfaced as
   `ChatResponse.response_id`; when used for continuation on the next request, it becomes the `previous_response_id`
   value.
+- In other words, a Responses `resp_*` value can be both: (1) the identity of the response that was produced, and
+  later (2) the service-owned continuation handle for the next turn. The lifecycle changes with usage.
 - Python A2A has not been released as stable yet, so its session factory or session shape can still be adjusted before
   release.
 
@@ -226,6 +247,10 @@ response/message. Values that resume unfinished work stay in `ContinuationToken`
 run should stay in the protocol wrapper or run/telemetry context, not in `AgentSession`.
 
 Durable-state option decision: **Option B: Extend `service_session_id` with richer service-owned values**.
+This does **not** add a new top-level identity abstraction; it keeps continuation identity under
+`service_session_id` and keeps run correlation in existing run/telemetry context.
+The immediate implementation gap is mainly in A2A mapping clarity, but the lifecycle split applies
+consistently across providers.
 
 To support telemetry, `BaseAgent` should expose a method that accepts an `AgentSession | None` and returns the value to
 use for `gen_ai.conversation.id`. The default implementation should return `session.service_session_id` when it is a
