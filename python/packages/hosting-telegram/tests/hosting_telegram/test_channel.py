@@ -531,7 +531,9 @@ class TestStreamingBehavior:
         await ch._stream_to_chat(6, request, cast(Any, stream))  # pyright: ignore[reportPrivateUsage]
 
         assert reply_with_result.await_count == 1
-        assert reply_with_result.await_args.kwargs["send_text"] is True
+        await_args = reply_with_result.await_args
+        assert await_args is not None
+        assert await_args.kwargs["send_text"] is True
 
     async def test_streaming_sends_images_from_final_result(self) -> None:
         ch, _ = _make_telegram()
