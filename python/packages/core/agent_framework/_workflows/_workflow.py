@@ -864,10 +864,11 @@ class Workflow(DictConvertible):
                 # finalizer ran, ``self._active_run`` points at the successor and we
                 # leave it untouched to preserve the successor's concurrency guard.
                 self._active_run = None
-            if checkpoint_storage is not None and owns_run:
-                # Only clear the runtime checkpoint storage if this run still owns it,
-                # so a dropped run's deferred finalizer can't clear a successor's storage.
-                self._runner.context.clear_runtime_checkpoint_storage()
+                # Same ownership scoping applies to the runtime checkpoint storage:
+                # only clear it when this run still owns it, so a dropped run's
+                # deferred finalizer can't clear a successor's storage.
+                if checkpoint_storage is not None:
+                    self._runner.context.clear_runtime_checkpoint_storage()
 
     @staticmethod
     def _finalize_events(
