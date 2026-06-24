@@ -22,6 +22,7 @@ from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.types import Part, Task, TaskState
 from agent_framework import Content
+from agent_framework import Message as AFMessage
 from agent_framework_hosting import (
     ChannelContext,
     ChannelIdentity,
@@ -57,6 +58,17 @@ def _contents_to_parts(contents: list[Content]) -> list[Part]:
         else:
             logger.warning("A2AChannel does not support content type: %s. Omitted.", content.type)
     return parts
+
+
+def _value_to_parts(value: Any) -> list[Part]:
+    """Convert workflow outputs and fallback values into A2A parts."""
+    if isinstance(value, Content):
+        return _contents_to_parts([value])
+    if isinstance(value, AFMessage):
+        return _contents_to_parts(list(value.contents))
+    if isinstance(value, str):
+        return [Part(text=value)]
+    return [Part(text=str(value))]
 
 
 class HostAgentExecutor(AgentExecutor):
@@ -158,11 +170,13 @@ class HostAgentExecutor(AgentExecutor):
         )
         response: Any = result.result
         messages: list[Any] = list(getattr(response, "messages", None) or [])
+        get_outputs = cast("Any", getattr(response, "get_outputs", None))
+        if callable(get_outputs):
+            messages.extend(cast("list[Any]", get_outputs()))
         for message in messages:
             if getattr(message, "role", None) == "user":
                 continue
-            contents: list[Content] = list(getattr(message, "contents", None) or [])
-            parts = _contents_to_parts(contents)
+            parts = _value_to_parts(message)
             if parts:
                 await updater.update_status(
                     state=TaskState.TASK_STATE_WORKING,
@@ -171,7 +185,8 @@ class HostAgentExecutor(AgentExecutor):
 
     async def _run_stream(self, request: ChannelRequest, updater: TaskUpdater, *, protocol_request: Any) -> None:
         """Streaming: publish incremental updates as task artifacts."""
-        streamed_ids: set[str] = set()
+        stream_artifact_id = f"{request.attributes.get('task_id', 'stream')}:stream"
+        appended = False
         stream = await self._ctx.run_stream(
             request,
             run_hook=self._run_hook,
@@ -182,14 +197,15 @@ class HostAgentExecutor(AgentExecutor):
         async for update in stream:
             contents: list[Content] = list(getattr(update, "contents", None) or [])
             parts = _contents_to_parts(contents)
+            text = getattr(update, "text", None)
+            if not parts and isinstance(text, str) and text:
+                parts = [Part(text=text)]
             if not parts:
                 continue
-            message_id: str | None = getattr(update, "message_id", None)
             await updater.add_artifact(
                 parts=parts,
-                artifact_id=message_id,
-                append=True if message_id is not None and message_id in streamed_ids else None,
+                artifact_id=stream_artifact_id,
+                append=True if appended else None,
             )
-            if message_id is not None:
-                streamed_ids.add(message_id)
+            appended = True
         await stream.get_final_response()

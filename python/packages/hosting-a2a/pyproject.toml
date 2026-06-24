@@ -79,3 +79,8 @@ cmd = 'pytest -m "not integration" --cov=agent_framework_hosting_a2a --cov-repor
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]
 build-backend = "flit_core.buildapi"
+
+[dependency-groups]
+dev = [
+    "uvicorn[standard]>=0.34.0",
+]
