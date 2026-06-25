@@ -598,8 +598,8 @@ class MCPTool:
         """
         from mcp import types
 
-        raw_meta = getattr(mcp_type, "meta", None)
-        meta: dict[str, Any] | None = dict(raw_meta) if raw_meta else None
+        raw_meta = mcp_type.meta
+        meta: dict[str, Any] | None = dict(raw_meta) if isinstance(raw_meta, Mapping) else None
         # Stamp the server ``_meta`` payload directly via additional_properties on
         # each newly constructed Content; empty when the server provided no meta.
         additional_kwargs: dict[str, Any] = {"additional_properties": {"_meta": meta}} if meta else {}

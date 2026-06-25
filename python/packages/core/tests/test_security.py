@@ -462,7 +462,7 @@ class TestLabelTrackingMiddleware:
         )
         context = FunctionInvocationContext(
             function=message_tool,
-            arguments=message_tool.args_schema(summary=f"[{variable_id}]"),
+            arguments=MessageArgs(summary=f"[{variable_id}]"),
         )
 
         async def next_fn() -> None:
@@ -508,7 +508,7 @@ class TestLabelTrackingMiddleware:
         )
         context = FunctionInvocationContext(
             function=message_tool,
-            arguments=message_tool.args_schema(summary=f"Security review complete. [{variable_id}]"),
+            arguments=MessageArgs(summary=f"Security review complete. [{variable_id}]"),
         )
 
         async def next_fn() -> None:
@@ -1030,6 +1030,7 @@ class TestAutomaticHiding:
         await middleware_no_auto_hide.process(context, next_fn)
 
         # The literal ID must survive (not expanded to "raw untrusted payload").
+        assert isinstance(context.arguments, dict)
         assert context.arguments["variable_id"] == var_id
 
         payload = json.loads(context.result[0].text)
@@ -2916,7 +2917,11 @@ class TestMCPIFCMetaLabels:
 
         from agent_framework._mcp import MCPTool
 
-        helper = MCPTool(name="helper")
+        class _ConcreteMCPTool(MCPTool):
+            def get_mcp_client(self):
+                raise NotImplementedError
+
+        helper = _ConcreteMCPTool(name="helper")
         mcp_result = mcp_types.CallToolResult(
             content=[
                 mcp_types.TextContent(type="text", text="first"),
@@ -2938,7 +2943,11 @@ class TestMCPIFCMetaLabels:
 
         from agent_framework._mcp import MCPTool
 
-        helper = MCPTool(name="helper")
+        class _ConcreteMCPTool(MCPTool):
+            def get_mcp_client(self):
+                raise NotImplementedError
+
+        helper = _ConcreteMCPTool(name="helper")
         mcp_result = mcp_types.CallToolResult(content=[mcp_types.TextContent(type="text", text="hi")])
         contents = helper._parse_tool_result_from_mcp(mcp_result)
         assert "_meta" not in contents[0].additional_properties
@@ -2950,9 +2959,7 @@ class TestMCPIFCMetaLabels:
         contents = [
             Content.from_text(
                 "x",
-                additional_properties={
-                    "_meta": {"ifc": {"integrity": "untrusted", "confidentiality": "private"}}
-                },
+                additional_properties={"_meta": {"ifc": {"integrity": "untrusted", "confidentiality": "private"}}},
             )
         ]
         _stamp_mcp_content_labels(contents, static)
@@ -2982,9 +2989,7 @@ class TestMCPIFCMetaLabels:
         contents = [
             Content.from_text(
                 "x",
-                additional_properties={
-                    "_meta": {"ifc": {"integrity": "bogus", "confidentiality": "public"}}
-                },
+                additional_properties={"_meta": {"ifc": {"integrity": "bogus", "confidentiality": "public"}}},
             )
         ]
         _stamp_mcp_content_labels(contents, static)
@@ -3033,9 +3038,7 @@ class TestMCPIFCMetaLabels:
             return [
                 Content.from_text(
                     "payload",
-                    additional_properties={
-                        "_meta": {"ifc": {"integrity": "untrusted", "confidentiality": "private"}}
-                    },
+                    additional_properties={"_meta": {"ifc": {"integrity": "untrusted", "confidentiality": "private"}}},
                 )
             ]
 
@@ -3050,7 +3053,8 @@ class TestMCPIFCMetaLabels:
             },
         )
         _wrap_mcp_function_for_ifc(func_tool, IntegrityLabel.UNTRUSTED)
-        result = await func_tool.func()  # type: ignore[misc]
+        assert func_tool.func is not None
+        result = await func_tool.func()
         assert isinstance(result, list)
         assert result[0].additional_properties["security_label"] == {
             "integrity": "untrusted",
@@ -3077,7 +3081,8 @@ class TestMCPIFCMetaLabels:
             },
         )
         _wrap_mcp_function_for_ifc(func_tool, IntegrityLabel.UNTRUSTED)
-        result = await func_tool.func()  # type: ignore[misc]
+        assert func_tool.func is not None
+        result = await func_tool.func()
         assert result[0].additional_properties["security_label"] == {
             "integrity": "untrusted",
             "confidentiality": "public",
@@ -3096,9 +3101,7 @@ class TestMCPIFCMetaLabels:
             return [
                 Content.from_text(
                     "wrote item",
-                    additional_properties={
-                        "_meta": {"ifc": {"integrity": "trusted", "confidentiality": "private"}}
-                    },
+                    additional_properties={"_meta": {"ifc": {"integrity": "trusted", "confidentiality": "private"}}},
                 )
             ]
 
@@ -3114,7 +3117,8 @@ class TestMCPIFCMetaLabels:
             },
         )
         _wrap_mcp_function_for_ifc(func_tool, IntegrityLabel.UNTRUSTED)
-        result = await func_tool.func()  # type: ignore[misc]
+        assert func_tool.func is not None
+        result = await func_tool.func()
         # Server label wins verbatim.
         assert result[0].additional_properties["security_label"] == {
             "integrity": "trusted",
@@ -3140,7 +3144,8 @@ class TestMCPIFCMetaLabels:
             },
         )
         _wrap_mcp_function_for_ifc(func_tool, IntegrityLabel.UNTRUSTED)
-        result = await func_tool.func()  # type: ignore[misc]
+        assert func_tool.func is not None
+        result = await func_tool.func()
         assert result == "plain string result"
 
     @pytest.mark.asyncio

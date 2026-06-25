@@ -105,9 +105,7 @@ async def main() -> None:
         print(f"Bearer token: {auth_token}")
         print("Press Ctrl+C to stop.\n")
 
-        uvicorn_server = uvicorn.Server(
-            uvicorn.Config(server.get_app(), host=host, port=port, log_level="info")
-        )
+        uvicorn_server = uvicorn.Server(uvicorn.Config(server.get_app(), host=host, port=port, log_level="info"))
         await uvicorn_server.serve()
 
 
