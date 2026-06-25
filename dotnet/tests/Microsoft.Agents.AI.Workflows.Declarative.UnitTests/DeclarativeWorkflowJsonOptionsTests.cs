@@ -106,17 +106,6 @@ public sealed partial class DeclarativeWorkflowJsonOptionsTests(ITestOutputHelpe
         Assert.Contains("exec-1", text, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void CreateCheckpointManager_SmokeTest()
-    {
-        InMemoryJsonStore store = new();
-
-        Assert.NotNull(DeclarativeWorkflowJsonOptions.CreateCheckpointManager(store));
-
-        JsonSerializerOptions userOptions = new() { TypeInfoResolver = AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver };
-        Assert.NotNull(DeclarativeWorkflowJsonOptions.CreateCheckpointManager(store, userOptions));
-    }
-
     // Mirrors the documented public usage: CheckpointManager.CreateJson(store, DeclarativeWorkflowJsonOptions.Default).
     [Fact]
     public void CheckpointManager_CreateJson_WithDefault_SmokeTest()

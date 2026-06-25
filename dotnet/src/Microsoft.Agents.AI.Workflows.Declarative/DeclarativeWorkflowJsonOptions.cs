@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Text.Json.Serialization.Metadata;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
@@ -38,32 +37,6 @@ public static partial class DeclarativeWorkflowJsonOptions
 {
     /// <summary>Gets the source-gen <see cref="JsonSerializerOptions"/> covering declarative-package checkpoint types.</summary>
     public static JsonSerializerOptions Default { get; } = CreateDefaultOptions();
-
-    /// <summary>Creates a JSON-backed <see cref="CheckpointManager"/> wired up with <see cref="Default"/>.</summary>
-    /// <param name="store">The JSON checkpoint store.</param>
-    /// <param name="userOptions">Optional user options whose resolvers/converters are chained after the declarative defaults.</param>
-    internal static CheckpointManager CreateCheckpointManager(
-        ICheckpointStore<JsonElement> store,
-        JsonSerializerOptions? userOptions = null)
-    {
-        JsonSerializerOptions composed = new(Default);
-
-        if (userOptions is not null)
-        {
-            foreach (IJsonTypeInfoResolver resolver in userOptions.TypeInfoResolverChain)
-            {
-                composed.TypeInfoResolverChain.Add(resolver);
-            }
-
-            foreach (JsonConverter converter in userOptions.Converters)
-            {
-                composed.Converters.Add(converter);
-            }
-        }
-
-        composed.MakeReadOnly();
-        return CheckpointManager.CreateJson(store, composed);
-    }
 
     [UnconditionalSuppressMessage("ReflectionAnalysis", "IL3050:RequiresDynamicCode", Justification = "Source-gen context.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "Source-gen context.")]
