@@ -74,10 +74,7 @@ internal sealed class DurableFanOutEdgeRouter : IDurableEdgeRouter
         // No assigner: plain fan-out, forward the message to every target.
         if (this._edgeAssigner is null)
         {
-            if (logger.IsEnabled(LogLevel.Debug))
-            {
-                logger.LogDebug("Fan-Out from {Source}: routing to {Count} targets", this._sourceId, this._targetRouters.Count);
-            }
+            logger.LogFanOutRouting(this._sourceId, this._targetRouters.Count);
 
             foreach (IDurableEdgeRouter targetRouter in this._targetRouters)
             {
@@ -88,16 +85,13 @@ internal sealed class DurableFanOutEdgeRouter : IDurableEdgeRouter
         }
 
         // Assigner present (e.g., a switch): select only the matching targets, mirroring the in-process
-        // FanOutEdgeRunner. The assigner returns indices into the ordered target list. Indices map directly
-        // to targets with no range filtering and no de-duplication, so an out-of-range index surfaces as an
-        // error (logged below) instead of being silently dropped, and duplicate indices deliver more than once.
-        List<IDurableEdgeRouter> selectedRouters;
+        // FanOutEdgeRunner. The assigner returns indices into the ordered target list, with no de-duplication,
+        // so duplicate indices deliver the message more than once.
+        List<int> selectedIndices;
         try
         {
             object? messageObj = DurableSerialization.DeserializeMessage(envelope.Message, this._sourceOutputType);
-            selectedRouters = this._edgeAssigner(messageObj, this._targetRouters.Count)
-                                  .Select(index => this._targetRouters[index])
-                                  .ToList();
+            selectedIndices = this._edgeAssigner(messageObj, this._targetRouters.Count).ToList();
         }
         catch (Exception ex)
         {
@@ -105,11 +99,19 @@ internal sealed class DurableFanOutEdgeRouter : IDurableEdgeRouter
             return;
         }
 
-        logger.LogFanOutSelectorMatched(this._sourceId, selectedRouters.Count, this._targetRouters.Count);
+        logger.LogFanOutSelectorMatched(this._sourceId, selectedIndices.Count, this._targetRouters.Count);
 
-        foreach (IDurableEdgeRouter targetRouter in selectedRouters)
+        foreach (int index in selectedIndices)
         {
-            targetRouter.RouteMessage(envelope, messageQueues, logger);
+            // Range-check each index individually so an out-of-range value is surfaced (logged) and skipped on
+            // its own, without dropping deliveries to the other valid targets selected for this message.
+            if (index < 0 || index >= this._targetRouters.Count)
+            {
+                logger.LogFanOutSelectorIndexOutOfRange(this._sourceId, index, this._targetRouters.Count);
+                continue;
+            }
+
+            this._targetRouters[index].RouteMessage(envelope, messageQueues, logger);
         }
     }
 }

@@ -175,6 +175,50 @@ public sealed class DurableEdgeMapSwitchTests
         Assert.Equal(0, QueuedCount(queues, TargetId));
     }
 
+    [Fact]
+    public void RouteMessage_SelectorReturnsMixedValidAndInvalidIndex_DeliversValidTargetsOnly()
+    {
+        // Arrange: a selector returning [0, 5] for two targets. The out-of-range index 5 must be skipped
+        // without dropping the valid delivery to index 0.
+        const string ValidId = "valid";
+        const string OtherId = "other";
+
+        FunctionExecutor<int, int> router = Router();
+        WorkflowBuilder builder = new(router);
+        builder.AddFanOutEdge<int>(router, [Sink(ValidId), Sink(OtherId)], (_, _) => [0, 5]);
+
+        // Act
+        Dictionary<string, Queue<DurableMessageEnvelope>> queues = Route(builder.Build(), 7);
+
+        // Assert: index 0 still receives the message; the invalid index is skipped.
+        Assert.Equal(1, QueuedCount(queues, ValidId));
+        Assert.Equal(0, QueuedCount(queues, OtherId));
+    }
+
+    [Fact]
+    public void RouteMessage_SwitchCaseAndSiblingEdgeToSameTarget_BothDeliver()
+    {
+        // Arrange: a switch case and a sibling direct edge both target the same executor. The sibling edge must
+        // still be wired even though the switch already routes to that target.
+        FunctionExecutor<int> evenSink = Sink(EvenId);
+
+        FunctionExecutor<int, int> router = Router();
+        WorkflowBuilder builder = new(router);
+        builder.AddSwitch(router, sb =>
+        {
+            sb.AddCase<int>(n => n % 2 == 0, evenSink);
+            sb.AddCase<int>(n => n % 2 != 0, Sink(OddId));
+        });
+        builder.AddEdge(router, evenSink);
+
+        // Act: 4 is even, so the switch routes to evenSink; the sibling direct edge also delivers to it.
+        Dictionary<string, Queue<DurableMessageEnvelope>> queues = Route(builder.Build(), 4);
+
+        // Assert: evenSink receives the message twice (once via the switch case, once via the sibling edge).
+        Assert.Equal(2, QueuedCount(queues, EvenId));
+        Assert.Equal(0, QueuedCount(queues, OddId));
+    }
+
     private static FunctionExecutor<int, int> Router()
         => new(RouterId, (input, _, _) => input, outputTypes: [typeof(int)]);
 

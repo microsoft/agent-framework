@@ -246,4 +246,23 @@ internal static partial class Logs
         this ILogger logger,
         Exception ex,
         string source);
+
+    [LoggerMessage(
+        EventId = 116,
+        Level = LogLevel.Debug,
+        Message = "Fan-out from {Source}: routing to {Count} target(s)")]
+    public static partial void LogFanOutRouting(
+        this ILogger logger,
+        string source,
+        int count);
+
+    [LoggerMessage(
+        EventId = 117,
+        Level = LogLevel.Warning,
+        Message = "Fan-out from {Source}: selector returned out-of-range index {Index} (target count {Count}), skipping")]
+    public static partial void LogFanOutSelectorIndexOutOfRange(
+        this ILogger logger,
+        string source,
+        int index,
+        int count);
 }

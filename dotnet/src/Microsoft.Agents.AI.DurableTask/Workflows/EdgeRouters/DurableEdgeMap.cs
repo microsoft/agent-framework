@@ -112,16 +112,18 @@ internal sealed class DurableEdgeMap
             {
                 List<IDurableEdgeRouter> sourceRouters = [];
 
-                // Targets reached through a selector are chosen by its assigner; track them so we don't also
-                // wire an unconditional direct router to them below.
-                HashSet<string> selectorSinks = [];
+                // Count how many times each target is claimed by a selector. The flattened successor list can
+                // contain the same target more than once (a selector case and a sibling edge can point at the
+                // same executor), so we consume one occurrence per selector claim rather than skipping the
+                // target entirely, ensuring sibling edges to a selector's target are still wired.
+                Dictionary<string, int> selectorSinkCounts = [];
                 foreach (SelectiveFanOut selectiveFanOut in selectiveFanOuts)
                 {
                     List<IDurableEdgeRouter> orderedRouters = [];
                     foreach (string sinkId in selectiveFanOut.SinkIds)
                     {
                         orderedRouters.Add(new DurableDirectEdgeRouter(sourceId, sinkId, condition: null, sourceOutputType));
-                        selectorSinks.Add(sinkId);
+                        selectorSinkCounts[sinkId] = selectorSinkCounts.GetValueOrDefault(sinkId) + 1;
                     }
 
                     sourceRouters.Add(new DurableFanOutEdgeRouter(sourceId, orderedRouters, selectiveFanOut.Assigner, sourceOutputType));
@@ -131,8 +133,10 @@ internal sealed class DurableEdgeMap
                 // not part of any selector still need to deliver.
                 foreach (string sinkId in successorIds)
                 {
-                    if (selectorSinks.Contains(sinkId))
+                    // Consume one selector occurrence of this target; any remaining occurrence is a sibling edge.
+                    if (selectorSinkCounts.TryGetValue(sinkId, out int remaining) && remaining > 0)
                     {
+                        selectorSinkCounts[sinkId] = remaining - 1;
                         continue;
                     }
 
