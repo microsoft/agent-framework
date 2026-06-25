@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using GitHub.Copilot;
 using GitHub.Copilot.Rpc;
@@ -133,13 +132,13 @@ public class GitHubCopilotAgentTests
     }
 
     [Fact]
-    public async Task RunAsync_WithApprovalRequiredTool_ExecutesWhenCallbackApprovesAsync()
+    public async Task RunAsync_WithApprovalRequiredTool_AsksAndExecutesWhenPermissionApprovesAsync()
     {
         // Arrange
         SkipIfCopilotNotConfigured();
 
         bool toolInvoked = false;
-        bool approvalRequested = false;
+        bool permissionRequested = false;
 
         AIFunction weatherTool = AIFunctionFactory.Create((string location) =>
         {
@@ -148,10 +147,10 @@ public class GitHubCopilotAgentTests
         }, "GetWeather", "Get the weather for a given location.");
         ApprovalRequiredAIFunction approvalRequiredTool = new(weatherTool);
 
-        ValueTask<bool> approveAsync(FunctionCallContent request, CancellationToken cancellationToken)
+        Task<PermissionDecision> OnPermissionRequestRecordingAsync(PermissionRequest request, PermissionInvocation invocation)
         {
-            approvalRequested = true;
-            return new(true);
+            permissionRequested = true;
+            return Task.FromResult(PermissionDecision.ApproveOnce());
         }
 
         await using CopilotClient client = new(new CopilotClientOptions());
@@ -160,7 +159,7 @@ public class GitHubCopilotAgentTests
         SessionConfig sessionConfig = new()
         {
             Tools = [approvalRequiredTool],
-            OnPermissionRequest = OnPermissionRequestAsync,
+            OnPermissionRequest = OnPermissionRequestRecordingAsync,
             SystemMessage = new SystemMessageConfig
             {
                 Mode = SystemMessageMode.Append,
@@ -168,7 +167,7 @@ public class GitHubCopilotAgentTests
             },
         };
 
-        await using GitHubCopilotAgent agent = new(client, sessionConfig, onFunctionApproval: approveAsync);
+        await using GitHubCopilotAgent agent = new(client, sessionConfig);
         AgentSession session = await agent.CreateSessionAsync();
 
         try
@@ -176,11 +175,11 @@ public class GitHubCopilotAgentTests
             // Act
             AgentResponse response = await agent.RunAsync("What's the weather like in Seattle?", session);
 
-            // Assert - the SDK tool loop must dispatch through the Agent Framework approval gate,
-            // and the underlying function only runs because the callback approved the call.
+            // Assert - the provider-installed OnPreToolUse returns "ask" for the approval-required tool, routing the
+            // decision to OnPermissionRequest; the tool only runs because the permission handler approved it.
             Assert.NotNull(response);
             Assert.NotEmpty(response.Messages);
-            Assert.True(approvalRequested);
+            Assert.True(permissionRequested);
             Assert.True(toolInvoked);
         }
         finally

@@ -3,11 +3,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using GitHub.Copilot;
 using GitHub.Copilot.Rpc;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.GitHub.Copilot.UnitTests;
 
@@ -385,181 +385,141 @@ public sealed class GitHubCopilotAgentTests
     }
 
     [Fact]
-    public async Task Constructor_WithApprovalRequiredTool_GatesExecutionAndDeniesWithoutCallbackAsync()
+    public async Task Constructor_WithApprovalRequiredTool_InstallsAskPreToolUseHookAsync()
     {
         // Arrange
-        bool invoked = false;
-        AIFunction dangerousTool = AIFunctionFactory.Create(
-            () => { invoked = true; return "sensitive operation completed"; },
-            "ApprovalRequiredOperation",
-            "Performs an approval-required operation.");
-        ApprovalRequiredAIFunction approvalRequiredTool = new(dangerousTool);
-
+        AIFunction dangerousTool = AIFunctionFactory.Create(() => "sensitive", "ApprovalRequiredOperation", "A sensitive operation.");
+        AIFunction plainTool = AIFunctionFactory.Create(() => "ok", "PlainOperation", "A normal operation.");
         CopilotClient copilotClient = new(new CopilotClientOptions());
-        var agent = new GitHubCopilotAgent(copilotClient, tools: [approvalRequiredTool]);
 
         // Act
-        AIFunction exposedTool = GetExposedFunction(agent);
-        object? result = await exposedTool.InvokeAsync(new AIFunctionArguments());
+        var agent = new GitHubCopilotAgent(copilotClient, tools: [new ApprovalRequiredAIFunction(dangerousTool), plainTool]);
 
-        // Assert - the provider must NOT expose the same directly-invokable approval-required object,
-        // and invoking the gate without an approval callback must deny execution.
-        Assert.NotSame(approvalRequiredTool, exposedTool);
-        Assert.False(invoked);
-        Assert.Contains("requires human approval", result?.ToString());
+        // Assert - the provider installs a default OnPreToolUse that asks for the approval-required tool
+        // (routing the decision to OnPermissionRequest) and defers everything else.
+        SessionConfig sessionConfig = GetSessionConfigFromAgent(agent);
+        Assert.NotNull(sessionConfig.Hooks?.OnPreToolUse);
+
+        PreToolUseHookOutput? approvalDecision = await InvokePreToolUseAsync(sessionConfig, "ApprovalRequiredOperation");
+        Assert.Equal("ask", approvalDecision?.PermissionDecision);
+        Assert.False(string.IsNullOrEmpty(approvalDecision?.PermissionDecisionReason));
+
+        PreToolUseHookOutput? plainDecision = await InvokePreToolUseAsync(sessionConfig, "PlainOperation");
+        Assert.Null(plainDecision);
     }
 
     [Fact]
-    public async Task Constructor_WithApprovalRequiredTool_ExecutesWhenCallbackApprovesAsync()
+    public async Task Constructor_WithApprovalRequiredToolInSessionConfig_InstallsAskPreToolUseHookAsync()
     {
         // Arrange
-        bool invoked = false;
-        AIFunction dangerousTool = AIFunctionFactory.Create(
-            () => { invoked = true; return "sensitive operation completed"; },
-            "ApprovalRequiredOperation",
-            "Performs an approval-required operation.");
-        ApprovalRequiredAIFunction approvalRequiredTool = new(dangerousTool);
-
-        FunctionCallContent? observedRequest = null;
-        ValueTask<bool> approveAsync(FunctionCallContent request, CancellationToken _) { observedRequest = request; return new(true); }
-
+        AIFunction dangerousTool = AIFunctionFactory.Create(() => "sensitive", "ApprovalRequiredOperation", "A sensitive operation.");
+        SessionConfig sessionConfig = new() { Tools = [new ApprovalRequiredAIFunction(dangerousTool)] };
         CopilotClient copilotClient = new(new CopilotClientOptions());
-        var agent = new GitHubCopilotAgent(copilotClient, tools: [approvalRequiredTool], onFunctionApproval: approveAsync);
 
         // Act
-        AIFunction exposedTool = GetExposedFunction(agent);
-        object? result = await exposedTool.InvokeAsync(new AIFunctionArguments());
+        var agent = new GitHubCopilotAgent(copilotClient, sessionConfig);
 
         // Assert
-        Assert.True(invoked);
-        Assert.NotNull(observedRequest);
-        Assert.Equal("ApprovalRequiredOperation", observedRequest!.Name);
-        Assert.Contains("sensitive operation completed", result?.ToString());
+        SessionConfig configured = GetSessionConfigFromAgent(agent);
+        Assert.NotNull(configured.Hooks?.OnPreToolUse);
+        PreToolUseHookOutput? decision = await InvokePreToolUseAsync(configured, "ApprovalRequiredOperation");
+        Assert.Equal("ask", decision?.PermissionDecision);
     }
 
     [Fact]
-    public async Task Constructor_WithApprovalRequiredTool_DeniesWhenCallbackRejectsAsync()
+    public void Constructor_WithNoApprovalRequiredTools_DoesNotInstallPreToolUseHook()
     {
         // Arrange
-        bool invoked = false;
-        AIFunction dangerousTool = AIFunctionFactory.Create(
-            () => { invoked = true; return "sensitive operation completed"; },
-            "ApprovalRequiredOperation",
-            "Performs an approval-required operation.");
-        ApprovalRequiredAIFunction approvalRequiredTool = new(dangerousTool);
-
-        ValueTask<bool> denyAsync(FunctionCallContent request, CancellationToken cancellationToken) => new(false);
-
+        AIFunction plainTool = AIFunctionFactory.Create(() => "ok", "PlainOperation", "A normal operation.");
         CopilotClient copilotClient = new(new CopilotClientOptions());
-        var agent = new GitHubCopilotAgent(copilotClient, tools: [approvalRequiredTool], onFunctionApproval: denyAsync);
 
         // Act
-        AIFunction exposedTool = GetExposedFunction(agent);
-        object? result = await exposedTool.InvokeAsync(new AIFunctionArguments());
-
-        // Assert
-        Assert.False(invoked);
-        Assert.Contains("the request was denied", result?.ToString());
-    }
-
-    [Fact]
-    public async Task Constructor_WithApprovalRequiredTool_DeniesWhenCallbackThrowsAsync()
-    {
-        // Arrange
-        bool invoked = false;
-        AIFunction dangerousTool = AIFunctionFactory.Create(
-            () => { invoked = true; return "sensitive operation completed"; },
-            "ApprovalRequiredOperation",
-            "Performs an approval-required operation.");
-        ApprovalRequiredAIFunction approvalRequiredTool = new(dangerousTool);
-
-        ValueTask<bool> throwingAsync(FunctionCallContent request, CancellationToken cancellationToken) => throw new InvalidOperationException("callback failure");
-
-        CopilotClient copilotClient = new(new CopilotClientOptions());
-        var agent = new GitHubCopilotAgent(copilotClient, tools: [approvalRequiredTool], onFunctionApproval: throwingAsync);
-
-        // Act
-        AIFunction exposedTool = GetExposedFunction(agent);
-        object? result = await exposedTool.InvokeAsync(new AIFunctionArguments());
-
-        // Assert - secure-by-default: a throwing callback denies execution rather than propagating.
-        Assert.False(invoked);
-        Assert.Contains("the request was denied", result?.ToString());
-    }
-
-    [Fact]
-    public async Task Constructor_WithApprovalRequiredTool_PropagatesCancellationAsync()
-    {
-        // Arrange
-        bool invoked = false;
-        AIFunction dangerousTool = AIFunctionFactory.Create(
-            () => { invoked = true; return "sensitive operation completed"; },
-            "ApprovalRequiredOperation",
-            "Performs an approval-required operation.");
-        ApprovalRequiredAIFunction approvalRequiredTool = new(dangerousTool);
-
-        ValueTask<bool> cancelingAsync(FunctionCallContent request, CancellationToken cancellationToken)
-            => throw new OperationCanceledException(cancellationToken);
-
-        CopilotClient copilotClient = new(new CopilotClientOptions());
-        var agent = new GitHubCopilotAgent(copilotClient, tools: [approvalRequiredTool], onFunctionApproval: cancelingAsync);
-
-        // Act & Assert - cancellation must propagate rather than being swallowed into a denial.
-        AIFunction exposedTool = GetExposedFunction(agent);
-        await Assert.ThrowsAsync<OperationCanceledException>(
-            async () => await exposedTool.InvokeAsync(new AIFunctionArguments()));
-        Assert.False(invoked);
-    }
-
-    [Fact]
-    public void Constructor_WithApprovalRequiredTool_PreservesSkipPermissionMetadata()
-    {
-        // Arrange
-        AIFunction dangerousTool = CopilotTool.DefineTool(
-            () => "ok",
-            toolOptions: new CopilotToolOptions { SkipPermission = true },
-            factoryOptions: new AIFunctionFactoryOptions
-            {
-                Name = "WriteSensitiveMarker",
-                Description = "Writes a sensitive marker file."
-            });
-        ApprovalRequiredAIFunction approvalRequiredTool = new(dangerousTool);
-
-        CopilotClient copilotClient = new(new CopilotClientOptions());
-        var agent = new GitHubCopilotAgent(copilotClient, tools: [approvalRequiredTool]);
-
-        // Act
-        AIFunction exposedTool = GetExposedFunction(agent);
-
-        // Assert - the gate must remain transparent to the Copilot SDK, preserving the skip_permission flag.
-        Assert.NotSame(approvalRequiredTool, exposedTool);
-        Assert.Equal("WriteSensitiveMarker", exposedTool.Name);
-        Assert.NotNull(exposedTool.AdditionalProperties);
-        Assert.True(exposedTool.AdditionalProperties.TryGetValue("skip_permission", out object? skip));
-        Assert.Equal(true, skip);
-    }
-
-    [Fact]
-    public void Constructor_WithNonApprovalTool_LeavesToolUnchanged()
-    {
-        // Arrange
-        AIFunction plainTool = AIFunctionFactory.Create(() => "test", "TestFunc", "Test function");
-
-        CopilotClient copilotClient = new(new CopilotClientOptions());
         var agent = new GitHubCopilotAgent(copilotClient, tools: [plainTool]);
 
-        // Act
-        AIFunction exposedTool = GetExposedFunction(agent);
-
-        // Assert - tools that do not require approval pass through untouched.
-        Assert.Same(plainTool, exposedTool);
+        // Assert - no approval-required tools means no hook is installed; tools flow through normally.
+        SessionConfig sessionConfig = GetSessionConfigFromAgent(agent);
+        Assert.Null(sessionConfig.Hooks?.OnPreToolUse);
     }
 
-    private static AIFunction GetExposedFunction(GitHubCopilotAgent agent)
+    [Fact]
+    public async Task Constructor_WithUserPreToolUseHook_PreservesItAndWarnsAsync()
     {
-        SessionConfig sessionConfig = GetSessionConfigFromAgent(agent);
-        AIFunctionDeclaration declaration = Assert.Single(sessionConfig.Tools!);
-        return declaration.GetService<AIFunction>()!;
+        // Arrange - the caller supplies their own OnPreToolUse hook and also registers an approval-required tool.
+        AIFunction dangerousTool = AIFunctionFactory.Create(() => "sensitive", "ApprovalRequiredOperation", "A sensitive operation.");
+        var userHookOutput = new PreToolUseHookOutput { PermissionDecision = "allow" };
+        SessionConfig sessionConfig = new()
+        {
+            Tools = [new ApprovalRequiredAIFunction(dangerousTool)],
+            Hooks = new SessionHooks
+            {
+                OnPreToolUse = (input, invocation) => Task.FromResult<PreToolUseHookOutput?>(userHookOutput),
+            },
+        };
+
+        CapturingLoggerFactory loggerFactory = new();
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, sessionConfig, loggerFactory: loggerFactory);
+
+        // Assert - the user's hook is preserved (not overridden), and a warning is logged for the unenforced tool.
+        SessionConfig configured = GetSessionConfigFromAgent(agent);
+        PreToolUseHookOutput? decision = await InvokePreToolUseAsync(configured, "ApprovalRequiredOperation");
+        Assert.Same(userHookOutput, decision);
+
+        (LogLevel Level, string Message) warning = Assert.Single(loggerFactory.Entries, e => e.Level == LogLevel.Warning);
+        Assert.Contains("ApprovalRequiredOperation", warning.Message);
+    }
+
+    [Fact]
+    public void Constructor_WithUserPreToolUseHookButNoApprovalRequiredTools_DoesNotWarn()
+    {
+        // Arrange
+        AIFunction plainTool = AIFunctionFactory.Create(() => "ok", "PlainOperation", "A normal operation.");
+        SessionConfig sessionConfig = new()
+        {
+            Tools = [plainTool],
+            Hooks = new SessionHooks
+            {
+                OnPreToolUse = (input, invocation) => Task.FromResult<PreToolUseHookOutput?>(null),
+            },
+        };
+
+        CapturingLoggerFactory loggerFactory = new();
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, sessionConfig, loggerFactory: loggerFactory);
+
+        // Assert - nothing is being bypassed, so no warning is emitted.
+        Assert.DoesNotContain(loggerFactory.Entries, e => e.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public void Constructor_WithApprovalRequiredTool_DoesNotMutateCallerHooks()
+    {
+        // Arrange
+        AIFunction dangerousTool = AIFunctionFactory.Create(() => "sensitive", "ApprovalRequiredOperation", "A sensitive operation.");
+        SessionHooks callerHooks = new();
+        SessionConfig sessionConfig = new()
+        {
+            Tools = [new ApprovalRequiredAIFunction(dangerousTool)],
+            Hooks = callerHooks,
+        };
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+
+        // Act
+        _ = new GitHubCopilotAgent(copilotClient, sessionConfig);
+
+        // Assert - the caller-supplied SessionConfig and its Hooks instance are not mutated.
+        Assert.Null(callerHooks.OnPreToolUse);
+        Assert.Same(callerHooks, sessionConfig.Hooks);
+    }
+
+    private static Task<PreToolUseHookOutput?> InvokePreToolUseAsync(SessionConfig sessionConfig, string toolName)
+    {
+        var input = new PreToolUseHookInput { ToolName = toolName };
+        return sessionConfig.Hooks!.OnPreToolUse!(input, new HookInvocation());
     }
 
     private static SessionConfig GetSessionConfigFromAgent(GitHubCopilotAgent agent)
@@ -568,5 +528,30 @@ public sealed class GitHubCopilotAgentTests
             "_sessionConfig",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         return (SessionConfig)field.GetValue(agent)!;
+    }
+
+    private sealed class CapturingLoggerFactory : ILoggerFactory
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public ILogger CreateLogger(string categoryName) => new CapturingLogger(this.Entries);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class CapturingLogger(List<(LogLevel Level, string Message)> entries) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+                => entries.Add((logLevel, formatter(state, exception)));
+        }
     }
 }
