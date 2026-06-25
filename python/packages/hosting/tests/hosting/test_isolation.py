@@ -18,7 +18,7 @@ import asyncio
 from typing import Any
 
 import pytest
-from agent_framework import AgentSession
+from agent_framework import AgentSession, ServiceSessionId
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Route
@@ -169,7 +169,7 @@ def _make_host_with_probe() -> tuple[AgentFrameworkHost, _IsolationProbeChannel]
         def create_session(self, *, session_id: str | None = None) -> AgentSession:
             return AgentSession(session_id=session_id)
 
-        def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+        def get_session(self, service_session_id: ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
             return AgentSession(service_session_id=service_session_id, session_id=session_id)
 
         def run(self, *_args: object, **_kwargs: object) -> Any:  # pragma: no cover - never called
