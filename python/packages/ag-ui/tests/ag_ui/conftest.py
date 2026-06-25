@@ -59,7 +59,7 @@ class StreamingChatClientStub(
         self._stream_fn = stream_fn
         self._response_fn = response_fn
         self.last_session: AgentSession | None = None
-        self.last_service_session_id: str | None = None
+        self.last_service_session_id: str | ServiceSessionId | None = None
 
     @overload
     def get_response(
@@ -245,7 +245,7 @@ class StubAgent(SupportsAgentRun):
     def create_session(self, **kwargs: Any) -> AgentSession:
         return AgentSession(session_id=kwargs.get("session_id"))
 
-    def get_session(self, service_session_id: ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
+    def get_session(self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id, service_session_id=service_session_id)
 
 
