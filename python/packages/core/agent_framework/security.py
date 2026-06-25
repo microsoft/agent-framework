@@ -837,16 +837,21 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         only receive the primary content they would normally have seen without
         variable indirection.
         """
-        if isinstance(expanded_content, dict) and "response" in expanded_content:
-            return expanded_content["response"]
+        if isinstance(expanded_content, dict):
+            content_map = cast(dict[str, Any], expanded_content)
+            if "response" in content_map:
+                return content_map["response"]
+            return content_map
 
         if isinstance(expanded_content, str):
             stripped = expanded_content.strip()
             if stripped.startswith("{") and stripped.endswith("}"):
                 with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
                     parsed = json.loads(stripped)
-                    if isinstance(parsed, dict) and "response" in parsed:
-                        return parsed["response"]
+                    if isinstance(parsed, dict):
+                        parsed_map = cast(dict[str, Any], parsed)
+                        if "response" in parsed_map:
+                            return parsed_map["response"]
 
         return expanded_content
 
@@ -998,7 +1003,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         if context.function.name in _VARIABLE_ID_CONSUMERS:
             return
 
-        if context.arguments is not None:
+        if context.arguments:
             args_before = str(context.arguments)[:200] if context.arguments else ""
             context.arguments = self._expand_variable_reference(context.arguments)
             args_after = str(context.arguments)[:200] if context.arguments else ""
@@ -1692,7 +1697,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
             if isinstance(original_args, BaseModel):
                 arguments = original_args.model_dump()
             elif isinstance(original_args, dict):
-                arguments = original_args
+                arguments = cast(dict[str, Any], original_args)
             else:
                 arguments = dict(original_args)
         elif isinstance(context.arguments, BaseModel):
@@ -2640,7 +2645,7 @@ def _inspect_variable_result_parser(result: Any) -> list[Content]:
     the tool's default label.
     """
     contents = FunctionTool.parse_result(result)
-    label = result.get("security_label") if isinstance(result, dict) else None
+    label = cast(dict[str, Any], result).get("security_label") if isinstance(result, dict) else None
     if label and contents:
         first = contents[0]
         props = first.additional_properties or {}
@@ -3075,19 +3080,21 @@ def _label_from_mcp_meta(meta: Any) -> ContentLabel | None:
     """
     if not isinstance(meta, dict):
         return None
-    ifc = meta.get("ifc")
+    meta_map = cast(dict[str, Any], meta)
+    ifc = meta_map.get("ifc")
     if not isinstance(ifc, dict):
         return None
-    integ_raw = ifc.get("integrity")
-    conf_raw = ifc.get("confidentiality")
+    ifc_map = cast(dict[str, Any], ifc)
+    integ_raw = ifc_map.get("integrity")
+    conf_raw = ifc_map.get("confidentiality")
     try:
         integrity = IntegrityLabel(integ_raw) if integ_raw is not None else None
         confidentiality = ConfidentialityLabel(conf_raw) if conf_raw is not None else None
     except ValueError:
-        logger.debug("MCP _meta.ifc had unknown label values: %r", ifc)
+        logger.debug("MCP _meta.ifc had unknown label values: %r", ifc_map)
         return None
     if integrity is None or confidentiality is None:
-        logger.debug("MCP _meta.ifc missing integrity/confidentiality: %r", ifc)
+        logger.debug("MCP _meta.ifc missing integrity/confidentiality: %r", ifc_map)
         return None
     return ContentLabel(integrity=integrity, confidentiality=confidentiality)
 
@@ -3109,7 +3116,8 @@ def _stamp_mcp_content_labels(contents: Any, static_label: ContentLabel) -> Any:
     """
     if not isinstance(contents, list):
         return contents
-    for item in contents:
+    contents_list = cast(list[Any], contents)
+    for item in contents_list:
         if not isinstance(item, Content):
             continue
         props = item.additional_properties or {}
@@ -3118,7 +3126,7 @@ def _stamp_mcp_content_labels(contents: Any, static_label: ContentLabel) -> Any:
         label = dynamic or static_label
         props["security_label"] = label.to_dict()
         item.additional_properties = props
-    return contents
+    return contents_list
 
 
 def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: IntegrityLabel) -> None:
@@ -3217,7 +3225,7 @@ class SecureMCPToolProxy:
 
     def __init__(
         self,
-        mcp_tool: "MCPTool | None" = None,
+        mcp_tool: MCPTool | None = None,
         *,
         url: str | None = None,
         headers: dict[str, str] | None = None,
@@ -3279,14 +3287,16 @@ class SecureMCPToolProxy:
                 description=description,
             )
 
-        self._mcp_tool = mcp_tool
+        # The validation above guarantees a tool is set (passed directly or built
+        # from ``url``); declare the attribute as non-optional ``MCPTool``.
+        self._mcp_tool: MCPTool = cast(MCPTool, mcp_tool)
         self._default_integrity = default_integrity
         self._annotation_overrides = annotation_overrides
         self._mark_write_tools_as_sinks = mark_write_tools_as_sinks
 
     # -- Async context manager --
 
-    async def __aenter__(self) -> "SecureMCPToolProxy":
+    async def __aenter__(self) -> SecureMCPToolProxy:
         """Enter context, connect the wrapped tool, and apply labels."""
         await self._mcp_tool.__aenter__()
         await self._apply_labels()
@@ -3305,7 +3315,7 @@ class SecureMCPToolProxy:
 
     async def disconnect(self) -> None:
         """Disconnect the underlying MCPTool."""
-        await self._mcp_tool.disconnect()
+        await self._mcp_tool.close()
 
     async def refresh_labels(self) -> None:
         """Re-apply labels/wrappers for tools added while connected.
