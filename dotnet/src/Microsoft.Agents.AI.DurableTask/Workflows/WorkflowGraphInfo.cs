@@ -95,4 +95,12 @@ internal sealed class WorkflowGraphInfo
     /// Maps executor IDs to their output types (for proper deserialization during condition evaluation).
     /// </summary>
     public Dictionary<string, Type?> ExecutorOutputTypes { get; } = [];
+
+    /// <summary>
+    /// Maps a source executor ID to a fan-out target selector produced by a switch (<c>AddSwitch</c>) or a
+    /// target-selecting fan-out edge. The <c>Assigner</c> maps an incoming message to the indices of the
+    /// ordered <c>SinkIds</c> that should receive it, so only the selected targets run (mirroring the
+    /// in-process <c>FanOutEdgeData.EdgeAssigner</c>).
+    /// </summary>
+    public Dictionary<string, (List<string> SinkIds, Func<object?, int, IEnumerable<int>> Assigner)> FanOutRoutings { get; } = [];
 }

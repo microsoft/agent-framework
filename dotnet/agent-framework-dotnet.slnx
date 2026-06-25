@@ -79,6 +79,7 @@
     <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/06_WorkflowSharedState/06_WorkflowSharedState.csproj" />
     <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/07_SubWorkflows/07_SubWorkflows.csproj" />
     <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/08_WorkflowHITL/08_WorkflowHITL.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/09_SwitchRouting/09_SwitchRouting.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/DurableWorkflows/AzureFunctions/">
     <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/01_SequentialWorkflow/01_SequentialWorkflow.csproj" />

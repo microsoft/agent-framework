@@ -101,6 +101,23 @@ internal sealed class DurableEdgeMap
 
             graphInfo.ExecutorOutputTypes.TryGetValue(sourceId, out Type? sourceOutputType);
 
+            // A switch (AddSwitch) or target-selecting fan-out edge is represented as a single
+            // fan-out edge with an assigner. Build a fan-out router that evaluates the assigner so
+            // only the selected targets receive the message, mirroring the in-process FanOutEdgeRunner.
+            if (graphInfo.FanOutRoutings.TryGetValue(sourceId, out (List<string> SinkIds, Func<object?, int, IEnumerable<int>> Assigner) fanOutRouting))
+            {
+                List<IDurableEdgeRouter> orderedRouters = [];
+                foreach (string sinkId in fanOutRouting.SinkIds)
+                {
+                    orderedRouters.Add(new DurableDirectEdgeRouter(sourceId, sinkId, condition: null, sourceOutputType));
+                }
+
+                this._routersBySource[sourceId] =
+                    [new DurableFanOutEdgeRouter(sourceId, orderedRouters, fanOutRouting.Assigner, sourceOutputType)];
+
+                continue;
+            }
+
             List<IDurableEdgeRouter> routers = [];
             foreach (string sinkId in successorIds)
             {

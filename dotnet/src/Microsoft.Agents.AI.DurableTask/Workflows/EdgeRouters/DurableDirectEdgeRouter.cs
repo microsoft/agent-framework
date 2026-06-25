@@ -29,8 +29,6 @@
 //  Enqueue to
 //  D's queue
 
-using System.Diagnostics.CodeAnalysis;
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.DurableTask.Workflows.EdgeRouters;
@@ -88,7 +86,7 @@ internal sealed class DurableDirectEdgeRouter : IDurableEdgeRouter
         {
             try
             {
-                object? messageObj = DeserializeForCondition(envelope.Message, this._sourceOutputType);
+                object? messageObj = DurableSerialization.DeserializeMessage(envelope.Message, this._sourceOutputType);
                 if (!this._condition(messageObj))
                 {
                     logger.LogEdgeConditionFalse(this._sourceId, this._sinkId);
@@ -104,40 +102,6 @@ internal sealed class DurableDirectEdgeRouter : IDurableEdgeRouter
 
         logger.LogEdgeRoutingMessage(this._sourceId, this._sinkId);
         EnqueueMessage(messageQueues, this._sinkId, envelope);
-    }
-
-    /// <summary>
-    /// Deserializes a JSON message to an object for condition evaluation.
-    /// </summary>
-    /// <remarks>
-    /// Messages travel through the durable workflow as serialized JSON strings, but condition
-    /// delegates need typed objects to evaluate (e.g., order => order.Status == "Approved").
-    /// This method converts the JSON back to an object the condition delegate can evaluate.
-    /// </remarks>
-    /// <param name="json">The JSON string representation of the message.</param>
-    /// <param name="targetType">
-    /// The expected type of the message. When provided, enables strongly-typed deserialization
-    /// so the condition function receives the correct type to evaluate against.
-    /// </param>
-    /// <returns>
-    /// The deserialized object, or null if the JSON is empty.
-    /// </returns>
-    /// <exception cref="JsonException">Thrown when the JSON is invalid or cannot be deserialized to the target type.</exception>
-    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow types registered at startup.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow types registered at startup.")]
-    private static object? DeserializeForCondition(string json, Type? targetType)
-    {
-        if (string.IsNullOrEmpty(json))
-        {
-            return null;
-        }
-
-        // If we know the source executor's output type, deserialize to that specific type
-        // so the condition function can access strongly-typed properties.
-        // Otherwise, deserialize as a generic object for basic inspection.
-        return targetType is null
-            ? JsonSerializer.Deserialize<object>(json, DurableSerialization.Options)
-            : JsonSerializer.Deserialize(json, targetType, DurableSerialization.Options);
     }
 
     private static void EnqueueMessage(

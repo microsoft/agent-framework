@@ -227,4 +227,23 @@ internal static partial class Logs
     public static partial void LogReceivedExternalEvent(
         this ILogger logger,
         string requestPortId);
+
+    [LoggerMessage(
+        EventId = 114,
+        Level = LogLevel.Debug,
+        Message = "Fan-out from {Source}: selector matched {SelectedCount} of {TotalCount} target(s)")]
+    public static partial void LogFanOutSelectorMatched(
+        this ILogger logger,
+        string source,
+        int selectedCount,
+        int totalCount);
+
+    [LoggerMessage(
+        EventId = 115,
+        Level = LogLevel.Warning,
+        Message = "Failed to evaluate fan-out selector for source {Source}, skipping")]
+    public static partial void LogFanOutSelectorEvaluationFailed(
+        this ILogger logger,
+        Exception ex,
+        string source);
 }
