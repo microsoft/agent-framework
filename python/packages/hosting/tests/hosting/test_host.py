@@ -84,7 +84,7 @@ class _FakeAgent:
         self.created_sessions.append(s)
         return s
 
-    def get_session(self, service_session_id: ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
+    def get_session(self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id, service_session_id=service_session_id)
 
     def run(self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any) -> Any:
@@ -793,7 +793,7 @@ class TestHostedRunResult:
                 return AgentSession(session_id=session_id)
 
             def get_session(
-                self, service_session_id: ServiceSessionId, *, session_id: str | None = None
+                self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None
             ) -> AgentSession:
                 return AgentSession(session_id=session_id, service_session_id=service_session_id)
 
@@ -876,7 +876,7 @@ class _ProvidersAgent:
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
 
-    def get_session(self, service_session_id: ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
+    def get_session(self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id, service_session_id=service_session_id)
 
     def run(
