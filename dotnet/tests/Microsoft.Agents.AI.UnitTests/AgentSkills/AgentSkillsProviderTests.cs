@@ -1046,42 +1046,14 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task InvokingCoreAsync_WithScriptsAndScriptApproval_WrapsRunScriptToolAsync()
+    public async Task InvokingCoreAsync_WithScripts_AllToolsRequireApprovalAsync()
     {
-        // Arrange — create a skill with a script and enable ScriptApproval
+        // Arrange — create a skill with a script; all tools should require approval by default
         string skillDir = Path.Combine(this._testRoot, "approval-skill");
         Directory.CreateDirectory(Path.Combine(skillDir, "scripts"));
         File.WriteAllText(
             Path.Combine(skillDir, "SKILL.md"),
             "---\nname: approval-skill\ndescription: Approval test\n---\nBody.");
-        File.WriteAllText(
-            Path.Combine(skillDir, "scripts", "run.py"),
-            "print('hello')");
-
-        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
-        var options = new AgentSkillsProviderOptions { ScriptApproval = true };
-        var provider = new AgentSkillsProvider(source, options);
-        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
-
-        // Act
-        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
-
-        // Assert — run_skill_script tool should be wrapped in ApprovalRequiredAIFunction
-        Assert.NotNull(result.Tools);
-        var scriptTool = result.Tools!.FirstOrDefault(t => t.Name == "run_skill_script");
-        Assert.NotNull(scriptTool);
-        Assert.IsType<ApprovalRequiredAIFunction>(scriptTool);
-    }
-
-    [Fact]
-    public async Task InvokingCoreAsync_WithScriptsNoScriptApproval_DoesNotWrapRunScriptToolAsync()
-    {
-        // Arrange — create a skill with a script, default options (no approval)
-        string skillDir = Path.Combine(this._testRoot, "no-approval-skill");
-        Directory.CreateDirectory(Path.Combine(skillDir, "scripts"));
-        File.WriteAllText(
-            Path.Combine(skillDir, "SKILL.md"),
-            "---\nname: no-approval-skill\ndescription: No approval test\n---\nBody.");
         File.WriteAllText(
             Path.Combine(skillDir, "scripts", "run.py"),
             "print('hello')");
@@ -1093,11 +1065,55 @@ public sealed class AgentSkillsProviderTests : IDisposable
         // Act
         var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
 
-        // Assert — run_skill_script tool should NOT be wrapped
+        // Assert — all tools should be wrapped in ApprovalRequiredAIFunction
         Assert.NotNull(result.Tools);
         var scriptTool = result.Tools!.FirstOrDefault(t => t.Name == "run_skill_script");
         Assert.NotNull(scriptTool);
-        Assert.IsNotType<ApprovalRequiredAIFunction>(scriptTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(scriptTool);
+
+        var loadTool = result.Tools!.FirstOrDefault(t => t.Name == "load_skill");
+        Assert.NotNull(loadTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(loadTool);
+
+        var readTool = result.Tools!.FirstOrDefault(t => t.Name == "read_skill_resource");
+        Assert.NotNull(readTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(readTool);
+    }
+
+    [Fact]
+    public async Task ReadOnlyToolsAutoApprovalRule_ApprovesReadOnlyToolsAsync()
+    {
+        // Arrange
+        var loadSkillCall = new FunctionCallContent("call1", AgentSkillsProvider.LoadSkillToolName, null);
+        var readResourceCall = new FunctionCallContent("call2", AgentSkillsProvider.ReadSkillResourceToolName, null);
+        var runScriptCall = new FunctionCallContent("call3", AgentSkillsProvider.RunSkillScriptToolName, null);
+        var unrelatedCall = new FunctionCallContent("call4", "some_other_tool", null);
+
+        // Act & Assert — read-only tools should be approved
+        Assert.True(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(loadSkillCall));
+        Assert.True(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(readResourceCall));
+
+        // Act & Assert — script tool and unrelated tools should not be approved
+        Assert.False(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(runScriptCall));
+        Assert.False(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(unrelatedCall));
+    }
+
+    [Fact]
+    public async Task AllToolsAutoApprovalRule_ApprovesAllSkillToolsAsync()
+    {
+        // Arrange
+        var loadSkillCall = new FunctionCallContent("call1", AgentSkillsProvider.LoadSkillToolName, null);
+        var readResourceCall = new FunctionCallContent("call2", AgentSkillsProvider.ReadSkillResourceToolName, null);
+        var runScriptCall = new FunctionCallContent("call3", AgentSkillsProvider.RunSkillScriptToolName, null);
+        var unrelatedCall = new FunctionCallContent("call4", "some_other_tool", null);
+
+        // Act & Assert — all skill tools should be approved
+        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(loadSkillCall));
+        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(readResourceCall));
+        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(runScriptCall));
+
+        // Act & Assert — unrelated tools should not be approved
+        Assert.False(await AgentSkillsProvider.AllToolsAutoApprovalRule(unrelatedCall));
     }
 
     [Fact]
