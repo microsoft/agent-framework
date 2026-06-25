@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates multi-way routing in a workflow using AddSwitch.
 // An expense is routed to a different approval path based on its amount:
