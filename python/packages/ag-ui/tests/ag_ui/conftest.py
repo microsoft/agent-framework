@@ -19,6 +19,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     Message,
+    ServiceSessionId,
     SupportsAgentRun,
     SupportsChatGetResponse,
 )
@@ -244,7 +245,7 @@ class StubAgent(SupportsAgentRun):
     def create_session(self, **kwargs: Any) -> AgentSession:
         return AgentSession(session_id=kwargs.get("session_id"))
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+    def get_session(self, service_session_id: ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id, service_session_id=service_session_id)
 
 
