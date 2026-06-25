@@ -40,16 +40,6 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     /// </summary>
     private const string SkillsPlaceholder = "{skills}";
 
-    /// <summary>
-    /// Placeholder token for the script instructions in the prompt template.
-    /// </summary>
-    private const string ScriptInstructionsPlaceholder = "{script_instructions}";
-
-    /// <summary>
-    /// Placeholder token for the resource instructions in the prompt template.
-    /// </summary>
-    private const string ResourceInstructionsPlaceholder = "{resource_instructions}";
-
     private const string DefaultSkillsInstructionPrompt =
         """
         You have access to skills containing domain-specific knowledge and capabilities.
@@ -62,8 +52,9 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         When a task aligns with a skill's domain, follow these steps in exact order:
         - Use `load_skill` to retrieve the skill's instructions.
         - Follow the provided guidance.
-        {resource_instructions}
-        {script_instructions}
+        - Use `read_skill_resource` to read any referenced resources, using the name exactly as listed
+           (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ.md"` not `"FAQ.md"`).
+        - Use `run_skill_script` to run referenced scripts, using the name exactly as listed.
         Only load what is needed, when it is needed.
         """;
 
@@ -258,18 +249,8 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
             sb.AppendLine("  </skill>");
         }
 
-        const string ResourceInstruction =
-            """
-            - Use `read_skill_resource` to read any referenced resources, using the name exactly as listed
-               (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ.md"` not `"FAQ.md"`).
-            """;
-
-        const string ScriptInstruction = "- Use `run_skill_script` to run referenced scripts, using the name exactly as listed.";
-
         return new StringBuilder(promptTemplate)
             .Replace(SkillsPlaceholder, sb.ToString().TrimEnd())
-            .Replace(ResourceInstructionsPlaceholder, ResourceInstruction)
-            .Replace(ScriptInstructionsPlaceholder, ScriptInstruction)
             .ToString();
     }
 
@@ -376,20 +357,6 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         {
             throw new ArgumentException(
                 $"The custom prompt template must contain the '{SkillsPlaceholder}' placeholder for the generated skills list.",
-                paramName);
-        }
-
-        if (template.IndexOf(ResourceInstructionsPlaceholder, StringComparison.Ordinal) < 0)
-        {
-            throw new ArgumentException(
-                $"The custom prompt template must contain the '{ResourceInstructionsPlaceholder}' placeholder for resource instructions.",
-                paramName);
-        }
-
-        if (template.IndexOf(ScriptInstructionsPlaceholder, StringComparison.Ordinal) < 0)
-        {
-            throw new ArgumentException(
-                $"The custom prompt template must contain the '{ScriptInstructionsPlaceholder}' placeholder for script instructions.",
                 paramName);
         }
     }

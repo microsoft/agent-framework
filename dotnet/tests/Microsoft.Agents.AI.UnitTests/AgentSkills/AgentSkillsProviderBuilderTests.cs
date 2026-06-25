@@ -159,7 +159,7 @@ public sealed class AgentSkillsProviderBuilderTests
         var result = builder
             .UseSource(source)
             .UseScriptApproval(false)
-            .UsePromptTemplate("Skills:\n{skills}\n{resource_instructions}\n{script_instructions}");
+            .UsePromptTemplate("Skills:\n{skills}");
 
         // Assert
         Assert.Same(builder, result);
