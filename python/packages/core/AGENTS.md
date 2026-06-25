@@ -61,6 +61,7 @@ agent_framework/
 ### Sessions (`_sessions.py`)
 
 - **`AgentSession`** - Manages conversation state and session metadata
+- **`ServiceSessionId`** - Mapping alias for structured service-owned continuation handles used in `AgentSession.service_session_id`
 - **`SessionContext`** - Context object for session-scoped data during agent runs
 - **`ContextProvider`** - Base class for context providers (RAG, memory systems)
 - **`HistoryProvider`** - Base class for conversation history storage
