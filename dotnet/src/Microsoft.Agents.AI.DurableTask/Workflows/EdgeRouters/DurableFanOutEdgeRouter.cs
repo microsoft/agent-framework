@@ -87,15 +87,16 @@ internal sealed class DurableFanOutEdgeRouter : IDurableEdgeRouter
             return;
         }
 
-        // Assigner present (e.g., a switch): select only the matching targets, mirroring the
-        // in-process FanOutEdgeRunner. The assigner returns indices into the ordered target list.
-        List<int> selectedIndices;
+        // Assigner present (e.g., a switch): select only the matching targets, mirroring the in-process
+        // FanOutEdgeRunner. The assigner returns indices into the ordered target list. Indices map directly
+        // to targets with no range filtering and no de-duplication, so an out-of-range index surfaces as an
+        // error (logged below) instead of being silently dropped, and duplicate indices deliver more than once.
+        List<IDurableEdgeRouter> selectedRouters;
         try
         {
             object? messageObj = DurableSerialization.DeserializeMessage(envelope.Message, this._sourceOutputType);
-            selectedIndices = this._edgeAssigner(messageObj, this._targetRouters.Count)
-                                  .Where(i => i >= 0 && i < this._targetRouters.Count)
-                                  .Distinct()
+            selectedRouters = this._edgeAssigner(messageObj, this._targetRouters.Count)
+                                  .Select(index => this._targetRouters[index])
                                   .ToList();
         }
         catch (Exception ex)
@@ -104,11 +105,11 @@ internal sealed class DurableFanOutEdgeRouter : IDurableEdgeRouter
             return;
         }
 
-        logger.LogFanOutSelectorMatched(this._sourceId, selectedIndices.Count, this._targetRouters.Count);
+        logger.LogFanOutSelectorMatched(this._sourceId, selectedRouters.Count, this._targetRouters.Count);
 
-        foreach (int index in selectedIndices)
+        foreach (IDurableEdgeRouter targetRouter in selectedRouters)
         {
-            this._targetRouters[index].RouteMessage(envelope, messageQueues, logger);
+            targetRouter.RouteMessage(envelope, messageQueues, logger);
         }
     }
 }

@@ -101,19 +101,46 @@ internal sealed class DurableEdgeMap
 
             graphInfo.ExecutorOutputTypes.TryGetValue(sourceId, out Type? sourceOutputType);
 
-            // A switch (AddSwitch) or target-selecting fan-out edge is represented as a single
-            // fan-out edge with an assigner. Build a fan-out router that evaluates the assigner so
-            // only the selected targets receive the message, mirroring the in-process FanOutEdgeRunner.
-            if (graphInfo.FanOutRoutings.TryGetValue(sourceId, out (List<string> SinkIds, Func<object?, int, IEnumerable<int>> Assigner) fanOutRouting))
+            // A switch (AddSwitch) or target-selecting fan-out edge is represented as a single fan-out edge
+            // with an assigner. A source can also declare such selector edges alongside ordinary direct or
+            // plain fan-out edges. Because the graph flattens every edge's targets into a single successor
+            // list, we build one selector-aware fan-out router per selector routing (so only the chosen
+            // targets receive the message) and ordinary direct routers for the remaining sibling edges, so
+            // none of them are dropped. This mirrors the in-process runner, which creates one runner per edge.
+            if (graphInfo.SelectiveFanOuts.TryGetValue(sourceId, out List<SelectiveFanOut>? selectiveFanOuts)
+                && selectiveFanOuts.Count > 0)
             {
-                List<IDurableEdgeRouter> orderedRouters = [];
-                foreach (string sinkId in fanOutRouting.SinkIds)
+                List<IDurableEdgeRouter> sourceRouters = [];
+
+                // Targets reached through a selector are chosen by its assigner; track them so we don't also
+                // wire an unconditional direct router to them below.
+                HashSet<string> selectorSinks = [];
+                foreach (SelectiveFanOut selectiveFanOut in selectiveFanOuts)
                 {
-                    orderedRouters.Add(new DurableDirectEdgeRouter(sourceId, sinkId, condition: null, sourceOutputType));
+                    List<IDurableEdgeRouter> orderedRouters = [];
+                    foreach (string sinkId in selectiveFanOut.SinkIds)
+                    {
+                        orderedRouters.Add(new DurableDirectEdgeRouter(sourceId, sinkId, condition: null, sourceOutputType));
+                        selectorSinks.Add(sinkId);
+                    }
+
+                    sourceRouters.Add(new DurableFanOutEdgeRouter(sourceId, orderedRouters, selectiveFanOut.Assigner, sourceOutputType));
                 }
 
-                this._routersBySource[sourceId] =
-                    [new DurableFanOutEdgeRouter(sourceId, orderedRouters, fanOutRouting.Assigner, sourceOutputType)];
+                // Sibling edges from the same source (direct or plain fan-out, possibly conditional) that are
+                // not part of any selector still need to deliver.
+                foreach (string sinkId in successorIds)
+                {
+                    if (selectorSinks.Contains(sinkId))
+                    {
+                        continue;
+                    }
+
+                    graphInfo.EdgeConditions.TryGetValue((sourceId, sinkId), out Func<object?, bool>? siblingCondition);
+                    sourceRouters.Add(new DurableDirectEdgeRouter(sourceId, sinkId, siblingCondition, sourceOutputType));
+                }
+
+                this._routersBySource[sourceId] = sourceRouters;
 
                 continue;
             }

@@ -123,7 +123,7 @@ internal static class WorkflowAnalyzer
             {
                 AddSuccessorsFromEdge(graphInfo, sourceId, edge, successors);
                 TryAddEdgeCondition(graphInfo, edge);
-                TryAddFanOutRouting(graphInfo, edge);
+                TryAddSelectiveFanOut(graphInfo, edge);
             }
         }
     }
@@ -176,16 +176,23 @@ internal static class WorkflowAnalyzer
     /// target selector) is represented as a single <see cref="FanOutEdgeData"/> carrying an
     /// <c>EdgeAssigner</c>. The assigner maps an incoming message to the subset of targets that should
     /// receive it. Capturing it here lets the durable runtime route to only the selected target(s).
+    /// A source can declare several such edges, so each one is appended to the source's list.
     /// </remarks>
     /// <param name="graphInfo">The graph info to update.</param>
     /// <param name="edge">The edge that may be a fan-out edge with an assigner.</param>
-    private static void TryAddFanOutRouting(WorkflowGraphInfo graphInfo, Edge edge)
+    private static void TryAddSelectiveFanOut(WorkflowGraphInfo graphInfo, Edge edge)
     {
         FanOutEdgeData? fanOutEdge = edge.FanOutEdgeData;
 
         if (fanOutEdge?.EdgeAssigner is not null)
         {
-            graphInfo.FanOutRoutings[fanOutEdge.SourceId] = (fanOutEdge.SinkIds, fanOutEdge.EdgeAssigner);
+            if (!graphInfo.SelectiveFanOuts.TryGetValue(fanOutEdge.SourceId, out List<SelectiveFanOut>? selectiveFanOuts))
+            {
+                selectiveFanOuts = [];
+                graphInfo.SelectiveFanOuts[fanOutEdge.SourceId] = selectiveFanOuts;
+            }
+
+            selectiveFanOuts.Add(new SelectiveFanOut(fanOutEdge.SinkIds, fanOutEdge.EdgeAssigner));
         }
     }
 

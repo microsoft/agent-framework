@@ -84,6 +84,97 @@ public sealed class DurableEdgeMapSwitchTests
         Assert.Equal(1, QueuedCount(queues, TargetBId));
     }
 
+    [Fact]
+    public void RouteMessage_SwitchWithSiblingDirectEdge_DeliversToSelectedCaseAndSibling()
+    {
+        // Arrange: a switch plus an ordinary direct edge from the same source. The switch selects one case,
+        // while the sibling edge must always deliver (the switch must not suppress unrelated edges).
+        const string AuditId = "audit";
+
+        FunctionExecutor<int, int> router = Router();
+        WorkflowBuilder builder = new(router);
+        builder.AddSwitch(router, sb =>
+        {
+            sb.AddCase<int>(n => n % 2 == 0, Sink(EvenId));
+            sb.AddCase<int>(n => n % 2 != 0, Sink(OddId));
+        });
+        builder.AddEdge(router, Sink(AuditId));
+
+        // Act: 4 is even, so the even case matches; the audit sibling always receives the message.
+        Dictionary<string, Queue<DurableMessageEnvelope>> queues = Route(builder.Build(), 4);
+
+        // Assert
+        Assert.Equal(1, QueuedCount(queues, EvenId));
+        Assert.Equal(0, QueuedCount(queues, OddId));
+        Assert.Equal(1, QueuedCount(queues, AuditId));
+    }
+
+    [Fact]
+    public void RouteMessage_MultipleSwitchesFromSameSource_HonorsEachIndependently()
+    {
+        // Arrange: two switches from the same source. Both must be evaluated; neither should overwrite the other.
+        const string PositiveId = "positive";
+        const string NonPositiveId = "nonPositive";
+
+        FunctionExecutor<int, int> router = Router();
+        WorkflowBuilder builder = new(router);
+        builder.AddSwitch(router, sb =>
+        {
+            sb.AddCase<int>(n => n > 0, Sink(PositiveId));
+            sb.WithDefault(Sink(NonPositiveId));
+        });
+        builder.AddSwitch(router, sb =>
+        {
+            sb.AddCase<int>(n => n % 2 == 0, Sink(EvenId));
+            sb.WithDefault(Sink(OddId));
+        });
+
+        // Act: 4 is both positive and even.
+        Dictionary<string, Queue<DurableMessageEnvelope>> queues = Route(builder.Build(), 4);
+
+        // Assert: the matching branch of each switch receives the message.
+        Assert.Equal(1, QueuedCount(queues, PositiveId));
+        Assert.Equal(0, QueuedCount(queues, NonPositiveId));
+        Assert.Equal(1, QueuedCount(queues, EvenId));
+        Assert.Equal(0, QueuedCount(queues, OddId));
+    }
+
+    [Fact]
+    public void RouteMessage_SelectorReturnsDuplicateIndex_DeliversMessageOncePerIndex()
+    {
+        // Arrange: a selector that returns the same index twice must deliver twice (no de-duplication),
+        // mirroring the in-process FanOutEdgeRunner.
+        const string TargetId = "dupTarget";
+        const string OtherId = "other";
+
+        FunctionExecutor<int, int> router = Router();
+        WorkflowBuilder builder = new(router);
+        builder.AddFanOutEdge<int>(router, [Sink(TargetId), Sink(OtherId)], (_, _) => [0, 0]);
+
+        // Act
+        Dictionary<string, Queue<DurableMessageEnvelope>> queues = Route(builder.Build(), 7);
+
+        // Assert: index 0 was selected twice, so the target receives two messages.
+        Assert.Equal(2, QueuedCount(queues, TargetId));
+        Assert.Equal(0, QueuedCount(queues, OtherId));
+    }
+
+    [Fact]
+    public void RouteMessage_SelectorReturnsOutOfRangeIndex_DoesNotThrow()
+    {
+        // Arrange: an out-of-range index must be surfaced (logged) rather than crash the routing layer.
+        const string TargetId = "target";
+
+        FunctionExecutor<int, int> router = Router();
+        WorkflowBuilder builder = new(router);
+        builder.AddFanOutEdge<int>(router, [Sink(TargetId)], (_, _) => [5]);
+
+        // Act + Assert: routing swallows the bad index, nothing is delivered, and no exception escapes.
+        Dictionary<string, Queue<DurableMessageEnvelope>> queues = Route(builder.Build(), 7);
+
+        Assert.Equal(0, QueuedCount(queues, TargetId));
+    }
+
     private static FunctionExecutor<int, int> Router()
         => new(RouterId, (input, _, _) => input, outputTypes: [typeof(int)]);
 
