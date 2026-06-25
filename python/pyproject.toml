@@ -313,7 +313,7 @@ cmd = "python scripts/workspace_poe_tasks.py check"
 
 [tool.poe.tasks.markdown-code-lint]
 help = "Lint Python code blocks embedded in README and sample markdown files."
-cmd = "uv run python scripts/check_md_code_blocks.py 'README.md' './packages/**/README.md' './samples/**/*.md' --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend' --exclude context_providers/azure_ai_search"
+cmd = "uv run python scripts/check_md_code_blocks.py 'README.md' './packages/**/README.md' './samples/**/*.md' --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend' --exclude context_providers/azure_ai_search --exclude packages/azure-cosmos-memory"
 
 # Testing
 [tool.poe.tasks.test]
