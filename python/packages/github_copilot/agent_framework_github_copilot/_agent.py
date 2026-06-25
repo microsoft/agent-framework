@@ -1007,7 +1007,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         try:
             if agent_session.service_session_id:
-                return await self._resume_session(agent_session.service_session_id, streaming, runtime_options)
+                service_session_id = agent_session.service_session_id
+                if not isinstance(service_session_id, str):
+                    raise AgentException(
+                        "GitHubCopilotAgent expects a string service_session_id for session resumption."
+                    )
+                return await self._resume_session(service_session_id, streaming, runtime_options)
 
             session = await self._create_session(streaming, runtime_options)
             agent_session.service_session_id = session.session_id
