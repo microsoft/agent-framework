@@ -798,6 +798,41 @@ def test_non_base64_data_uri_is_skipped(caplog: pytest.LogCaptureFixture) -> Non
     assert any("base64" in r.message for r in caplog.records)
 
 
+def test_data_uri_media_type_parameters_are_stripped() -> None:
+    """Parameters in a data URI media type (e.g. charset) are dropped before reaching Gemini."""
+    import base64
+
+    client, _ = _make_gemini_client()
+    encoded = base64.b64encode(b"hello").decode()
+    content = Content.from_text("placeholder")
+    content.type = "data"  # type: ignore[assignment]
+    content.uri = f"data:text/plain;charset=utf-8;base64,{encoded}"
+    content.media_type = None
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].inline_data is not None
+    assert parts[0].inline_data.mime_type == "text/plain"
+
+
+def test_external_uri_without_inferable_media_type_is_passed_through(caplog: pytest.LogCaptureFixture) -> None:
+    """A URI with no media_type and no guessable extension is sent as file_data without crashing."""
+    client, _ = _make_gemini_client()
+    content = Content.from_uri(uri="https://api.example.com/files/123")
+    assert content.type == "uri"
+    assert content.media_type is None
+
+    with caplog.at_level(logging.WARNING):
+        parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].file_data is not None
+    assert parts[0].file_data.file_uri == "https://api.example.com/files/123"
+    assert parts[0].file_data.mime_type is None
+    assert any("media_type" in r.message for r in caplog.records)
+
+
 # code execution parts
 
 

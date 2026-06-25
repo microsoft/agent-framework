@@ -710,7 +710,7 @@ class RawGeminiChatClient(
                 logger.warning("Skipping data content for Gemini: data URI is not base64-encoded")
                 return None
             header, encoded = uri.split(";base64,", 1)
-            mime_type = content.media_type or header[len("data:") :] or None
+            mime_type = content.media_type or header[len("data:") :].split(";")[0] or None
             if not mime_type:
                 logger.warning("Skipping data content for Gemini: missing media_type")
                 return None
@@ -721,7 +721,14 @@ class RawGeminiChatClient(
                 return None
             return types.Part.from_bytes(data=raw_bytes, mime_type=mime_type)
 
-        return types.Part.from_uri(file_uri=uri, mime_type=content.media_type)
+        try:
+            return types.Part.from_uri(file_uri=uri, mime_type=content.media_type)
+        except ValueError:
+            # from_uri raises when no media_type is given and one cannot be inferred from the URI
+            # (e.g. presigned URLs or API endpoints without an extension). Pass the URI through
+            # without a mime type rather than dropping the content or raising.
+            logger.warning("Could not determine media_type for URI content; sending to Gemini without one: %s", uri)
+            return types.Part(file_data=types.FileData(file_uri=uri, mime_type=None))
 
     def _convert_function_result(
         self,
