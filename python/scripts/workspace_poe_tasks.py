@@ -38,6 +38,10 @@ MARKDOWN_EXCLUDES = [
     "tau2",
     "packages/devui/frontend",
     "context_providers/azure_ai_search",
+    # Excluded from the uv workspace (see python/pyproject.toml); its README imports
+    # the package, which is not installed in the workspace env, so Pyright on the
+    # snippets cannot resolve it.
+    "packages/azure-cosmos-memory",
 ]
 DEFAULT_AGGREGATE_TEST_EXCLUDES = {"devui", "lab"}
 

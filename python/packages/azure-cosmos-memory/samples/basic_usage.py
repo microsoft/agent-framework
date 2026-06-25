@@ -11,7 +11,7 @@ This example demonstrates:
 Prerequisites:
     Install the package in development mode first:
         pip install -e .
-    
+
     Then run this sample:
         python samples/basic_usage.py
 """

@@ -10,7 +10,7 @@ This sample shows:
 Prerequisites:
     Install the package in development mode first:
         pip install -e .
-    
+
     Then run this sample:
         python samples/interactive_chat.py
 """
@@ -87,7 +87,7 @@ Return {"memories": []} if nothing worth remembering long-term.
 
 class CustomMemoryProcessor:
     """Custom processor that injects our extraction rubric into the memory pipeline.
-    
+
     The Azure Cosmos DB Agent Memory Toolkit accepts a custom processor that can
     override the default extraction logic. This shows how to inject domain-specific
     extraction rules.
@@ -95,7 +95,7 @@ class CustomMemoryProcessor:
 
     def __init__(self, extraction_rubric: str):
         """Initialize with custom extraction rubric.
-        
+
         Args:
             extraction_rubric: System prompt for memory extraction LLM calls
         """
@@ -105,14 +105,14 @@ class CustomMemoryProcessor:
         self, user_id: str, thread_id: str, messages: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Extract memories from conversation using custom rubric.
-        
+
         This is called by the AsyncCosmosMemoryClient after conversation turns.
-        
+
         Args:
             user_id: User identifier
             thread_id: Conversation thread identifier
             messages: Recent conversation messages
-            
+
         Returns:
             List of extracted memory records
         """
@@ -129,7 +129,7 @@ class CustomMemoryProcessor:
 
 async def create_agent_with_memory() -> tuple[Agent, CosmosMemoryContextProvider]:
     """Create an agent with Cosmos DB memory integration.
-    
+
     Returns:
         Tuple of (agent, memory_provider)
     """
@@ -223,7 +223,7 @@ async def create_agent_with_memory() -> tuple[Agent, CosmosMemoryContextProvider
 
 async def chat_loop(agent: Agent, user_id: str) -> None:
     """Run interactive chat loop.
-    
+
     Args:
         agent: Agent to chat with
         user_id: User identifier for memory scoping
