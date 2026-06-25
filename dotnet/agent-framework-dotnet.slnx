@@ -241,6 +241,7 @@
   </Folder>
   <Folder Name="/Samples/03-workflows/Declarative/">
     <File Path="samples/03-workflows/Declarative/README.md" />
+    <Project Path="samples/03-workflows/Declarative/AotCheckpointing/AotCheckpointing.csproj" />
     <Project Path="samples/03-workflows/Declarative/ConfirmInput/ConfirmInput.csproj" />
     <Project Path="samples/03-workflows/Declarative/CustomerSupport/CustomerSupport.csproj" />
     <Project Path="samples/03-workflows/Declarative/DeepResearch/DeepResearch.csproj" />

@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <InjectSharedIntegrationTestCode>true</InjectSharedIntegrationTestCode>
+    <NoWarn>$(NoWarn);MAAI001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
