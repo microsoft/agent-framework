@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import sys
@@ -678,9 +679,49 @@ class RawGeminiChatClient(
                         parts.append(raw_part.model_copy(update={"function_call": function_call}, deep=True))
                     else:
                         parts.append(types.Part(function_call=function_call))
+                case "data" | "uri":
+                    part = self._convert_data_or_uri_content(content)
+                    if part is not None:
+                        parts.append(part)
                 case _:
                     logger.debug("Skipping unsupported content type for Gemini: %s", content.type)
         return parts
+
+    def _convert_data_or_uri_content(self, content: Content) -> types.Part | None:
+        """Convert a ``data`` or ``uri`` Content to a Gemini Part.
+
+        Data URIs (``type="data"``) become ``inline_data`` Parts with the decoded bytes.
+        External URIs (``type="uri"``) become ``file_data`` Parts referencing the resource.
+
+        Args:
+            content: The framework Content object, expected to be of type ``data`` or ``uri``.
+
+        Returns:
+            A Gemini Part carrying the multimodal content, or None if the content cannot be
+            converted (e.g. missing URI, non-base64 data URI, or undecodable data).
+        """
+        uri = content.uri
+        if not uri:
+            logger.warning("Skipping %s content for Gemini: missing uri", content.type)
+            return None
+
+        if uri.startswith("data:"):
+            if ";base64," not in uri:
+                logger.warning("Skipping data content for Gemini: data URI is not base64-encoded")
+                return None
+            header, encoded = uri.split(";base64,", 1)
+            mime_type = content.media_type or header[len("data:") :] or None
+            if not mime_type:
+                logger.warning("Skipping data content for Gemini: missing media_type")
+                return None
+            try:
+                raw_bytes = base64.b64decode(encoded)
+            except Exception:
+                logger.warning("Skipping data content for Gemini: failed to decode base64 data")
+                return None
+            return types.Part.from_bytes(data=raw_bytes, mime_type=mime_type)
+
+        return types.Part.from_uri(file_uri=uri, mime_type=content.media_type)
 
     def _convert_function_result(
         self,
