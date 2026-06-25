@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import inspect
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
@@ -39,7 +38,15 @@ from agent_framework.observability import AgentTelemetryLayer
 try:
     from copilot import CopilotClient, CopilotSession, RuntimeConnection
     from copilot.generated.rpc import PermissionDecisionUserNotAvailable
-    from copilot.session import MCPServerConfig, PermissionRequestResult, ProviderConfig, SystemMessageConfig
+    from copilot.session import (
+        MCPServerConfig,
+        PermissionRequestResult,
+        PreToolUseHandler,
+        PreToolUseHookOutput,
+        ProviderConfig,
+        SessionHooks,
+        SystemMessageConfig,
+    )
     from copilot.session_events import PermissionRequest, SessionEvent, SessionEventType
     from copilot.tools import Tool as CopilotTool
     from copilot.tools import ToolInvocation, ToolResult
@@ -62,58 +69,6 @@ PermissionHandlerType = Callable[
     [PermissionRequest, dict[str, str]], "PermissionRequestResult | Awaitable[PermissionRequestResult]"
 ]
 """Type for permission request handlers. Supports both sync and async callbacks."""
-
-
-FunctionApprovalCallback = Callable[[Content], "bool | Awaitable[bool]"]
-"""Callback invoked by the agent before executing a FunctionTool that requires approval.
-
-The callback receives a ``FunctionCallContent`` describing the pending call
-(``name``, ``arguments``, and a synthetic ``call_id``) and must return ``True``
-to allow execution or ``False`` to deny it. Both synchronous and ``await``-able
-return values are supported.
-
-The Copilot CLI manages its own tool-calling loop, so the framework cannot
-round-trip a ``FunctionApprovalRequestContent`` / ``FunctionApprovalResponseContent``
-pair the way the standard chat-client pipeline does. This callback is the
-agent-level enforcement point for tools declared with
-``approval_mode="always_require"``: when no callback is configured the agent
-denies these calls by default.
-
-Note: this is independent of ``on_permission_request``, which gates the
-Copilot SDK's *built-in* shell/file actions; ``on_function_approval`` gates
-agent-framework ``FunctionTool`` calls.
-"""
-
-
-async def _resolve_function_approval(
-    callback: FunctionApprovalCallback | None,
-    func_tool: FunctionTool,
-    arguments: Mapping[str, Any] | None,
-) -> bool:
-    """Run the agent-level approval callback for a pending tool call.
-
-    Returns ``True`` only when ``callback`` is configured and explicitly returns
-    a truthy value. A missing callback or any callback failure is treated as a
-    denial so the secure-by-default policy holds even if the user code raises.
-    """
-    if callback is None:
-        return False
-    request = Content.from_function_call(
-        call_id=f"af-copilot-approval::{func_tool.name}",
-        name=func_tool.name,
-        arguments=None if arguments is None else dict(arguments),
-    )
-    try:
-        outcome = callback(request)
-        if inspect.isawaitable(outcome):
-            outcome = await outcome
-    except Exception:
-        logger.exception(
-            "on_function_approval callback raised for tool '%s'; denying execution.",
-            func_tool.name,
-        )
-        return False
-    return bool(outcome)
 
 
 logger = logging.getLogger("agent_framework.github_copilot")
@@ -205,13 +160,21 @@ class GitHubCopilotOptions(TypedDict, total=False):
     base_directory: str
     """Directory where the CLI stores session state, configuration, and other persistent data."""
 
-    on_function_approval: FunctionApprovalCallback
-    """Approval callback for ``FunctionTool`` instances declared with
-    ``approval_mode="always_require"``. The callback is awaited (sync or async)
-    inside the SDK tool-handler before the tool is executed; a falsy return
-    value denies the call. If omitted, calls to such tools are denied with an
-    explanatory message returned to the model. This is independent of
-    ``on_permission_request``, which gates the Copilot SDK's built-in actions."""
+    on_pre_tool_use: PreToolUseHandler
+    """Pre-tool-use hook handler for the Copilot SDK.
+
+    Called by the Copilot SDK before any tool is executed. The handler receives a
+    ``PreToolUseHookInput`` and a context dict, and returns a ``PreToolUseHookOutput``
+    (or ``None`` to defer). Returning ``{"permissionDecision": "ask"}`` routes the
+    decision to ``on_permission_request``; ``"allow"`` / ``"deny"`` gate the call
+    directly.
+
+    If you do **not** supply this hook, the agent installs a default ``on_pre_tool_use``
+    hook that returns ``"ask"`` for ``FunctionTool`` instances declared with
+    ``approval_mode="always_require"`` (deferring all other tools), so those tools are
+    gated through ``on_permission_request``. If you **do** supply your own hook, it
+    takes precedence and **you** are responsible for enforcing approval for any
+    ``always_require`` tool; the agent logs a warning naming such tools."""
 
 
 OptionsT = TypeVar(
@@ -319,7 +282,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         mcp_servers: dict[str, MCPServerConfig] | None = opts.pop("mcp_servers", None)
         provider: ProviderConfig | None = opts.pop("provider", None)
         instruction_directories: list[str] | None = opts.pop("instruction_directories", None)
-        on_function_approval: FunctionApprovalCallback | None = opts.pop("on_function_approval", None)
+        on_pre_tool_use: PreToolUseHandler | None = opts.pop("on_pre_tool_use", None)
         base_directory = opts.pop("base_directory", None)
 
         self._settings = load_settings(
@@ -336,7 +299,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         self._tools = normalize_tools(tools)
         self._permission_handler = on_permission_request
-        self._function_approval_handler: FunctionApprovalCallback | None = on_function_approval
+        self._on_pre_tool_use: PreToolUseHandler | None = on_pre_tool_use
         self._mcp_servers = mcp_servers
         self._provider = provider
         self._instruction_directories = instruction_directories
@@ -516,12 +479,6 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             session = self.create_session()
 
         opts: dict[str, Any] = dict(options) if options else {}
-        if "on_function_approval" in opts:
-            raise ValueError(
-                "on_function_approval is a security-sensitive option and must be set "
-                "via default_options at agent construction time. It cannot be overridden "
-                "per run."
-            )
         timeout = opts.get("timeout") or self._settings.get("timeout") or DEFAULT_TIMEOUT_SECONDS
 
         input_messages = normalize_messages(messages)
@@ -605,12 +562,6 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             session = self.create_session()
 
         opts: dict[str, Any] = dict(options) if options else {}
-        if "on_function_approval" in opts:
-            raise ValueError(
-                "on_function_approval is a security-sensitive option and must be set "
-                "via default_options at agent construction time. It cannot be overridden "
-                "per run."
-            )
 
         input_messages = normalize_messages(messages)
 
@@ -792,34 +743,16 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         return copilot_tools
 
     def _tool_to_copilot_tool(self, ai_func: FunctionTool) -> CopilotTool:
-        """Convert an FunctionTool to a Copilot SDK tool."""
-        approval_handler = self._function_approval_handler
-        requires_approval = ai_func.approval_mode == "always_require"
+        """Convert an FunctionTool to a Copilot SDK tool.
+
+        Approval for tools declared with ``approval_mode="always_require"`` is enforced
+        by the Copilot SDK's native ``on_pre_tool_use`` hook (see
+        :meth:`_build_session_hooks`), not inside this handler.
+        """
 
         async def handler(invocation: ToolInvocation) -> ToolResult:
             args: dict[str, Any] = invocation.arguments or {}
             try:
-                if requires_approval and not await _resolve_function_approval(approval_handler, ai_func, args):
-                    deny_text = (
-                        f"Tool '{ai_func.name}' requires human approval "
-                        "(approval_mode='always_require') and the request was denied."
-                        if approval_handler is not None
-                        else (
-                            f"Tool '{ai_func.name}' requires human approval "
-                            "(approval_mode='always_require') but no on_function_approval "
-                            "callback is configured on the agent; the request was denied."
-                        )
-                    )
-                    logger.info(
-                        "Denying execution of tool '%s' (approval_mode='always_require', %s)",
-                        ai_func.name,
-                        "callback denied" if approval_handler is not None else "no callback configured",
-                    )
-                    return ToolResult(
-                        text_result_for_llm=deny_text,
-                        result_type="failure",
-                        error="approval_denied",
-                    )
                 if ai_func.input_model:
                     args_instance = ai_func.input_model(**args)
                     result = await ai_func.invoke(arguments=args_instance)
@@ -849,6 +782,71 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             handler=handler,
             parameters=ai_func.parameters(),
         )
+
+    def _build_session_hooks(
+        self,
+        all_tools: Sequence[ToolTypes | CopilotTool],
+        opts: Mapping[str, Any],
+    ) -> SessionHooks | None:
+        """Build the ``SessionHooks`` to pass to the Copilot SDK for this session.
+
+        Approval enforcement for ``FunctionTool`` instances declared with
+        ``approval_mode="always_require"`` is delegated to the Copilot SDK's native
+        ``on_pre_tool_use`` hook:
+
+        - If the caller supplies their own ``on_pre_tool_use`` (via per-run ``options``
+          or ``default_options``), it takes precedence and is returned unchanged. A
+          warning is logged naming any approval-required tool that will therefore not
+          be automatically gated, since the caller's hook is responsible for enforcing
+          approval.
+        - Otherwise, when any approval-required tool is present, a default hook is
+          installed that returns ``"ask"`` for those tools (routing the decision to
+          ``on_permission_request``) and defers (``None``) for all other tools.
+        - When there are no approval-required tools and no caller hook, ``None`` is
+          returned so no hooks are registered.
+
+        Args:
+            all_tools: The full set of tools resolved for the session.
+            opts: Runtime options that take precedence over ``default_options``.
+
+        Returns:
+            The hooks to register for the session, or ``None`` if none are needed.
+        """
+        user_hook: PreToolUseHandler | None = opts.get("on_pre_tool_use") or self._on_pre_tool_use
+
+        approval_required_names = {
+            tool.name for tool in all_tools if isinstance(tool, FunctionTool) and tool.approval_mode == "always_require"
+        }
+
+        if user_hook is not None:
+            if approval_required_names:
+                logger.warning(
+                    "A custom 'on_pre_tool_use' hook is configured, so %d approval-required tool(s) (%s) "
+                    "will not be automatically gated by GitHubCopilotAgent. The custom hook is responsible "
+                    "for enforcing approval (for example, by returning a 'deny' or 'ask' decision).",
+                    len(approval_required_names),
+                    ", ".join(sorted(approval_required_names)),
+                )
+            return {"on_pre_tool_use": user_hook}
+
+        if not approval_required_names:
+            return None
+
+        def default_pre_tool_use(
+            hook_input: Mapping[str, Any],
+            _context: Mapping[str, str],
+        ) -> PreToolUseHookOutput | None:
+            tool_name = hook_input.get("toolName")
+            if tool_name in approval_required_names:
+                return {
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason": (
+                        f"Tool '{tool_name}' is marked as requiring approval (approval_mode='always_require')."
+                    ),
+                }
+            return None
+
+        return {"on_pre_tool_use": default_pre_tool_use}
 
     async def _get_or_create_session(
         self,
@@ -907,6 +905,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         instruction_directories = opts.get("instruction_directories", self._instruction_directories)
         all_tools = list(self._tools or []) + list(opts.get("tools") or [])
         tools = self._prepare_tools(all_tools) if all_tools else None
+        hooks = self._build_session_hooks(all_tools, opts)
 
         return await self._client.create_session(
             on_permission_request=permission_handler,
@@ -917,6 +916,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             mcp_servers=mcp_servers or None,
             provider=provider or None,
             instruction_directories=instruction_directories,
+            hooks=hooks,
         )
 
     async def _resume_session(
@@ -946,6 +946,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         instruction_directories = opts.get("instruction_directories", self._instruction_directories)
         all_tools = list(self._tools or []) + list(opts.get("tools") or [])
         tools = self._prepare_tools(all_tools) if all_tools else None
+        hooks = self._build_session_hooks(all_tools, opts)
 
         return await self._client.resume_session(
             session_id,
@@ -957,6 +958,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             mcp_servers=mcp_servers or None,
             provider=provider or None,
             instruction_directories=instruction_directories,
+            hooks=hooks,
         )
 
 
