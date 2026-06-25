@@ -1,4 +1,4 @@
-﻿# Release History
+# Release History
 
 ## [Unreleased]
 
