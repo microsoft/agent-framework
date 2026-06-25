@@ -40,9 +40,11 @@ from copilot.session import (
     PreToolUseHookOutput,
 )
 from copilot.session_events import PermissionRequest
+from dotenv import load_dotenv
 
-# Keep the demos driven by the function tool: tell the model to rely on the tool
-# and not fall back to web browsing when the tool is unavailable.
+load_dotenv()
+
+
 INSTRUCTIONS = (
     "You are a helpful weather assistant. Always answer weather questions by calling the "
     "get_weather_detail tool. Do not browse the web or use any other source."

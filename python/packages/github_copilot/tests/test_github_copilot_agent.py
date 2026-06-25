@@ -25,7 +25,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework.exceptions import AgentException
-from copilot.session import PermissionHandler
+from copilot.session import PermissionHandler, PreToolUseHookInput
 from copilot.session_events import (
     Data,
     SessionEvent,
@@ -41,6 +41,17 @@ from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOpti
 def copilot_options(options: GitHubCopilotOptions) -> GitHubCopilotOptions:
     """Return GitHub Copilot options with concrete TypedDict typing for tests."""
     return options
+
+
+def pre_tool_use_input(tool_name: str) -> PreToolUseHookInput:
+    """Build a complete PreToolUseHookInput for exercising on_pre_tool_use hooks in tests."""
+    return {
+        "sessionId": "test-session",
+        "timestamp": datetime.now(timezone.utc),
+        "workingDirectory": ".",
+        "toolName": tool_name,
+        "toolArgs": {},
+    }
 
 
 def create_session_event(
@@ -1670,7 +1681,7 @@ class TestGitHubCopilotAgentFunctionApproval:
         assert hooks is not None
         hook = hooks["on_pre_tool_use"]
 
-        approval_decision = hook({"toolName": "dangerous"}, {"session_id": "s"})
+        approval_decision = hook(pre_tool_use_input("dangerous"), {"session_id": "s"})
         assert approval_decision == {
             "permissionDecision": "ask",
             "permissionDecisionReason": (
@@ -1678,7 +1689,7 @@ class TestGitHubCopilotAgentFunctionApproval:
             ),
         }
 
-        assert hook({"toolName": "safe"}, {"session_id": "s"}) is None
+        assert hook(pre_tool_use_input("safe"), {"session_id": "s"}) is None
 
     def test_no_hook_when_no_approval_required_tools(
         self,
