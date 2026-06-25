@@ -100,7 +100,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         this.CreateSkill("custom-prompt-skill", "Custom prompt", "Body.");
         var options = new AgentSkillsProviderOptions
         {
-            SkillsInstructionPrompt = "Custom template: {skills}\n{resource_instructions}\n{script_instructions}"
+            SkillsInstructionPrompt = "Custom template: {skills}"
         };
         var provider = new AgentSkillsProvider(new AgentFileSkillsSource(this._testRoot, s_noOpExecutor), options);
         var inputContext = new AIContext();
@@ -122,7 +122,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         // Arrange
         var options = new AgentSkillsProviderOptions
         {
-            SkillsInstructionPrompt = "No skills placeholder here {resource_instructions} {script_instructions}"
+            SkillsInstructionPrompt = "No skills placeholder here"
         };
 
         // Act & Assert
@@ -133,28 +133,12 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
-    public void Constructor_PromptWithoutRunnerInstructionsPlaceholder_ThrowsArgumentException()
+    public void Constructor_PromptWithOnlySkillsPlaceholder_Succeeds()
     {
         // Arrange
         var options = new AgentSkillsProviderOptions
         {
-            SkillsInstructionPrompt = "Has skills {skills} but no runner instructions {resource_instructions}"
-        };
-
-        // Act & Assert
-        var ex = Assert.Throws<ArgumentException>(() =>
-            new AgentSkillsProvider(new AgentFileSkillsSource(this._testRoot, s_noOpExecutor), options));
-        Assert.Contains("{script_instructions}", ex.Message);
-        Assert.Equal("options", ex.ParamName);
-    }
-
-    [Fact]
-    public void Constructor_PromptWithBothPlaceholders_Succeeds()
-    {
-        // Arrange
-        var options = new AgentSkillsProviderOptions
-        {
-            SkillsInstructionPrompt = "Skills: {skills}\nResources: {resource_instructions}\nRunner: {script_instructions}"
+            SkillsInstructionPrompt = "Skills: {skills}"
         };
 
         // Act — should not throw
@@ -165,19 +149,25 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
-    public void Constructor_PromptWithoutResourceInstructionsPlaceholder_ThrowsArgumentException()
+    public async Task InvokingCoreAsync_CustomTemplateWithLegacyPlaceholders_RendersThemLiterallyAsync()
     {
-        // Arrange
+        // Arrange — template contains legacy placeholder tokens that are no longer substituted
+        this.CreateSkill("literal-test-skill", "Literal test", "Body.");
         var options = new AgentSkillsProviderOptions
         {
-            SkillsInstructionPrompt = "Has skills {skills} and runner {script_instructions} but no resource instructions"
+            SkillsInstructionPrompt = "Skills: {skills}\nRes: {resource_instructions}\nScript: {script_instructions}"
         };
+        var provider = new AgentSkillsProvider(new AgentFileSkillsSource(this._testRoot, s_noOpExecutor), options);
+        var inputContext = new AIContext();
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, inputContext);
 
-        // Act & Assert
-        var ex = Assert.Throws<ArgumentException>(() =>
-            new AgentSkillsProvider(new AgentFileSkillsSource(this._testRoot, s_noOpExecutor), options));
-        Assert.Contains("{resource_instructions}", ex.Message);
-        Assert.Equal("options", ex.ParamName);
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — legacy tokens render literally, not substituted
+        Assert.NotNull(result.Instructions);
+        Assert.Contains("{resource_instructions}", result.Instructions);
+        Assert.Contains("{script_instructions}", result.Instructions);
     }
 
     [Fact]
@@ -626,6 +616,31 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task ReadSkillResource_ResourceThrows_PropagatesExceptionAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("res-skill", "Has resources", "Body.");
+        Func<object> failing = () => throw new InvalidOperationException("boom-resource");
+        skill.AddResource("config", failing);
+        var provider = new AgentSkillsProvider(skill);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        var readTool = result.Tools!.First(t => t.Name == "read_skill_resource") as AIFunction;
+
+        // Act & Assert — the exception is not swallowed but propagates to the caller.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await readTool!.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?>
+            {
+                ["skillName"] = "res-skill",
+                ["resourceName"] = "config",
+            })
+            {
+                Services = new TestServiceProvider(),
+            }));
+        Assert.Equal("boom-resource", ex.Message);
+    }
+
+    [Fact]
     public async Task RunSkillScript_EmptySkillName_ReturnsErrorAsync()
     {
         // Arrange
@@ -719,6 +734,58 @@ public sealed class AgentSkillsProviderTests : IDisposable
 
         // Assert
         Assert.Equal("Error: Script 'scripts/missing.py' not found in skill 'err-script4-skill'.", content!.ToString());
+    }
+
+    [Fact]
+    public async Task RunSkillScript_ScriptThrows_PropagatesExceptionByDefaultAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("script-skill", "Has scripts", "Body.");
+        Func<object> failing = () => throw new InvalidOperationException("boom-script");
+        skill.AddScript("explode", failing);
+        var provider = new AgentSkillsProvider(skill);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        var runScriptTool = result.Tools!.First(t => t.Name == "run_skill_script") as AIFunction;
+
+        // Act & Assert — exception propagates when IncludeDetailedErrors is not set
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await runScriptTool!.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?>
+            {
+                ["skillName"] = "script-skill",
+                ["scriptName"] = "explode",
+            })
+            {
+                Services = new TestServiceProvider(),
+            }));
+        Assert.Equal("boom-script", ex.Message);
+    }
+
+    [Fact]
+    public async Task RunSkillScript_ScriptThrows_IncludesDetailsWhenEnabledAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("script-skill", "Has scripts", "Body.");
+        Func<object> failing = () => throw new InvalidOperationException("boom-script");
+        skill.AddScript("explode", failing);
+        var options = new AgentSkillsProviderOptions { IncludeDetailedErrors = true };
+        var provider = new AgentSkillsProvider(new[] { skill }, options);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        var runScriptTool = result.Tools!.First(t => t.Name == "run_skill_script") as AIFunction;
+
+        // Act
+        var content = await runScriptTool!.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?>
+        {
+            ["skillName"] = "script-skill",
+            ["scriptName"] = "explode",
+        })
+        {
+            Services = new TestServiceProvider(),
+        });
+
+        // Assert — includes exception message
+        Assert.Equal("Error: Failed to execute script 'explode' from skill 'script-skill'. Exception: boom-script", content!.ToString());
     }
 
     [Fact]

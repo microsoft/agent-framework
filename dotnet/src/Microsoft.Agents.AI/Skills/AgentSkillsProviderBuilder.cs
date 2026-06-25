@@ -132,11 +132,23 @@ public sealed class AgentSkillsProviderBuilder
     }
 
     /// <summary>
+    /// Adds a custom skill source created by a factory that receives the builder's logger factory
+    /// at build time. Use this overload when the source needs logging and should not require the
+    /// caller to pass an <see cref="ILoggerFactory"/> explicitly.
+    /// </summary>
+    /// <param name="factory">A factory that creates the skill source given an optional logger factory.</param>
+    /// <returns>This builder instance for chaining.</returns>
+    public AgentSkillsProviderBuilder UseSource(Func<ILoggerFactory?, AgentSkillsSource> factory)
+    {
+        _ = Throw.IfNull(factory);
+        this._sourceFactories.Add((_, loggerFactory) => factory(loggerFactory));
+        return this;
+    }
+
+    /// <summary>
     /// Sets a custom system prompt template.
     /// </summary>
-    /// <param name="promptTemplate">The prompt template with <c>{skills}</c> placeholder for the skills list,
-    /// <c>{resource_instructions}</c> for optional resource instructions,
-    /// and <c>{script_instructions}</c> for optional script instructions.</param>
+    /// <param name="promptTemplate">The prompt template with <c>{skills}</c> placeholder for the skills list.</param>
     /// <returns>This builder instance for chaining.</returns>
     public AgentSkillsProviderBuilder UsePromptTemplate(string promptTemplate)
     {
