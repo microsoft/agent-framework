@@ -157,7 +157,7 @@ $env:AI_FOUNDRY_ENDPOINT="https://<your-project>.services.ai.azure.com"
 python samples/basic_usage.py
 ```
 
-#### 2. **Interactive Chat (`samples/interactive_chat.py`)** - Real Agent Integration  
+#### 2. **Interactive Chat (`samples/interactive_chat.py`)** - Real Agent Integration
 This sample shows **real-world usage** with Agent Framework. It demonstrates:
 - ✅ **Full Agent Framework integration** - actual chatbot you can interact with
 - ✅ **Custom memory extraction rubric** - inject your own extraction logic
@@ -224,7 +224,7 @@ This sample shows **real-world usage** with Agent Framework. It demonstrates:
    - Managed identity (if running in Azure)
    - Azure CLI (`az login`)
    - Interactive browser login (fallback)
-   
+
    For local development, the easiest option is: `az login`
 
 5. **Run the sample** (ensure your virtual environment is activated):
@@ -279,7 +279,7 @@ Inject your own extraction logic with a custom rubric:
 class CustomMemoryProcessor:
     def __init__(self, extraction_rubric: str):
         self.extraction_rubric = extraction_rubric  # Your custom prompt
-    
+
     async def extract_memories(self, user_id, thread_id, messages):
         # Your extraction logic here using self.extraction_rubric
         # Return list of memory records
@@ -312,12 +312,12 @@ memory_provider = CosmosMemoryContextProvider(
     cosmos_database="ai_memory",                  # Database name
     ai_foundry_endpoint="https://...",            # AI Foundry endpoint
     credential=DefaultAzureCredential(),          # Azure credential
-    
+
     # Memory retrieval options
     top_k=5,                                      # Number of memories to retrieve
     min_confidence=0.7,                           # Minimum confidence score (0.0-1.0)
     memory_types=["fact", "procedural"],          # Types to retrieve
-    
+
     # Processing options
     auto_extract=True,                            # Auto-extract memories after runs
     processor_config={                            # Optional processor settings
@@ -366,7 +366,7 @@ agent = client.as_agent(
     context_providers=[
         # Short-term: recent conversation
         InMemoryHistoryProvider("recent"),
-        
+
         # Mid-term: persistent conversation history
         CosmosHistoryProvider(
             endpoint=cosmos_endpoint,
@@ -374,7 +374,7 @@ agent = client.as_agent(
             database_name="agent-framework",
             container_name="chat-history",
         ),
-        
+
         # Long-term: semantic memory with facts and profiles
         CosmosMemoryContextProvider(
             cosmos_endpoint=cosmos_endpoint,

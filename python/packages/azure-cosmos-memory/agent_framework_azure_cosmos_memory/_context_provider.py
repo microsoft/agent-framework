@@ -239,7 +239,7 @@ class CosmosMemoryContextProvider(ContextProvider):
         self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any
     ) -> None:
         """Async context manager exit.
-        
+
         Only close the memory client if this provider created it (_should_close_client=True).
         If a pre-created client was provided, the caller is responsible for closing it.
         """
@@ -365,7 +365,7 @@ class CosmosMemoryContextProvider(ContextProvider):
 
     def _format_memories(self, memories: Sequence[dict[str, Any]]) -> str:
         """Format memories for context injection.
-        
+
         Each memory is formatted as: "[type] content (confidence: X.XX)"
         This provides the agent with both the memory content and metadata about
         its type (fact, procedural, episodic) and confidence score for better reasoning.
