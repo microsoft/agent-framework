@@ -9,7 +9,7 @@ env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
   # GitHub Copilot configuration
-  GITHUB_COPILOT_MODEL: claude-opus-4.6
+  GITHUB_COPILOT_MODEL: claude-opus-4.8
   COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
 
 permissions:

@@ -1,6 +1,9 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
+#     "agent-framework-openai",
+#     "agent-framework-orchestrations",
+#     "python-dotenv",
 #     "semantic-kernel",
 # ]
 # ///
