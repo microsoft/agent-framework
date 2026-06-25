@@ -158,7 +158,7 @@ public sealed class AgentSkillsProviderBuilderTests
         // Act — all fluent methods should return the same builder
         var result = builder
             .UseSource(source)
-            .UsePromptTemplate("Skills:\n{skills}\n{resource_instructions}\n{script_instructions}");
+            .UsePromptTemplate("Skills:\n{skills}");
 
         // Assert
         Assert.Same(builder, result);
