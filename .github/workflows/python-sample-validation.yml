@@ -23,8 +23,8 @@ jobs:
     environment: integration
     env:
       # Required configuration for get-started samples
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
     defaults:
       run:
         working-directory: python
@@ -61,8 +61,8 @@ jobs:
     environment: integration
     env:
       # Foundry configuration
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       # Azure OpenAI configuration
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
@@ -70,12 +70,12 @@ jobs:
       AZURE_OPENAI_CHAT_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       AZURE_OPENAI_EMBEDDING_MODEL: ${{ vars.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME || vars.AZUREOPENAI__EMBEDDINGDEPLOYMENTNAME }}
       # OpenAI configuration
-      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
       # GitHub MCP
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
-      OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_MODEL: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
       # Observability
       ENABLE_INSTRUMENTATION: "true"
     defaults:
@@ -122,10 +122,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      OPENAI_MODEL: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
     defaults:
       run:
         working-directory: python
@@ -329,12 +329,11 @@ jobs:
 
   validate-02-agents-foundry:
     name: Validate 02-agents/providers/foundry
-    if: false # Temporarily disabled - provider folder also contains the local Foundry sample
     runs-on: ubuntu-latest
     environment: integration
     env:
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       FOUNDRY_AGENT_NAME: ${{ vars.FOUNDRY_AGENT_NAME || '' }}
       FOUNDRY_AGENT_VERSION: ${{ vars.FOUNDRY_AGENT_VERSION || '' }}
     defaults:
@@ -445,8 +444,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
     defaults:
       run:
         working-directory: python
@@ -479,12 +478,11 @@ jobs:
 
   validate-04-hosting:
     name: Validate 04-hosting
-    if: false # Temporarily disabled because of sample complexity
     runs-on: ubuntu-latest
     environment: integration
     env:
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       # A2A configuration
       A2A_AGENT_HOST: http://localhost:5001/
     defaults:
@@ -518,8 +516,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       # Azure OpenAI configuration
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
@@ -560,16 +558,16 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       # Azure OpenAI configuration
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # OpenAI configuration
-      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
-      OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
+      OPENAI_MODEL: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
     defaults:
       run:
         working-directory: python
@@ -610,20 +608,21 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       # Azure OpenAI configuration for AF
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # Azure OpenAI configuration for SK
       AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME }}
       # OpenAI key
-      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
-      OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
+      OPENAI_MODEL: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
       # OpenAI configuration for SK
-      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
+      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
       # Copilot Studio
       COPILOTSTUDIOAGENT__ENVIRONMENTID: ${{ secrets.COPILOTSTUDIOAGENT__ENVIRONMENTID }}
       COPILOTSTUDIOAGENT__SCHEMANAME: ${{ secrets.COPILOTSTUDIOAGENT__SCHEMANAME }}
