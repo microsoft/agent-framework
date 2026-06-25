@@ -168,10 +168,14 @@ internal sealed class DurableEdgeMap
             }
         }
 
-        // Store predecessor counts for fan-in detection
+        // Store predecessor counts for fan-in detection. Count distinct source executors: a single source can
+        // reach the same target through more than one edge (for example a switch case plus a sibling direct
+        // edge to the same executor), and those repeated deliveries must not be mistaken for a fan-in. True
+        // fan-in aggregates deliveries from multiple distinct sources, mirroring the in-process FanInEdgeData
+        // contract, so a target fed twice by the same source still runs once per delivery.
         foreach (KeyValuePair<string, List<string>> entry in graphInfo.Predecessors)
         {
-            this._predecessorCounts[entry.Key] = entry.Value.Count;
+            this._predecessorCounts[entry.Key] = entry.Value.Distinct().Count();
         }
     }
 

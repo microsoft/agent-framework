@@ -219,16 +219,108 @@ public sealed class DurableEdgeMapSwitchTests
         Assert.Equal(0, QueuedCount(queues, OddId));
     }
 
+    [Theory]
+    [InlineData(4, 1)] // 4 > 3, sibling condition holds, audit receives the message
+    [InlineData(2, 0)] // 2 > 3 is false, sibling condition fails, audit is skipped
+    public void RouteMessage_SwitchWithConditionalSiblingEdge_HonorsSiblingCondition(int number, int expectedAuditCount)
+    {
+        // Arrange: a switch plus a conditional sibling direct edge from the same source. The sibling edge's
+        // condition must be honored even though it shares a source with the selector.
+        const string AuditId = "audit";
+
+        FunctionExecutor<int, int> router = Router();
+        WorkflowBuilder builder = new(router);
+        builder.AddSwitch(router, sb =>
+        {
+            sb.AddCase<int>(n => n % 2 == 0, Sink(EvenId));
+            sb.AddCase<int>(n => n % 2 != 0, Sink(OddId));
+        });
+        builder.AddEdge<int>(router, Sink(AuditId), n => n > 3);
+
+        // Act: both inputs are even, so the switch always routes to the even branch.
+        Dictionary<string, Queue<DurableMessageEnvelope>> queues = Route(builder.Build(), number);
+
+        // Assert: the switch delivers regardless; the audit sibling only delivers when its condition holds.
+        Assert.Equal(1, QueuedCount(queues, EvenId));
+        Assert.Equal(expectedAuditCount, QueuedCount(queues, AuditId));
+    }
+
+    [Fact]
+    public void RouteMessage_SelectorThrows_DoesNotDeliverOrThrow()
+    {
+        // Arrange: a selector that throws when evaluated. Routing must swallow and log the failure rather
+        // than crash the orchestration, and nothing should be delivered.
+        const string TargetId = "target";
+        const string OtherId = "other";
+
+        FunctionExecutor<int, int> router = Router();
+        WorkflowBuilder builder = new(router);
+        builder.AddFanOutEdge<int>(router, [Sink(TargetId), Sink(OtherId)], (_, _) => throw new InvalidOperationException("boom"));
+
+        // Act + Assert: the selector exception is swallowed, no message is delivered, and nothing escapes.
+        Dictionary<string, Queue<DurableMessageEnvelope>> queues = Route(builder.Build(), 7);
+
+        Assert.Equal(0, QueuedCount(queues, TargetId));
+        Assert.Equal(0, QueuedCount(queues, OtherId));
+    }
+
+    [Fact]
+    public void IsFanInExecutor_SwitchCaseAndSiblingEdgeToSameTarget_NotTreatedAsFanIn()
+    {
+        // Arrange: a switch case and a sibling direct edge both target the same executor from the same source.
+        // Those repeated deliveries originate from a single source, so the target must not be treated as a
+        // fan-in (which would aggregate them into one invocation); it should run once per delivery, matching
+        // the in-process contract where aggregation is reserved for explicit fan-in edges.
+        FunctionExecutor<int> evenSink = Sink(EvenId);
+
+        FunctionExecutor<int, int> router = Router();
+        WorkflowBuilder builder = new(router);
+        builder.AddSwitch(router, sb =>
+        {
+            sb.AddCase<int>(n => n % 2 == 0, evenSink);
+            sb.AddCase<int>(n => n % 2 != 0, Sink(OddId));
+        });
+        builder.AddEdge(router, evenSink);
+
+        DurableEdgeMap edgeMap = BuildEdgeMap(builder.Build());
+
+        // Assert: a target fed twice by the same source is not a fan-in point.
+        Assert.False(edgeMap.IsFanInExecutor(EvenId));
+    }
+
+    [Fact]
+    public void IsFanInExecutor_MultipleDistinctSources_TreatedAsFanIn()
+    {
+        // Arrange: a diamond where two distinct sources converge on one target — a genuine fan-in.
+        FunctionExecutor<int, int> start = new("start", (input, _, _) => input, outputTypes: [typeof(int)]);
+        FunctionExecutor<int, int> left = new("left", (input, _, _) => input, outputTypes: [typeof(int)]);
+        FunctionExecutor<int, int> right = new("right", (input, _, _) => input, outputTypes: [typeof(int)]);
+        FunctionExecutor<int> target = Sink("target");
+
+        WorkflowBuilder builder = new(start);
+        builder.AddEdge(start, left);
+        builder.AddEdge(start, right);
+        builder.AddEdge(left, target);
+        builder.AddEdge(right, target);
+
+        DurableEdgeMap edgeMap = BuildEdgeMap(builder.Build());
+
+        // Assert: two distinct predecessors still register as a fan-in point.
+        Assert.True(edgeMap.IsFanInExecutor("target"));
+    }
+
     private static FunctionExecutor<int, int> Router()
         => new(RouterId, (input, _, _) => input, outputTypes: [typeof(int)]);
 
     private static FunctionExecutor<int> Sink(string id)
         => new(id, (_, _, _) => default);
 
+    private static DurableEdgeMap BuildEdgeMap(Workflow workflow)
+        => new(WorkflowAnalyzer.BuildGraphInfo(workflow));
+
     private static Dictionary<string, Queue<DurableMessageEnvelope>> Route(Workflow workflow, int number)
     {
-        WorkflowGraphInfo graphInfo = WorkflowAnalyzer.BuildGraphInfo(workflow);
-        DurableEdgeMap edgeMap = new(graphInfo);
+        DurableEdgeMap edgeMap = BuildEdgeMap(workflow);
         Dictionary<string, Queue<DurableMessageEnvelope>> queues = [];
 
         edgeMap.RouteMessage(
