@@ -3,10 +3,12 @@
 import logging
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 
 from agent_framework import (
     Executor,
     Message,
+    SkillsProvider,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
@@ -30,6 +32,9 @@ from sample_validation.models import (
 from typing_extensions import Never
 
 logger = logging.getLogger(__name__)
+
+# Directory containing file-based skills used by the validation agents.
+SKILLS_DIR = Path(__file__).parent / "skills"
 
 
 class AgentResponseFormat(BaseModel):
@@ -58,7 +63,9 @@ AgentInstruction = (
     "Analyze the sample code and execute it as it is. Based on the execution result, determine "
     "if it runs successfully, fails, or is missing_setup. Use `missing_setup` if the sample reports "
     "missing required environment variables. The environment you're given should contain the necessary "
-    "variables. Don't create new environment variables nor modify the sample code.\n"
+    "variables. Don't create new environment variables nor modify the sample code, unless an available "
+    "skill instructs you to do so for the setup issue you detected. When a skill applies to the problem, "
+    "follow its guidance to resolve the setup and then re-run the sample.\n"
     "Feel free to install any required dependencies if needed.\n"
     "The sample can be interactive. If it is interactive, respond to the sample when prompted "
     "based on your analysis of the code. You do not need to consult human on what to respond.\n"
@@ -289,6 +296,7 @@ class CreateConcurrentValidationWorkflowExecutor(Executor):
                 id=agent_id,
                 name=agent_id,
                 instructions=AgentInstruction,
+                context_providers=[SkillsProvider.from_paths(skill_paths=str(SKILLS_DIR))],
                 default_options={
                     "on_permission_request": prompt_permission,
                     "timeout": 120,
