@@ -69,6 +69,11 @@ environments = [
 
 [tool.uv.workspace]
 members = [ "packages/*" ]
+# azure-cosmos-memory is excluded from the shared workspace resolution because its
+# dependency (azure-cosmos-agent-memory) requires Python >=3.11 and a prompty
+# pre-release (>=2.0.0a9), which is unsatisfiable against the workspace's >=3.10
+# floor and pre-release policy. It is published and tested as a standalone package.
+exclude = [ "packages/azure-cosmos-memory" ]
 
 [tool.uv.sources]
 agent-framework = { workspace = true }
