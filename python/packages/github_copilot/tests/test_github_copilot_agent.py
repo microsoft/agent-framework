@@ -2771,7 +2771,7 @@ async def test_integration_run_with_simple_prompt_returns_response() -> None:
         assert len(response.messages) > 0
         assert "4" in response.text
 
-        if session.service_session_id and agent._client:
+        if isinstance(session.service_session_id, str) and agent._client:
             await agent._client.delete_session(session.service_session_id)
 
 
@@ -2795,7 +2795,7 @@ async def test_integration_run_streaming_returns_updates() -> None:
         full_text = "".join(u.text for u in updates if u.text)
         assert len(full_text) > 0
 
-        if session.service_session_id and agent._client:
+        if isinstance(session.service_session_id, str) and agent._client:
             await agent._client.delete_session(session.service_session_id)
 
 
@@ -2818,7 +2818,7 @@ async def test_integration_run_with_function_tool_invokes_tool() -> None:
         assert len(response.messages) > 0
         assert any(word in response.text.lower() for word in ["sunny", "25", "weather", "seattle"])
 
-        if session.service_session_id and agent._client:
+        if isinstance(session.service_session_id, str) and agent._client:
             await agent._client.delete_session(session.service_session_id)
 
 
@@ -2843,7 +2843,7 @@ async def test_integration_run_with_session_maintains_context() -> None:
         assert response2 is not None
         assert "alice" in response2.text.lower()
 
-        if session.service_session_id and agent._client:
+        if isinstance(session.service_session_id, str) and agent._client:
             await agent._client.delete_session(session.service_session_id)
 
 
@@ -2862,7 +2862,7 @@ async def test_integration_run_with_session_resume_continues_conversation() -> N
         await agent.run("Remember this number: 42.", session=session1)
 
         session_id = session1.service_session_id
-        assert session_id is not None
+        assert isinstance(session_id, str)
 
         session2 = AgentSession()
         session2.service_session_id = session_id
@@ -2893,5 +2893,5 @@ async def test_integration_run_with_shell_permissions_executes_command() -> None
         assert response is not None
         assert "hello" in response.text.lower()
 
-        if session.service_session_id and agent._client:
+        if isinstance(session.service_session_id, str) and agent._client:
             await agent._client.delete_session(session.service_session_id)

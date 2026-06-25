@@ -10,7 +10,15 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 import pytest
-from agent_framework import AgentResponse, AgentResponseUpdate, AgentSession, Content, Message, ResponseStream
+from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
+    AgentSession,
+    Content,
+    Message,
+    ResponseStream,
+    ServiceSessionId,
+)
 from agent_framework._workflows._events import WorkflowEvent
 from opentelemetry import context as otel_context
 from opentelemetry import trace
@@ -76,7 +84,7 @@ class _FakeAgent:
         self.created_sessions.append(s)
         return s
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+    def get_session(self, service_session_id: ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id, service_session_id=service_session_id)
 
     def run(self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any) -> Any:
@@ -784,7 +792,9 @@ class TestHostedRunResult:
             def create_session(self, *, session_id: str | None = None) -> AgentSession:
                 return AgentSession(session_id=session_id)
 
-            def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+            def get_session(
+                self, service_session_id: ServiceSessionId, *, session_id: str | None = None
+            ) -> AgentSession:
                 return AgentSession(session_id=session_id, service_session_id=service_session_id)
 
             def run(self, *_args: Any, **_kwargs: Any) -> Any:
@@ -866,7 +876,7 @@ class _ProvidersAgent:
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+    def get_session(self, service_session_id: ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id, service_session_id=service_session_id)
 
     def run(

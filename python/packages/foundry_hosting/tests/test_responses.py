@@ -30,6 +30,7 @@ from agent_framework import (
     Message,
     RawAgent,
     ResponseStream,
+    ServiceSessionId,
     SupportsAgentRun,
     WorkflowAgent,
     WorkflowBuilder,
@@ -3692,7 +3693,7 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
     def create_session(self, **kwargs: Any) -> AgentSession:
         return AgentSession()
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+    def get_session(self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
         return AgentSession()
 
     def _next_request_id(self) -> str:
@@ -3826,7 +3827,9 @@ def _build_text_workflow_agent(text: str) -> WorkflowAgent:
         def create_session(self, **kwargs: Any) -> AgentSession:
             return AgentSession()
 
-        def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+        def get_session(
+            self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None
+        ) -> AgentSession:
             return AgentSession()
 
         @overload
