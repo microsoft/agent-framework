@@ -2125,6 +2125,14 @@ def _parse_structured_response_value(text: str, response_format: Any | None) -> 
     return None
 
 
+def _last_non_empty_message_text(messages: Sequence[Message]) -> str:
+    for message in reversed(messages):
+        text = message.text
+        if text.strip():
+            return text
+    return ""
+
+
 class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
     """Represents the response to a chat request.
 
@@ -2397,7 +2405,10 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         if self._value_parsed:
             return self._value
         if self._response_format is not None:
-            self._value = cast(ResponseModelT, _parse_structured_response_value(self.text, self._response_format))
+            self._value = cast(
+                ResponseModelT,
+                _parse_structured_response_value(_last_non_empty_message_text(self.messages), self._response_format),
+            )
             self._value_parsed = True
         return self._value
 
@@ -2661,7 +2672,10 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         if self._value_parsed:
             return self._value
         if self._response_format is not None:
-            self._value = cast(ResponseModelT, _parse_structured_response_value(self.text, self._response_format))
+            self._value = cast(
+                ResponseModelT,
+                _parse_structured_response_value(_last_non_empty_message_text(self.messages), self._response_format),
+            )
             self._value_parsed = True
         return self._value
 
