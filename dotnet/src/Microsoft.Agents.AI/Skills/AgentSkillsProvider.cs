@@ -122,7 +122,6 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     private readonly AgentSkillsSource _source;
     private readonly AgentSkillsProviderOptions? _options;
     private readonly ILogger<AgentSkillsProvider> _logger;
-    private Task<AIContext>? _contextTask;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentSkillsProvider"/> class
@@ -162,7 +161,8 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         ILoggerFactory? loggerFactory = null)
         : this(
             new DeduplicatingAgentSkillsSource(
-                new AgentFileSkillsSource(skillPaths, scriptRunner, fileOptions, loggerFactory),
+                new CachingAgentSkillsSource(
+                    new AgentFileSkillsSource(skillPaths, scriptRunner, fileOptions, loggerFactory)),
                 loggerFactory),
             options,
             loggerFactory)
@@ -192,7 +192,8 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         ILoggerFactory? loggerFactory = null)
         : this(
             new DeduplicatingAgentSkillsSource(
-                new AgentInMemorySkillsSource(Throw.IfNull(skills)),
+                new CachingAgentSkillsSource(
+                    new AgentInMemorySkillsSource(Throw.IfNull(skills))),
                 loggerFactory),
             options,
             loggerFactory)
@@ -222,16 +223,6 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
-        if (this._options?.DisableCaching == true)
-        {
-            return await this.CreateContextAsync(context, cancellationToken).ConfigureAwait(false);
-        }
-
-        return await this.GetOrCreateContextAsync(context, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task<AIContext> CreateContextAsync(InvokingContext context, CancellationToken cancellationToken)
-    {
         var skills = await this._source.GetSkillsAsync(cancellationToken).ConfigureAwait(false);
         if (skills is not { Count: > 0 })
         {
@@ -243,29 +234,6 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
             Instructions = this.BuildSkillsInstructions(skills),
             Tools = this.BuildTools(skills),
         };
-    }
-
-    private async Task<AIContext> GetOrCreateContextAsync(InvokingContext context, CancellationToken cancellationToken)
-    {
-        var tcs = new TaskCompletionSource<AIContext>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        if (Interlocked.CompareExchange(ref this._contextTask, tcs.Task, null) is { } existing)
-        {
-            return await existing.ConfigureAwait(false);
-        }
-
-        try
-        {
-            var result = await this.CreateContextAsync(context, cancellationToken).ConfigureAwait(false);
-            tcs.SetResult(result);
-            return result;
-        }
-        catch (Exception ex)
-        {
-            this._contextTask = null;
-            tcs.TrySetException(ex);
-            throw;
-        }
     }
 
     private IList<AIFunction> BuildTools(IList<AgentSkill> skills)
