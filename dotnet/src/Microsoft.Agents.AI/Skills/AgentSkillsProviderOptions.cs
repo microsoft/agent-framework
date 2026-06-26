@@ -13,19 +13,10 @@ public sealed class AgentSkillsProviderOptions
 {
     /// <summary>
     /// Gets or sets a custom system prompt template for advertising skills.
-    /// The template must contain <c>{skills}</c> as the placeholder for the generated skills list,
-    /// <c>{resource_instructions}</c> for resource instructions,
-    /// and <c>{script_instructions}</c> for script instructions.
+    /// The template must contain <c>{skills}</c> as the placeholder for the generated skills list.
     /// When <see langword="null"/>, a default template is used.
     /// </summary>
     public string? SkillsInstructionPrompt { get; set; }
-
-    /// <summary>
-    /// Gets or sets a value indicating whether script execution requires approval.
-    /// When <see langword="true"/>, script execution is blocked until approved.
-    /// Defaults to <see langword="false"/>.
-    /// </summary>
-    public bool ScriptApproval { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether detailed exception information is included

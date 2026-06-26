@@ -22,7 +22,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// should register an alternate <see cref="HostedSessionIsolationKeyProvider"/> implementation
 /// that provides fallback values for the missing headers.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 internal sealed class PlatformHostedSessionIsolationKeyProvider : HostedSessionIsolationKeyProvider
 {
     /// <inheritdoc />

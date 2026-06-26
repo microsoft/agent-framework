@@ -14,6 +14,9 @@ from agent_framework_hosting import (
     AgentFrameworkHost,
     HostedRunResult,
 )
+from opentelemetry import context as otel_context
+from opentelemetry import trace
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.testclient import TestClient
 
 from agent_framework_hosting_responses import ResponsesChannel
@@ -516,6 +519,41 @@ class TestResultTextRendering:
 
 
 class TestResponsesChannelStreaming:
+    def test_sse_streaming_uses_request_parent_span_context(self) -> None:
+        observed: dict[str, int] = {}
+        parent_ctx = trace.SpanContext(
+            trace_id=0xABCDEF00112233445566778899AABBCC,
+            span_id=0x1122334455667788,
+            is_remote=False,
+            trace_flags=trace.TraceFlags(0x01),
+            trace_state=trace.TraceState(),
+        )
+        parent_span = trace.NonRecordingSpan(parent_ctx)
+
+        class _SpanAwareAgent(_FakeAgent):
+            def run(self, messages: Any = None, *, stream: bool = False, **kwargs: Any) -> Any:
+                self.calls.append({"messages": messages, "stream": stream, "kwargs": kwargs})
+                if stream:
+                    observed["run_span_id"] = trace.get_current_span().get_span_context().span_id
+                    return _FakeStream(["chunk"])
+                return super().run(messages=messages, stream=stream, **kwargs)
+
+        async def _middleware_dispatch(request: Any, call_next: Any) -> Any:
+            token = otel_context.attach(trace.set_span_in_context(parent_span))
+            try:
+                return await call_next(request)
+            finally:
+                otel_context.detach(token)
+
+        host = AgentFrameworkHost(target=_SpanAwareAgent(), channels=[ResponsesChannel()])
+        host.app.add_middleware(BaseHTTPMiddleware, dispatch=_middleware_dispatch)
+
+        with TestClient(host.app) as client:
+            r = client.post("/responses", json={"input": "hi", "stream": True})
+
+        assert r.status_code == 200
+        assert observed["run_span_id"] == parent_ctx.span_id
+
     def test_sse_emits_created_delta_completed(self) -> None:
         agent = _FakeAgent(reply="hello world", chunks=["hello", " ", "world"])
         host = AgentFrameworkHost(target=agent, channels=[ResponsesChannel()])

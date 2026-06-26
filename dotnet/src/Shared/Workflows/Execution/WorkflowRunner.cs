@@ -55,12 +55,15 @@ internal sealed class WorkflowRunner
         Workflow workflow = workflowProvider.Invoke();
 
         CheckpointManager checkpointManager;
+        DirectoryInfo? checkpointFolder = null;
+        FileSystemJsonCheckpointStore? jsonCheckpointStore = null;
 
         if (this.UseJsonCheckpoints)
         {
             // Use a file-system based JSON checkpoint store to persist checkpoints to disk.
-            DirectoryInfo checkpointFolder = Directory.CreateDirectory(Path.Combine(".", $"chk-{DateTime.Now:yyMMdd-hhmmss-ff}"));
-            checkpointManager = CheckpointManager.CreateJson(new FileSystemJsonCheckpointStore(checkpointFolder));
+            checkpointFolder = Directory.CreateDirectory(Path.Combine(".", $"chk-{DateTime.Now:yyMMdd-hhmmss-ff}"));
+            jsonCheckpointStore = new FileSystemJsonCheckpointStore(checkpointFolder);
+            checkpointManager = CheckpointManager.CreateJson(jsonCheckpointStore);
         }
         else
         {
@@ -68,41 +71,53 @@ internal sealed class WorkflowRunner
             checkpointManager = CheckpointManager.CreateInMemory();
         }
 
-        StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input, checkpointManager).ConfigureAwait(false);
-
-        bool isComplete = false;
-        ExternalResponse? requestResponse = null;
-        do
+        try
         {
-            ExternalRequest? externalRequest = await this.MonitorAndDisposeWorkflowRunAsync(run, requestResponse).ConfigureAwait(false);
-            if (externalRequest is not null)
-            {
-                Notify("\nWORKFLOW: Yield\n", ConsoleColor.DarkYellow);
+            StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input, checkpointManager).ConfigureAwait(false);
 
-                if (this.LastCheckpoint is null)
+            bool isComplete = false;
+            ExternalResponse? requestResponse = null;
+            do
+            {
+                ExternalRequest? externalRequest = await this.MonitorAndDisposeWorkflowRunAsync(run, requestResponse).ConfigureAwait(false);
+                if (externalRequest is not null)
                 {
-                    throw new InvalidOperationException("Checkpoint information missing after external request.");
+                    Notify("\nWORKFLOW: Yield\n", ConsoleColor.DarkYellow);
+
+                    if (this.LastCheckpoint is null)
+                    {
+                        throw new InvalidOperationException("Checkpoint information missing after external request.");
+                    }
+
+                    // Process the external request.
+                    object response = await this.HandleExternalRequestAsync(externalRequest).ConfigureAwait(false);
+                    requestResponse = externalRequest.CreateResponse(response);
+
+                    // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
+                    workflow = workflowProvider.Invoke();
+
+                    // Restore the latest checkpoint.
+                    Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
+                    Notify("WORKFLOW: Restore", ConsoleColor.DarkYellow);
+
+                    run = await InProcessExecution.ResumeStreamingAsync(workflow, this.LastCheckpoint, checkpointManager).ConfigureAwait(false);
                 }
-
-                // Process the external request.
-                object response = await this.HandleExternalRequestAsync(externalRequest).ConfigureAwait(false);
-                requestResponse = externalRequest.CreateResponse(response);
-
-                // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
-                workflow = workflowProvider.Invoke();
-
-                // Restore the latest checkpoint.
-                Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
-                Notify("WORKFLOW: Restore", ConsoleColor.DarkYellow);
-
-                run = await InProcessExecution.ResumeStreamingAsync(workflow, this.LastCheckpoint, checkpointManager).ConfigureAwait(false);
+                else
+                {
+                    isComplete = true;
+                }
             }
-            else
-            {
-                isComplete = true;
-            }
+            while (!isComplete);
         }
-        while (!isComplete);
+        catch (Exception)
+        {
+            throw;
+        }
+        finally
+        {
+            jsonCheckpointStore?.Dispose();
+            checkpointFolder?.Delete(true);
+        }
 
         Notify("\nWORKFLOW: Done!\n");
     }

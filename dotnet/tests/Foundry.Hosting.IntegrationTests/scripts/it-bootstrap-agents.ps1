@@ -44,6 +44,7 @@ $Scenarios = @(
     'tool-calling',
     'tool-calling-approval',
     'mcp-toolbox',
+    'toolbox-oauth-consent',
     'custom-storage',
     'memory',
     'azure-search-rag',
