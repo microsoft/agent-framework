@@ -351,6 +351,14 @@ public sealed partial class ChatClientAgent : AIAgent
                 throw;
             }
 
+            // Track the last non-null continuation token seen during streaming.
+            // Some IChatClient implementations (e.g. MEAI OpenAI Responses) only emit the
+            // continuation token on specific events (response.created) rather than on every
+            // streaming update. We carry the last-seen token forward so that callers who break
+            // out of the stream early (simulating connection loss) always receive a valid token
+            // on the last update they consume.
+            ResponseContinuationToken? lastSeenContinuationToken = null;
+
             while (hasUpdates)
             {
                 var update = responseUpdatesEnumerator.Current;
@@ -360,10 +368,17 @@ public sealed partial class ChatClientAgent : AIAgent
 
                     responseUpdates.Add(update);
 
+                    // Propagate the last seen token for mid-stream updates that don't carry one.
+                    // The final update (FinishReason set) intentionally yields null to signal
+                    // that no further resumption is needed.
+                    lastSeenContinuationToken = update.ContinuationToken ?? lastSeenContinuationToken;
+                    var effectiveContinuationToken = update.ContinuationToken
+                        ?? (update.FinishReason is null ? lastSeenContinuationToken : null);
+
                     yield return new(update)
                     {
                         AgentId = this.Id,
-                        ContinuationToken = WrapContinuationToken(update.ContinuationToken, GetInputMessages(inputMessages, continuationToken), responseUpdates)
+                        ContinuationToken = WrapContinuationToken(effectiveContinuationToken, GetInputMessages(inputMessages, continuationToken), responseUpdates)
                     };
                 }
 

@@ -25,6 +25,9 @@ internal sealed class WorkflowRunner
     private Dictionary<string, AIFunction> FunctionMap { get; }
     private CheckpointInfo? LastCheckpoint { get; set; }
 
+    // Set to true once stdin returns EOF; ExecuteAsync exits the loop when this flag is set.
+    private bool _stdinEof;
+
     public static void Notify(string message, ConsoleColor? color = null)
     {
         Console.ForegroundColor = color ?? ConsoleColor.Cyan;
@@ -91,6 +94,13 @@ internal sealed class WorkflowRunner
 
                     // Process the external request.
                     object response = await this.HandleExternalRequestAsync(externalRequest).ConfigureAwait(false);
+
+                    // If stdin was closed during input handling, stop the workflow loop gracefully.
+                    if (this._stdinEof)
+                    {
+                        break;
+                    }
+
                     requestResponse = externalRequest.CreateResponse(response);
 
                     // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
@@ -364,7 +374,7 @@ internal sealed class WorkflowRunner
         }
     }
 
-    private static ChatMessage HandleUserInputRequest(ExternalInputRequest request)
+    private ChatMessage HandleUserInputRequest(ExternalInputRequest request)
     {
         string prompt =
             string.IsNullOrWhiteSpace(request.AgentResponse.Text) || request.AgentResponse.ResponseId is not null ?
@@ -378,6 +388,13 @@ internal sealed class WorkflowRunner
             Console.Write($"{prompt} ");
             Console.ForegroundColor = ConsoleColor.White;
             userInput = Console.ReadLine();
+
+            // Stop waiting when stdin is closed (e.g. automated test runner piped input).
+            if (userInput is null)
+            {
+                this._stdinEof = true;
+                return new ChatMessage(ChatRole.User, string.Empty);
+            }
         }
         while (string.IsNullOrWhiteSpace(userInput));
 
