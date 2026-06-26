@@ -249,7 +249,82 @@ class ActivityProtocolChannel:
         inbound_auth_validator: InboundAuthValidator | None = None,
         service_url_allowed_hosts: tuple[str, ...] = _DEFAULT_SERVICE_URL_HOSTS,
     ) -> None:
-        """Configure the Teams channel.
+        """Configure the Activity Protocol channel.
+
+        Streaming multimodal updates are automatically converted to Activity text via
+        the stream response text rendering chain (images, files, etc. → URIs, then
+        included in plain-text stream updates); the channel stream-update hook can
+        further customize.
+
+        Keyword Args:
+            path: Messages endpoint path on the host. Use ``""`` to expose the
+                webhook at the app root.
+            app_id: Bot Framework / Entra application (client) id. Required
+                whenever any credential is supplied.
+            app_password: Application secret for OAuth2 client credentials.
+                Mutually exclusive with ``certificate_path``.
+            certificate_path: Path to a PEM file containing **both** the
+                private key and the X.509 certificate. Use this for tenants
+                that disallow client secrets. See the module docstring for an
+                ``openssl`` recipe.
+            certificate_password: Password for the PEM private key, if any.
+            tenant_id: Entra tenant. Defaults to ``"botframework.com"`` for
+                public Bot Framework channels; pass your tenant id for
+                single-tenant bots.
+            token_scope: OAuth2 scope to request. Defaults to the Bot
+                Framework resource.
+            credential: Bring your own ``AsyncTokenCredential`` (e.g. a
+                ``DefaultAzureCredential`` configured elsewhere). Overrides
+                ``app_password`` / ``certificate_path``.
+            commands: Discoverable ``/command`` handlers. An inbound message
+                whose text (after stripping the bot's own @mention) begins with
+                ``/`` and matches a command ``name`` (case-insensitive) is
+                dispatched to that handler instead of the agent, mirroring the
+                Telegram channel. The matching ``run_hook`` is applied to the
+                command request first, so command handlers observe the same
+                resolved ``session.isolation_key`` as ordinary messages.
+                Unknown ``/foo`` text falls through to the agent. Handlers reply
+                via ``ChannelCommandContext.reply``; surface them to users with
+                a Teams manifest ``commandLists`` entry.
+            run_hook: Optional rewrite of ``ChannelRequest`` before invocation;
+                the host owns invocation of this hook. Defaults to stripping
+                reserved request options so the host can manage agent invocation
+                context safely.
+            response_hook: Optional rewrite of the
+                :class:`HostedRunResult` before the originating Activity
+                reply is serialized; the host owns invocation of this hook.
+            send_typing_action: Whether to send ``typing`` activities while
+                the agent runs.
+            stream: Whether to stream by default.
+            stream_update_hook: Optional rewrite of each
+                ``AgentResponseUpdate`` before it hits the wire.
+            stream_edit_min_interval: Seconds between successive in-place
+                edits. Teams is more rate-sensitive than Telegram, so default
+                is higher.
+            inbound_auth_validator: Optional async callable invoked for each
+                inbound webhook request **before** the activity is parsed.
+                Return ``True`` to allow, ``False`` to reject with HTTP 401.
+                The webhook endpoint accepts unauthenticated requests by
+                default — Bot Framework normally validates inbound calls via
+                the JWT in the ``Authorization`` header (see Microsoft's
+                bot framework auth docs). The prototype intentionally does
+                NOT ship a built-in JWT validator (key rotation, OpenID
+                config caching, etc. are out of scope); plug your own
+                validator here, or terminate auth in front of the channel
+                (e.g. APIM, Application Gateway). When no credentials AND
+                no validator are configured the channel logs a loud
+                warning at startup so the dev-mode bypass cannot
+                accidentally ship.
+            service_url_allowed_hosts: Host (or host suffix) allow-list the
+                channel will POST a bearer token to. Defaults to the public
+                Bot Framework host suffixes (``botframework.com`` and
+                ``smba.trafficmanager.net``). An inbound activity claiming a
+                ``serviceUrl`` outside this set is rejected — without this
+                gate a malicious caller could redirect outbound replies (and
+                the attached bearer token) to an attacker-controlled host.
+                Pass an extended tuple for sovereign clouds or private
+                deployments; pass ``()`` to disable the check entirely
+                (only safe with strong inbound auth).
 
         Keyword Args:
             path: Messages endpoint path on the host. Use ``""`` to expose the
@@ -765,10 +840,13 @@ class ActivityProtocolChannel:
 
         try:
             async for update in stream:
-                chunk = getattr(update, "text", None)
-                if chunk:
-                    accumulated += chunk
-                    wake.set()
+                # Use multimodal stream contents: iterate and extract text from all text-type items.
+                # Non-text content (images, files, etc.) is ignored here and forwarded via the
+                # final response; this ensures text accumulation isn't corrupted by multimodal chunks.
+                for content in update.contents:
+                    if content.type == "text" and content.text:
+                        accumulated += content.text
+                        wake.set()
         except Exception:
             logger.exception("Activity streaming consumption failed")
         finally:
@@ -829,9 +907,12 @@ class ActivityProtocolChannel:
         accumulated = ""
         try:
             async for update in stream:
-                chunk = getattr(update, "text", None)
-                if chunk:
-                    accumulated += chunk
+                # Use multimodal stream contents: iterate and extract text from all text-type items.
+                # Non-text content is ignored here (forwarded via final response); text accumulation
+                # is protected from corruption by multimodal chunks.
+                for content in update.contents:
+                    if content.type == "text" and content.text:
+                        accumulated += content.text
         except Exception:
             logger.exception("Activity streaming consumption failed")
 

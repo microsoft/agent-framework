@@ -14,6 +14,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from agent_framework import Content
 from agent_framework_hosting import (
     AgentFrameworkHost,
     ChannelCommand,
@@ -587,6 +588,10 @@ class TestStreaming:
         class _Up:
             text: str
 
+            @property
+            def contents(self) -> list[Any]:
+                return [Content.from_text(self.text)]
+
         class _Stream:
             def __init__(self) -> None:
                 self._chunks = ["hel", "lo"]
@@ -634,6 +639,10 @@ class TestStreaming:
         @dataclass
         class _Up:
             text: str
+
+            @property
+            def contents(self) -> list[Any]:
+                return [Content.from_text(self.text)]
 
         class _Stream:
             def __aiter__(self) -> Any:
@@ -693,6 +702,10 @@ class TestStreaming:
         @dataclass
         class _Up:
             text: str
+
+            @property
+            def contents(self) -> list[Any]:
+                return [Content.from_text(self.text)]
 
         class _Stream:
             def __aiter__(self) -> Any:
@@ -754,6 +767,10 @@ class TestStreaming:
         @dataclass
         class _Up:
             text: str
+
+            @property
+            def contents(self) -> list[Any]:
+                return [Content.from_text(self.text)]
 
         class _Stream:
             def __aiter__(self) -> Any:
