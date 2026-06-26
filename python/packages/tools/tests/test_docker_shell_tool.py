@@ -10,6 +10,7 @@ available in CI / dev sandboxes).
 
 from __future__ import annotations
 
+import subprocess
 import sys
 
 import pytest
@@ -24,11 +25,27 @@ from agent_framework_tools.shell._docker import (
     build_run_argv,
 )
 
+
+def _docker_image_available(image: str) -> bool:
+    if not is_docker_available():
+        return False
+    try:
+        result = subprocess.run(
+            ["docker", "image", "inspect", image],
+            capture_output=True,
+            check=False,
+            timeout=5.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
 # Integration tests use Linux container images (alpine) that don't run
 # under Docker Desktop's default Windows-container mode.
 _skip_if_no_linux_docker = pytest.mark.skipif(
-    not is_docker_available() or sys.platform == "win32",
-    reason="docker daemon unavailable or running Windows containers",
+    not _docker_image_available("alpine:3") or sys.platform == "win32",
+    reason="docker daemon unavailable, alpine:3 image missing, or running Windows containers",
 )
 
 # --------------------------------------------------------------------- argv builders

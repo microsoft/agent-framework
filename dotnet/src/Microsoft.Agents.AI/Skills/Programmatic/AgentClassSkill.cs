@@ -120,6 +120,7 @@ public abstract class AgentClassSkill<
             this.Frontmatter.Name,
             this.Frontmatter.Description,
             this.Instructions,
+            this.Resources,
             this.Scripts));
     }
 
@@ -160,8 +161,9 @@ public abstract class AgentClassSkill<
     /// Override this property in derived classes to provide skill-specific resources.
     /// </para>
     /// <para>
-    /// Resources are not automatically included in the skill body.
-    /// To enable discovery, reference resources by name in the skill's instructions or in other resources.
+    /// Resources are listed in the <c>&lt;available_resources&gt;</c> block of the skill body so the LLM
+    /// knows which ones can be accessed. When empty, a self-closing element is emitted to prevent
+    /// hallucinated resource calls.
     /// </para>
     /// </remarks>
     public virtual IReadOnlyList<AgentSkillResource>? Resources => this._resources.Value;
@@ -178,8 +180,9 @@ public abstract class AgentClassSkill<
     /// Override this property in derived classes to provide skill-specific scripts.
     /// </para>
     /// <para>
-    /// Only script parameter schemas are included in the skill body (as a <c>&lt;script_schemas&gt;</c> block).
-    /// To enable discovery, reference scripts by name in the skill's instructions or in a resource.
+    /// Scripts are listed in the <c>&lt;available_scripts&gt;</c> block of the skill body so the LLM
+    /// knows which ones can be called. When empty, a self-closing element is emitted to prevent
+    /// hallucinated script calls.
     /// </para>
     /// </remarks>
     public virtual IReadOnlyList<AgentSkillScript>? Scripts => this._scripts.Value;
@@ -202,8 +205,9 @@ public abstract class AgentClassSkill<
     /// Creates a skill resource backed by a static value.
     /// </summary>
     /// <remarks>
-    /// Resources are not automatically included in the skill body.
-    /// To enable discovery, reference the resource by name in the skill's instructions or in another resource.
+    /// The resource is listed in the <c>&lt;available_resources&gt;</c> block of the skill body so the LLM
+    /// knows it can be accessed. When no resources are registered, the block is emitted as a
+    /// self-closing element to signal that none exist, preventing hallucinated resource calls.
     /// </remarks>
     /// <param name="name">The resource name.</param>
     /// <param name="value">The static resource value.</param>
@@ -216,8 +220,9 @@ public abstract class AgentClassSkill<
     /// Creates a skill resource backed by a delegate that produces a dynamic value.
     /// </summary>
     /// <remarks>
-    /// Resources are not automatically included in the skill body.
-    /// To enable discovery, reference the resource by name in the skill's instructions or in another resource.
+    /// The resource is listed in the <c>&lt;available_resources&gt;</c> block of the skill body so the LLM
+    /// knows it can be accessed. When no resources are registered, the block is emitted as a
+    /// self-closing element to signal that none exist, preventing hallucinated resource calls.
     /// </remarks>
     /// <param name="name">The resource name.</param>
     /// <param name="method">A method that produces the resource value when requested.</param>
@@ -234,8 +239,9 @@ public abstract class AgentClassSkill<
     /// Creates a skill script backed by a delegate.
     /// </summary>
     /// <remarks>
-    /// Only the script's parameter schema is included in the skill body (as a <c>&lt;script_schemas&gt;</c> block).
-    /// To enable discovery, reference the script by name in the skill's instructions or in a resource.
+    /// The script is listed in the <c>&lt;available_scripts&gt;</c> block of the skill body so the LLM
+    /// knows it can be called. When no scripts are registered, the block is emitted as a
+    /// self-closing element to signal that none exist, preventing hallucinated script calls.
     /// </remarks>
     /// <param name="name">The script name.</param>
     /// <param name="method">A method to execute when the script is invoked.</param>

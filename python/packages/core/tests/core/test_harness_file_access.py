@@ -497,10 +497,10 @@ async def test_file_access_provider_registers_tools_and_instructions(
         assert any(DEFAULT_FILE_ACCESS_INSTRUCTIONS in chunk for chunk in (instructions or []))
 
 
-async def test_file_access_provider_delete_approval_defaults_to_always_require(
+async def test_file_access_provider_all_tools_require_approval(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    """By default ``file_access_delete_file`` should require host approval."""
+    """Every file-access tool should require host approval."""
     session = AgentSession(session_id="session-1")
     provider = FileAccessProvider(store=InMemoryAgentFileStore())
     agent = Agent(client=chat_client_base, context_providers=[provider])
@@ -512,36 +512,72 @@ async def test_file_access_provider_delete_approval_defaults_to_always_require(
 
     tools = options["tools"]
     assert isinstance(tools, list)
-    delete_file = _tool_by_name(tools, "file_access_delete_file")
-    assert delete_file.approval_mode == "always_require"
-    # The non-destructive tools should remain autonomous.
     for name in (
-        "file_access_save_file",
-        "file_access_read_file",
-        "file_access_list_files",
-        "file_access_list_subdirectories",
-        "file_access_search_files",
+        FileAccessProvider.SAVE_FILE_TOOL_NAME,
+        FileAccessProvider.READ_FILE_TOOL_NAME,
+        FileAccessProvider.DELETE_FILE_TOOL_NAME,
+        FileAccessProvider.LIST_FILES_TOOL_NAME,
+        FileAccessProvider.LIST_SUBDIRECTORIES_TOOL_NAME,
+        FileAccessProvider.SEARCH_FILES_TOOL_NAME,
     ):
-        assert _tool_by_name(tools, name).approval_mode == "never_require"
+        assert _tool_by_name(tools, name).approval_mode == "always_require"
 
 
-async def test_file_access_provider_delete_approval_opt_out(
-    chat_client_base: SupportsChatGetResponse,
-) -> None:
-    """``require_delete_approval=False`` should drop delete to ``never_require``."""
-    session = AgentSession(session_id="session-1")
-    provider = FileAccessProvider(store=InMemoryAgentFileStore(), require_delete_approval=False)
-    agent = Agent(client=chat_client_base, context_providers=[provider])
+def test_read_only_tools_auto_approval_rule() -> None:
+    """The read-only rule approves only the non-mutating tools."""
+    approved = {
+        FileAccessProvider.READ_FILE_TOOL_NAME,
+        FileAccessProvider.LIST_FILES_TOOL_NAME,
+        FileAccessProvider.LIST_SUBDIRECTORIES_TOOL_NAME,
+        FileAccessProvider.SEARCH_FILES_TOOL_NAME,
+    }
+    rejected = {
+        FileAccessProvider.SAVE_FILE_TOOL_NAME,
+        FileAccessProvider.DELETE_FILE_TOOL_NAME,
+        "some_other_tool",
+    }
+    for name in approved:
+        call = Content("function_call", call_id="c1", name=name, arguments="{}")
+        assert FileAccessProvider.read_only_tools_auto_approval_rule(call) is True
+    for name in rejected:
+        call = Content("function_call", call_id="c1", name=name, arguments="{}")
+        assert FileAccessProvider.read_only_tools_auto_approval_rule(call) is False
+    # A hosted tool with the same name (carrying a server_label) is NOT auto-approved.
+    for name in approved:
+        hosted = Content(
+            "function_call",
+            call_id="c1",
+            name=name,
+            arguments="{}",
+            additional_properties={"server_label": "remote"},
+        )
+        assert FileAccessProvider.read_only_tools_auto_approval_rule(hosted) is False
 
-    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
-        session=session,
-        input_messages=[Message(role="user", contents=["work with files"])],
-    )
 
-    tools = options["tools"]
-    assert isinstance(tools, list)
-    delete_file = _tool_by_name(tools, "file_access_delete_file")
-    assert delete_file.approval_mode == "never_require"
+def test_all_tools_auto_approval_rule() -> None:
+    """The all-tools rule approves every file-access tool but nothing else."""
+    for name in (
+        FileAccessProvider.SAVE_FILE_TOOL_NAME,
+        FileAccessProvider.READ_FILE_TOOL_NAME,
+        FileAccessProvider.DELETE_FILE_TOOL_NAME,
+        FileAccessProvider.LIST_FILES_TOOL_NAME,
+        FileAccessProvider.LIST_SUBDIRECTORIES_TOOL_NAME,
+        FileAccessProvider.SEARCH_FILES_TOOL_NAME,
+    ):
+        call = Content("function_call", call_id="c1", name=name, arguments="{}")
+        assert FileAccessProvider.all_tools_auto_approval_rule(call) is True
+        # A hosted tool with the same name (carrying a server_label) is NOT auto-approved.
+        hosted = Content(
+            "function_call",
+            call_id="c1",
+            name=name,
+            arguments="{}",
+            additional_properties={"server_label": "remote"},
+        )
+        assert FileAccessProvider.all_tools_auto_approval_rule(hosted) is False
+
+    unrelated = Content("function_call", call_id="c1", name="some_other_tool", arguments="{}")
+    assert FileAccessProvider.all_tools_auto_approval_rule(unrelated) is False
 
 
 async def test_file_access_provider_tools_round_trip_files(

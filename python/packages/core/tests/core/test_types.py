@@ -3860,6 +3860,61 @@ class TestResponseStreamMapAndWithFinalizer:
         final = await outer.get_final_response()
         assert final.text == "mapped_update_0mapped_update_1"
 
+    async def test_flat_map_expands_updates(self) -> None:
+        """flat_map() can transform one update into many updates."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        def expand(update: ChatResponseUpdate) -> list[ChatResponseUpdate]:
+            return [
+                ChatResponseUpdate(contents=[Content.from_text(update.text)], role=cast(Any, update.role)),
+                ChatResponseUpdate(contents=[Content.from_text(f"{update.text}_extra")], role=cast(Any, update.role)),
+            ]
+
+        outer = inner.flat_map(expand, _combine_updates)
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_0_extra", "update_1", "update_1_extra"]
+
+        final = await outer.get_final_response()
+        assert final.text == "update_0update_0_extraupdate_1update_1_extra"
+
+    async def test_flat_map_skips_empty_mappings(self) -> None:
+        """flat_map() supports zero-output transforms."""
+        inner = ResponseStream(_generate_updates(3), finalizer=_combine_updates)
+
+        def keep_odd(update: ChatResponseUpdate) -> list[ChatResponseUpdate]:
+            return [update] if update.text == "update_1" else []
+
+        outer = inner.flat_map(keep_odd, _combine_updates)
+
+        collected = [update.text async for update in outer]
+        assert collected == ["update_1"]
+
+        final = await outer.get_final_response()
+        assert final.text == "update_1"
+
+    async def test_flat_map_calls_inner_result_hooks(self) -> None:
+        """flat_map() preserves inner result hooks."""
+        inner_result_hook_called = {"value": False}
+
+        def inner_result_hook(response: ChatResponse) -> ChatResponse:
+            inner_result_hook_called["value"] = True
+            return response
+
+        inner = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[inner_result_hook],  # ty: ignore[invalid-argument-type]
+        )
+        outer = inner.flat_map(lambda u: [u], _combine_updates)
+
+        await outer.get_final_response()
+
+        assert inner_result_hook_called["value"] is True
+
     async def test_outer_transform_hooks_independent(self) -> None:
         """Outer stream has its own independent transform hooks."""
         inner_hook_calls = {"value": 0}
