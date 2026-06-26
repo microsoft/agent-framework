@@ -27,10 +27,13 @@ var projectClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCrede
 // Using a dedicated client here avoids mixing side-channel extraction calls with the agent's
 // conversation history, and avoids the chicken-and-egg problem of needing an IChatClient
 // before the main agent is constructed.
-IChatClient extractionClient = projectClient
-    .AsAIAgent(new ChatClientAgentOptions { ChatOptions = new ChatOptions { ModelId = model } })
-    .GetService<IChatClient>()
-    ?? throw new InvalidOperationException("Could not retrieve IChatClient from AIProjectClient agent.");
+IChatClient extractionClient =
+    new AIProjectClient(
+        new Uri(endpoint),
+        new DefaultAzureCredential())
+    .GetProjectOpenAIClient()
+    .GetResponsesClient()
+    .AsIChatClient(model);
 
 // Create the agent with instructions and the custom memory context provider.
 // The memory component is attached to all sessions created by the agent. Here each new memory
