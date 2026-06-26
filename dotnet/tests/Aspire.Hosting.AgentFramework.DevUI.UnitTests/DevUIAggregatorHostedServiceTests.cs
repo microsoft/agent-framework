@@ -310,6 +310,33 @@ public class DevUIAggregatorHostedServiceTests
 
     #region Proxy Target Validation Tests
 
+    [Theory]
+    [InlineData("http://localhost:5000", "/v1/conversations")]
+    [InlineData("http://localhost:5000", "/devui/index.html?v=1")]
+    public void ValidateProxyTarget_TargetStaysOnConfiguredBackend_ReturnsTargetUri(string backendUrl, string path)
+    {
+        var target = DevUIAggregatorHostedService.ValidateProxyTarget(backendUrl, path);
+
+        Assert.NotNull(target);
+        var backendUri = new Uri(backendUrl);
+        Assert.Equal(backendUri.Host, target!.Host);
+        Assert.Equal(backendUri.Scheme, target.Scheme);
+        Assert.Equal(backendUri.Port, target.Port);
+    }
+
+    [Theory]
+    [InlineData("http://localhost:5000", "http://alternate.example/data")] // absolute path overrides the host
+    [InlineData("http://localhost:5000", "//alternate.example/data")]      // protocol-relative path overrides the host
+    [InlineData("http://localhost:5000", "https://localhost:5000/data")]   // scheme differs from the backend
+    [InlineData("http://localhost:5000", "http://localhost:6000/data")]    // port differs from the backend
+    [InlineData("this is not a url", "/v1/conversations")]                 // malformed backend url
+    public void ValidateProxyTarget_TargetLeavesConfiguredBackend_ReturnsNull(string backendUrl, string path)
+    {
+        var target = DevUIAggregatorHostedService.ValidateProxyTarget(backendUrl, path);
+
+        Assert.Null(target);
+    }
+
     [Fact]
     public async Task ProxyRequest_ConversationRoute_ForwardsToConfiguredBackendAsync()
     {

@@ -789,7 +789,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
     /// <paramref name="path"/> does not redirect the request to an unintended host.
     /// Returns the validated <see cref="Uri"/> if safe, or <c>null</c> if the target is invalid.
     /// </summary>
-    private static Uri? ValidateProxyTarget(string backendUrl, string path)
+    internal static Uri? ValidateProxyTarget(string backendUrl, string path)
     {
         if (!Uri.TryCreate(backendUrl, UriKind.Absolute, out var baseUri) ||
             !Uri.TryCreate(baseUri, path, out var targetUri))
