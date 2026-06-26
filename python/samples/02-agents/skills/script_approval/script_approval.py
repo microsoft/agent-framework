@@ -9,7 +9,7 @@ import os
 # warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from textwrap import dedent
 
-from agent_framework import Agent, InlineSkill, SkillFrontmatter, SkillsProvider
+from agent_framework import Agent, Content, InlineSkill, Message, SkillFrontmatter, SkillsProvider
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -98,10 +98,14 @@ async def main() -> None:
         result = await agent.run(query, session=session)
 
         # Step 2: Handle approval requests (with sessions, context is
-        # maintained automatically — just send the approval response)
+        # maintained automatically). Collect a response for every request and
+        # send them in one run so the loop always makes progress.
         while result.user_input_requests:
+            approval_responses: list[Content] = []
             for request in result.user_input_requests:
                 if request.function_call is None:
+                    # Not a function-approval request; reject it so the run can proceed.
+                    approval_responses.append(request.to_function_approval_response(approved=False))
                     continue
                 print("\nApproval needed:")
                 print(f"  Function: {request.function_call.name}")
@@ -110,10 +114,10 @@ async def main() -> None:
                 # In a real application, prompt the user here
                 approved = True  # Change to False to see rejection
                 print(f"  Decision: {'Approved' if approved else 'Rejected'}")
+                approval_responses.append(request.to_function_approval_response(approved=approved))
 
-                # Send the approval response — session preserves conversation history
-                approval_response = request.to_function_approval_response(approved=approved)
-                result = await agent.run(approval_response, session=session)
+            # Send the approval responses — session preserves conversation history
+            result = await agent.run(Message(role="user", contents=approval_responses), session=session)
 
         print(f"\nAgent: {result}")
 

@@ -13,8 +13,10 @@ from typing import Any
 
 from agent_framework import (
     Agent,
+    Content,
     InlineSkill,
     InlineSkillResource,
+    Message,
     SkillFrontmatter,
     SkillsProvider,
     ToolApprovalMiddleware,
@@ -128,11 +130,15 @@ async def main() -> None:
     # To approve every skill tool without prompting, swap the rule for
     # SkillsProvider.all_tools_auto_approval_rule (the manual approval loop
     # below then becomes a no-op).
+    approval_middleware = ToolApprovalMiddleware(
+        auto_approval_rules=[SkillsProvider.read_only_tools_auto_approval_rule]
+    )
+
     async with Agent(
         client=client,
         instructions="You are a helpful assistant that can convert units.",
         context_providers=[skills_provider],
-        middleware=[ToolApprovalMiddleware(auto_approval_rules=[SkillsProvider.read_only_tools_auto_approval_rule])],
+        middleware=[approval_middleware],
     ) as agent:
         session = agent.create_session()
 
@@ -145,9 +151,14 @@ async def main() -> None:
 
         # Read-only tools (load_skill, read_skill_resource) were auto-approved.
         # Only run_skill_script reaches this loop and needs explicit approval.
+        # Collect a response for every request and send them in one run so the
+        # loop always makes progress.
         while result.user_input_requests:
+            approval_responses: list[Content] = []
             for request in result.user_input_requests:
                 if request.function_call is None:
+                    # Not a function-approval request; reject it so the run can proceed.
+                    approval_responses.append(request.to_function_approval_response(approved=False))
                     continue
                 print("\nApproval needed:")
                 print(f"  Function: {request.function_call.name}")
@@ -156,9 +167,9 @@ async def main() -> None:
                 # In a real application, prompt the user here.
                 approved = True
                 print(f"  Decision: {'Approved' if approved else 'Rejected'}")
+                approval_responses.append(request.to_function_approval_response(approved=approved))
 
-                approval_response = request.to_function_approval_response(approved=approved)
-                result = await agent.run(approval_response, session=session)
+            result = await agent.run(Message(role="user", contents=approval_responses), session=session)
 
         print(f"\nAgent: {result}")
 
