@@ -105,6 +105,10 @@ agent-framework-purview = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-azure-contentunderstanding = { workspace = true }
 agent-framework-tools = { workspace = true }
+# azure-ai-agentserver-* are pre-release wheels not yet published to PyPI.
+azure-ai-agentserver-core = { url = "https://raw.githubusercontent.com/Azure/azure-sdk-for-python/cbf9549c49844dcad5a2f23b5edd13d3b42b0e6d/sdk/agentserver/wheels/azure_ai_agentserver_core-2.0.0b7-py3-none-any.whl" }
+azure-ai-agentserver-invocations = { url = "https://raw.githubusercontent.com/Azure/azure-sdk-for-python/cbf9549c49844dcad5a2f23b5edd13d3b42b0e6d/sdk/agentserver/wheels/azure_ai_agentserver_invocations-1.0.0b6-py3-none-any.whl" }
+azure-ai-agentserver-responses = { url = "https://raw.githubusercontent.com/Azure/azure-sdk-for-python/cbf9549c49844dcad5a2f23b5edd13d3b42b0e6d/sdk/agentserver/wheels/azure_ai_agentserver_responses-1.0.0b8-py3-none-any.whl" }
 
 [tool.ruff]
 line-length = 120
