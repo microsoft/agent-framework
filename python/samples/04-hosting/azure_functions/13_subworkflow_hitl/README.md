@@ -45,6 +45,25 @@ child orchestration, so a nested `request_info` is recorded on the *child* insta
 The separator is `~` (not `:`), so it never collides with framework-generated
 request ids such as functional-workflow `auto::N` ids.
 
+## Notifying a reviewer from inside a nested workflow
+
+This sample also notifies the reviewer from inside the inner workflow. The `review_gate` reads the id `request_info` generated and sends it to a downstream `NotifyExecutor`, which builds the respond URL with `WorkflowHitlContext`.
+
+```python
+# review_gate, inside the nested human_review workflow
+await ctx.request_info(request_data=HumanApprovalRequest(...), response_type=HumanApprovalResponse)
+request_id = await WorkflowHitlContext.pending_request_id(ctx)
+# ... send request_id to the notify executor ...
+
+# NotifyExecutor (also inside the inner workflow)
+hitl = WorkflowHitlContext.from_context(ctx)
+respond_url = hitl.build_respond_url(request_id)  # already qualified back to the root
+```
+
+The notify executor runs inside the child orchestration, yet `build_respond_url` returns a URL that targets the **top-level** instance with the qualified `review_sub~0~{requestId}` id. You pass only the **bare** inner id. The host propagates the address context (the root instance, the workflow name, and the `review_sub~0~` path prefix) down into the child, so the executor qualifies the id for you and never needs to know how it is embedded.
+
+The same two properties from the flat sample apply here. You never generate the id, because `request_info` creates it and `pending_request_id` reads it back, so call `pending_request_id` immediately after `request_info`. This is safe because each executor runs in its own Durable Functions activity with its own runner context, so the pending set only holds this executor's own requests and the newest one is the request you just emitted. And the email lives in a downstream executor, so a retried `review_gate` (activities are at least once) never emails a dead link, since only the committed attempt's id reaches the notifier.
+
 ## Endpoints
 
 `AgentFunctionApp` exposes routes only for the **top-level** workflow; the inner

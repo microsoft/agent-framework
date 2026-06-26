@@ -111,19 +111,24 @@ class WorkflowHitlContext:
     async def pending_request_id(ctx: Any) -> str | None:
         """Return the id of the most recently emitted ``request_info`` on ``ctx``.
 
-        Call this immediately after ``await ctx.request_info(...)`` to recover the
+        Call this **immediately after** ``await ctx.request_info(...)`` to recover the
         request id the framework generated, so it can be forwarded (e.g. in a message
         to a downstream notify executor that builds the respond URL) without the caller
         generating an id by hand.
 
-        It reads the executor's runner context, which both the in-process and durable
-        runners populate, so it works on any host and returns ``None`` only when no
-        request is pending (or the runner context does not track request-info events).
+        Why "immediately after" is the rule, and why it is safe on the durable host:
+        the returned id is simply the newest entry in the executor's pending
+        request-info set, so reading right after a call always yields *that* call's id.
+        On the Azure Functions durable host every executor runs in its own activity with
+        its own runner context, so that set only ever holds this executor's own
+        requests (never another executor's), and the request you just emitted is always
+        the latest. If a single executor emits several ``request_info`` calls in one
+        turn, read this after **each** call (the only case where reading once at the end
+        would lose the earlier ids); or pass an explicit ``request_id`` to
+        ``request_info`` to address them directly.
 
-        Note:
-            When an executor emits several ``request_info`` calls in one turn this
-            returns the **most recent** one. Read it right after each call -- or pass an
-            explicit ``request_id`` to ``request_info`` -- to disambiguate.
+        Returns ``None`` only when no request is pending (or the runner context does not
+        track request-info events, e.g. in process off the durable host).
         """
         runner_context = getattr(ctx, "_runner_context", None)
         getter = getattr(runner_context, "get_pending_request_info_events", None)
