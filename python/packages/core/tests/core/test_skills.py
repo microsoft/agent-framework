@@ -3816,21 +3816,6 @@ class TestSkillsProviderFactories:
         with pytest.raises(RuntimeError, match="Something went wrong"):
             await run_tool.func(skill_name="my-skill", script_name="boom")
 
-    async def test_code_script_exception_includes_details_when_enabled(self) -> None:
-        """When include_detailed_errors=True, the script error string includes the exception message."""
-
-        def failing_script() -> str:
-            raise RuntimeError("Something went wrong")
-
-        skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
-        skill._scripts.append(InlineSkillScript(name="boom", function=failing_script))
-
-        provider = SkillsProvider([skill], include_detailed_errors=True)
-        await _init_provider(provider)
-        run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
-        result = await run_tool.func(skill_name="my-skill", script_name="boom")
-        assert result == "Error: Failed to run script 'boom' in skill 'my-skill'. Exception: Something went wrong"
-
     async def test_custom_template_without_runner_placeholder_raises(self) -> None:
         """Providers accept custom templates without {runner_instructions}."""
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")

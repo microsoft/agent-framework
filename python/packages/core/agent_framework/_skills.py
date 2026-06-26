@@ -1843,7 +1843,6 @@ class SkillsProvider(ContextProvider):
         *,
         instruction_template: str | None = None,
         require_script_approval: bool = False,
-        include_detailed_errors: bool = False,
         disable_caching: bool = False,
         source_id: str | None = None,
     ) -> None:
@@ -1882,21 +1881,6 @@ class SkillsProvider(ContextProvider):
                 the user declined. Defaults to ``False``.  See
                 ``samples/02-agents/skills/script_approval/script_approval.py``
                 for the full approval loop pattern.
-            include_detailed_errors: Controls how script-execution failures are
-                surfaced to the model. When ``False`` (the default), the
-                exception is logged and re-raised, delegating error handling to
-                the function-invocation pipeline (which applies its own
-                ``include_detailed_errors`` policy). When ``True``, the
-                exception message is appended to the error string returned
-                directly to the model, enabling it to retry with different
-                arguments. This may disclose raw exception details to the
-                model, so exercise particular caution when enabling it for
-                skills whose scripts originate from untrusted or third-party
-                sources: a maliciously crafted script could throw an exception
-                whose message embeds a prompt-injection payload, which would
-                then be fed back to the model. Only enable this when the skills
-                and their scripts come from a trusted source. Defaults to
-                ``False``.
             disable_caching: When ``True``, rebuilds tools and instructions
                 from the source on every invocation instead of caching
                 after the first build.  Defaults to ``False``.
@@ -1920,7 +1904,6 @@ class SkillsProvider(ContextProvider):
         self._source = source
         self._instruction_template = instruction_template
         self._require_script_approval = require_script_approval
-        self._include_detailed_errors = include_detailed_errors
         self._disable_caching = disable_caching
 
         # Lazy-initialized via _get_or_create_context / _create_context
@@ -1939,7 +1922,6 @@ class SkillsProvider(ContextProvider):
         resource_filter: Callable[[str, str], bool] | None = None,
         instruction_template: str | None = None,
         require_script_approval: bool = False,
-        include_detailed_errors: bool = False,
         disable_caching: bool = False,
         source_id: str | None = None,
     ) -> _TSkillsProvider:
@@ -1987,16 +1969,6 @@ class SkillsProvider(ContextProvider):
                 the user declined. Defaults to ``False``.  See
                 ``samples/02-agents/skills/script_approval/script_approval.py``
                 for the full approval loop pattern.
-            include_detailed_errors: Controls how script-execution failures are
-                surfaced to the model. When ``False`` (the default), the
-                exception is logged and re-raised, delegating error handling to
-                the function-invocation pipeline (which applies its own
-                ``include_detailed_errors`` policy). When ``True``, the
-                exception message is appended to the error string returned
-                directly to the model, enabling it to retry with different
-                arguments. This may disclose raw exception details to the
-                model, so only enable it when the skills and their scripts come
-                from a trusted source. Defaults to ``False``.
             disable_caching: When ``True``, rebuilds tools and instructions
                 from the source on every invocation instead of caching
                 after the first build.
@@ -2020,7 +1992,6 @@ class SkillsProvider(ContextProvider):
             source,
             instruction_template=instruction_template,
             require_script_approval=require_script_approval,
-            include_detailed_errors=include_detailed_errors,
             disable_caching=disable_caching,
             source_id=source_id,
         )
@@ -2348,14 +2319,12 @@ class SkillsProvider(ContextProvider):
 
         Returns:
             The script result. Returns a user-facing error string for
-            validation failures (empty or unknown skill/script name) and,
-            when ``include_detailed_errors`` is ``True``, for execution
-            failures.
+            validation failures (empty or unknown skill/script name).
 
         Raises:
-            Exception: Re-raises any exception raised while running the
-                script when ``include_detailed_errors`` is ``False``,
-                delegating error handling to the function-invocation pipeline.
+            Exception: Re-raises any exception raised while running the script,
+                delegating error handling to the function-invocation pipeline
+                (which applies its own ``include_detailed_errors`` policy).
         """
         if not skill_name or not skill_name.strip():
             return "Error: Skill name cannot be empty."
@@ -2373,10 +2342,8 @@ class SkillsProvider(ContextProvider):
 
         try:
             return await script.run(skill, args, **kwargs)
-        except Exception as ex:
+        except Exception:
             logger.exception("Error running script '%s' in skill '%s'", script_name, skill_name)
-            if self._include_detailed_errors:
-                return f"Error: Failed to run script '{script_name}' in skill '{skill_name}'. Exception: {ex}"
             raise
 
     async def _read_skill_resource(
