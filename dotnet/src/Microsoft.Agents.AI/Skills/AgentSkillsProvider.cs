@@ -35,20 +35,71 @@ namespace Microsoft.Agents.AI;
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed partial class AgentSkillsProvider : AIContextProvider
 {
+    /// <summary>The name of the tool that loads a skill.</summary>
+    public const string LoadSkillToolName = "load_skill";
+
+    /// <summary>The name of the tool that reads a skill resource.</summary>
+    public const string ReadSkillResourceToolName = "read_skill_resource";
+
+    /// <summary>The name of the tool that runs a skill script.</summary>
+    public const string RunSkillScriptToolName = "run_skill_script";
+
+    /// <summary>The names of the tools that only read (never execute scripts from) the skills source.</summary>
+    private static readonly HashSet<string> s_readOnlyToolNames = new(StringComparer.Ordinal)
+    {
+        LoadSkillToolName,
+        ReadSkillResourceToolName,
+    };
+
+    /// <summary>The names of all tools exposed by this provider.</summary>
+    private static readonly HashSet<string> s_allToolNames = new(StringComparer.Ordinal)
+    {
+        LoadSkillToolName,
+        ReadSkillResourceToolName,
+        RunSkillScriptToolName,
+    };
+
+    /// <summary>
+    /// Gets an auto-approval rule that approves the read-only skill tools
+    /// (<see cref="LoadSkillToolName"/> and <see cref="ReadSkillResourceToolName"/>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The tools exposed by <see cref="AgentSkillsProvider"/> always require approval. Add this rule to
+    /// <see cref="ToolApprovalAgentOptions.AutoApprovalRules"/> to automatically approve only the tools
+    /// that read skill content, while still prompting for script execution
+    /// (<see cref="RunSkillScriptToolName"/>).
+    /// </para>
+    /// <para>
+    /// The rule matches on the tool name, returning <see langword="true"/> for read-only skill tools
+    /// and <see langword="false"/> for all other tool calls so that subsequent rules continue to be evaluated.
+    /// </para>
+    /// </remarks>
+    public static Func<FunctionCallContent, ValueTask<bool>> ReadOnlyToolsAutoApprovalRule { get; } =
+        functionCall => new ValueTask<bool>(s_readOnlyToolNames.Contains(functionCall.Name));
+
+    /// <summary>
+    /// Gets an auto-approval rule that approves all skill tools, including the script execution tool
+    /// (<see cref="RunSkillScriptToolName"/>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The tools exposed by <see cref="AgentSkillsProvider"/> always require approval. Add this rule to
+    /// <see cref="ToolApprovalAgentOptions.AutoApprovalRules"/> to automatically approve every skill
+    /// tool without prompting the user.
+    /// </para>
+    /// <para>
+    /// The rule matches on the tool name, returning <see langword="true"/> for any skill tool
+    /// and <see langword="false"/> for all other tool calls so that subsequent rules continue to be evaluated.
+    /// </para>
+    /// </remarks>
+    public static Func<FunctionCallContent, ValueTask<bool>> AllToolsAutoApprovalRule { get; } =
+        functionCall => new ValueTask<bool>(s_allToolNames.Contains(functionCall.Name));
+
     /// <summary>
     /// Placeholder token for the generated skills list in the prompt template.
     /// </summary>
     private const string SkillsPlaceholder = "{skills}";
-
-    /// <summary>
-    /// Placeholder token for the script instructions in the prompt template.
-    /// </summary>
-    private const string ScriptInstructionsPlaceholder = "{script_instructions}";
-
-    /// <summary>
-    /// Placeholder token for the resource instructions in the prompt template.
-    /// </summary>
-    private const string ResourceInstructionsPlaceholder = "{resource_instructions}";
 
     private const string DefaultSkillsInstructionPrompt =
         """
@@ -62,8 +113,9 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         When a task aligns with a skill's domain, follow these steps in exact order:
         - Use `load_skill` to retrieve the skill's instructions.
         - Follow the provided guidance.
-        {resource_instructions}
-        {script_instructions}
+        - Use `read_skill_resource` to read any referenced resources, using the name exactly as listed
+           (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ.md"` not `"FAQ.md"`).
+        - Use `run_skill_script` to run referenced scripts, using the name exactly as listed.
         Only load what is needed, when it is needed.
         """;
 
@@ -218,31 +270,23 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
 
     private IList<AIFunction> BuildTools(IList<AgentSkill> skills)
     {
-        IList<AIFunction> tools =
+        return
         [
-            AIFunctionFactory.Create(
+            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(
                 (string skillName, CancellationToken cancellationToken) => this.LoadSkillAsync(skills, skillName, cancellationToken),
-                name: "load_skill",
-                description: "Loads the full content of a specific skill"),
-            AIFunctionFactory.Create(
+                name: LoadSkillToolName,
+                description: "Loads the full content of a specific skill")),
+            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(
                 (string skillName, string resourceName, IServiceProvider? serviceProvider, CancellationToken cancellationToken = default) =>
                     this.ReadSkillResourceAsync(skills, skillName, resourceName, serviceProvider, cancellationToken),
-                name: "read_skill_resource",
-                description: "Reads a resource associated with a skill, such as references, assets, or dynamic data."),
+                name: ReadSkillResourceToolName,
+                description: "Reads a resource associated with a skill, such as references, assets, or dynamic data.")),
+            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(
+                (string skillName, string scriptName, JsonElement? arguments = null, IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default) =>
+                    this.RunSkillScriptAsync(skills, skillName, scriptName, arguments, serviceProvider, cancellationToken),
+                name: RunSkillScriptToolName,
+                description: "Runs a script associated with a skill.")),
         ];
-
-        AIFunction scriptFunction = AIFunctionFactory.Create(
-            (string skillName, string scriptName, JsonElement? arguments = null, IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default) =>
-                this.RunSkillScriptAsync(skills, skillName, scriptName, arguments, serviceProvider, cancellationToken),
-            name: "run_skill_script",
-            description: "Runs a script associated with a skill.");
-
-        if (this._options?.ScriptApproval == true)
-        {
-            return [.. tools, new ApprovalRequiredAIFunction(scriptFunction)];
-        }
-
-        return [.. tools, scriptFunction];
     }
 
     private string? BuildSkillsInstructions(IList<AgentSkill> skills)
@@ -258,18 +302,8 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
             sb.AppendLine("  </skill>");
         }
 
-        const string ResourceInstruction =
-            """
-            - Use `read_skill_resource` to read any referenced resources, using the name exactly as listed
-               (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ.md"` not `"FAQ.md"`).
-            """;
-
-        const string ScriptInstruction = "- Use `run_skill_script` to run referenced scripts, using the name exactly as listed.";
-
         return new StringBuilder(promptTemplate)
             .Replace(SkillsPlaceholder, sb.ToString().TrimEnd())
-            .Replace(ResourceInstructionsPlaceholder, ResourceInstruction)
-            .Replace(ScriptInstructionsPlaceholder, ScriptInstruction)
             .ToString();
     }
 
@@ -376,20 +410,6 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         {
             throw new ArgumentException(
                 $"The custom prompt template must contain the '{SkillsPlaceholder}' placeholder for the generated skills list.",
-                paramName);
-        }
-
-        if (template.IndexOf(ResourceInstructionsPlaceholder, StringComparison.Ordinal) < 0)
-        {
-            throw new ArgumentException(
-                $"The custom prompt template must contain the '{ResourceInstructionsPlaceholder}' placeholder for resource instructions.",
-                paramName);
-        }
-
-        if (template.IndexOf(ScriptInstructionsPlaceholder, StringComparison.Ordinal) < 0)
-        {
-            throw new ArgumentException(
-                $"The custom prompt template must contain the '{ScriptInstructionsPlaceholder}' placeholder for script instructions.",
                 paramName);
         }
     }

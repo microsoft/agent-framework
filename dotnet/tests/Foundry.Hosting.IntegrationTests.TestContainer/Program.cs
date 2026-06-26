@@ -276,7 +276,13 @@ static AIAgent CreateAgentSkillsAgent(AIProjectClient client, string deployment)
             Instructions = "You are a customer-support assistant for Contoso Outdoors.",
         },
         AIContextProviders = [skillsProvider]
-    });
+    })
+    .AsBuilder()
+    .UseToolApproval(new ToolApprovalAgentOptions
+    {
+        AutoApprovalRules = [AgentSkillsProvider.AllToolsAutoApprovalRule],
+    })
+    .Build();
 }
 #pragma warning restore MEAI001
 
