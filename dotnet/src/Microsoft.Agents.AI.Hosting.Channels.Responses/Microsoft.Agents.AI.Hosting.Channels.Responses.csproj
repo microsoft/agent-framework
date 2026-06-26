@@ -1,0 +1,34 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <RootNamespace>Microsoft.Agents.AI.Hosting.Channels.Responses</RootNamespace>
+    <VersionSuffix>alpha</VersionSuffix>
+    <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.AspNetCore.Http.Generated</InterceptorsNamespaces>
+    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI.Hosting.Channels\Microsoft.Agents.AI.Hosting.Channels.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.Channels.Responses.UnitTests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <Title>Microsoft Agent Framework Hosting Channels - Responses</Title>
+    <Description>OpenAI Responses-shaped channel for the Microsoft Agent Framework hosting channels surface. Maps Responses requests and streams onto a shared AgentFrameworkHost.</Description>
+  </PropertyGroup>
+</Project>

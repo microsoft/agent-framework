@@ -378,6 +378,10 @@
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-AgentSkills/HostedAgentSkills.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/DurableAgents/" />
+  <Folder Name="/Samples/04-hosting/HostingChannels/">
+    <Project Path="samples/04-hosting/HostingChannels/01_ResponsesAgent/01_ResponsesAgent.csproj" />
+    <Project Path="samples/04-hosting/HostingChannels/02_ResponsesWorkflow/02_ResponsesWorkflow.csproj" />
+  </Folder>
   <Folder Name="/Samples/04-hosting/DurableAgents/AzureFunctions/">
     <File Path="samples/04-hosting/DurableAgents/AzureFunctions/.editorconfig" />
     <File Path="samples/04-hosting/DurableAgents/AzureFunctions/README.md" />
@@ -620,6 +624,8 @@
     <Project Path="src/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.AspNetCore/Microsoft.Agents.AI.Hosting.AspNetCore.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.AzureFunctions/Microsoft.Agents.AI.Hosting.AzureFunctions.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Hosting.Channels/Microsoft.Agents.AI.Hosting.Channels.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Hosting.Channels.Responses/Microsoft.Agents.AI.Hosting.Channels.Responses.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.OpenAI/Microsoft.Agents.AI.Hosting.OpenAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting/Microsoft.Agents.AI.Hosting.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hyperlight/Microsoft.Agents.AI.Hyperlight.csproj" />
@@ -674,6 +680,8 @@
     <Project Path="tests/Microsoft.Agents.AI.GitHub.Copilot.UnitTests/Microsoft.Agents.AI.GitHub.Copilot.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Harness.UnitTests/Microsoft.Agents.AI.Harness.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.A2A.UnitTests/Microsoft.Agents.AI.Hosting.A2A.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.Hosting.Channels.UnitTests/Microsoft.Agents.AI.Hosting.Channels.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.Hosting.Channels.IntegrationTests/Microsoft.Agents.AI.Hosting.Channels.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.AzureFunctions.UnitTests/Microsoft.Agents.AI.Hosting.AzureFunctions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests.csproj" />
