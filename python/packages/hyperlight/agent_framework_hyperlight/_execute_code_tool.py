@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import mimetypes
 import os
 import shutil
@@ -90,6 +91,10 @@ class SandboxRuntime(Protocol):
     def execute(self, *, config: _RunConfig, code: str) -> list[Content]: ...
 
 
+class _NamedDirectory(Protocol):
+    name: str
+
+
 _T = TypeVar("_T")
 
 
@@ -158,7 +163,8 @@ class _SandboxWorker:
                 del exc
                 return False, (exc_type, exc_args)
 
-        ok, payload = self._executor.submit(_wrapped).result()
+        current_context = contextvars.copy_context()
+        ok, payload = self._executor.submit(lambda: current_context.run(_wrapped)).result()
         if ok:
             return cast(_T, payload)
         exc_type, exc_args = cast(tuple[type[BaseException], tuple[str, ...]], payload)
@@ -725,7 +731,7 @@ def _collect_output_relative_paths(*, sandbox: Any, root: Path) -> set[str]:
 def _parse_output_files(
     *,
     sandbox: Any,
-    output_dir: TemporaryDirectory[str] | None,
+    output_dir: _NamedDirectory | None,
     expect_output_files: bool,
 ) -> list[Content]:
     if output_dir is None:
@@ -826,12 +832,13 @@ def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
         # registered callbacks synchronously via FFI, so this must be a sync function.
         # We run the async call on a dedicated thread to avoid conflicts with any
         # event loop that may be running on the current thread.
+        current_context = contextvars.copy_context()
         result_box: list[Any] = [None]
         error_box: list[BaseException] = []
 
         def _run() -> None:
             try:
-                result_box[0] = asyncio.run(_invoke())
+                result_box[0] = current_context.run(lambda: asyncio.run(_invoke()))
             except BaseException as exc:
                 error_box.append(exc)
 

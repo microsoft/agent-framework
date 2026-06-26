@@ -108,7 +108,6 @@ For authentication, run `az login` before running samples.
 
 **Note:** For samples demonstrating other providers (Azure OpenAI, OpenAI, Anthropic, etc.), see `02-agents/AgentProviders/`.
 
-
 ## Snippet tags for docs integration
 
 Samples embed named snippet regions for future `:::code` integration:
@@ -133,7 +132,6 @@ dotnet run
 - `AIAgent` is the primary agent abstraction (created via `ChatClient.AsAIAgent(...)`)
 - `AgentSession` manages multi-turn conversation state
 - `AIContextProvider` injects memory and context
-- Prefer `client.GetChatClient(deployment).AsAIAgent(...)` extension method pattern
+- Prefer `AIProjectClient.AsAIAgent(...)` for Foundry-backed canonical samples
 - Azure Functions hosting uses `ConfigureDurableAgents(options => options.AddAIAgent(agent))`
 - Workflows use `WorkflowBuilder` with `Executor<TIn, TOut>` and edge connections
-

@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import dataclasses
 import gc
+import importlib
 import importlib.metadata
 import importlib.util
 import inspect
@@ -13,10 +14,12 @@ import json
 import sys
 import threading
 import time
-from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Generator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 from agent_framework import (
@@ -31,6 +34,10 @@ from agent_framework import (
     ResponseStream,
     tool,
 )
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from pytest import fixture
 
 from agent_framework_hyperlight import AllowedDomain, FileMount, HyperlightCodeActProvider, HyperlightExecuteCodeTool
 from agent_framework_hyperlight import _execute_code_tool as execute_code_module
@@ -87,6 +94,54 @@ skip_if_hyperlight_integration_tests_disabled = pytest.mark.skipif(
     (reason := _hyperlight_integration_static_skip_reason()) is not None,
     reason=reason or "Hyperlight integration tests are disabled.",
 )
+
+
+@fixture
+def span_exporter(monkeypatch) -> Generator[InMemorySpanExporter]:
+    env_vars = [
+        "ENABLE_INSTRUMENTATION",
+        "ENABLE_SENSITIVE_DATA",
+        "ENABLE_CONSOLE_EXPORTERS",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_PROTOCOL",
+        "OTEL_EXPORTER_OTLP_HEADERS",
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+        "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+        "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+        "OTEL_SERVICE_NAME",
+        "OTEL_SERVICE_VERSION",
+        "OTEL_RESOURCE_ATTRIBUTES",
+    ]
+
+    for key in env_vars:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "True")
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "True")
+
+    import agent_framework.observability as observability
+    from opentelemetry import trace
+
+    importlib.reload(observability)
+    observability_settings = observability.ObservabilitySettings()
+    tracer_provider = TracerProvider(resource=observability.create_resource())
+    trace.set_tracer_provider(tracer_provider)
+    monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", observability_settings, raising=False)
+
+    with (
+        patch("agent_framework.observability.OBSERVABILITY_SETTINGS", observability_settings),
+        patch("agent_framework.observability.configure_otel_providers"),
+    ):
+        exporter = InMemorySpanExporter()
+        current_tracer_provider = trace.get_tracer_provider()
+        if not hasattr(current_tracer_provider, "add_span_processor"):
+            raise RuntimeError("Tracer provider does not support adding span processors.")
+
+        cast(Any, current_tracer_provider).add_span_processor(SimpleSpanProcessor(exporter))
+        yield exporter
+        exporter.clear()
 
 
 @pytest.fixture(scope="module")
@@ -378,6 +433,38 @@ def test_execute_code_tool_replaces_tools_with_the_same_name() -> None:
     assert execute_code.approval_mode == "always_require"
 
 
+async def test_execute_code_tool_parent_span_for_host_tools(
+    span_exporter: InMemorySpanExporter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+
+    execute_code = HyperlightExecuteCodeTool(tools=[compute])
+
+    span_exporter.clear()
+    await execute_code.invoke(
+        arguments={"code": 'total = call_tool("compute", a=20, b=22)\nprint(total)'},
+        skip_parsing=True,
+    )
+
+    spans = span_exporter.get_finished_spans()
+    execute_code_spans = [span for span in spans if span.name == "execute_tool execute_code"]
+    compute_spans = [span for span in spans if span.name == "execute_tool compute"]
+
+    assert len(execute_code_spans) == 1
+    assert len(compute_spans) == 1
+
+    execute_code_span = execute_code_spans[0]
+    compute_span = compute_spans[0]
+
+    assert compute_span.context is not None
+    assert execute_code_span.context is not None
+    assert compute_span.context.trace_id == execute_code_span.context.trace_id
+    assert compute_span.parent is not None
+    assert compute_span.parent.span_id == execute_code_span.context.span_id
+
+
 def test_execute_code_tool_accepts_string_and_tuple_file_mounts_without_mode_flags(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -665,7 +752,7 @@ def test_parse_output_files_skips_symlink_to_host_file(tmp_path: Path, monkeypat
 
     contents = execute_code_module._parse_output_files(
         sandbox=object(),
-        output_dir=_OutputDirShim(output_root),
+        output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
         expect_output_files=False,
     )
 
@@ -691,7 +778,7 @@ def test_parse_output_files_rejects_intermediate_dir_symlink_from_listing(
 
     contents = execute_code_module._parse_output_files(
         sandbox=_SandboxWithListing(["output/sub/leak.txt"]),
-        output_dir=_OutputDirShim(output_root),
+        output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
         expect_output_files=False,
     )
 
@@ -720,7 +807,7 @@ def test_parse_output_files_collects_real_output_file(tmp_path: Path) -> None:
 
     contents = execute_code_module._parse_output_files(
         sandbox=object(),
-        output_dir=_OutputDirShim(output_root),
+        output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
         expect_output_files=True,
     )
 

@@ -40,7 +40,7 @@ public sealed class AgentMcpSkillsSourceTests
     [Fact]
     public async Task GetSkillsAsync_IndexBasedDiscovery_ReturnsSkillAsync()
     {
-        // Arrange — server exposes both skill://index.json and the skill itself.
+        // Arrange - server exposes both skill://index.json and the skill itself.
         await using var server = new InMemoryMcpServer(builder =>
             builder.WithResources<IndexAndSkill>());
         await using var client = await server.CreateClientAsync();
@@ -49,7 +49,7 @@ public sealed class AgentMcpSkillsSourceTests
         // Act
         var skills = await source.GetSkillsAsync();
 
-        // Assert — frontmatter comes from index; Content is the actual SKILL.md body from the server.
+        // Assert - frontmatter comes from index; Content is the actual SKILL.md body from the server.
         var skill = Assert.Single(skills);
         Assert.Equal("unit-converter", skill.Frontmatter.Name);
         Assert.Equal("Convert between common units.", skill.Frontmatter.Description);
@@ -63,7 +63,7 @@ public sealed class AgentMcpSkillsSourceTests
     [Fact]
     public async Task GetSkillsAsync_NoIndex_ReturnsEmptyAsync()
     {
-        // Arrange — server only exposes SKILL.md, no skill://index.json.
+        // Arrange - server only exposes SKILL.md, no skill://index.json.
         // Per SEP-2640, discovery requires the index document; without it, no skills are surfaced.
         await using var server = new InMemoryMcpServer(builder =>
             builder.WithResources<SkillOnly>());
@@ -80,7 +80,7 @@ public sealed class AgentMcpSkillsSourceTests
     [Fact]
     public async Task GetResourceAsync_SiblingText_ReturnsContentAsync()
     {
-        // Arrange — server exposes index, SKILL.md, and a sibling reference file.
+        // Arrange - server exposes index, SKILL.md, and a sibling reference file.
         // The skill reads the sibling on demand via GetResourceAsync.
         await using var server = new InMemoryMcpServer(builder =>
             builder.WithResources<IndexAndSkillWithSibling>());
@@ -100,7 +100,7 @@ public sealed class AgentMcpSkillsSourceTests
     [Fact]
     public async Task GetResourceAsync_SiblingBinary_ReturnsDataContentAsync()
     {
-        // Arrange — server exposes index, SKILL.md, and a binary sibling.
+        // Arrange - server exposes index, SKILL.md, and a binary sibling.
         await using var server = new InMemoryMcpServer(builder =>
             builder.WithResources<IndexAndSkillWithBinarySibling>());
         await using var client = await server.CreateClientAsync();
@@ -121,7 +121,7 @@ public sealed class AgentMcpSkillsSourceTests
     [Fact]
     public async Task GetResourceAsync_UnknownName_ReturnsNullAsync()
     {
-        // Arrange — index advertises a skill, but no sibling resource exists.
+        // Arrange - index advertises a skill, but no sibling resource exists.
         // GetResourceAsync eagerly fetches from the MCP server; a non-existent
         // resource causes the server to return an error, so null is returned.
         await using var server = new InMemoryMcpServer(builder =>
@@ -133,7 +133,7 @@ public sealed class AgentMcpSkillsSourceTests
         var skill = Assert.Single(await source.GetSkillsAsync());
         var resource = await skill.GetResourceAsync("references/does-not-exist.md");
 
-        // Assert — resource does not exist on the server, so null is returned
+        // Assert - resource does not exist on the server, so null is returned
         Assert.Null(resource);
     }
 
@@ -143,7 +143,7 @@ public sealed class AgentMcpSkillsSourceTests
     [InlineData("..")]
     public async Task GetResourceAsync_PathTraversalName_ReturnsNullAsync(string name)
     {
-        // Arrange — '..' segments result in URIs that don't match any server resource.
+        // Arrange - '..' segments result in URIs that don't match any server resource.
         // The MCP server returns an error for unknown URIs, so GetResourceAsync returns null.
         await using var server = new InMemoryMcpServer(builder =>
             builder.WithResources<IndexAndSkill>());
@@ -154,14 +154,14 @@ public sealed class AgentMcpSkillsSourceTests
         var skill = Assert.Single(await source.GetSkillsAsync());
         var resource = await skill.GetResourceAsync(name);
 
-        // Assert — resource does not exist on the server, so null is returned
+        // Assert - resource does not exist on the server, so null is returned
         Assert.Null(resource);
     }
 
     [Fact]
     public async Task GetSkillsAsync_DoesNotReadSkillMdAsync()
     {
-        // Arrange — index points to a non-existent SKILL.md URI. Because the source builds
+        // Arrange - index points to a non-existent SKILL.md URI. Because the source builds
         // skills from index info only, discovery still succeeds.
         await using var server = new InMemoryMcpServer(builder =>
             builder.WithResources<IndexWithoutSkillMdResource>());
@@ -171,7 +171,7 @@ public sealed class AgentMcpSkillsSourceTests
         // Act
         var skills = await source.GetSkillsAsync();
 
-        // Assert — discovery succeeds from index alone.
+        // Assert - discovery succeeds from index alone.
         var skill = Assert.Single(skills);
         Assert.Equal("unit-converter", skill.Frontmatter.Name);
     }
@@ -179,7 +179,7 @@ public sealed class AgentMcpSkillsSourceTests
     [Fact]
     public async Task GetSkillsAsync_IndexEntryWithInvalidName_IsSkippedAsync()
     {
-        // Arrange — index entry has an invalid (uppercase) name, which AgentSkillFrontmatter rejects.
+        // Arrange - index entry has an invalid (uppercase) name, which AgentSkillFrontmatter rejects.
         await using var server = new InMemoryMcpServer(builder =>
             builder.WithResources<IndexWithInvalidName>());
         await using var client = await server.CreateClientAsync();
@@ -195,7 +195,7 @@ public sealed class AgentMcpSkillsSourceTests
     [Fact]
     public async Task GetSkillsAsync_IndexEntryWithMissingRequiredFields_IsSkippedAsync()
     {
-        // Arrange — index entry is missing the required description and url fields.
+        // Arrange - index entry is missing the required description and url fields.
         await using var server = new InMemoryMcpServer(builder =>
             builder.WithResources<IndexWithIncompleteEntry>());
         await using var client = await server.CreateClientAsync();
@@ -209,9 +209,10 @@ public sealed class AgentMcpSkillsSourceTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_IndexEntryWithUnsupportedType_IsSkippedAsync()
+    public async Task GetSkillsAsync_ArchiveEntryWithUnreadableResource_IsSkippedAsync()
     {
-        // Arrange — index has an "archive" entry, which this source does not support.
+        // Arrange - index has an "archive" entry, but the referenced archive resource does not
+        // exist on the server, so reading it fails and the entry is skipped gracefully.
         await using var server = new InMemoryMcpServer(builder =>
             builder.WithResources<IndexWithArchiveOnly>());
         await using var client = await server.CreateClientAsync();
@@ -227,7 +228,7 @@ public sealed class AgentMcpSkillsSourceTests
     [Fact]
     public async Task GetSkillsAsync_IndexEntryWithTemplateType_IsSkippedAsync()
     {
-        // Arrange — index has an "mcp-resource-template" entry (parameterized skill namespace).
+        // Arrange - index has an "mcp-resource-template" entry (parameterized skill namespace).
         // The current source skips template entries; they require user input to materialize.
         await using var server = new InMemoryMcpServer(builder =>
             builder.WithResources<IndexWithTemplateOnly>());
@@ -243,7 +244,7 @@ public sealed class AgentMcpSkillsSourceTests
 
     #region Resource classes (registered with the MCP server via WithResources<T>)
 
-    // CA1812 flags these classes as "never instantiated", which is technically correct —
+    // CA1812 flags these classes as "never instantiated", which is technically correct -
     // they are never constructed because they only contain static methods (e.g. `public static string Index()`).
     // The MCP framework discovers and invokes these static methods via the [McpServerResourceType] and
     // [McpServerResource] attributes registered through WithResources<T>(), without ever creating an instance.
