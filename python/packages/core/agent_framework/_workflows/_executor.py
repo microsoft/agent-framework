@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import contextlib
 import copy
 import functools
@@ -198,6 +199,12 @@ class Executor(RequestInfoMixin, DictConvertible):
         self.type = resolved_type
         self.type_ = resolved_type
 
+        # Serialize per-executor message processing. Within a superstep the runner may
+        # dispatch deliveries to the same target executor from multiple sources
+        # concurrently; this lock guarantees the executor processes them one at a time
+        # (and, per source, in the order they were sent).
+        self._execution_lock = asyncio.Lock()
+
         from builtins import type as builtin_type
 
         self._handlers: dict[
@@ -241,57 +248,61 @@ class Executor(RequestInfoMixin, DictConvertible):
         Returns:
             An awaitable that resolves to the result of the execution.
         """
-        # Create processing span for tracing (gracefully handles disabled tracing)
-        with create_processing_span(
-            self.id,
-            self.__class__.__name__,
-            str(MessageType.STANDARD if not isinstance(message, WorkflowMessage) else message.type),
-            type(message).__name__,
-            source_trace_contexts=trace_contexts,
-            source_span_ids=source_span_ids,
-        ):
-            # Find the handler and handler spec that matches the message type.
-            handler = self._find_handler(message)
-
-            original_message = message
-            if isinstance(message, WorkflowMessage):
-                # Unwrap raw data for handler call
-                message = message.data
-
-            # Create the appropriate WorkflowContext based on handler specs
-            context = self._create_context_for_handler(
-                source_executor_ids=source_executor_ids,
-                state=state,
-                runner_context=runner_context,
-                trace_contexts=trace_contexts,
+        # Serialize execution per executor instance. The runner may dispatch deliveries
+        # to this executor from multiple sources concurrently within a superstep; the lock
+        # ensures they are processed one at a time rather than interleaving at await points.
+        async with self._execution_lock:
+            # Create processing span for tracing (gracefully handles disabled tracing)
+            with create_processing_span(
+                self.id,
+                self.__class__.__name__,
+                str(MessageType.STANDARD if not isinstance(message, WorkflowMessage) else message.type),
+                type(message).__name__,
+                source_trace_contexts=trace_contexts,
                 source_span_ids=source_span_ids,
-                request_id=original_message.original_request_info_event.request_id
-                if isinstance(original_message, WorkflowMessage) and original_message.original_request_info_event
-                else None,
-            )
+            ):
+                # Find the handler and handler spec that matches the message type.
+                handler = self._find_handler(message)
 
-            # Invoke the handler with the message and context
-            # Use deepcopy to capture original input state before handler can mutate it
-            with _framework_event_origin():
-                invoke_event = WorkflowEvent.executor_invoked(self.id, copy.deepcopy(message))
-            await context.add_event(invoke_event)
-            try:
-                await handler(message, context)
-            except Exception as exc:
-                # Surface structured executor failure before propagating
-                with _framework_event_origin():
-                    failure_event = WorkflowEvent.executor_failed(self.id, WorkflowErrorDetails.from_exception(exc))
-                await context.add_event(failure_event)
-                raise
-            with _framework_event_origin():
-                # Include sent messages and yielded outputs as the completion data
-                sent_messages = context.get_sent_messages()
-                yielded_outputs = context.get_yielded_outputs()
-                completion_data = sent_messages + yielded_outputs
-                completed_event = WorkflowEvent.executor_completed(
-                    self.id, completion_data if completion_data else None
+                original_message = message
+                if isinstance(message, WorkflowMessage):
+                    # Unwrap raw data for handler call
+                    message = message.data
+
+                # Create the appropriate WorkflowContext based on handler specs
+                context = self._create_context_for_handler(
+                    source_executor_ids=source_executor_ids,
+                    state=state,
+                    runner_context=runner_context,
+                    trace_contexts=trace_contexts,
+                    source_span_ids=source_span_ids,
+                    request_id=original_message.original_request_info_event.request_id
+                    if isinstance(original_message, WorkflowMessage) and original_message.original_request_info_event
+                    else None,
                 )
-            await context.add_event(completed_event)
+
+                # Invoke the handler with the message and context
+                # Use deepcopy to capture original input state before handler can mutate it
+                with _framework_event_origin():
+                    invoke_event = WorkflowEvent.executor_invoked(self.id, copy.deepcopy(message))
+                await context.add_event(invoke_event)
+                try:
+                    await handler(message, context)
+                except Exception as exc:
+                    # Surface structured executor failure before propagating
+                    with _framework_event_origin():
+                        failure_event = WorkflowEvent.executor_failed(self.id, WorkflowErrorDetails.from_exception(exc))
+                    await context.add_event(failure_event)
+                    raise
+                with _framework_event_origin():
+                    # Include sent messages and yielded outputs as the completion data
+                    sent_messages = context.get_sent_messages()
+                    yielded_outputs = context.get_yielded_outputs()
+                    completion_data = sent_messages + yielded_outputs
+                    completed_event = WorkflowEvent.executor_completed(
+                        self.id, completion_data if completion_data else None
+                    )
+                await context.add_event(completed_event)
 
     def _create_context_for_handler(
         self,

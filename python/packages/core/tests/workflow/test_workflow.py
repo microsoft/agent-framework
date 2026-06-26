@@ -1079,6 +1079,63 @@ async def test_workflow_partial_stream_does_not_clobber_successor_runtime_storag
         await asyncio.sleep(0)
 
 
+async def test_workflow_serializes_concurrent_delivery_to_same_executor():
+    """Messages delivered to one executor within a superstep must be processed serially.
+
+    A start executor fans out to two intermediate executors that both send to a single
+    target in the same superstep. The runner dispatches those two deliveries concurrently
+    (they have different source executors), but the target must process them one at a time
+    rather than interleaving at ``await`` points.
+    """
+
+    class _FanSource(Executor):
+        def __init__(self, id: str, label: str) -> None:
+            super().__init__(id=id)
+            self._label = label
+
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(self._label)
+
+    class _SerialTarget(Executor):
+        def __init__(self, id: str) -> None:
+            super().__init__(id=id)
+            self.active = 0
+            self.max_active = 0
+            self.received: list[str] = []
+
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            # Yield control. If execution were not serialized per executor, a concurrent
+            # delivery would enter here and push ``active`` (and ``max_active``) to 2.
+            await asyncio.sleep(0)
+            self.received.append(message)
+            self.active -= 1
+
+    start = _FanSource(id="start", label="go")
+    source_a = _FanSource(id="a", label="from_a")
+    source_b = _FanSource(id="b", label="from_b")
+    target = _SerialTarget(id="target")
+
+    # superstep 1: start -> {a, b}; superstep 2: a -> target, b -> target (both in the
+    # same superstep); superstep 3: target receives both deliveries concurrently.
+    workflow = (
+        WorkflowBuilder(start_executor=start)
+        .add_edge(start, source_a)
+        .add_edge(start, source_b)
+        .add_edge(source_a, target)
+        .add_edge(source_b, target)
+        .build()
+    )
+
+    await workflow.run("go")
+
+    assert target.max_active == 1, "Target processed concurrent deliveries (executions overlapped)"
+    assert sorted(target.received) == ["from_a", "from_b"]
+
+
 class _StreamingTestAgent(BaseAgent):
     """Test agent that supports both streaming and non-streaming modes."""
 
