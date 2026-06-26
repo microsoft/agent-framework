@@ -611,9 +611,11 @@ internal sealed class DurableWorkflowRunner
     /// as a JSON string element (escaped payload plus surrounding quotes and a separating comma).
     /// </summary>
     /// <remarks>
-    /// Uses the default JSON escaping (matching the serializer that writes the custom status), so the
-    /// estimate is an upper bound on the actual contribution — never an underestimate that could lead to
-    /// an overflow.
+    /// Uses <see cref="JsonEncodedText.Encode(string, System.Text.Encodings.Web.JavaScriptEncoder?)"/> with the
+    /// default (strict) encoder. This is intentionally stricter than the serializer that actually writes the custom
+    /// status, which uses <see cref="System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping"/> and so
+    /// escapes fewer characters. Because the strict encoder never produces a shorter result, the estimate is an upper
+    /// bound on the actual contribution — never an underestimate that could lead to an overflow.
     /// </remarks>
     internal static int SerializedElementCost(string serializedEvent)
         => JsonEncodedText.Encode(serializedEvent).Value.Length + 3;
