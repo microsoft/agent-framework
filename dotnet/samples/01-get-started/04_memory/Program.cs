@@ -127,7 +127,10 @@ namespace SampleApp
             {
                 // The Foundry Responses API requires the model name in the request body.
                 // Retrieve it from the client's metadata so callers don't need to pass it separately.
-                var modelId = this._chatClient.GetService<ChatClientMetadata>()?.DefaultModelId;
+                var modelId = this._chatClient.GetService<ChatClientMetadata>()?.DefaultModelId
+                    ?? throw new InvalidOperationException(
+                        "Could not retrieve DefaultModelId from the extraction IChatClient. " +
+                        "Ensure the client was created with a model ID (e.g., via projectClient.AsAIAgent(...)).");
                 var result = await this._chatClient.GetResponseAsync<UserInfo>(
                     context.RequestMessages,
                     new ChatOptions()

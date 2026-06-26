@@ -55,6 +55,8 @@ await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Write a ve
     Console.Write(update.Text);
 
     // Track the last update that carries a resumable continuation token.
+    // Lifecycle events like response.completed return null tokens (response is finished),
+    // so we only update our reference when a token is actually present.
     if (update.ContinuationToken is not null)
     {
         lastReceivedUpdate = update;

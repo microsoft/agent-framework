@@ -55,6 +55,9 @@ internal sealed class WorkflowRunner
 
     public async Task ExecuteAsync(Func<Workflow> workflowProvider, string input)
     {
+        // Reset EOF flag so a reused WorkflowRunner instance handles stdin correctly on each run.
+        this._stdinEof = false;
+
         Workflow workflow = workflowProvider.Invoke();
 
         CheckpointManager checkpointManager;
@@ -318,7 +321,7 @@ internal sealed class WorkflowRunner
         if (responseMessages.Count == 0)
         {
             // Must be request for user input.
-            responseMessages.Add(HandleUserInputRequest(inputRequest));
+            responseMessages.Add(this.HandleUserInputRequest(inputRequest));
         }
 
         Console.WriteLine();
