@@ -1120,7 +1120,7 @@ async def test_workflow_serializes_concurrent_delivery_to_same_executor():
     target = _SerialTarget(id="target")
 
     # superstep 1: start -> {a, b}; superstep 2: a -> target, b -> target (both in the
-    # same superstep); superstep 3: target receives both deliveries concurrently.
+    # same superstep); superstep 3: target receives both deliveries and processes them serially.
     workflow = (
         WorkflowBuilder(start_executor=start)
         .add_edge(start, source_a)

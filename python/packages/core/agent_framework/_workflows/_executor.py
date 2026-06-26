@@ -204,10 +204,10 @@ class Executor(RequestInfoMixin, DictConvertible):
         # concurrently; this lock guarantees the executor processes them one at a time
         # (and, per source, in the order they were sent).
         #
-        # Created lazily under the running loop (see ``_get_execution_lock``): an executor
-        # is often constructed outside an event loop and may be reused across multiple
-        # loops (e.g. successive ``asyncio.run`` calls on the same workflow). Binding a
-        # single lock to one loop would raise "bound to a different event loop" on reuse.
+        # The lock must be created lazily under the running loop (see ``_get_execution_lock``)
+        # in order to support executors that are constructed outside an event loop and reused
+        # across multiple async loops (e.g., successive ``asyncio.run`` calls on the same workflow).
+        # Binding a single lock to one loop would raise "bound to a different event loop" on reuse.
         self._execution_lock: asyncio.Lock | None = None
         self._execution_lock_loop: asyncio.AbstractEventLoop | None = None
 
@@ -268,9 +268,6 @@ class Executor(RequestInfoMixin, DictConvertible):
         Returns:
             An awaitable that resolves to the result of the execution.
         """
-        # Serialize execution per executor instance. The runner may dispatch deliveries
-        # to this executor from multiple sources concurrently within a superstep; the lock
-        # ensures they are processed one at a time rather than interleaving at await points.
         async with self._get_execution_lock():
             # Create processing span for tracing (gracefully handles disabled tracing)
             with create_processing_span(
