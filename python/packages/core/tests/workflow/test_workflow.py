@@ -1136,6 +1136,31 @@ async def test_workflow_serializes_concurrent_delivery_to_same_executor():
     assert sorted(target.received) == ["from_a", "from_b"]
 
 
+def test_executor_serialization_lock_is_loop_scoped():
+    """The per-executor serialization lock must be created under the running loop.
+
+    Executors are often constructed outside an event loop and may be reused across loops
+    (e.g. successive ``asyncio.run`` calls). The lock is created lazily and re-created when
+    the running loop changes, so reuse never raises ``asyncio.Lock`` "bound to a different
+    event loop". Creating it eagerly in ``__init__`` and binding it to the first loop would.
+    """
+
+    class _Noop(Executor):
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None: ...
+
+    executor = _Noop(id="noop")
+
+    async def _grab_lock() -> asyncio.Lock:
+        return executor._get_execution_lock()  # pyright: ignore[reportPrivateUsage]
+
+    # Each ``asyncio.run`` uses a fresh event loop; the lock must be re-created per loop.
+    lock_loop_1 = asyncio.run(_grab_lock())
+    lock_loop_2 = asyncio.run(_grab_lock())
+
+    assert lock_loop_1 is not lock_loop_2
+
+
 class _StreamingTestAgent(BaseAgent):
     """Test agent that supports both streaming and non-streaming modes."""
 

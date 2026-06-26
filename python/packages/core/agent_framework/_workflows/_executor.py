@@ -203,7 +203,13 @@ class Executor(RequestInfoMixin, DictConvertible):
         # dispatch deliveries to the same target executor from multiple sources
         # concurrently; this lock guarantees the executor processes them one at a time
         # (and, per source, in the order they were sent).
-        self._execution_lock = asyncio.Lock()
+        #
+        # Created lazily under the running loop (see ``_get_execution_lock``): an executor
+        # is often constructed outside an event loop and may be reused across multiple
+        # loops (e.g. successive ``asyncio.run`` calls on the same workflow). Binding a
+        # single lock to one loop would raise "bound to a different event loop" on reuse.
+        self._execution_lock: asyncio.Lock | None = None
+        self._execution_lock_loop: asyncio.AbstractEventLoop | None = None
 
         from builtins import type as builtin_type
 
@@ -222,6 +228,20 @@ class Executor(RequestInfoMixin, DictConvertible):
 
             # Initialize RequestInfoMixin to discover response handlers
             self._discover_response_handlers()
+
+    def _get_execution_lock(self) -> asyncio.Lock:
+        """Return this executor's serialization lock, bound to the running event loop.
+
+        The lock is created lazily and re-created if the running loop has changed since it
+        was last used (for example, the executor is reused across successive
+        ``asyncio.run`` calls), avoiding ``asyncio.Lock`` "bound to a different event loop"
+        errors. Must be called from within a running loop.
+        """
+        loop = asyncio.get_running_loop()
+        if self._execution_lock is None or self._execution_lock_loop is not loop:
+            self._execution_lock = asyncio.Lock()
+            self._execution_lock_loop = loop
+        return self._execution_lock
 
     async def execute(
         self,
@@ -251,7 +271,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         # Serialize execution per executor instance. The runner may dispatch deliveries
         # to this executor from multiple sources concurrently within a superstep; the lock
         # ensures they are processed one at a time rather than interleaving at await points.
-        async with self._execution_lock:
+        async with self._get_execution_lock():
             # Create processing span for tracing (gracefully handles disabled tracing)
             with create_processing_span(
                 self.id,
