@@ -26,7 +26,7 @@ host = AgentFrameworkHost(
     channels=[
         ActivityProtocolChannel(
             app_id="<entra app id>",
-            client_secret="<entra client secret>",
+            app_password="<entra client secret>",
             tenant_id="botframework.com",  # or your tenant id
         )
     ],

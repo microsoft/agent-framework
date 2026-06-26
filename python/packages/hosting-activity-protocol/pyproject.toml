@@ -72,20 +72,6 @@ reportUnknownVariableType = "none"
 reportUnknownLambdaType = "none"
 reportOptionalMemberAccess = "none"
 
-[tool.mypy]
-plugins = ['pydantic.mypy']
-strict = true
-python_version = "3.10"
-ignore_missing_imports = true
-disallow_untyped_defs = true
-no_implicit_optional = true
-check_untyped_defs = true
-warn_return_any = true
-show_error_codes = true
-warn_unused_ignores = false
-disallow_incomplete_defs = true
-disallow_untyped_decorators = true
-
 [tool.bandit]
 targets = ["agent_framework_hosting_activity_protocol"]
 exclude_dirs = ["tests"]
@@ -93,10 +79,6 @@ exclude_dirs = ["tests"]
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
-
-[tool.poe.tasks.mypy]
-help = "Run MyPy for this package."
-cmd = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_hosting_activity_protocol"
 
 [tool.poe.tasks.test]
 help = "Run the default unit test suite for this package."

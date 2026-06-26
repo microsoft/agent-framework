@@ -132,6 +132,11 @@ class TestCommandText:
         }
         assert _command_text(activity) == "/help"
 
+    def test_non_mapping_recipient_is_ignored(self) -> None:
+        # A truthy-but-non-mapping ``recipient`` must not raise; command
+        # detection should still work (falls back to stripping all mentions).
+        assert _command_text({"text": "/help", "recipient": "bogus"}) == "/help"
+
 
 @dataclass
 class _FakeAgentResponse:
@@ -294,6 +299,27 @@ class TestTeamsWebhook:
         # caller knows the activity was structurally invalid.
         assert r.status_code == 400
         assert not agent.runs
+
+    def test_non_mapping_json_body_returns_400(self) -> None:
+        # A valid-JSON-but-non-object body (list/number/string) must not 500.
+        ch, agent = _make_teams()
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post("/activity/messages", json=["not", "an", "object"])
+        assert r.status_code == 400
+        assert not agent.runs
+
+    def test_non_mapping_conversation_is_dropped(self) -> None:
+        # A truthy-but-non-mapping ``conversation`` must not raise; the
+        # activity is dropped deterministically (200, no outbound POST).
+        ch, agent = _make_teams()
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        bad = {**_VALID_ACTIVITY, "conversation": ["not", "a", "map"]}
+        with TestClient(host.app) as client:
+            r = client.post("/activity/messages", json=bad)
+        assert r.status_code == 200
+        assert ch._http is not None
+        cast(Any, ch._http).post.assert_not_called()
 
 
 class TestCommands:
@@ -475,6 +501,22 @@ class TestServiceUrlAllowList:
         ch = ActivityProtocolChannel(service_url_allowed_hosts=())
         assert ch._is_service_url_allowed("https://anywhere.example.org/")
 
+    def test_rejects_non_https_when_credential_present(self) -> None:
+        # With a credential configured the channel POSTs a real bearer token to
+        # serviceUrl, so plaintext http (which would leak it) must be rejected
+        # even when the host is allow-listed.
+        ch = ActivityProtocolChannel()
+        ch._credential = MagicMock()
+        assert not ch._is_service_url_allowed("http://smba.trafficmanager.net/amer/")
+        assert ch._is_service_url_allowed("https://smba.trafficmanager.net/amer/")
+
+    def test_allows_http_in_dev_mode(self) -> None:
+        # No credential (dev mode / Bot Framework Emulator) → http is allowed
+        # because no token is sent.
+        ch = ActivityProtocolChannel(service_url_allowed_hosts=("localhost",))
+        assert ch._credential is None
+        assert ch._is_service_url_allowed("http://localhost:3978/")
+
     def test_webhook_rejects_disallowed_serviceurl(self) -> None:
         ch, agent = _make_teams()
         host = AgentFrameworkHost(target=agent, channels=[ch])
@@ -583,6 +625,49 @@ class TestRetrySignal:
         # Deterministic failure → 200 (Bot Service does not retry the same
         # broken activity in a loop).
         assert r.status_code == 200
+
+    def test_token_acquisition_failure_returns_502(self) -> None:
+        # azure.identity errors are not httpx errors; they must be wrapped as
+        # transient so the activity is retried rather than silently dropped.
+        ch, agent = _make_teams()
+        cred = MagicMock()
+        cred.get_token = AsyncMock(side_effect=RuntimeError("token boom"))
+        ch._credential = cred
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        with TestClient(host.app) as client:
+            r = client.post("/activity/messages", json=_VALID_ACTIVITY)
+        assert r.status_code == 502
+
+    async def test_buffered_final_send_transient_failure_propagates(self) -> None:
+        # On a non-edit channel the single buffered POST is the only delivery;
+        # a transient failure must propagate so _handle surfaces 502 (retry).
+        import httpx as _httpx
+
+        ch, _agent = _make_teams(stream=True)
+        assert ch._http is not None
+        cast(Any, ch._http).post = AsyncMock(side_effect=_httpx.ConnectError("nope"))
+        webchat_activity = {**_VALID_ACTIVITY, "channelId": "webchat"}
+
+        @dataclass
+        class _Up:
+            text: str
+
+            @property
+            def contents(self) -> list[Any]:
+                return [Content.from_text(self.text)]
+
+        class _Stream:
+            def __aiter__(self) -> Any:
+                async def gen() -> Any:
+                    yield _Up("hi")
+
+                return gen()
+
+            async def get_final_response(self) -> Any:
+                return _FakeAgentResponse(text="hi")
+
+        with pytest.raises(_httpx.HTTPError):
+            await ch._buffer_and_send(webchat_activity, _VALID_REQUEST, cast(Any, _Stream()))
 
 
 class TestStreaming:

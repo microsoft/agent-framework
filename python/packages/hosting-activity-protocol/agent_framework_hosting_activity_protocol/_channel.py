@@ -197,7 +197,7 @@ def _command_text(activity: Mapping[str, Any]) -> str:
     text = activity.get("text")
     if not isinstance(text, str):
         return ""
-    bot_id = (activity.get("recipient") or {}).get("id")
+    bot_id = recipient.get("id") if isinstance(recipient := activity.get("recipient"), Mapping) else None
     for entity in activity.get("entities") or []:
         if not isinstance(entity, Mapping) or entity.get("type") != "mention":
             continue
@@ -508,7 +508,13 @@ class ActivityProtocolChannel:
         """
         if self._credential is None:
             return None
-        access_token = await self._credential.get_token(self._token_scope)
+        try:
+            access_token = await self._credential.get_token(self._token_scope)
+        except Exception as exc:
+            # azure.identity raises ClientAuthenticationError / ServiceRequestError /
+            # HttpResponseError — none are httpx.HTTPError. Mark as transient so
+            # _handle returns 502 (retry) instead of silently dropping the activity.
+            raise _OutboundError("token acquisition failed") from exc
         return access_token.token
 
     def _auth_headers(self, token: str | None) -> dict[str, str]:
@@ -524,10 +530,17 @@ class ActivityProtocolChannel:
         if not service_url:
             return False
         try:
-            host = (urlparse(service_url).hostname or "").lower()
+            parsed = urlparse(service_url)
+            host = (parsed.hostname or "").lower()
         except Exception:
             return False
         if not host:
+            return False
+        # When a credential is configured we POST a real bearer token to this
+        # serviceUrl, so reject plaintext http to avoid leaking it. In dev mode
+        # (no credential, e.g. the Bot Framework Emulator) http is allowed.
+        if self._credential is not None and parsed.scheme != "https":
+            logger.warning("Rejecting non-https serviceUrl while a credential is configured: %r", service_url)
             return False
         return any(host == allowed or host.endswith(f".{allowed}") for allowed in self._service_url_allowed_hosts)
 
@@ -558,6 +571,8 @@ class ActivityProtocolChannel:
         try:
             activity = await request.json()
         except Exception:
+            return JSONResponse({"error": "invalid json"}, status_code=400)
+        if not isinstance(activity, Mapping):
             return JSONResponse({"error": "invalid json"}, status_code=400)
 
         # We accept only message activities for now. ``conversationUpdate``,
@@ -599,7 +614,9 @@ class ActivityProtocolChannel:
         """
         if self._ctx is None:  # pragma: no cover - guarded by lifecycle
             raise RuntimeError("activity channel not started")
-        conversation = activity.get("conversation") or {}
+        conversation = activity.get("conversation")
+        if not isinstance(conversation, Mapping):
+            conversation = {}
         conversation_id = conversation.get("id")
         service_url = activity.get("serviceUrl")
         if not isinstance(conversation_id, str) or not isinstance(service_url, str):
@@ -667,11 +684,11 @@ class ActivityProtocolChannel:
         """Run a matched ``/command`` handler and reply into the conversation.
 
         The command request mirrors the message-path request (same isolation
-        key, identity and attributes) and is run through the channel ``run_hook``
-        first, so handlers observe the same resolved ``session.isolation_key`` as
-        ordinary messages. Handler/reply failures are logged but never raised:
-        commands are best-effort, and surfacing a 502 would make Bot Service
-        retry the inbound activity and re-run a non-idempotent command.
+        key, identity and attributes), but — like the Telegram channel —
+        commands bypass the agent and the channel ``run_hook`` entirely: the
+        handler runs directly. Handler/reply failures are logged but never
+        raised: commands are best-effort, and surfacing a 502 would make Bot
+        Service retry the inbound activity and re-run a non-idempotent command.
         """
         if self._ctx is None:  # pragma: no cover - guarded by lifecycle
             raise RuntimeError("activity channel not started")
@@ -872,6 +889,11 @@ class ActivityProtocolChannel:
             text = final_text or "(no response)"
             try:
                 await self._send_message(inbound, text)
+            except (httpx.HTTPError, _OutboundError):
+                # Placeholder never landed (or edits unsupported), so this POST is
+                # the user's only delivery — surface 502 so Bot Service retries.
+                logger.exception("Activity fallback final send failed — signalling Bot Service to retry")
+                raise
             except Exception:  # pragma: no cover
                 logger.exception("Activity fallback final send failed")
         elif activity_id is not None and final_text and final_text != last_sent:
@@ -924,6 +946,12 @@ class ActivityProtocolChannel:
         text = getattr(final, "text", None) or accumulated or "(no response)"
         try:
             await self._send_message(inbound, text)
+        except (httpx.HTTPError, _OutboundError):
+            # The single buffered POST is the user's only delivery. A transient
+            # failure must surface 502 so Bot Service retries (mirrors the
+            # non-streaming path's contract) rather than silently dropping it.
+            logger.exception("Activity buffered final send failed — signalling Bot Service to retry")
+            raise
         except Exception:  # pragma: no cover
             logger.exception("Activity buffered final send failed")
 
