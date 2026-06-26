@@ -183,7 +183,7 @@ internal sealed class StopSequencesConverter : JsonConverter<StopSequences>
         }
         else if (value.IsSequences)
         {
-            JsonSerializer.Serialize(writer, value.Sequences, ChatCompletionsJsonContext.Default.IReadOnlyListMessageContentPart);
+            JsonSerializer.Serialize(writer, value.Sequences, ChatCompletionsJsonContext.Default.IListString);
         }
         else
         {
