@@ -1161,6 +1161,32 @@ def test_executor_serialization_lock_is_loop_scoped():
     assert lock_loop_1 is not lock_loop_2
 
 
+def test_workflow_instance_can_be_reused_across_event_loops():
+    """A workflow built once can be re-run across separate event loops.
+
+    Both the per-executor ``asyncio.Lock`` and the runner context's ``asyncio.Queue`` bind to
+    the first event loop they are awaited under. They are re-created lazily under the running
+    loop, so successive ``asyncio.run`` calls on the same workflow instance do not raise
+    "bound to a different event loop".
+    """
+
+    class _Echo(Executor):
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[Any, str]) -> None:
+            await ctx.yield_output(message)
+
+    workflow = WorkflowBuilder(start_executor=_Echo(id="echo")).build()
+
+    # A fresh event loop per run; reuse must not raise "bound to a different event loop".
+    result_1 = asyncio.run(workflow.run("a"))
+    result_2 = asyncio.run(workflow.run("b"))
+
+    assert result_1.get_final_state() == WorkflowRunState.IDLE
+    assert result_2.get_final_state() == WorkflowRunState.IDLE
+    assert result_1.get_outputs() == ["a"]
+    assert result_2.get_outputs() == ["b"]
+
+
 class _StreamingTestAgent(BaseAgent):
     """Test agent that supports both streaming and non-streaming modes."""
 

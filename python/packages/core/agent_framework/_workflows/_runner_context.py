@@ -285,8 +285,13 @@ class InProcRunnerContext:
             checkpoint_storage: Optional storage to enable checkpointing.
         """
         self._messages: dict[str, list[WorkflowMessage]] = {}
-        # Event queue for immediate streaming of events
+        # Event queue for immediate streaming of events.
+        # asyncio.Queue binds to the first event loop it is awaited under, so a context
+        # reused across loops (e.g. successive asyncio.run calls on the same workflow) would
+        # raise "bound to a different event loop". The queue is re-created lazily under the
+        # running loop via _get_event_queue() whenever the loop changes.
         self._event_queue: asyncio.Queue[WorkflowEvent] = asyncio.Queue()
+        self._event_queue_loop: asyncio.AbstractEventLoop | None = None
 
         # An additional storage for pending request info events
         self._pending_request_info_events: dict[str, WorkflowEvent[Any]] = {}
@@ -312,33 +317,48 @@ class InProcRunnerContext:
     async def has_messages(self) -> bool:
         return bool(self._messages)
 
+    def _get_event_queue(self) -> asyncio.Queue[WorkflowEvent]:
+        """Return the event queue bound to the running loop, re-creating it on loop change.
+
+        asyncio.Queue binds to the first event loop it is awaited under. Reusing this context
+        across loops (e.g. successive asyncio.run calls on the same workflow) would otherwise
+        raise "bound to a different event loop". Events left over from a previous run's loop
+        are stale and intentionally dropped, mirroring reset_for_new_run().
+        """
+        loop = asyncio.get_running_loop()
+        if self._event_queue_loop is not loop:
+            self._event_queue = asyncio.Queue()
+            self._event_queue_loop = loop
+        return self._event_queue
+
     async def add_event(self, event: WorkflowEvent) -> None:
         """Add an event to the context immediately.
 
         Events are enqueued so runners can stream them in real time instead of
         waiting for superstep boundaries.
         """
-        await self._event_queue.put(event)
+        await self._get_event_queue().put(event)
 
     async def drain_events(self) -> list[WorkflowEvent]:
         """Drain all currently queued events without blocking for new ones."""
         events: list[WorkflowEvent] = []
+        queue = self._get_event_queue()
         while True:
             try:
-                events.append(self._event_queue.get_nowait())
+                events.append(queue.get_nowait())
             except asyncio.QueueEmpty:
                 break
         return events
 
     async def has_events(self) -> bool:
-        return not self._event_queue.empty()
+        return not self._get_event_queue().empty()
 
     async def next_event(self) -> WorkflowEvent:
         """Wait for and return the next event.
 
         Used by the runner to interleave event emission with ongoing iteration work.
         """
-        return await self._event_queue.get()
+        return await self._get_event_queue().get()
 
     # endregion Messaging and Events
 
@@ -407,8 +427,10 @@ class InProcRunnerContext:
         Runtime checkpoint storage is NOT cleared here as it's managed at the workflow level.
         """
         self._messages.clear()
-        # Clear any pending events (best-effort) by recreating the queue
+        # Clear any pending events (best-effort) by recreating the queue. The loop marker is
+        # reset so the queue rebinds under the running loop on next use.
         self._event_queue = asyncio.Queue()
+        self._event_queue_loop = None
         self._streaming = False  # Reset streaming flag
 
     async def apply_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
