@@ -1,8 +1,20 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+using Aspire.Hosting.AgentFramework;
 using Aspire.Hosting.ApplicationModel;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Aspire.Hosting.AgentFramework.DevUI.UnitTests;
 
@@ -293,6 +305,169 @@ public class DevUIAggregatorHostedServiceTests
 
         return mockBuilder.Object;
     }
+
+    #endregion
+
+    #region Proxy Target Validation Tests
+
+    [Fact]
+    public async Task ProxyRequest_ConversationRoute_ForwardsToConfiguredBackendAsync()
+    {
+        await using var proxy = await ProxyTestContext.StartAsync();
+
+        var response = await proxy.SendAsync("/v1/conversations?limit=10");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var forwarded = Assert.Single(proxy.BackendRequests);
+        Assert.Equal("/v1/conversations", forwarded.Path);
+        Assert.Equal("?limit=10", forwarded.QueryString);
+    }
+
+    [Fact]
+    public async Task ProxyRequest_DevUIRoute_ForwardsToConfiguredBackendAsync()
+    {
+        await using var proxy = await ProxyTestContext.StartAsync();
+
+        var response = await proxy.SendAsync("/devui/index.html?v=1");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var forwarded = Assert.Single(proxy.BackendRequests);
+        Assert.Equal("/devui/index.html", forwarded.Path);
+        Assert.Equal("?v=1", forwarded.QueryString);
+    }
+
+    [Theory]
+    [InlineData("/v1/conversations/../conversations")]
+    [InlineData("/devui/../devui/index.html")]
+    public async Task ProxyRequest_NormalizedPath_ForwardsToConfiguredBackendAsync(string requestPath)
+    {
+        await using var proxy = await ProxyTestContext.StartAsync();
+
+        var response = await proxy.SendAsync(requestPath);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Single(proxy.BackendRequests);
+    }
+
+    #region Proxy Test Helpers
+
+    /// <summary>
+    /// Hosts a stub backend together with a DevUI aggregator wired to it, and exposes an
+    /// <see cref="HttpClient"/> targeting the aggregator so proxied requests can be observed
+    /// on the backend.
+    /// </summary>
+    private sealed class ProxyTestContext : IAsyncDisposable
+    {
+        private readonly WebApplication _backend;
+        private readonly DevUIAggregatorHostedService _aggregator;
+        private readonly HttpClient _client;
+        private readonly List<(string Path, string QueryString)> _backendRequests;
+
+        private ProxyTestContext(
+            WebApplication backend,
+            DevUIAggregatorHostedService aggregator,
+            HttpClient client,
+            List<(string Path, string QueryString)> backendRequests)
+        {
+            this._backend = backend;
+            this._aggregator = aggregator;
+            this._client = client;
+            this._backendRequests = backendRequests;
+        }
+
+        /// <summary>Gets the requests received by the stub backend, in arrival order.</summary>
+        public IReadOnlyList<(string Path, string QueryString)> BackendRequests => this._backendRequests;
+
+        public static async Task<ProxyTestContext> StartAsync()
+        {
+            var backendRequests = new List<(string Path, string QueryString)>();
+            var backend = await StartStubBackendAsync(backendRequests).ConfigureAwait(false);
+
+            var aggregator = await StartAggregatorAsync(GetBaseAddress(backend)).ConfigureAwait(false);
+            var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{aggregator.AllocatedPort}") };
+
+            return new ProxyTestContext(backend, aggregator, client, backendRequests);
+        }
+
+        /// <summary>Sends a GET request to the aggregator using the given relative path.</summary>
+        public Task<HttpResponseMessage> SendAsync(string relativePath)
+            => this._client.GetAsync(new Uri(relativePath, UriKind.Relative));
+
+        public async ValueTask DisposeAsync()
+        {
+            this._client.Dispose();
+            await this._aggregator.DisposeAsync().ConfigureAwait(false);
+            await this._backend.StopAsync().ConfigureAwait(false);
+            await this._backend.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Starts a minimal backend that records the path and query string of every request it receives.
+    /// </summary>
+    private static async Task<WebApplication> StartStubBackendAsync(List<(string Path, string QueryString)> requests)
+    {
+        var builder = WebApplication.CreateSlimBuilder();
+        builder.Logging.ClearProviders();
+
+        var app = builder.Build();
+        app.Urls.Add("http://127.0.0.1:0");
+        app.Map("{**path}", (HttpContext context) =>
+        {
+            requests.Add((context.Request.Path.Value ?? string.Empty, context.Request.QueryString.Value ?? string.Empty));
+            return Results.Json(new { ok = true });
+        });
+
+        await app.StartAsync().ConfigureAwait(false);
+        return app;
+    }
+
+    /// <summary>
+    /// Starts a DevUI aggregator configured with a single backend pointing at <paramref name="backendUrl"/>.
+    /// </summary>
+    private static async Task<DevUIAggregatorHostedService> StartAggregatorAsync(string backendUrl)
+    {
+        var resource = new DevUIResource("test-devui");
+        resource.Annotations.Add(new AgentServiceAnnotation(CreateBackendResource(backendUrl)));
+
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var aggregator = new DevUIAggregatorHostedService(
+            resource,
+            loggerFactory.CreateLogger<DevUIAggregatorHostedService>());
+
+        await aggregator.StartAsync(CancellationToken.None).ConfigureAwait(false);
+        return aggregator;
+    }
+
+    /// <summary>
+    /// Creates a backend resource whose "http" endpoint is allocated to <paramref name="backendUrl"/>.
+    /// </summary>
+    private static TestBackendResource CreateBackendResource(string backendUrl)
+    {
+        var backendUri = new Uri(backendUrl);
+        var resource = new TestBackendResource("test-backend");
+
+        var endpoint = new EndpointAnnotation(
+            System.Net.Sockets.ProtocolType.Tcp,
+            uriScheme: "http",
+            name: "http",
+            port: backendUri.Port,
+            isProxied: false)
+        {
+            TargetHost = backendUri.Host
+        };
+        endpoint.AllocatedEndpoint = new AllocatedEndpoint(endpoint, backendUri.Host, backendUri.Port);
+
+        resource.Annotations.Add(endpoint);
+        return resource;
+    }
+
+    private static string GetBaseAddress(WebApplication app)
+        => app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First();
+
+    private sealed class TestBackendResource(string name) : Resource(name), IResourceWithEndpoints;
+
+    #endregion
 
     #endregion
 }

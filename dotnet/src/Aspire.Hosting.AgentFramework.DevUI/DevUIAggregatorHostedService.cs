@@ -672,7 +672,14 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         var httpClientFactory = context.RequestServices.GetRequiredService<IHttpClientFactory>();
         using var client = httpClientFactory.CreateClient("devui-proxy");
 
-        var targetUri = new Uri(new Uri(backendUrl), path);
+        var targetUri = ValidateProxyTarget(backendUrl, path);
+        if (targetUri is null)
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            await context.Response.WriteAsync("Invalid proxy target.", context.RequestAborted).ConfigureAwait(false);
+            return;
+        }
+
         using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method), targetUri);
 
         foreach (var header in context.Request.Headers)
@@ -775,5 +782,25 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             || headerName.Equals("Connection", StringComparison.OrdinalIgnoreCase)
             || headerName.Equals("Keep-Alive", StringComparison.OrdinalIgnoreCase)
             || headerName.Equals("Host", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Validates that constructing a proxy target URI from <paramref name="backendUrl"/> and
+    /// <paramref name="path"/> does not redirect the request to an unintended host.
+    /// Returns the validated <see cref="Uri"/> if safe, or <c>null</c> if the target is invalid.
+    /// </summary>
+    private static Uri? ValidateProxyTarget(string backendUrl, string path)
+    {
+        var baseUri = new Uri(backendUrl);
+        var targetUri = new Uri(baseUri, path);
+
+        if (!string.Equals(targetUri.Host, baseUri.Host, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(targetUri.Scheme, baseUri.Scheme, StringComparison.OrdinalIgnoreCase) ||
+            targetUri.Port != baseUri.Port)
+        {
+            return null;
+        }
+
+        return targetUri;
     }
 }
