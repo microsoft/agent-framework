@@ -54,8 +54,11 @@ await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Write a ve
     // Output each update.
     Console.Write(update.Text);
 
-    // Track last update.
-    lastReceivedUpdate = update;
+    // Track the last update that carries a resumable continuation token.
+    if (update.ContinuationToken is not null)
+    {
+        lastReceivedUpdate = update;
+    }
 
     // Simulate connection loss after first piece of content received.
     if (update.Text.Length > 0)
