@@ -41,6 +41,7 @@ class CapturingRunnerContext(RunnerContext):
         self._workflow_id: str | None = None
         self._streaming: bool = False
         self._yield_output_classifier: YieldOutputClassifier = lambda _executor_id: "output"
+        self._host_metadata: dict[str, Any] | None = None
 
     # -- Messaging ------------------------------------------------------------
 
@@ -120,6 +121,25 @@ class CapturingRunnerContext(RunnerContext):
 
     def is_streaming(self) -> bool:
         return self._streaming
+
+    # -- Host metadata --------------------------------------------------------
+
+    @property
+    def host_metadata(self) -> dict[str, Any] | None:
+        """Orchestration metadata injected by the durable host, or ``None`` in-process.
+
+        The durable orchestrator populates this from its own context (e.g. the
+        orchestration ``instance_id`` and ``workflow_name``) so an executor can
+        address the running orchestration -- for example to build a human-in-the-loop
+        respond URL and notify a reviewer -- without the caller threading those ids by
+        hand. It is ``None`` when the same executor runs in-process (no durable host),
+        so host-specific helpers can degrade gracefully.
+        """
+        return self._host_metadata
+
+    def set_host_metadata(self, metadata: dict[str, Any] | None) -> None:
+        """Set the orchestration metadata for this activity execution."""
+        self._host_metadata = metadata
 
     # -- Yield-output classification -------------------------------------------
 

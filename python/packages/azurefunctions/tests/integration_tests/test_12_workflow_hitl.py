@@ -20,8 +20,11 @@ Usage:
 """
 
 import time
+import uuid
 
 import pytest
+
+from agent_framework_azurefunctions import WorkflowHitlContext
 
 # Module-level markers - applied to all tests in this file
 pytestmark = [
@@ -213,6 +216,68 @@ class TestWorkflowHITL:
         # Wait for completion
         final_status = self.helper.wait_for_orchestration(data["statusQueryGetUri"])
         assert final_status["runtimeStatus"] == "Completed"
+
+    def test_hitl_notify_respond_url_matches_helper(self) -> None:
+        """The respond URL WorkflowHitlContext builds equals the one the server accepts.
+
+        This is the core guarantee of the in-workflow notify pattern: the URL an
+        executor builds (via ``WorkflowHitlContext`` -- the same one ``NotifyExecutor``
+        would email a reviewer) is byte-for-byte the canonical respond URL the status
+        endpoint exposes, and POSTing to it actually resumes the run.
+        """
+        payload = {
+            "content_id": "article-test-005",
+            "title": "Sustainable Gardening Basics",
+            "body": (
+                "Composting kitchen scraps enriches soil naturally and reduces waste. "
+                "Rotating crops each season helps prevent nutrient depletion."
+            ),
+            "author": "Green Thumb",
+        }
+
+        # Start orchestration
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", payload)
+        assert response.status_code == 202
+        data = response.json()
+        instance_id = data["instanceId"]
+
+        # Wait for the workflow to reach the HITL pause point
+        status = self._wait_for_hitl_request(instance_id)
+        pending_requests = status.get("pendingHumanInputRequests", [])
+        assert len(pending_requests) > 0, "Expected pending HITL request"
+        pending = pending_requests[0]
+        request_id = pending["requestId"]
+
+        # The review executor now generates an explicit uuid4 and passes it to
+        # request_info, so the pending id round-trips as a valid UUID (not an opaque
+        # framework default).
+        uuid.UUID(request_id)  # raises ValueError if not a valid UUID
+
+        # The request originates in the executor that called request_info.
+        assert pending.get("sourceExecutor") == "human_review_executor"
+
+        # Build the respond URL the same way an in-workflow executor would, via the
+        # public helper, pointing it at this app's base URL. It must equal the
+        # server-exposed respondUrl exactly -- i.e. the link NotifyExecutor emails is
+        # the one the /respond endpoint honors.
+        hitl = WorkflowHitlContext(
+            instance_id=instance_id,
+            workflow_name=WORKFLOW_NAME,
+            base_url_override=self.base_url,
+        )
+        helper_url = hitl.build_respond_url(request_id)
+        assert helper_url == pending["respondUrl"]
+
+        # Responding via the helper-built URL resumes the workflow to completion.
+        approval_response = self.helper.post_json(
+            helper_url,
+            {"approved": True, "reviewer_notes": "Looks good."},
+        )
+        assert approval_response.status_code == 200
+
+        final_status = self.helper.wait_for_orchestration(data["statusQueryGetUri"])
+        assert final_status["runtimeStatus"] == "Completed"
+        assert "output" in final_status
 
 
 if __name__ == "__main__":

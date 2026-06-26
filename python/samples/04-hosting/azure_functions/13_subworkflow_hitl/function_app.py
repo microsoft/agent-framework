@@ -40,6 +40,7 @@ Prerequisites:
 
 import logging
 from dataclasses import dataclass
+from uuid import uuid4
 
 from agent_framework import (
     Executor,
@@ -50,7 +51,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from agent_framework_azurefunctions import AgentFunctionApp
+from agent_framework_azurefunctions import AgentFunctionApp, WorkflowHitlContext
 from pydantic import BaseModel
 from typing_extensions import Never
 
@@ -100,6 +101,19 @@ class ModerationDecision:
     reviewer_notes: str
 
 
+@dataclass
+class HumanReviewNotification:
+    """Payload handed to the notifier so it can build the (qualified) respond URL.
+
+    Carries the ``request_id`` the review gate passed to ``ctx.request_info`` so the
+    notifier addresses the exact pending request the (nested) workflow waits on.
+    """
+
+    request_id: str
+    content_id: str
+    prompt: str
+
+
 # ============================================================================
 # Inner workflow (contains the HITL pause)
 # ============================================================================
@@ -112,7 +126,9 @@ class ReviewGateExecutor(Executor):
         super().__init__(id="review_gate")
 
     @handler
-    async def request_review(self, submission: ContentSubmission, ctx: WorkflowContext) -> None:
+    async def request_review(
+        self, submission: ContentSubmission, ctx: WorkflowContext[HumanReviewNotification]
+    ) -> None:
         prompt = (
             f"Please review the following content for publication:\n\n"
             f"Title: {submission.title}\n"
@@ -125,9 +141,29 @@ class ReviewGateExecutor(Executor):
             body=submission.body,
             prompt=prompt,
         )
+        # Generate the request id up front so we can notify the reviewer *and* pause on
+        # the same id. The notification is sent to a downstream executor, so only this
+        # activity's committed id ever reaches the notifier (retries notify no one).
+        request_id = str(uuid4())
+
+        # Side-branch: hand the request id to the notifier so it can build the respond
+        # URL. This runs before the (inner) workflow pauses.
+        await ctx.send_message(
+            HumanReviewNotification(
+                request_id=request_id,
+                content_id=submission.content_id,
+                prompt=prompt,
+            ),
+            target_id="notify",
+        )
+
         # Pause the (inner) workflow and wait for a human response. On the durable
         # host this pauses the child orchestration running this inner workflow.
-        await ctx.request_info(request_data=approval_request, response_type=HumanApprovalResponse)
+        await ctx.request_info(
+            request_data=approval_request,
+            response_type=HumanApprovalResponse,
+            request_id=request_id,
+        )
 
     @response_handler
     async def handle_approval_response(
@@ -152,10 +188,57 @@ class ReviewGateExecutor(Executor):
         )
 
 
+class NotifyExecutor(Executor):
+    """Inner-workflow notifier that builds the qualified respond URL for the reviewer.
+
+    Runs inside the nested ``human_review`` child orchestration, so the respond URL it
+    builds via :class:`WorkflowHitlContext` targets the **top-level** instance with a
+    qualified request id (``review_sub~0~{requestId}``) -- the address context is
+    propagated down from the parent, so this executor needs no knowledge of how it is
+    embedded.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(id="notify")
+
+    @handler
+    async def notify(self, notification: HumanReviewNotification, ctx: WorkflowContext) -> None:
+        hitl = WorkflowHitlContext.from_context(ctx)
+        if hitl is None:
+            logger.info(
+                "Not on the durable host; skipping reviewer notification for content %s.",
+                notification.content_id,
+            )
+            return
+
+        try:
+            respond_url = hitl.build_respond_url(notification.request_id)
+        except RuntimeError:
+            # No base URL configured (WEBSITE_HOSTNAME unset and no override). Notifying
+            # is best-effort -- the request is still reachable via the status endpoint --
+            # so warn and continue rather than failing the workflow.
+            logger.warning(
+                "Cannot build a respond URL (set WEBSITE_HOSTNAME). Skipping reviewer notification for content %s.",
+                notification.content_id,
+            )
+            return
+
+        # In a real application, email/Teams this URL to the reviewer. They POST
+        # {"approved": bool, "reviewer_notes": str} to it to resume the run.
+        logger.info(
+            "Human review needed for content %s.\n  Respond at: %s",
+            notification.content_id,
+            respond_url,
+        )
+
+
 def create_inner_workflow() -> Workflow:
-    """Build the inner ``human_review`` workflow (a single HITL gate)."""
+    """Build the inner ``human_review`` workflow (HITL gate + reviewer notifier)."""
     review_gate = ReviewGateExecutor()
-    return WorkflowBuilder(name=INNER_WORKFLOW_NAME, start_executor=review_gate).build()
+    notify = NotifyExecutor()
+    # Side-branch: review_gate -> notify builds the qualified respond URL in the same
+    # superstep that raises the request, before the inner workflow pauses.
+    return WorkflowBuilder(name=INNER_WORKFLOW_NAME, start_executor=review_gate).add_edge(review_gate, notify).build()
 
 
 # ============================================================================

@@ -18,12 +18,16 @@ from unittest.mock import Mock
 
 from agent_framework import WorkflowExecutor
 
+from agent_framework_durabletask._workflows.naming import qualify_subworkflow_request_id
 from agent_framework_durabletask._workflows.orchestrator import (
+    SUBWORKFLOW_ADDRESS_KEY,
     SUBWORKFLOW_INPUT_KEY,
     TaskType,
     _coerce_initial_input,
+    _prepare_all_tasks,
     _prepare_subworkflow_task,
     _process_subworkflow_result,
+    _resolve_workflow_address,
     _try_unwrap_subworkflow_input,
     _unpack_subworkflow_result,
 )
@@ -57,6 +61,14 @@ def _result_envelope(outputs: list[Any], events: list[dict[str, Any]]) -> dict[s
     return {SUBWORKFLOW_RESULT_KEY: True, "outputs": outputs, "events": events}
 
 
+# A representative child address marker (root instance/workflow + one-hop path prefix).
+_CHILD_ADDRESS = {
+    "root_instance_id": "root-instance",
+    "root_workflow_name": "outer_wf",
+    "request_path_prefix": "sub-node~0~",
+}
+
+
 class TestPrepareSubworkflowTask:
     """Dispatch of a ``WorkflowExecutor`` node as a child orchestration."""
 
@@ -65,7 +77,7 @@ class TestPrepareSubworkflowTask:
         ctx.call_sub_orchestrator.return_value = "task-sentinel"
         executor = _subworkflow_executor("sub-node", "inner_wf")
 
-        task = _prepare_subworkflow_task(ctx, executor, "hello", "parent::sub-node::0")
+        task = _prepare_subworkflow_task(ctx, executor, "hello", "parent::sub-node::0", _CHILD_ADDRESS)
 
         assert task == "task-sentinel"
         ctx.call_sub_orchestrator.assert_called_once()
@@ -77,12 +89,14 @@ class TestPrepareSubworkflowTask:
         ctx = Mock()
         executor = _subworkflow_executor("sub-node", "inner_wf")
 
-        _prepare_subworkflow_task(ctx, executor, "payload", "child-id")
+        _prepare_subworkflow_task(ctx, executor, "payload", "child-id", _CHILD_ADDRESS)
 
         args, _ = ctx.call_sub_orchestrator.call_args
         child_input = args[1]
         # The wrapped payload round-trips back to the original message.
         assert deserialize_value(child_input[SUBWORKFLOW_INPUT_KEY]) == "payload"
+        # The address marker rides alongside so the child can build respond URLs.
+        assert child_input[SUBWORKFLOW_ADDRESS_KEY] == _CHILD_ADDRESS
 
 
 class TestProcessSubworkflowResult:
@@ -251,3 +265,108 @@ class TestSubworkflowInputUnwrap:
         marker = {SUBWORKFLOW_INPUT_KEY: "inner-message"}
 
         assert _coerce_initial_input(workflow, marker) == "inner-message"
+
+
+class TestResolveWorkflowAddress:
+    """Derivation of an orchestration's HITL address (root vs nested child)."""
+
+    def test_top_level_is_its_own_root_with_empty_prefix(self) -> None:
+        addr = _resolve_workflow_address("plain input", "top-instance", "outer_wf")
+        assert addr == {
+            "root_instance_id": "top-instance",
+            "root_workflow_name": "outer_wf",
+            "request_path_prefix": "",
+        }
+
+    def test_child_inherits_address_from_marker(self) -> None:
+        marker = {
+            SUBWORKFLOW_INPUT_KEY: "x",
+            SUBWORKFLOW_ADDRESS_KEY: {
+                "root_instance_id": "root",
+                "root_workflow_name": "outer_wf",
+                "request_path_prefix": "review_sub~0~",
+            },
+        }
+        # ctx.instance_id ("child-id") is ignored in favour of the marker's root values.
+        addr = _resolve_workflow_address(marker, "child-id", "human_review")
+        assert addr == {
+            "root_instance_id": "root",
+            "root_workflow_name": "outer_wf",
+            "request_path_prefix": "review_sub~0~",
+        }
+
+    def test_malformed_address_marker_falls_back_to_self(self) -> None:
+        # A non-dict / incomplete address marker is ignored (treated as top-level).
+        marker = {SUBWORKFLOW_ADDRESS_KEY: {"root_instance_id": 123}}
+        addr = _resolve_workflow_address(marker, "self-id", "wf")
+        assert addr == {"root_instance_id": "self-id", "root_workflow_name": "wf", "request_path_prefix": ""}
+
+
+class TestSubworkflowAddressPropagation:
+    """The dispatch-side request-path prefix must match the read-side qualified id.
+
+    The orchestrator builds each child's prefix from a *per-executor* ordinal; the
+    status/respond read path qualifies a nested request by ``enumerate()``-ing the
+    ``subworkflows[executorId]`` list. These two indexes must agree or an emailed
+    respond URL would resolve to the wrong child (or 404). This guards that agreement
+    for the tricky case: one node fanning out to several children in one superstep.
+    """
+
+    def _dispatch(self, address: dict[str, str], message_count: int) -> tuple[list[dict[str, str]], list[str]]:
+        """Run _prepare_all_tasks for one WorkflowExecutor node fanning out N children.
+
+        Returns (child_addresses, child_instance_ids) in dispatch order.
+        """
+        node_id = "review_sub"
+        executor = _subworkflow_executor(node_id, "human_review")
+        workflow = Mock()
+        workflow.executors = {node_id: executor}
+        workflow.name = "moderation_pipeline"
+
+        captured: list[dict[str, str]] = []
+
+        def _call_sub(name: str, input_: dict[str, object], *, instance_id: str) -> str:  # noqa: ARG001
+            captured.append(input_[SUBWORKFLOW_ADDRESS_KEY])  # type: ignore[arg-type]
+            return f"task::{instance_id}"
+
+        ctx = Mock()
+        ctx.instance_id = address["root_instance_id"]
+        ctx.call_sub_orchestrator.side_effect = _call_sub
+
+        pending = {node_id: [(f"msg-{i}", "src") for i in range(message_count)]}
+        _all_tasks, task_metadata, _remaining = _prepare_all_tasks(ctx, workflow, pending, None, [0], address)
+        child_ids = [m.child_instance_id for m in task_metadata if m.task_type == TaskType.SUBWORKFLOW]
+        assert all(cid is not None for cid in child_ids)
+        return captured, [cid for cid in child_ids if cid is not None]
+
+    def test_fanout_prefixes_match_readside_qualification(self) -> None:
+        top = {"root_instance_id": "root", "root_workflow_name": "moderation_pipeline", "request_path_prefix": ""}
+        addresses, child_ids = self._dispatch(top, message_count=3)
+
+        # Read side: subworkflows["review_sub"] = [child0, child1, child2]; a nested
+        # request from child ``ordinal`` is qualified as review_sub~{ordinal}~{bare}.
+        bare = "req-xyz"
+        for ordinal, child_address in enumerate(addresses):
+            dispatch_qualified = f"{child_address['request_path_prefix']}{bare}"
+            readside_qualified = qualify_subworkflow_request_id("review_sub", ordinal, bare)
+            assert dispatch_qualified == readside_qualified
+            # Root identity is carried through unchanged at every child.
+            assert child_address["root_instance_id"] == "root"
+            assert child_address["root_workflow_name"] == "moderation_pipeline"
+
+        # Child instance ids use the *global* counter (distinct from the ordinal).
+        assert child_ids == ["root::review_sub::0", "root::review_sub::1", "root::review_sub::2"]
+
+    def test_prefix_accumulates_when_already_nested(self) -> None:
+        # Simulate dispatching from a workflow that is itself one level deep.
+        nested = {
+            "root_instance_id": "root",
+            "root_workflow_name": "moderation_pipeline",
+            "request_path_prefix": "outer_node~2~",
+        }
+        addresses, _child_ids = self._dispatch(nested, message_count=2)
+
+        assert [a["request_path_prefix"] for a in addresses] == [
+            "outer_node~2~review_sub~0~",
+            "outer_node~2~review_sub~1~",
+        ]

@@ -50,8 +50,14 @@ from agent_framework._workflows._edge import (
 from agent_framework._workflows._state import State
 
 from .context import WorkflowOrchestrationContext
-from .naming import workflow_executor_activity_name, workflow_orchestrator_name, workflow_scoped_executor_id
+from .naming import (
+    qualify_subworkflow_request_id,
+    workflow_executor_activity_name,
+    workflow_orchestrator_name,
+    workflow_scoped_executor_id,
+)
 from .serialization import (
+    SUBWORKFLOW_ADDRESS_KEY,
     SUBWORKFLOW_INPUT_KEY,
     SUBWORKFLOW_RESULT_KEY,
     deserialize_value,
@@ -261,6 +267,7 @@ def _prepare_activity_task(
     source_executor_id: str,
     shared_state_snapshot: dict[str, Any] | None,
     workflow_name: str,
+    address: dict[str, str],
 ) -> Any:
     """Prepare an activity task for execution via the context adapter.
 
@@ -273,6 +280,17 @@ def _prepare_activity_task(
         "message": serialize_value(message),
         "shared_state_snapshot": shared_state_snapshot,
         "source_executor_ids": [source_executor_id],
+        # host_context addresses the *root* (HTTP-routable) orchestration so an executor
+        # can build a HITL respond URL (see CapturingRunnerContext.host_metadata):
+        # instance_id / workflow_name name the top-level instance, and
+        # request_path_prefix is the accumulated ``{executor}~{ordinal}~`` hops from the
+        # root down to this workflow level. For a top-level workflow the prefix is empty,
+        # so this reduces to addressing the instance directly.
+        "host_context": {
+            "instance_id": address["root_instance_id"],
+            "workflow_name": address["root_workflow_name"],
+            "request_path_prefix": address["request_path_prefix"],
+        },
     }
     activity_input_json = json.dumps(activity_input)
     activity_name = workflow_executor_activity_name(workflow_name, executor_id)
@@ -284,16 +302,23 @@ def _prepare_subworkflow_task(
     executor: WorkflowExecutor,
     message: Any,
     child_instance_id: str,
+    child_address: dict[str, str],
 ) -> Any:
     """Prepare a child-orchestration task that runs a ``WorkflowExecutor``'s inner workflow.
 
     The inner workflow runs as its own durable orchestration (``dafx-{innerName}``),
     so its executors are independently durable/observable. The node's message is
     serialized and wrapped in a marker so the child orchestrator reconstructs the
-    original typed object (trusted internal input).
+    original typed object (trusted internal input). A sibling address marker carries
+    the root instance / workflow name and this child's request-path prefix, so an
+    executor inside the child can build a respond URL that targets the top-level
+    instance with a qualified request id.
     """
     inner_orchestration_name = workflow_orchestrator_name(executor.workflow.name)
-    child_input = {SUBWORKFLOW_INPUT_KEY: serialize_value(message)}
+    child_input = {
+        SUBWORKFLOW_INPUT_KEY: serialize_value(message),
+        SUBWORKFLOW_ADDRESS_KEY: child_address,
+    }
     return ctx.call_sub_orchestrator(inner_orchestration_name, child_input, instance_id=child_instance_id)
 
 
@@ -637,6 +662,46 @@ def _try_unwrap_subworkflow_input(raw_value: Any) -> tuple[bool, Any]:
     return False, None
 
 
+def _resolve_workflow_address(initial_message: Any, instance_id: str, workflow_name: str) -> dict[str, str]:
+    """Resolve this orchestration's HITL address context.
+
+    Returns ``{root_instance_id, root_workflow_name, request_path_prefix}`` -- the
+    values an executor needs to build a respond URL that targets the addressable
+    top-level instance with a (possibly qualified) request id:
+
+    * A **child** orchestration receives its address from the parent in the
+      :data:`SUBWORKFLOW_ADDRESS_KEY` marker (the root instance/workflow plus the
+      ``{executor}~{ordinal}~`` path prefix down to this level), since its own
+      ``ctx.instance_id`` is a non-addressable child id.
+    * A **top-level** workflow has no such marker (it is stripped from untrusted input
+      at the host boundary by :func:`strip_subworkflow_markers`), so it is its own root
+      with an empty prefix.
+    """
+    if isinstance(initial_message, dict):
+        marker = cast("dict[str, Any]", initial_message)
+        addr = marker.get(SUBWORKFLOW_ADDRESS_KEY)
+        if isinstance(addr, dict):
+            typed = cast("dict[str, Any]", addr)
+            root_instance_id = typed.get("root_instance_id")
+            root_workflow_name = typed.get("root_workflow_name")
+            request_path_prefix = typed.get("request_path_prefix")
+            if (
+                isinstance(root_instance_id, str)
+                and isinstance(root_workflow_name, str)
+                and isinstance(request_path_prefix, str)
+            ):
+                return {
+                    "root_instance_id": root_instance_id,
+                    "root_workflow_name": root_workflow_name,
+                    "request_path_prefix": request_path_prefix,
+                }
+    return {
+        "root_instance_id": instance_id,
+        "root_workflow_name": workflow_name,
+        "request_path_prefix": "",
+    }
+
+
 def _coerce_initial_input(workflow: Workflow, raw_value: Any) -> Any:
     """Coerce the client's initial workflow input to the start executor's type.
 
@@ -779,6 +844,7 @@ def _prepare_all_tasks(
     pending_messages: dict[str, list[tuple[Any, str]]],
     shared_state: dict[str, Any] | None,
     subworkflow_counter: list[int],
+    address: dict[str, str],
 ) -> tuple[list[Any], list[TaskMetadata], list[tuple[str, Any, str]]]:
     """Prepare all pending tasks for parallel execution.
 
@@ -797,12 +863,24 @@ def _prepare_all_tasks(
         shared_state: Optional dict for cross-executor state sharing.
         subworkflow_counter: A single-element mutable counter, persistent across
             supersteps, used to derive unique deterministic child instance ids.
+        address: This orchestration's HITL address context
+            (``{root_instance_id, root_workflow_name, request_path_prefix}``). Surfaced
+            to activity executors via ``host_context`` and extended by one
+            ``{executor}~{ordinal}~`` hop for each dispatched sub-workflow child.
     """
     all_tasks: list[Any] = []
     task_metadata_list: list[TaskMetadata] = []
     remaining_agent_messages: list[tuple[str, Any, str]] = []
 
     agent_messages_by_executor: dict[str, list[tuple[str, Any, str]]] = defaultdict(list)
+
+    # Per-executor, per-superstep ordinal for sub-workflow dispatch. This must match the
+    # read side's enumerate() index into the custom-status ``subworkflows[executorId]``
+    # list (built in this same dispatch order), so a nested pending request resolves
+    # back to the right child. It is deliberately distinct from ``subworkflow_counter``
+    # (a global, cross-superstep counter that only guarantees child-instance-id
+    # uniqueness, not addressing position).
+    per_executor_sub_ordinal: dict[str, int] = defaultdict(int)
 
     for executor_id, messages_with_sources in pending_messages.items():
         executor = workflow.executors[executor_id]
@@ -819,8 +897,19 @@ def _prepare_all_tasks(
                 # are stable across orchestration replay.
                 child_instance_id = f"{ctx.instance_id}::{executor_id}::{subworkflow_counter[0]}"
                 subworkflow_counter[0] += 1
+                # Extend this orchestration's request-path prefix by one hop
+                # (``{executor}~{ordinal}~``) so an executor inside the child builds a
+                # respond URL qualified all the way back to the root instance.
+                ordinal = per_executor_sub_ordinal[executor_id]
+                per_executor_sub_ordinal[executor_id] += 1
+                child_address = {
+                    "root_instance_id": address["root_instance_id"],
+                    "root_workflow_name": address["root_workflow_name"],
+                    "request_path_prefix": address["request_path_prefix"]
+                    + qualify_subworkflow_request_id(executor_id, ordinal, ""),
+                }
                 logger.debug("Preparing sub-workflow task: %s -> %s", executor_id, child_instance_id)
-                task = _prepare_subworkflow_task(ctx, executor, message, child_instance_id)
+                task = _prepare_subworkflow_task(ctx, executor, message, child_instance_id, child_address)
                 all_tasks.append(task)
                 task_metadata_list.append(
                     TaskMetadata(
@@ -834,7 +923,7 @@ def _prepare_all_tasks(
             else:
                 logger.debug("Preparing activity task: %s", executor_id)
                 task = _prepare_activity_task(
-                    ctx, executor_id, message, source_executor_id, shared_state, workflow.name
+                    ctx, executor_id, message, source_executor_id, shared_state, workflow.name, address
                 )
                 all_tasks.append(task)
                 task_metadata_list.append(
@@ -919,6 +1008,13 @@ def run_workflow_orchestrator(
     # external client output path is unchanged.
     is_subworkflow = isinstance(initial_message, dict) and SUBWORKFLOW_INPUT_KEY in initial_message
 
+    # Resolve the HITL address context once: a child orchestration inherits the root
+    # instance/workflow + path prefix from the parent's address marker; a top-level
+    # workflow is its own root with an empty prefix. Threaded into task dispatch so an
+    # executor at any depth can build a respond URL targeting the addressable top-level
+    # instance.
+    workflow_address = _resolve_workflow_address(initial_message, ctx.instance_id, workflow.name)
+
     # Monotonic, replay-stable counter for deriving child orchestration instance ids;
     # persists across supersteps so repeated sub-workflow invocations never collide.
     subworkflow_counter: list[int] = [0]
@@ -992,7 +1088,7 @@ def run_workflow_orchestrator(
 
         # Phase 1: Prepare all tasks
         all_tasks, task_metadata_list, remaining_agent_messages = _prepare_all_tasks(
-            ctx, workflow, pending_messages, shared_state, subworkflow_counter
+            ctx, workflow, pending_messages, shared_state, subworkflow_counter, workflow_address
         )
 
         # Agents and sub-workflows bypass the per-executor activity, so synthesize their
