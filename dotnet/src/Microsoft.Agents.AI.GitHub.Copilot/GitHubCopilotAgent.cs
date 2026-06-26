@@ -559,7 +559,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             return sessionConfig;
         }
 
-        List<string> approvalRequiredToolNames = [];
+        HashSet<string> approvalRequiredToolNames = new(StringComparer.Ordinal);
         foreach (AIFunctionDeclaration tool in tools)
         {
             if (tool is AIFunction function && function.GetService<ApprovalRequiredAIFunction>() is not null)
@@ -586,8 +586,6 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             return sessionConfig;
         }
 
-        HashSet<string> approvalRequiredNames = new(approvalRequiredToolNames, StringComparer.Ordinal);
-
         SessionConfig configured = sessionConfig.Clone();
 
         // SessionConfig.Clone() shallow-copies Hooks, so build a fresh SessionHooks (preserving any other hooks)
@@ -595,7 +593,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         SessionHooks hooks = CloneHooks(configured.Hooks);
         hooks.OnPreToolUse = (input, invocation) =>
             Task.FromResult(
-                approvalRequiredNames.Contains(input.ToolName)
+                approvalRequiredToolNames.Contains(input.ToolName)
                     ? new PreToolUseHookOutput
                     {
                         PermissionDecision = "ask",
