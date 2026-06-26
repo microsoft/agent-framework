@@ -2802,7 +2802,7 @@ class TestSkillsProviderEdgeCases:
         assert result.startswith("Error:")
         assert "empty" in result
 
-    async def test_read_callable_resource_exception_returns_error(self) -> None:
+    async def test_read_callable_resource_exception_propagates(self) -> None:
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="A skill."), instructions="Body")
 
         @skill.resource
@@ -2811,11 +2811,10 @@ class TestSkillsProviderEdgeCases:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_raw_skills(provider), "my-skill", "exploding_resource")
-        assert result.startswith("Error:")
-        assert "Failed to read resource" in result
+        with pytest.raises(RuntimeError, match="boom"):
+            await provider._read_skill_resource(_raw_skills(provider), "my-skill", "exploding_resource")
 
-    async def test_read_async_callable_resource_exception_returns_error(self) -> None:
+    async def test_read_async_callable_resource_exception_propagates(self) -> None:
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="A skill."), instructions="Body")
 
         @skill.resource
@@ -2824,8 +2823,8 @@ class TestSkillsProviderEdgeCases:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_raw_skills(provider), "my-skill", "async_exploding")
-        assert result.startswith("Error:")
+        with pytest.raises(ValueError, match="async boom"):
+            await provider._read_skill_resource(_raw_skills(provider), "my-skill", "async_exploding")
 
     async def test_load_code_skill_xml_escapes_metadata(self) -> None:
         skill = InlineSkill(
@@ -3588,10 +3587,9 @@ class TestSkillsProviderFactories:
         result = await run_tool.func(skill_name="my-skill", script_name="code-s")
         assert result == "ok"
 
-        # File script without runner returns error
-        result = await run_tool.func(skill_name="my-skill", script_name="file-s")
-        assert "Error" in result
-        assert "Failed to run" in result
+        # File script without runner propagates an error by default
+        with pytest.raises(TypeError, match="requires a FileSkill"):
+            await run_tool.func(skill_name="my-skill", script_name="file-s")
 
     async def test_async_code_script_runs_directly(self) -> None:
         async def async_func(x: int = 0) -> str:
@@ -3646,10 +3644,9 @@ class TestSkillsProviderFactories:
         result = await run_tool.func(skill_name="my-skill", script_name="code-s")
         assert result == "ok"
 
-        # Path+function script without runner returns error
-        result = await run_tool.func(skill_name="my-skill", script_name="path-s")
-        assert "Error" in result
-        assert "script_runner" in result or "Failed to run" in result
+        # Path+function script without runner propagates an error by default
+        with pytest.raises(TypeError, match="requires a FileSkill"):
+            await run_tool.func(skill_name="my-skill", script_name="path-s")
 
     async def test_run_skill_script_error_on_missing_skill(self) -> None:
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
@@ -3717,10 +3714,10 @@ class TestSkillsProviderFactories:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._run_skill_script(
-            _raw_skills(provider), "my-skill", "process", args={"mode": "llm-value"}, mode="runtime-value"
-        )
-        assert "Error" in result
+        with pytest.raises(TypeError):
+            await provider._run_skill_script(
+                _raw_skills(provider), "my-skill", "process", args={"mode": "llm-value"}, mode="runtime-value"
+            )
 
     async def test_run_skill_script_error_on_missing_script(self) -> None:
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
@@ -3804,8 +3801,8 @@ class TestSkillsProviderFactories:
         for t in other_tools:
             assert t.approval_mode == "never_require"
 
-    async def test_code_script_exception_returns_error(self) -> None:
-        """A code script function that raises should return an error string."""
+    async def test_code_script_exception_propagates_by_default(self) -> None:
+        """A code script function that raises should propagate by default."""
 
         def failing_script() -> str:
             raise RuntimeError("Something went wrong")
@@ -3816,10 +3813,23 @@ class TestSkillsProviderFactories:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
+        with pytest.raises(RuntimeError, match="Something went wrong"):
+            await run_tool.func(skill_name="my-skill", script_name="boom")
+
+    async def test_code_script_exception_includes_details_when_enabled(self) -> None:
+        """When include_detailed_errors=True, the script error string includes the exception message."""
+
+        def failing_script() -> str:
+            raise RuntimeError("Something went wrong")
+
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
+        skill._scripts.append(InlineSkillScript(name="boom", function=failing_script))
+
+        provider = SkillsProvider([skill], include_detailed_errors=True)
+        await _init_provider(provider)
+        run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
         result = await run_tool.func(skill_name="my-skill", script_name="boom")
-        assert "Error" in result
-        assert "boom" in result
-        assert "Something went wrong" not in result
+        assert result == "Error: Failed to run script 'boom' in skill 'my-skill'. Exception: Something went wrong"
 
     async def test_custom_template_without_runner_placeholder_raises(self) -> None:
         """Providers accept custom templates without {runner_instructions}."""
@@ -5799,17 +5809,16 @@ class TestArrayStyleScriptArgs:
         assert result == "list_result"
         assert captured["args"] == ["input.docx", "--verbose"]
 
-    async def test_run_skill_script_inline_with_list_args_returns_error(self) -> None:
-        """Inline script called with list args through provider returns error (TypeError caught)."""
+    async def test_run_skill_script_inline_with_list_args_propagates_error(self) -> None:
+        """Inline script called with list args through provider propagates the TypeError by default."""
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
         skill._scripts.append(InlineSkillScript(name="s1", function=lambda: "ok"))
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
-        result = await run_tool.func(skill_name="my-skill", script_name="s1", args=["arg1"])
-        assert "Error" in result
-        assert "Failed to run" in result
+        with pytest.raises(TypeError, match="requires keyword arguments"):
+            await run_tool.func(skill_name="my-skill", script_name="s1", args=["arg1"])
 
     async def test_file_skill_content_includes_scripts_block(self) -> None:
         """FileSkill.content appends an <available_scripts> block when scripts are present."""
