@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- Bound the live workflow status to a trailing event window so multi-executor workflows with large typed outputs no longer overflow the Durable Functions 16&#160;KB custom status cap ([#5745](https://github.com/microsoft/agent-framework/issues/5745))
+- Bound the live workflow status to a trailing event window so multi-executor workflows with large typed outputs no longer overflow the Durable Functions 16&#160;KB custom status cap ([#6775](https://github.com/microsoft/agent-framework/pull/6775))
 - Fix issue with resuming checkpoint after package version upgrade ([#6670](https://github.com/microsoft/agent-framework/pull/6670))
 - Bind MCP threadId to the current agent and guard cross-agent session dispatch ([#6531](https://github.com/microsoft/agent-framework/pull/6531))
 - Added support for durable workflows ([#4436](https://github.com/microsoft/agent-framework/pull/4436))

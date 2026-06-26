@@ -576,6 +576,37 @@ internal sealed class DurableWorkflowRunner
     }
 
     /// <summary>
+    /// Re-windows an already-published live status in place so its events fit the custom status budget
+    /// alongside the current <see cref="DurableWorkflowLiveStatus.PendingEvents"/>.
+    /// </summary>
+    /// <remarks>
+    /// Used by code paths that mutate <see cref="DurableWorkflowLiveStatus.PendingEvents"/> after the last
+    /// <see cref="PublishEventsToLiveStatus"/> call (e.g. a request port adding a pending input). Adding a
+    /// pending event grows the reserved budget, which can push a previously-fitting event window over the
+    /// 16&#160;KB cap. Trimming the trailing window here keeps the write within the limit while advancing
+    /// <see cref="DurableWorkflowLiveStatus.EventsStartIndex"/> so the consumer still maps window positions
+    /// to absolute indices. Trimmed events remain available via the orchestration output at completion, so
+    /// none are lost.
+    /// </remarks>
+    internal static void TrimLiveStatusToBudget(DurableWorkflowLiveStatus liveStatus)
+    {
+        int cost = 0;
+        foreach (string serializedEvent in liveStatus.Events)
+        {
+            cost += SerializedElementCost(serializedEvent);
+        }
+
+        (List<string> window, int relativeStart) = BuildEventWindow(liveStatus.Events, cost, liveStatus.PendingEvents);
+        if (relativeStart == 0 && window.Count == liveStatus.Events.Count)
+        {
+            return;
+        }
+
+        liveStatus.EventsStartIndex += relativeStart;
+        liveStatus.Events = window;
+    }
+
+    /// <summary>
     /// Estimates the serialized cost, in UTF-16 characters, of a single serialized event when written
     /// as a JSON string element (escaped payload plus surrounding quotes and a separating comma).
     /// </summary>
@@ -591,7 +622,13 @@ internal sealed class DurableWorkflowRunner
     /// Estimates the serialized cost, in UTF-16 characters, of the pending request ports carried in the
     /// live status, so the event window leaves room for them.
     /// </summary>
-    private static int EstimatePendingEventsCost(List<PendingRequestPortStatus> pendingEvents)
+    /// <remarks>
+    /// The <see cref="PendingRequestPortStatus.Input"/> is serialized request data; quotes, backslashes,
+    /// and control characters in it are escaped again when the live status is serialized. The cost is
+    /// therefore measured on the JSON-escaped length (matching <see cref="SerializedElementCost"/>) so the
+    /// reserve is conservative and never undercounts.
+    /// </remarks>
+    internal static int EstimatePendingEventsCost(List<PendingRequestPortStatus> pendingEvents)
     {
         if (pendingEvents.Count == 0)
         {
@@ -601,7 +638,9 @@ internal sealed class DurableWorkflowRunner
         int cost = 0;
         foreach (PendingRequestPortStatus pending in pendingEvents)
         {
-            cost += (pending.EventName?.Length ?? 0) + (pending.Input?.Length ?? 0) + PendingEventOverheadChars;
+            cost += JsonEncodedText.Encode(pending.EventName ?? string.Empty).Value.Length
+                + JsonEncodedText.Encode(pending.Input ?? string.Empty).Value.Length
+                + PendingEventOverheadChars;
         }
 
         return cost;

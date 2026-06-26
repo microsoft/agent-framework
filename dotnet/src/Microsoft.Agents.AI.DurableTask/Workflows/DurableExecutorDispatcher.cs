@@ -113,8 +113,11 @@ internal static class DurableExecutorDispatcher
 
         logger.LogWaitingForExternalEvent(eventName);
 
-        // Publish pending request so external clients can discover what input is needed
+        // Publish pending request so external clients can discover what input is needed.
+        // Adding a pending event grows the reserved budget, so re-window the events first to keep this
+        // direct status write within the Durable Functions custom status cap (issue #5745).
         liveStatus.PendingEvents.Add(new PendingRequestPortStatus(EventName: eventName, Input: input));
+        DurableWorkflowRunner.TrimLiveStatusToBudget(liveStatus);
         context.SetCustomStatus(liveStatus);
 
         // Wait until the external actor raises the event

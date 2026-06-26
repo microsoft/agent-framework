@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
 using Microsoft.Agents.AI.DurableTask.Workflows;
@@ -116,5 +116,50 @@ public sealed class DurableWorkflowRunnerEventWindowTests
         int length = JsonSerializer.Serialize(status, DurableSerialization.Options).Length;
         Assert.True(length <= CustomStatusCharLimit, $"Combined status length {length} exceeded cap.");
         Assert.True(startIndex > 0, "Expected the window to shrink to make room for pending events.");
+    }
+
+    [Fact]
+    public void TrimLiveStatusToBudget_WithinBudget_LeavesStatusUnchanged()
+    {
+        // Arrange — an already-published small window with no pending events.
+        List<string> events = [.. Enumerable.Range(0, 5).Select(i => MakeEvent(i, 100))];
+        DurableWorkflowLiveStatus status = new() { Events = events, EventsStartIndex = 0 };
+
+        // Act
+        DurableWorkflowRunner.TrimLiveStatusToBudget(status);
+
+        // Assert — nothing trimmed.
+        Assert.Equal(0, status.EventsStartIndex);
+        Assert.Equal(events, status.Events);
+        Assert.True(SerializedStatusLength(status.Events, status.EventsStartIndex) <= CustomStatusCharLimit);
+    }
+
+    [Fact]
+    public void TrimLiveStatusToBudget_LargePendingAddedToPublishedWindow_ShrinksAndStaysUnderCap()
+    {
+        // Arrange — a previously-published trailing window that fit the budget on its own and is already
+        // offset (absolute indices start at 6), mirroring PublishEventsToLiveStatus output. A request port
+        // then adds a large pending input after that publish — the direct-write path from issue #5745.
+        const int InitialStart = 6;
+        List<string> events = [.. Enumerable.Range(0, 20).Select(i => MakeEvent(InitialStart + i, 300))];
+        DurableWorkflowLiveStatus status = new()
+        {
+            Events = events,
+            EventsStartIndex = InitialStart,
+            PendingEvents = [new(EventName: "approval", Input: new string('p', 4000))],
+        };
+
+        // Act
+        DurableWorkflowRunner.TrimLiveStatusToBudget(status);
+
+        // Assert — the combined status (events window + pending) stays under the cap, the window shrank to
+        // make room, and the absolute start index advanced past where it began.
+        int length = JsonSerializer.Serialize(status, DurableSerialization.Options).Length;
+        Assert.True(length <= CustomStatusCharLimit, $"Combined status length {length} exceeded cap.");
+        Assert.True(status.EventsStartIndex > InitialStart, "Expected the window to shrink and advance the start index.");
+        Assert.NotEmpty(status.Events);
+
+        // The retained events are still the contiguous tail ending at the most recent event.
+        Assert.Equal(events[^1], status.Events[^1]);
     }
 }
