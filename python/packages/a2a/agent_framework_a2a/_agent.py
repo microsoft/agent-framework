@@ -46,14 +46,12 @@ from agent_framework._types import AgentRunInputs
 from agent_framework.observability import AgentTelemetryLayer
 from google.protobuf.json_format import MessageToDict
 
+from ._utils import get_uri_data
+
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # pragma: no cover
 else:
     from typing_extensions import TypedDict  # pragma: no cover
-
-__all__ = ["A2AAgent", "A2AAgentSession", "A2AContinuationToken", "A2AServiceSessionId"]
-
-from agent_framework_a2a._utils import get_uri_data
 
 
 class A2AServiceSessionId(TypedDict):
@@ -392,55 +390,15 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             return None, None, None
         if isinstance(session, A2AAgentSession):
             return session.context_id, session.task_id, session.task_state
-        service_session_id = session.service_session_id
-        if service_session_id is None:
+        if (service_session_id := session.service_session_id) is None:
             return None, None, None
         if isinstance(service_session_id, str):
             return service_session_id, None, None
-        if not isinstance(service_session_id, Mapping):
-            raise ValueError(
-                "A2AAgent requires service_session_id to be a string or mapping with context_id/task_id/task_state."
-            )
-
-        context_id = service_session_id.get("context_id")
-        if not isinstance(context_id, str) or not context_id:
-            raise ValueError("A2A service_session_id mapping must include a non-empty string 'context_id'.")
-
-        task_id_value = service_session_id.get("task_id")
-        if task_id_value is None:
-            task_id = None
-        elif isinstance(task_id_value, str):
-            task_id = task_id_value
-        else:
-            raise ValueError("A2A service_session_id mapping field 'task_id' must be a string or None.")
-
-        task_state_value = service_session_id.get("task_state")
-        if task_state_value is None:
-            task_state = None
-        elif isinstance(task_state_value, int):
-            task_state = cast(TaskState, task_state_value)
-        else:
-            raise ValueError("A2A service_session_id mapping field 'task_state' must be an integer enum value or None.")
-        return context_id, task_id, task_state
-
-    def _apply_a2a_session_state(
-        self,
-        *,
-        session: AgentSession,
-        context_id: str,
-        task_id: str | None,
-        task_state: TaskState | None,
-    ) -> None:
-        """Persist durable A2A continuation state on the session."""
-        session.service_session_id = self._build_service_session_id(
-            context_id=context_id,
-            task_id=task_id,
-            task_state=task_state,
+        return (
+            service_session_id.get("context_id"),
+            service_session_id.get("task_id"),
+            service_session_id.get("task_state"),
         )
-        if isinstance(session, A2AAgentSession):
-            session.context_id = context_id
-            session.task_id = task_id
-            session.task_state = task_state
 
     def _get_otel_conversation_id(self, session: AgentSession | None) -> str | None:
         """Return A2A context_id as OpenTelemetry conversation id."""
@@ -511,7 +469,6 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             When stream=False: An Awaitable[AgentResponse].
             When stream=True: A ResponseStream of AgentResponseUpdate items.
         """
-        del function_invocation_kwargs, client_kwargs, kwargs
         normalized_messages = normalize_messages(messages)
 
         # Use non-streaming transport for non-streaming calls when available.
@@ -720,12 +677,17 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
             persisted_context_id = existing_context_id or last_context_id
             if persisted_context_id is not None:
-                self._apply_a2a_session_state(
-                    session=session,
+                task_id = last_task_id or existing_task_id
+                task_state = last_task_state if last_task_state is not None else existing_task_state
+                session.service_session_id = self._build_service_session_id(
                     context_id=persisted_context_id,
-                    task_id=last_task_id or existing_task_id,
-                    task_state=last_task_state if last_task_state is not None else existing_task_state,
+                    task_id=task_id,
+                    task_state=task_state,
                 )
+                if isinstance(session, A2AAgentSession):
+                    session.context_id = persisted_context_id
+                    session.task_id = task_id
+                    session.task_state = task_state
 
         await self._run_after_providers(session=session, context=session_context)
 
