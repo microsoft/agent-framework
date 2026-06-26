@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Threading;
@@ -11,6 +11,7 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 /// </summary>
 public sealed class AgentInMemorySkillsSourceTests
 {
+    private readonly AgentSkillsSourceContext _context = new(new TestAIAgent());
     [Fact]
     public async Task GetSkillsAsync_ValidSkills_ReturnsAllAsync()
     {
@@ -23,7 +24,7 @@ public sealed class AgentInMemorySkillsSourceTests
         var source = new AgentInMemorySkillsSource(skills);
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert
         Assert.Equal(2, result.Count);
@@ -49,3 +50,4 @@ public sealed class AgentInMemorySkillsSourceTests
         Assert.Throws<ArgumentNullException>(() => new AgentInMemorySkillsSource(null!));
     }
 }
+

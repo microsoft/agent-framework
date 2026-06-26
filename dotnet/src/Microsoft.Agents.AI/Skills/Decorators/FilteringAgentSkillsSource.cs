@@ -45,9 +45,9 @@ internal sealed partial class FilteringAgentSkillsSource : DelegatingAgentSkills
     }
 
     /// <inheritdoc/>
-    public override async Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+    public override async Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
-        var allSkills = await this.InnerSource.GetSkillsAsync(cancellationToken).ConfigureAwait(false);
+        var allSkills = await this.InnerSource.GetSkillsAsync(context, cancellationToken).ConfigureAwait(false);
 
         var filtered = new List<AgentSkill>();
         foreach (var skill in allSkills)

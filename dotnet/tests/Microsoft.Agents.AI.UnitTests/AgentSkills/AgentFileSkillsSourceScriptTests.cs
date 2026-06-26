@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.IO;
@@ -17,6 +17,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
     private static readonly AgentFileSkillScriptRunner s_noOpExecutor = (skill, script, args, sp, ct) => Task.FromResult<object?>(null);
 
     private readonly string _testRoot;
+    private readonly AgentSkillsSourceContext _context = new(new TestAIAgent());
 
     public AgentFileSkillsSourceScriptTests()
     {
@@ -40,7 +41,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert
         Assert.Single(skills);
@@ -64,7 +65,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert
         Assert.Single(skills);
@@ -88,7 +89,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert
         Assert.Single(skills);
@@ -103,7 +104,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert
         Assert.Single(skills);
@@ -120,7 +121,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert — both root and subdirectory scripts are discovered
         Assert.Single(skills);
@@ -146,7 +147,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
             });
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(this._context, CancellationToken.None);
         var scriptResult = await (await skills[0].GetScriptAsync("scripts/test.py"))!.RunAsync(skills[0], null, null, CancellationToken.None);
 
         // Assert
@@ -171,7 +172,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, scriptRunner: null);
 
         // Act — discovery succeeds even without a runner
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(this._context, CancellationToken.None);
         var script = (await skills[0].GetScriptAsync("scripts/run.sh"))!;
 
         // Assert — running the script throws because no runner was provided
@@ -188,7 +189,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor, new AgentFileSkillsSourceOptions { AllowedScriptExtensions = s_rubyExtension });
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert
         Assert.Single(skills);
@@ -212,7 +213,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
             });
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(this._context, CancellationToken.None);
         using var argumentsDoc = JsonDocument.Parse("""{"value":26.2,"factor":1.60934}""");
         var arguments = argumentsDoc.RootElement;
         await (await skills[0].GetScriptAsync("scripts/test.py"))!.RunAsync(skills[0], arguments, null, CancellationToken.None);
@@ -234,7 +235,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
             new AgentFileSkillsSourceOptions { SearchDepth = 5 });
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert — script file inside the deeply nested directory is discovered
         Assert.Single(skills);
@@ -254,7 +255,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
             new AgentFileSkillsSourceOptions { ScriptFilter = ctx => !ctx.RelativeFilePath.StartsWith("f2/", StringComparison.OrdinalIgnoreCase) });
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert — only scripts/ script is included; f2/ is excluded by filter
         Assert.Single(skills);
@@ -287,3 +288,4 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         File.WriteAllText(fullPath, content);
     }
 }
+

@@ -30,6 +30,7 @@ internal interface IMcpSkillEntryLoader
     /// loaded successfully.
     /// </summary>
     /// <param name="entries">The index entries of this loader's <see cref="EntryType"/>. May be empty.</param>
+    /// <param name="context">The skills source context for the current invocation.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
-    Task<IList<AgentSkill>> LoadAsync(IReadOnlyList<McpSkillIndexEntry> entries, CancellationToken cancellationToken);
+    Task<IList<AgentSkill>> LoadAsync(IReadOnlyList<McpSkillIndexEntry> entries, AgentSkillsSourceContext context, CancellationToken cancellationToken);
 }

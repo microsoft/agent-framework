@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -404,7 +404,8 @@ public sealed class AgentSkillsProviderTests : IDisposable
         var source = new AgentFileSkillsSource(skillDir, s_noOpExecutor, options);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skillsContext = new AgentSkillsSourceContext(this._agent);
+        var skills = await source.GetSkillsAsync(skillsContext);
 
         // Assert
         Assert.Single(skills);
@@ -1337,7 +1338,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
 
         public int GetSkillsCallCount => this._callCount;
 
-        public override Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+        public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref this._callCount);
             return Task.FromResult(this._skills);
@@ -1359,3 +1360,4 @@ public sealed class AgentSkillsProviderTests : IDisposable
         protected override string Instructions => this._instructions;
     }
 }
+

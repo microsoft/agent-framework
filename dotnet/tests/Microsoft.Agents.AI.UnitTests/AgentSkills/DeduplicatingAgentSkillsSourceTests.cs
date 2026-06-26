@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Linq;
@@ -12,6 +12,7 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 /// </summary>
 public sealed class DeduplicatingAgentSkillsSourceTests
 {
+    private readonly AgentSkillsSourceContext _context = new(new TestAIAgent());
     [Fact]
     public async Task GetSkillsAsync_NoDuplicates_ReturnsAllSkillsAsync()
     {
@@ -24,7 +25,7 @@ public sealed class DeduplicatingAgentSkillsSourceTests
         var source = new DeduplicatingAgentSkillsSource(inner);
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert
         Assert.Equal(2, result.Count);
@@ -44,7 +45,7 @@ public sealed class DeduplicatingAgentSkillsSourceTests
         var source = new DeduplicatingAgentSkillsSource(inner);
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert
         Assert.Equal(2, result.Count);
@@ -60,7 +61,7 @@ public sealed class DeduplicatingAgentSkillsSourceTests
         var source = new DeduplicatingAgentSkillsSource(inner);
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert
         Assert.Single(result);
@@ -75,7 +76,7 @@ public sealed class DeduplicatingAgentSkillsSourceTests
         var source = new DeduplicatingAgentSkillsSource(inner);
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert
         Assert.Empty(result);
@@ -86,7 +87,7 @@ public sealed class DeduplicatingAgentSkillsSourceTests
     /// </summary>
     private sealed class FakeDuplicateCaseSource : AgentSkillsSource
     {
-        public override Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+        public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
         {
             // AgentSkillFrontmatter validates names must be lowercase, so we build
             // two skills with the same lowercase name to test case-insensitive dedup.
@@ -99,3 +100,4 @@ public sealed class DeduplicatingAgentSkillsSourceTests
         }
     }
 }
+

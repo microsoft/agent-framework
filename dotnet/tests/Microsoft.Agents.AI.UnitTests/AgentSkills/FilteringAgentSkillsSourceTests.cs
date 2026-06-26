@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Threading;
@@ -11,6 +11,7 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 /// </summary>
 public sealed class FilteringAgentSkillsSourceTests
 {
+    private readonly AgentSkillsSourceContext _context = new(new TestAIAgent());
     [Fact]
     public async Task GetSkillsAsync_PredicateIncludesAll_ReturnsAllSkillsAsync()
     {
@@ -23,7 +24,7 @@ public sealed class FilteringAgentSkillsSourceTests
         var source = new FilteringAgentSkillsSource(inner, _ => true);
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert
         Assert.Equal(2, result.Count);
@@ -41,7 +42,7 @@ public sealed class FilteringAgentSkillsSourceTests
         var source = new FilteringAgentSkillsSource(inner, _ => false);
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert
         Assert.Empty(result);
@@ -62,7 +63,7 @@ public sealed class FilteringAgentSkillsSourceTests
             skill => skill.Frontmatter.Name.StartsWith("keep", StringComparison.OrdinalIgnoreCase));
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert
         Assert.Equal(2, result.Count);
@@ -77,7 +78,7 @@ public sealed class FilteringAgentSkillsSourceTests
         var source = new FilteringAgentSkillsSource(inner, _ => true);
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert
         Assert.Empty(result);
@@ -118,7 +119,7 @@ public sealed class FilteringAgentSkillsSourceTests
             skill => skill.Frontmatter.Name is "alpha" or "gamma");
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(this._context, CancellationToken.None);
 
         // Assert
         Assert.Equal(2, result.Count);
@@ -126,3 +127,4 @@ public sealed class FilteringAgentSkillsSourceTests
         Assert.Equal("gamma", result[1].Frontmatter.Name);
     }
 }
+

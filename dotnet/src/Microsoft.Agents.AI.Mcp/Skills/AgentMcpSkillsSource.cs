@@ -78,7 +78,7 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     }
 
     /// <inheritdoc/>
-    public override async Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+    public override async Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
         if (this.TryGetCachedSkills() is { } cached)
         {
@@ -99,7 +99,7 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         {
             // The refresh owner uses CancellationToken.None so that a single caller's cancellation
             // does not abort the shared refresh for all concurrent waiters.
-            var skills = await this.GetCoreSkillsAsync(CancellationToken.None).ConfigureAwait(false);
+            var skills = await this.GetCoreSkillsAsync(context, CancellationToken.None).ConfigureAwait(false);
 
             this.UpdateCache(skills);
 
@@ -155,7 +155,7 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     /// Reads the skill index from the MCP server, dispatches entries to registered loaders, and
     /// returns the aggregated skill list.
     /// </summary>
-    private async Task<IList<AgentSkill>> GetCoreSkillsAsync(CancellationToken cancellationToken)
+    private async Task<IList<AgentSkill>> GetCoreSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken)
     {
         McpSkillIndex? index = await this.TryReadIndexAsync(cancellationToken).ConfigureAwait(false);
 
@@ -185,7 +185,7 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         foreach (var loader in this._loaders.Values)
         {
             var entries = entriesByType.TryGetValue(loader.EntryType, out List<McpSkillIndexEntry>? matched) ? matched : [];
-            skills.AddRange(await loader.LoadAsync(entries, cancellationToken).ConfigureAwait(false));
+            skills.AddRange(await loader.LoadAsync(entries, context, cancellationToken).ConfigureAwait(false));
         }
 
         LogSkillsLoadedTotal(this._logger, skills.Count);

@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
@@ -60,8 +60,12 @@ internal sealed class TestAgentSkillsSource : AgentSkillsSource
     }
 
     /// <inheritdoc/>
-    public override Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+    public AgentSkillsSourceContext? LastContext { get; private set; }
+
+    /// <inheritdoc/>
+    public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
+        this.LastContext = context;
         return Task.FromResult(this._skills);
     }
 }
@@ -114,3 +118,4 @@ internal sealed class SkillConfig
 internal sealed partial class SkillTestJsonContext : JsonSerializerContext
 {
 }
+

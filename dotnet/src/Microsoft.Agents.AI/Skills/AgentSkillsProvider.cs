@@ -232,7 +232,8 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
 
     private async Task<AIContext> CreateContextAsync(InvokingContext context, CancellationToken cancellationToken)
     {
-        var skills = await this._source.GetSkillsAsync(cancellationToken).ConfigureAwait(false);
+        var skillsContext = new AgentSkillsSourceContext(context.Agent);
+        var skills = await this._source.GetSkillsAsync(skillsContext, cancellationToken).ConfigureAwait(false);
         if (skills is not { Count: > 0 })
         {
             return await base.ProvideAIContextAsync(context, cancellationToken).ConfigureAwait(false);

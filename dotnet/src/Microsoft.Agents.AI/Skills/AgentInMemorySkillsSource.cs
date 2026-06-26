@@ -28,7 +28,7 @@ internal sealed class AgentInMemorySkillsSource : AgentSkillsSource
     }
 
     /// <inheritdoc/>
-    public override Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+    public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
         return Task.FromResult<IList<AgentSkill>>(this._skills);
     }

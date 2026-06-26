@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -86,7 +86,7 @@ public sealed class AgentClassSkillTests
         var source = new AgentInMemorySkillsSource(skills);
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(new AgentSkillsSourceContext(new TestAIAgent()), CancellationToken.None);
 
         // Assert
         Assert.Equal(2, result.Count);
@@ -1138,3 +1138,4 @@ public sealed class AgentClassSkillTests
 
     #endregion
 }
+
