@@ -791,8 +791,11 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
     /// </summary>
     private static Uri? ValidateProxyTarget(string backendUrl, string path)
     {
-        var baseUri = new Uri(backendUrl);
-        var targetUri = new Uri(baseUri, path);
+        if (!Uri.TryCreate(backendUrl, UriKind.Absolute, out var baseUri) ||
+            !Uri.TryCreate(baseUri, path, out var targetUri))
+        {
+            return null;
+        }
 
         if (!string.Equals(targetUri.Host, baseUri.Host, StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(targetUri.Scheme, baseUri.Scheme, StringComparison.OrdinalIgnoreCase) ||
