@@ -48,6 +48,12 @@ public sealed class DurableStreamingWorkflowRunTests
         return JsonSerializer.Serialize(status, DurableSerialization.Options);
     }
 
+    private static string SerializeCustomStatusWindow(List<string> events, int eventsStartIndex)
+    {
+        DurableWorkflowLiveStatus status = new() { Events = events, EventsStartIndex = eventsStartIndex };
+        return JsonSerializer.Serialize(status, DurableSerialization.Options);
+    }
+
     private static Workflow CreateTestWorkflowWithRequestPort(string requestPortId)
     {
         FunctionExecutor<string> start = new("start", (_, _, _) => default);
@@ -801,6 +807,141 @@ public sealed class DurableStreamingWorkflowRunTests
         Assert.NotNull(result);
         Assert.Equal("camel", result.Name);
         Assert.Equal(99, result.Value);
+    }
+
+    #endregion
+
+    #region Windowed live status (issue #5745)
+
+    [Fact]
+    public async Task WatchStreamAsync_SlidingWindow_MapsAbsoluteIndicesWithoutDuplicatesOrGapsAsync()
+    {
+        // Arrange — the producer publishes only a bounded trailing window of recent events,
+        // tagged with an absolute EventsStartIndex. A consumer that keeps up must still receive
+        // every event exactly once as the window slides forward.
+        List<string> all = [.. Enumerable.Range(0, 6).Select(i => SerializeEvent(new DurableHaltRequestedEvent($"executor-{i}")))];
+
+        // Poll 1: window [0..2] @ start 0; Poll 2: window [2..4] @ start 2; Poll 3: window [4..5] @ start 4.
+        string window1 = SerializeCustomStatusWindow([all[0], all[1], all[2]], 0);
+        string window2 = SerializeCustomStatusWindow([all[2], all[3], all[4]], 2);
+        string window3 = SerializeCustomStatusWindow([all[4], all[5]], 4);
+        string serializedOutput = SerializeWorkflowResult("done", all);
+
+        int callCount = 0;
+        Mock<DurableTaskClient> mockClient = new("test");
+        mockClient.Setup(c => c.GetInstanceAsync(InstanceId, true, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return callCount switch
+                {
+                    1 => CreateMetadata(OrchestrationRuntimeStatus.Running, serializedCustomStatus: window1),
+                    2 => CreateMetadata(OrchestrationRuntimeStatus.Running, serializedCustomStatus: window2),
+                    3 => CreateMetadata(OrchestrationRuntimeStatus.Running, serializedCustomStatus: window3),
+                    _ => CreateMetadata(OrchestrationRuntimeStatus.Completed, serializedOutput: serializedOutput),
+                };
+            });
+
+        DurableStreamingWorkflowRun run = new(mockClient.Object, InstanceId, CreateTestWorkflow());
+
+        // Act
+        List<WorkflowEvent> events = [];
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            events.Add(evt);
+        }
+
+        // Assert — all 6 halt events in order, exactly once, then completion.
+        Assert.Equal(7, events.Count);
+        for (int i = 0; i < 6; i++)
+        {
+            Assert.Equal($"executor-{i}", Assert.IsType<DurableHaltRequestedEvent>(events[i]).ExecutorId);
+        }
+
+        Assert.IsType<DurableWorkflowCompletedEvent>(events[6]);
+    }
+
+    [Fact]
+    public async Task WatchStreamAsync_ConsumerBehindWindow_RecoversAllEventsAtCompletionAsync()
+    {
+        // Arrange — the consumer's first read lands on a window that has already advanced past the
+        // earliest events (EventsStartIndex > 0). Those events are not in the window; they must be
+        // backfilled from the full output at completion, with nothing skipped.
+        List<string> all = [.. Enumerable.Range(0, 6).Select(i => SerializeEvent(new DurableHaltRequestedEvent($"executor-{i}")))];
+
+        // Only the trailing window [3..5] is live; events 0..2 already scrolled out.
+        string window = SerializeCustomStatusWindow([all[3], all[4], all[5]], 3);
+        string serializedOutput = SerializeWorkflowResult("done", all);
+
+        int callCount = 0;
+        Mock<DurableTaskClient> mockClient = new("test");
+        mockClient.Setup(c => c.GetInstanceAsync(InstanceId, true, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return callCount == 1
+                    ? CreateMetadata(OrchestrationRuntimeStatus.Running, serializedCustomStatus: window)
+                    : CreateMetadata(OrchestrationRuntimeStatus.Completed, serializedOutput: serializedOutput);
+            });
+
+        DurableStreamingWorkflowRun run = new(mockClient.Object, InstanceId, CreateTestWorkflow());
+
+        // Act
+        List<WorkflowEvent> events = [];
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            events.Add(evt);
+        }
+
+        // Assert — every event delivered exactly once (deferred ones arrive at completion), in order.
+        Assert.Equal(7, events.Count);
+        for (int i = 0; i < 6; i++)
+        {
+            Assert.Equal($"executor-{i}", Assert.IsType<DurableHaltRequestedEvent>(events[i]).ExecutorId);
+        }
+
+        Assert.IsType<DurableWorkflowCompletedEvent>(events[6]);
+    }
+
+    [Fact]
+    public async Task WatchStreamAsync_EmptyWindowForOversizedEvent_DeliversAtCompletionAsync()
+    {
+        // Arrange — an event too large to fit the custom status budget is excluded from the live
+        // window entirely (empty Events, EventsStartIndex == event count), so the orchestration never
+        // overflows. The event must still be delivered via the output at completion.
+        List<string> all = [.. Enumerable.Range(0, 3).Select(i => SerializeEvent(new DurableHaltRequestedEvent($"executor-{i}")))];
+
+        string emptyWindow = SerializeCustomStatusWindow([], all.Count);
+        string serializedOutput = SerializeWorkflowResult("done", all);
+
+        int callCount = 0;
+        Mock<DurableTaskClient> mockClient = new("test");
+        mockClient.Setup(c => c.GetInstanceAsync(InstanceId, true, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return callCount == 1
+                    ? CreateMetadata(OrchestrationRuntimeStatus.Running, serializedCustomStatus: emptyWindow)
+                    : CreateMetadata(OrchestrationRuntimeStatus.Completed, serializedOutput: serializedOutput);
+            });
+
+        DurableStreamingWorkflowRun run = new(mockClient.Object, InstanceId, CreateTestWorkflow());
+
+        // Act
+        List<WorkflowEvent> events = [];
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Equal(4, events.Count);
+        for (int i = 0; i < 3; i++)
+        {
+            Assert.Equal($"executor-{i}", Assert.IsType<DurableHaltRequestedEvent>(events[i]).ExecutorId);
+        }
+
+        Assert.IsType<DurableWorkflowCompletedEvent>(events[3]);
     }
 
     #endregion
