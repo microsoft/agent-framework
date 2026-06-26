@@ -37,7 +37,8 @@ from pydantic import BaseModel, Field
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
-from .._tools import ApprovalMode, tool
+from .._tools import tool
+from .._types import Content
 
 logger = logging.getLogger(__name__)
 
@@ -1075,7 +1076,65 @@ class FileAccessProvider(ContextProvider):
     contents are visible across sessions and agents. The store is passed in by
     the caller and should already be scoped to the desired folder or storage
     location.
+
+    All six tools always require approval: each is registered with
+    ``approval_mode="always_require"`` so the host must approve every file
+    operation the model proposes. In the auto-invocation flow this means the
+    model's calls to these tools are converted into
+    ``function_approval_request`` items and the tool does **not** execute until
+    the host supplies a matching ``function_approval_response``. Consumers that
+    use the base agent directly must install
+    :class:`~agent_framework.ToolApprovalMiddleware` (or use
+    :func:`~agent_framework.create_harness_agent`, which wires it in by default)
+    to drive that handshake; otherwise these tools never run. To run unattended,
+    supply one of the static auto-approval rules to
+    :class:`~agent_framework.ToolApprovalMiddleware` via its
+    ``auto_approval_rules``:
+
+    - :meth:`read_only_tools_auto_approval_rule` — auto-approves only the
+      read-only tools (read, list files, list subdirectories, search), while
+      still prompting for the tools that modify the store (save and delete).
+    - :meth:`all_tools_auto_approval_rule` — auto-approves every file-access
+      tool, including save and delete.
+
+    For example, to auto-approve only the read-only tools::
+
+        create_harness_agent(
+            chat_client,
+            auto_approval_rules=[FileAccessProvider.read_only_tools_auto_approval_rule],
+        )
     """
+
+    #: Name of the tool that saves a file.
+    SAVE_FILE_TOOL_NAME = "file_access_save_file"
+    #: Name of the tool that reads a file.
+    READ_FILE_TOOL_NAME = "file_access_read_file"
+    #: Name of the tool that deletes a file.
+    DELETE_FILE_TOOL_NAME = "file_access_delete_file"
+    #: Name of the tool that lists the files in a directory.
+    LIST_FILES_TOOL_NAME = "file_access_list_files"
+    #: Name of the tool that lists the subdirectories of a directory.
+    LIST_SUBDIRECTORIES_TOOL_NAME = "file_access_list_subdirectories"
+    #: Name of the tool that searches file contents.
+    SEARCH_FILES_TOOL_NAME = "file_access_search_files"
+
+    #: Names of the tools that only read from (never modify) the file store.
+    _READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset({
+        READ_FILE_TOOL_NAME,
+        LIST_FILES_TOOL_NAME,
+        LIST_SUBDIRECTORIES_TOOL_NAME,
+        SEARCH_FILES_TOOL_NAME,
+    })
+
+    #: Names of all tools exposed by this provider.
+    _ALL_TOOL_NAMES: frozenset[str] = frozenset({
+        SAVE_FILE_TOOL_NAME,
+        READ_FILE_TOOL_NAME,
+        DELETE_FILE_TOOL_NAME,
+        LIST_FILES_TOOL_NAME,
+        LIST_SUBDIRECTORIES_TOOL_NAME,
+        SEARCH_FILES_TOOL_NAME,
+    })
 
     def __init__(
         self,
@@ -1083,7 +1142,6 @@ class FileAccessProvider(ContextProvider):
         *,
         source_id: str = DEFAULT_FILE_ACCESS_SOURCE_ID,
         instructions: str | None = None,
-        require_delete_approval: bool = True,
     ) -> None:
         """Initialize the file access provider.
 
@@ -1096,17 +1154,78 @@ class FileAccessProvider(ContextProvider):
             source_id: Unique source ID for the provider.
             instructions: Optional instruction override. When ``None`` the
                 default file-access instructions are used.
-            require_delete_approval: When ``True`` (the default) the
-                ``file_access_delete_file`` tool is registered with
-                ``approval_mode="always_require"`` so the host must approve every
-                delete the model proposes. Set to ``False`` to opt out and allow
-                the agent to delete files autonomously (matching the .NET
-                ``FileAccessProvider``, which has no approval mechanism).
         """
         super().__init__(source_id)
         self.store = store
         self.instructions = instructions or DEFAULT_FILE_ACCESS_INSTRUCTIONS
-        self.require_delete_approval = require_delete_approval
+
+    @staticmethod
+    def _is_local_tool_call(function_call: Content) -> bool:
+        """Return whether a function call targets this provider's local tools.
+
+        Hosted-tool calls carry a ``server_label`` in their
+        ``additional_properties`` and are a separate server-scoped approval
+        boundary that must be passed through untouched (see
+        :func:`agent_framework._tools._is_hosted_tool_approval`). These rules
+        only ever auto-approve the provider's own local tools, so any call that
+        carries a ``server_label`` is rejected even if its name collides with a
+        file-access tool name.
+        """
+        return not function_call.additional_properties.get("server_label")
+
+    @staticmethod
+    def read_only_tools_auto_approval_rule(function_call: Content) -> bool:
+        """Auto-approval rule that approves only the read-only file-access tools.
+
+        The tools exposed by :class:`FileAccessProvider` always require approval.
+        Pass this rule to :class:`~agent_framework.ToolApprovalMiddleware` (via
+        ``auto_approval_rules``) to automatically approve the tools that read
+        from the store (``file_access_read_file``, ``file_access_list_files``,
+        ``file_access_list_subdirectories``, and ``file_access_search_files``),
+        while still prompting for the tools that modify it
+        (``file_access_save_file`` and ``file_access_delete_file``).
+
+        Hosted-tool calls (those carrying a ``server_label``) are never
+        auto-approved, even when their name matches a file-access tool, so the
+        rule stays scoped to this provider's local tools.
+
+        Args:
+            function_call: The pending ``function_call`` content.
+
+        Returns:
+            ``True`` for read-only file-access tools, ``False`` otherwise so that
+            subsequent rules continue to be evaluated.
+        """
+        return (
+            FileAccessProvider._is_local_tool_call(function_call)
+            and function_call.name in FileAccessProvider._READ_ONLY_TOOL_NAMES
+        )
+
+    @staticmethod
+    def all_tools_auto_approval_rule(function_call: Content) -> bool:
+        """Auto-approval rule that approves every file-access tool.
+
+        The tools exposed by :class:`FileAccessProvider` always require approval.
+        Pass this rule to :class:`~agent_framework.ToolApprovalMiddleware` (via
+        ``auto_approval_rules``) to automatically approve every file-access tool,
+        including the tools that modify the store (``file_access_save_file`` and
+        ``file_access_delete_file``).
+
+        Hosted-tool calls (those carrying a ``server_label``) are never
+        auto-approved, even when their name matches a file-access tool, so the
+        rule stays scoped to this provider's local tools.
+
+        Args:
+            function_call: The pending ``function_call`` content.
+
+        Returns:
+            ``True`` for any file-access tool, ``False`` otherwise so that
+            subsequent rules continue to be evaluated.
+        """
+        return (
+            FileAccessProvider._is_local_tool_call(function_call)
+            and function_call.name in FileAccessProvider._ALL_TOOL_NAMES
+        )
 
     async def before_run(
         self,
@@ -1118,7 +1237,7 @@ class FileAccessProvider(ContextProvider):
     ) -> None:
         """Inject file-access tools and instructions before the model runs."""
 
-        @tool(name="file_access_save_file", schema=_SaveFileInput, approval_mode="never_require")
+        @tool(name=FileAccessProvider.SAVE_FILE_TOOL_NAME, schema=_SaveFileInput, approval_mode="always_require")
         async def file_access_save_file(file_name: str, content: str, overwrite: bool = False) -> str:
             """Save a file with the given name and content. By default, does not overwrite an existing file unless overwrite is set to true."""  # noqa: E501
             try:
@@ -1132,7 +1251,7 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not save file '{file_name}': {exc.strerror or exc}"
             return f"File '{file_name}' saved."
 
-        @tool(name="file_access_read_file", schema=_ReadFileInput, approval_mode="never_require")
+        @tool(name=FileAccessProvider.READ_FILE_TOOL_NAME, schema=_ReadFileInput, approval_mode="always_require")
         async def file_access_read_file(file_name: str) -> str:
             """Read the content of a file by name. Returns the file content or a message indicating the file could not be read."""  # noqa: E501
             try:
@@ -1144,9 +1263,7 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not read file '{file_name}': {exc.strerror or exc}"
             return content if content is not None else f"File '{file_name}' not found."
 
-        delete_approval_mode: ApprovalMode = "always_require" if self.require_delete_approval else "never_require"
-
-        @tool(name="file_access_delete_file", schema=_DeleteFileInput, approval_mode=delete_approval_mode)
+        @tool(name=FileAccessProvider.DELETE_FILE_TOOL_NAME, schema=_DeleteFileInput, approval_mode="always_require")
         async def file_access_delete_file(file_name: str) -> str:
             """Delete a file by name."""
             try:
@@ -1158,7 +1275,7 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not delete file '{file_name}': {exc.strerror or exc}"
             return f"File '{file_name}' deleted." if deleted else f"File '{file_name}' not found."
 
-        @tool(name="file_access_list_files", schema=_ListFilesInput, approval_mode="never_require")
+        @tool(name=FileAccessProvider.LIST_FILES_TOOL_NAME, schema=_ListFilesInput, approval_mode="always_require")
         async def file_access_list_files(directory: str | None = None) -> list[str] | str:
             """List the direct child file names of a directory. Omit ``directory`` (or pass an empty string) to list the root. To enumerate files in a subdirectory, pass its relative path, for example ``"reports"`` or ``"reports/2024"``."""  # noqa: E501
             target = directory if directory and directory.strip() else ""
@@ -1169,7 +1286,11 @@ class FileAccessProvider(ContextProvider):
             except OSError as exc:
                 return f"Could not list directory '{directory or ''}': {exc.strerror or exc}"
 
-        @tool(name="file_access_list_subdirectories", schema=_ListSubdirectoriesInput, approval_mode="never_require")
+        @tool(
+            name=FileAccessProvider.LIST_SUBDIRECTORIES_TOOL_NAME,
+            schema=_ListSubdirectoriesInput,
+            approval_mode="always_require",
+        )
         async def file_access_list_subdirectories(directory: str | None = None) -> list[str] | str:
             """List the direct child subdirectory names of a directory.
 
@@ -1186,7 +1307,7 @@ class FileAccessProvider(ContextProvider):
             except OSError as exc:
                 return f"Could not list directory '{directory or ''}': {exc.strerror or exc}"
 
-        @tool(name="file_access_search_files", schema=_SearchFilesInput, approval_mode="never_require")
+        @tool(name=FileAccessProvider.SEARCH_FILES_TOOL_NAME, schema=_SearchFilesInput, approval_mode="always_require")
         async def file_access_search_files(
             regex_pattern: str,
             file_pattern: str | None = None,

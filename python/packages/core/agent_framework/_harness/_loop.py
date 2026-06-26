@@ -54,6 +54,7 @@ __all__ = [
     "JudgeVerdict",
     "background_tasks_running",
     "todos_remaining",
+    "todos_remaining_message",
 ]
 
 DEFAULT_NEXT_MESSAGE = "Continue working on the task. If it is complete, say so."
@@ -421,6 +422,25 @@ class AgentLoopMiddleware(AgentMiddleware):
             await self._process_non_streaming(context, call_next, original_messages, snapshot)
 
     @staticmethod
+    def _has_pending_approval_request(result: AgentResponse | None) -> bool:
+        """Return ``True`` if ``result`` carries a pending tool-approval request.
+
+        When the loop sits outermost (e.g. around a tool-approval middleware), an iteration may
+        return a response that asks the caller to approve a tool call rather than a completed turn.
+        In that case the loop must stop and hand the response back so a human can approve, instead
+        of continuing or injecting the next message. This mirrors the C# ``LoopAgent`` escape hatch
+        (``HasPendingApprovalRequests``). A pending request is any content whose ``type`` is
+        ``"function_approval_request"``.
+        """
+        if result is None:
+            return False
+        return any(
+            getattr(content, "type", None) == "function_approval_request"
+            for message in result.messages
+            for content in message.contents
+        )
+
+    @staticmethod
     def _restore_session(session: Any, snapshot: dict[str, Any]) -> None:
         """Restore a session in place to a previously captured ``to_dict()`` snapshot.
 
@@ -466,6 +486,11 @@ class AgentLoopMiddleware(AgentMiddleware):
             aggregated.extend(result.messages)
             if result.usage_details is not None:
                 aggregated_usage = add_usage_details(aggregated_usage, result.usage_details)
+
+            # Escape hatch: if this iteration is asking for tool approval, stop and return the
+            # response so the caller can approve, instead of continuing or injecting next_message.
+            if self._has_pending_approval_request(result):
+                break
 
             messages_used = context.messages
             loop_kwargs = self._build_loop_kwargs(
@@ -555,6 +580,10 @@ class AgentLoopMiddleware(AgentMiddleware):
 
                 messages_used = context.messages
                 final = holder["final"]
+                # Escape hatch: if this iteration is asking for tool approval, stop the loop and
+                # let the caller approve, instead of continuing or injecting next_message.
+                if self._has_pending_approval_request(final):
+                    return
                 loop_kwargs = self._build_loop_kwargs(
                     context=context,
                     iteration=iteration,
@@ -748,25 +777,6 @@ class AgentLoopMiddleware(AgentMiddleware):
         return list(next_msgs)
 
 
-def todos_remaining(provider: Any) -> ShouldContinueCallable:
-    """Build a ``should_continue`` predicate that loops while a ``TodoProvider`` has open items.
-
-    Args:
-        provider: A :class:`~agent_framework.TodoProvider` attached to the same session as the loop.
-
-    Returns:
-        A predicate suitable for :class:`AgentLoopMiddleware`'s ``should_continue`` argument.
-    """
-
-    async def _should_continue(*, session: Any = None, **kwargs: Any) -> bool:
-        if session is None:
-            return False
-        items = await provider.store.load_items(session, source_id=provider.source_id)
-        return any(not item.is_complete for item in items)
-
-    return _should_continue
-
-
 def background_tasks_running(provider: Any) -> ShouldContinueCallable:
     """Build a ``should_continue`` predicate that loops while a ``BackgroundAgentsProvider`` is busy.
 
@@ -794,3 +804,115 @@ def background_tasks_running(provider: Any) -> ShouldContinueCallable:
         )
 
     return _should_continue
+
+
+def _resolve_context_provider(agent: Any, provider_type: type) -> Any:
+    """Return the first ``provider_type`` instance on ``agent.context_providers`` (or ``None``).
+
+    The harness exposes its built-in context providers (``TodoProvider``, ``AgentModeProvider``,
+    ...) on ``agent.context_providers``, so loop callbacks can reuse the same instances that
+    :func:`~agent_framework.create_harness_agent` wired up instead of constructing their own.
+    """
+    return next(
+        (provider for provider in getattr(agent, "context_providers", []) if isinstance(provider, provider_type)),
+        None,
+    )
+
+
+def todos_remaining(*, looping_modes: Sequence[str] | None = None) -> ShouldContinueCallable:
+    """Build a ``should_continue`` predicate that loops while the Agent's ``TodoProvider`` has open items.
+
+    This resolves the :class:`~agent_framework.TodoProvider` from the running agent
+    (``agent.context_providers``) rather than taking it as an argument, so it can be used directly
+    with :func:`~agent_framework.create_harness_agent` (whose providers are built internally) as well
+    as with any agent that registers a ``TodoProvider`` via ``context_providers``. It is the Python
+    counterpart of the .NET ``TodoCompletionLoopEvaluator``.
+
+    Args:
+        looping_modes: When provided, the loop only continues while the agent's current operating
+            mode (read from its :class:`~agent_framework.AgentModeProvider`) is one of these modes;
+            in any other mode the predicate returns ``False`` so the agent stays interactive. Mode
+            matching is case-insensitive. When ``None`` (default), the loop applies in every mode. An
+            empty sequence is rejected (there would be no mode in which the loop could ever run).
+            Restricting looping to certain modes is useful when, for example, the agent has a planning
+            and execution mode, and you only want to loop on the execution mode until all todos are
+            complete.  Looping until completion in planning is usually undesirable since the agent is
+            still building the list of todos to complete.
+
+    Returns:
+        A predicate suitable for :class:`AgentLoopMiddleware`'s ``should_continue`` argument (and for
+        ``create_harness_agent``'s ``loop_should_continue``).
+
+    Raises:
+        ValueError: ``looping_modes`` is an empty sequence.
+    """
+    if looping_modes is not None:
+        allowed_modes: set[str] | None = {mode.strip().lower() for mode in looping_modes}
+        if not allowed_modes:
+            raise ValueError("looping_modes must be None or a non-empty sequence of mode names.")
+    else:
+        allowed_modes = None
+
+    async def _should_continue(*, session: Any = None, agent: Any = None, **kwargs: Any) -> bool:
+        from ._mode import AgentModeProvider, get_agent_mode
+        from ._todo import TodoProvider
+
+        if session is None or agent is None:
+            return False
+
+        if allowed_modes is not None:
+            mode_provider = _resolve_context_provider(agent, AgentModeProvider)
+            if mode_provider is not None:
+                current_mode = get_agent_mode(
+                    session,
+                    source_id=mode_provider.source_id,
+                    default_mode=mode_provider.default_mode,
+                    available_modes=mode_provider.available_modes,
+                )
+            else:
+                current_mode = get_agent_mode(session)
+            if current_mode.strip().lower() not in allowed_modes:
+                return False
+
+        todo_provider = _resolve_context_provider(agent, TodoProvider)
+        if todo_provider is None:
+            return False
+        items = await todo_provider.store.load_items(session, source_id=todo_provider.source_id)
+        return any(not item.is_complete for item in items)
+
+    return _should_continue
+
+
+async def todos_remaining_message(*, session: Any = None, agent: Any = None, **kwargs: Any) -> str | None:
+    """``next_message`` callable that reminds the agent which todos are still open.
+
+    Designed to pair with :func:`todos_remaining` as a loop's ``next_message`` (e.g.
+    ``create_harness_agent``'s ``loop_next_message``): between iterations it resolves the harness
+    :class:`~agent_framework.TodoProvider` from the agent, lists the still-open todo items, and
+    instructs the agent to complete them all before finishing.
+
+    Returns ``None`` when the session/agent/provider is unavailable or no todos are open. In that
+    case the loop's default ``next_message`` handling applies: with ``fresh_context=False`` (the
+    default, used by ``create_harness_agent``) it reuses the previous iteration's messages verbatim
+    (skipping progress injection); only with ``fresh_context=True`` does it fall back to
+    ``DEFAULT_NEXT_MESSAGE``. In normal looping a ``None`` here is rare, since "no open todos" also
+    makes :func:`todos_remaining` stop the loop before the next message is consulted.
+    """
+    from ._todo import TodoProvider
+
+    if session is None or agent is None:
+        return None
+    todo_provider = _resolve_context_provider(agent, TodoProvider)
+    if todo_provider is None:
+        return None
+    items = await todo_provider.store.load_items(session, source_id=todo_provider.source_id)
+    open_items = [item for item in items if not item.is_complete]
+    if not open_items:
+        return None
+    todo_lines = "\n".join(f"- {item.title}" for item in open_items)
+    return (
+        f"You still have {len(open_items)} open todo item(s) that must be addressed before you can "
+        f"finish:\n{todo_lines}\n\n"
+        "Continue working through them now. Mark each todo complete as you finish it, and only stop "
+        "once every todo item is complete."
+    )

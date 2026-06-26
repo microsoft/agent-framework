@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -29,6 +30,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     private readonly string _description;
     private readonly SessionConfig? _sessionConfig;
     private readonly bool _ownsClient;
+    private readonly JsonSerializerOptions _jsonSerializerOptions;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="GitHubCopilotAgent"/> class.
@@ -39,13 +41,15 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
+    /// <param name="jsonSerializerOptions">Optional JSON serializer options. Defaults to <see cref="GitHubCopilotJsonUtilities.DefaultOptions"/>.</param>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
         SessionConfig? sessionConfig = null,
         bool ownsClient = false,
         string? id = null,
         string? name = null,
-        string? description = null)
+        string? description = null,
+        JsonSerializerOptions? jsonSerializerOptions = null)
     {
         _ = Throw.IfNull(copilotClient);
 
@@ -55,6 +59,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         this._id = id;
         this._name = name ?? DefaultName;
         this._description = description ?? DefaultDescription;
+        this._jsonSerializerOptions = jsonSerializerOptions ?? GitHubCopilotJsonUtilities.DefaultOptions;
     }
 
     /// <summary>
@@ -67,6 +72,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="description">The description of the agent.</param>
     /// <param name="tools">The tools to make available to the agent.</param>
     /// <param name="instructions">Optional instructions to append as a system message.</param>
+    /// <param name="jsonSerializerOptions">Optional JSON serializer options. Defaults to <see cref="GitHubCopilotJsonUtilities.DefaultOptions"/>.</param>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
         bool ownsClient = false,
@@ -74,14 +80,16 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         string? name = null,
         string? description = null,
         IList<AITool>? tools = null,
-        string? instructions = null)
+        string? instructions = null,
+        JsonSerializerOptions? jsonSerializerOptions = null)
         : this(
             copilotClient,
             GetSessionConfig(tools, instructions),
             ownsClient,
             id,
             name,
-            description)
+            description,
+            jsonSerializerOptions)
     {
     }
 
@@ -180,6 +188,14 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
                     case AssistantMessageEvent assistantMessage:
                         channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(assistantMessage, isStreaming));
+                        break;
+
+                    case ToolExecutionStartEvent toolStart:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(toolStart));
+                        break;
+
+                    case ToolExecutionCompleteEvent toolComplete:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(toolComplete));
                         break;
 
                     case AssistantUsageEvent usageEvent:
@@ -347,6 +363,79 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             MessageId = assistantMessage.Data?.MessageId,
             CreatedAt = assistantMessage.Timestamp
         };
+    }
+
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(ToolExecutionStartEvent toolStart)
+    {
+        IDictionary<string, object?>? arguments = this.ParseArguments(toolStart.Data?.Arguments);
+
+        FunctionCallContent content = new(
+            toolStart.Data?.ToolCallId ?? string.Empty,
+            toolStart.Data?.ToolName ?? string.Empty,
+            arguments)
+        {
+            RawRepresentation = toolStart
+        };
+
+        return new AgentResponseUpdate(ChatRole.Assistant, [content])
+        {
+            AgentId = this.Id,
+            CreatedAt = toolStart.Timestamp
+        };
+    }
+
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(ToolExecutionCompleteEvent toolComplete)
+    {
+        object? result = toolComplete.Data?.Success == true
+            ? toolComplete.Data?.Result?.Content
+            : toolComplete.Data?.Error?.Message ?? "Tool execution failed";
+
+        FunctionResultContent content = new(
+            toolComplete.Data?.ToolCallId ?? string.Empty,
+            result)
+        {
+            RawRepresentation = toolComplete
+        };
+
+        return new AgentResponseUpdate(ChatRole.Tool, [content])
+        {
+            AgentId = this.Id,
+            CreatedAt = toolComplete.Timestamp
+        };
+    }
+
+    private IDictionary<string, object?>? ParseArguments(object? arguments)
+    {
+        if (arguments is null)
+        {
+            return null;
+        }
+
+        if (arguments is JsonElement jsonElement)
+        {
+            if (jsonElement.ValueKind == JsonValueKind.Null || jsonElement.ValueKind == JsonValueKind.Undefined)
+            {
+                return null;
+            }
+
+            var typeInfo = (JsonTypeInfo<Dictionary<string, object?>>)this._jsonSerializerOptions.GetTypeInfo(typeof(Dictionary<string, object?>));
+
+            try
+            {
+                return JsonSerializer.Deserialize(jsonElement.GetRawText(), typeInfo);
+            }
+            catch (JsonException)
+            {
+                return new Dictionary<string, object?> { ["value"] = jsonElement.ToString() };
+            }
+        }
+
+        if (arguments is IDictionary<string, object?> dict)
+        {
+            return dict;
+        }
+
+        return new Dictionary<string, object?> { ["value"] = arguments.ToString() };
     }
 
     private AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantUsageEvent usageEvent)

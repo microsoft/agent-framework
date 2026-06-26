@@ -1519,18 +1519,26 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 duration_state["duration"] = perf_counter() - start_time
 
             try:
-                result_stream = cast(
-                    ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
-                    super_get_response(
-                        messages=messages,
-                        stream=True,
-                        options=opts,
-                        compaction_strategy=compaction_strategy,
-                        tokenizer=tokenizer,
-                        function_invocation_kwargs=function_invocation_kwargs,
-                        client_kwargs=merged_client_kwargs,
-                    ),
-                )
+                # Activate the chat span across the synchronous setup phase so spans
+                # created by the underlying client while constructing the stream are
+                # parented under it. The per-pull ``_activate_span`` registered below
+                # covers iteration; this covers anything the subclass does between
+                # being called and returning the ResponseStream. Attach/detach are
+                # paired within this sync block, so there is no cross-context
+                # detach risk (the span itself is ended later in cleanup hooks).
+                with _activate_span(span):
+                    result_stream = cast(
+                        ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
+                        super_get_response(
+                            messages=messages,
+                            stream=True,
+                            options=opts,
+                            compaction_strategy=compaction_strategy,
+                            tokenizer=tokenizer,
+                            function_invocation_kwargs=function_invocation_kwargs,
+                            client_kwargs=merged_client_kwargs,
+                        ),
+                    )
             except Exception as exception:
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
                 _close_span()
@@ -1800,7 +1808,17 @@ class AgentTelemetryLayer:
                 duration_state["duration"] = perf_counter() - start_time
 
             try:
-                run_result: object = execute()
+                # Activate the agent span across the synchronous setup phase so spans
+                # created by the underlying agent while constructing the stream are
+                # parented under it. The per-pull ``_activate_span`` registered below
+                # covers iteration; this covers anything the subclass does between
+                # being called and returning the ResponseStream (subclasses that
+                # instead return an Awaitable defer their work into the first pull,
+                # where the per-pull activation already applies). Attach/detach are
+                # paired within this sync block, so there is no cross-context detach
+                # risk (the span itself is ended later in cleanup hooks).
+                with _activate_span(span):
+                    run_result: object = execute()
                 if isinstance(run_result, ResponseStream):
                     result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = run_result  # pyright: ignore[reportUnknownVariableType]
                 elif isinstance(run_result, Awaitable):
@@ -2193,6 +2211,181 @@ def _get_instructions_from_options(options: Any) -> str | list[str] | None:
     return None
 
 
+# region OTel tool definitions
+
+# Per-item in-memory cache of computed OTel tool definitions, keyed by the tool
+# object's identity. Tool objects (e.g. ``FunctionTool``, ``MCPTool``) are often
+# reused across runs, so caching their converted definitions avoids repeating the
+# isinstance checks, schema generation, and dict construction on every invocation.
+# A ``WeakKeyDictionary`` lets entries be garbage collected with their tools.
+# Unhashable / non-weak-referenceable specs (e.g. plain dicts) bypass the cache.
+_TOOL_OTEL_DEFINITION_CACHE: weakref.WeakKeyDictionary[Any, dict[str, Any] | None] = weakref.WeakKeyDictionary()
+# Sentinel distinguishing "not cached" from a cached ``None`` (unparseable tool).
+_CACHE_MISS: Final = object()
+
+
+def _tools_to_dict(
+    tools: Any,
+) -> list[dict[str, Any]] | None:
+    """Convert tools into OpenTelemetry GenAI tool definitions.
+
+    The output conforms to the OTel GenAI tool-definitions schema, where each
+    entry is either a ``FunctionToolDefinition`` (``type="function"`` with
+    ``name`` and optional ``description``/``parameters``) or a
+    ``GenericToolDefinition`` (any ``type`` plus a ``name``). See
+    https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-tool-definitions.json.
+
+    Args:
+        tools: The tools to parse. Can be a single tool or a sequence of tools.
+
+    Returns:
+        A list of OTel-conformant tool-definition dicts, or ``None`` when
+        ``tools`` is empty or no tool can be represented.
+    """
+    from ._tools import normalize_tools
+
+    normalized_tools = normalize_tools(tools)
+    if not normalized_tools:
+        return None
+    results: list[dict[str, Any]] = []
+    for tool_item in normalized_tools:
+        otel_def = _tool_to_otel_definition(tool_item)
+        if otel_def is not None:
+            results.append(otel_def)
+    return results or None
+
+
+def _tool_to_otel_definition(tool_item: Any) -> dict[str, Any] | None:
+    """Convert a single tool spec into an OTel GenAI tool-definition dict.
+
+    Results are cached per tool object (keyed by identity) so repeated runs that
+    reuse the same tool instances skip the conversion work. Specs that cannot be
+    weakly referenced (e.g. plain dicts) are converted without caching.
+
+    Returns ``None`` and emits a warning when the input cannot be represented
+    as either a ``FunctionToolDefinition`` or a ``GenericToolDefinition``.
+    """
+    try:
+        cached = _TOOL_OTEL_DEFINITION_CACHE.get(tool_item, _CACHE_MISS)
+    except TypeError:
+        # Unhashable spec (e.g. a plain dict); convert without caching.
+        return _build_tool_otel_definition(tool_item)
+    if cached is not _CACHE_MISS:
+        return cast("dict[str, Any] | None", cached)
+
+    definition = _build_tool_otel_definition(tool_item)
+    with contextlib.suppress(TypeError):
+        # Object may not support weak references; skip caching when that is the case.
+        _TOOL_OTEL_DEFINITION_CACHE[tool_item] = definition
+    return definition
+
+
+def _build_tool_otel_definition(tool_item: Any) -> dict[str, Any] | None:
+    """Convert a single tool spec into an OTel GenAI tool-definition dict (uncached)."""
+    from pydantic import BaseModel
+
+    from ._mcp import MCPTool
+    from ._serialization import SerializationMixin
+    from ._tools import FunctionTool
+
+    if isinstance(tool_item, FunctionTool):
+        definition: dict[str, Any] = {"type": "function", "name": tool_item.name}
+        if tool_item.description:
+            definition["description"] = tool_item.description
+        parameters = tool_item.parameters()
+        if parameters:
+            definition["parameters"] = parameters
+        return definition
+
+    if isinstance(tool_item, MCPTool):
+        definition = {"type": "mcp", "name": tool_item.name}
+        if tool_item.description:
+            definition["description"] = tool_item.description
+        return definition
+
+    raw: Mapping[str, Any] | None = None
+    if isinstance(tool_item, BaseModel):
+        raw = tool_item.model_dump(exclude_none=True)
+    elif isinstance(tool_item, SerializationMixin):
+        raw = tool_item.to_dict()
+    elif isinstance(tool_item, Mapping):
+        raw = cast("Mapping[str, Any]", tool_item)
+
+    if raw is None:
+        logger.warning(
+            "Can't parse tool to OpenTelemetry tool definition: %s",
+            type(tool_item).__name__,  # type: ignore[reportUnknownArgumentType]
+        )
+        return None
+    return _otel_definition_from_mapping(raw)
+
+
+def _otel_definition_from_mapping(raw: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Reshape a tool spec mapping into an OTel GenAI tool-definition dict.
+
+    Handles the nested OpenAI Chat Completions function shape
+    (``{"type": "function", "function": {...}}``) by flattening it into the
+    OTel shape.
+    """
+    # OpenAI Chat Completions nests the function spec one level deeper; flatten it.
+    nested_function = raw.get("function") if raw.get("type") == "function" else None
+    if isinstance(nested_function, Mapping):
+        nested = cast("Mapping[str, Any]", nested_function)
+        name = nested.get("name")
+        if not isinstance(name, str) or not name:
+            logger.warning("Can't parse tool to OpenTelemetry tool definition: missing 'name'.")
+            return None
+        definition: dict[str, Any] = {"type": "function", "name": name}
+        description = nested.get("description")
+        if description:
+            definition["description"] = description
+        parameters = nested.get("parameters")
+        if parameters:
+            definition["parameters"] = parameters
+        # Forward extra properties from both layers, preferring the inner spec.
+        for source in (nested, raw):
+            for key, value in source.items():
+                if key in {"type", "function", "name", "description", "parameters"}:
+                    continue
+                definition.setdefault(key, value)
+        return definition
+
+    type_value = raw.get("type")
+    if not isinstance(type_value, str) or not type_value:
+        logger.warning("Can't parse tool to OpenTelemetry tool definition: missing 'type'.")
+        return None
+
+    name_value = raw.get("name")
+    if not isinstance(name_value, str) or not name_value:
+        # Hosted tools sometimes omit ``name`` (e.g. ``{"type": "code_interpreter"}``);
+        # fall back to the type so the OTel definition stays valid.
+        name_value = type_value
+
+    if type_value == "function":
+        definition = {"type": "function", "name": name_value}
+        description = raw.get("description")
+        if description:
+            definition["description"] = description
+        parameters = raw.get("parameters")
+        if parameters:
+            definition["parameters"] = parameters
+        for key, value in raw.items():
+            if key in {"type", "name", "description", "parameters"}:
+                continue
+            definition.setdefault(key, value)
+        return definition
+
+    definition = {"type": type_value, "name": name_value}
+    for key, value in raw.items():
+        if key in {"type", "name"}:
+            continue
+        definition[key] = value
+    return definition
+
+
+# endregion
+
+
 # Mapping configuration for extracting span attributes
 # Each entry: source_keys -> (otel_attribute_key, transform_func, check_options_first, default_value)
 # - source_keys: single key or list of keys to check (first non-None value wins)
@@ -2228,11 +2421,7 @@ OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | Non
     # Tools with validation - returns None if no valid tools
     "tools": (
         OtelAttr.TOOL_DEFINITIONS,
-        lambda tools: (
-            json.dumps(tools_dict, ensure_ascii=False)
-            if (tools_dict := __import__("agent_framework._tools", fromlist=["_tools_to_dict"])._tools_to_dict(tools))
-            else None
-        ),
+        lambda tools: json.dumps(tools_dict, ensure_ascii=False) if (tools_dict := _tools_to_dict(tools)) else None,
         True,
         None,
     ),

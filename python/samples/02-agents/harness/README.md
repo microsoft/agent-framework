@@ -19,6 +19,7 @@ from a chat client.
 | SkillsProvider | File-based skill discovery and progressive loading |
 | Shell tool | Shell command execution + environment probing (when `shell_executor` provided) |
 | Tool approval | "Don't ask again" standing rules + heuristic auto-approval (enabled by default) |
+| Looping | Re-invoke the agent until a `loop_should_continue` predicate is satisfied (when provided) |
 | OpenTelemetry | Built-in observability |
 
 Each feature can be disabled or customized via keyword arguments.
@@ -27,7 +28,8 @@ Each feature can be disabled or customized via keyword arguments.
 
 | File | Description |
 |------|-------------|
-| `harness_research.py` | Interactive research assistant with web search and planning workflow |
+| `harness_research.py` | Interactive research assistant with web search, a plan/execute workflow, and an execute-mode loop that re-invokes the agent until every todo is complete |
+| `harness_data_processing.py` | Data-processing assistant over a folder of CSV files, demonstrating file-access tools and tool approval |
 
 ## Running
 
@@ -39,9 +41,29 @@ export FOUNDRY_MODEL="your-model-deployment-name"
 # Authenticate with Azure (required for AzureCliCredential)
 az login
 
-# Run the research sample
-python samples/02-agents/harness/harness_research.py
+# Run a sample against the released agent-framework (PEP 723 isolated env)
+uv run samples/02-agents/harness/harness_research.py
 ```
+
+### Running against the local repo
+
+To run a sample against your **local** `agent-framework` checkout (so it picks
+up uncommitted changes), use the workspace environment instead of the isolated
+PEP 723 env. From the `python/` directory, run the script with `uv run python`
+and add the `textual` UI dependency the harness console needs:
+
+```bash
+uv run --with textual python samples/02-agents/harness/harness_research.py
+uv run --with textual python samples/02-agents/harness/harness_data_processing.py
+```
+
+The workspace environment already provides the editable `agent-framework`
+packages plus the samples' other dependencies (`rich`, `python-dotenv`,
+`azure-identity`); only `textual` needs to be supplied with `--with`.
+
+> Note: invoking `uv run python <script>` (with `python`) bypasses the PEP 723
+> metadata and uses the workspace env; `uv run <script>` (without `python`)
+> uses the isolated env with the released package.
 
 ## Key Concepts
 

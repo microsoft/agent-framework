@@ -7,6 +7,12 @@ This sample demonstrates how to attach :class:`FileAccessProvider` (backed by
 data, perform analysis, and write summary output back to the same folder via
 the ``file_access_*`` tools.
 
+The file-access tools all require approval (``approval_mode="always_require"``),
+so a base ``Agent`` installs :class:`ToolApprovalMiddleware` to drive the
+approval handshake. Because this sample is non-interactive, it auto-approves
+every file-access tool via
+:meth:`FileAccessProvider.all_tools_auto_approval_rule`.
+
 The sibling ``working/`` folder contains ``sales.csv`` — ~50 rows of sales
 transactions (date, product, category, quantity, unit_price, region,
 salesperson). The agent is asked, in a single session, to: list available
@@ -22,7 +28,7 @@ import asyncio
 import os
 from pathlib import Path
 
-from agent_framework import Agent, FileAccessProvider, FileSystemAgentFileStore
+from agent_framework import Agent, FileAccessProvider, FileSystemAgentFileStore, ToolApprovalMiddleware
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -92,13 +98,19 @@ async def main() -> None:
     #    agent for the duration of each run.
     file_access = FileAccessProvider(store=FileSystemAgentFileStore(working_dir))
 
-    # 4. Create the agent and attach the provider.
+    # 4. Create the agent and attach the provider. The file-access tools all
+    #    require approval (approval_mode="always_require"). Developers can
+    #    present these to the user for approval, or like in this case, auto-approve
+    #    them via FileAccessProvider.all_tools_auto_approval_rule. Note that
+    #    to use tool approval rules, the agent must have ToolApprovalMiddleware
+    #    in its middleware stack.
     async with Agent(
         client=client,
         name="DataAnalyst",
         description="A data analyst assistant that reads, analyzes, and processes data files.",
         instructions=INSTRUCTIONS,
         context_providers=[file_access],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[FileAccessProvider.all_tools_auto_approval_rule])],
     ) as agent:
         # 5. Run all prompts inside one session so the conversation remains
         #    coherent across turns.
