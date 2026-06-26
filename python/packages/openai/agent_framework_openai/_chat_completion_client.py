@@ -85,6 +85,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_framework.openai")
 
+# Error message shared with tests — extracted to a constant to keep the
+# implementation and its assertions in sync.
+_AZURE_WEB_SEARCH_UNSUPPORTED_MSG = (
+    "Web search is not supported by the Azure OpenAI Chat Completions API. "
+    "Use agent_framework.openai.OpenAIChatClient (Responses API) for "
+    "web search support on Azure."
+)
+
 DEFAULT_AZURE_OPENAI_CHAT_COMPLETION_API_VERSION = "2024-12-01-preview"
 
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -373,6 +381,7 @@ class RawOpenAIChatCompletionClient(
         else:
             self.default_headers = None
         self.instruction_role = instruction_role
+        self._use_azure_client = use_azure_client
         if use_azure_client:
             self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
 
@@ -589,6 +598,12 @@ class RawOpenAIChatCompletionClient(
         Converts FunctionTool to JSON schema format. Web search tools are routed
         to web_search_options parameter. All other tools pass through unchanged.
 
+        Note:
+            Azure OpenAI Chat Completions API does not support ``web_search_options``.
+            When configured with an Azure endpoint, passing web search tools raises
+            :class:`ValueError`. Use :class:`~agent_framework.openai.OpenAIChatClient`
+            (Responses API) for web search support on Azure.
+
         Args:
             tools: Tool(s) to prepare.
 
@@ -603,8 +618,11 @@ class RawOpenAIChatCompletionClient(
             elif isinstance(tool, MutableMapping):
                 typed_tool = cast(MutableMapping[str, Any], tool)
                 if typed_tool.get("type") == "web_search":
-                    # Web search is handled via web_search_options, not tools array
-                    web_search_options = {k: v for k, v in typed_tool.items() if k != "type"}
+                    if self._use_azure_client:
+                        raise ValueError(_AZURE_WEB_SEARCH_UNSUPPORTED_MSG)
+                    else:
+                        # Web search is handled via web_search_options, not tools array
+                        web_search_options = {k: v for k, v in typed_tool.items() if k != "type"}
                 else:
                     # Pass through all other dict-based tools unchanged
                     chat_tools.append(typed_tool)
