@@ -107,6 +107,34 @@ class WorkflowHitlContext:
             request_path_prefix=request_path_prefix,
         )
 
+    @staticmethod
+    async def pending_request_id(ctx: Any) -> str | None:
+        """Return the id of the most recently emitted ``request_info`` on ``ctx``.
+
+        Call this immediately after ``await ctx.request_info(...)`` to recover the
+        request id the framework generated, so it can be forwarded (e.g. in a message
+        to a downstream notify executor that builds the respond URL) without the caller
+        generating an id by hand.
+
+        It reads the executor's runner context, which both the in-process and durable
+        runners populate, so it works on any host and returns ``None`` only when no
+        request is pending (or the runner context does not track request-info events).
+
+        Note:
+            When an executor emits several ``request_info`` calls in one turn this
+            returns the **most recent** one. Read it right after each call -- or pass an
+            explicit ``request_id`` to ``request_info`` -- to disambiguate.
+        """
+        runner_context = getattr(ctx, "_runner_context", None)
+        getter = getattr(runner_context, "get_pending_request_info_events", None)
+        if getter is None:
+            return None
+        events = await getter()
+        if not events:
+            return None
+        # Dicts preserve insertion order, so the last key is the most recent request.
+        return next(reversed(events))
+
     @property
     def base_url(self) -> str:
         """The scheme + host the respond/status URLs are built on (no trailing slash).

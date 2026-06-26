@@ -40,7 +40,6 @@ Prerequisites:
 
 import logging
 from dataclasses import dataclass
-from uuid import uuid4
 
 from agent_framework import (
     Executor,
@@ -141,13 +140,21 @@ class ReviewGateExecutor(Executor):
             body=submission.body,
             prompt=prompt,
         )
-        # Generate the request id up front so we can notify the reviewer *and* pause on
-        # the same id. The notification is sent to a downstream executor, so only this
-        # activity's committed id ever reaches the notifier (retries notify no one).
-        request_id = str(uuid4())
+        # Pause the (inner) workflow and wait for a human response. On the durable host
+        # this pauses the child orchestration running this inner workflow. request_info
+        # generates the request id; read it back so the downstream notifier can build
+        # the (qualified) respond URL -- no need to mint an id by hand.
+        await ctx.request_info(
+            request_data=approval_request,
+            response_type=HumanApprovalResponse,
+        )
+        request_id = await WorkflowHitlContext.pending_request_id(ctx)
+        assert request_id is not None  # always set immediately after request_info
 
         # Side-branch: hand the request id to the notifier so it can build the respond
-        # URL. This runs before the (inner) workflow pauses.
+        # URL. The notifier is a separate (downstream) activity, so only this activity's
+        # committed id reaches it -- retries notify no one. This message is drained
+        # before the (inner) workflow pauses.
         await ctx.send_message(
             HumanReviewNotification(
                 request_id=request_id,
@@ -155,14 +162,6 @@ class ReviewGateExecutor(Executor):
                 prompt=prompt,
             ),
             target_id="notify",
-        )
-
-        # Pause the (inner) workflow and wait for a human response. On the durable
-        # host this pauses the child orchestration running this inner workflow.
-        await ctx.request_info(
-            request_data=approval_request,
-            response_type=HumanApprovalResponse,
-            request_id=request_id,
         )
 
     @response_handler

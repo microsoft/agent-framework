@@ -29,7 +29,6 @@ import logging
 import os
 from dataclasses import dataclass
 from typing import Any
-from uuid import uuid4
 
 from agent_framework import (
     Agent,
@@ -250,15 +249,21 @@ class HumanReviewExecutor(Executor):
         # Store analysis in shared state for the response handler
         ctx.set_state("pending_analysis", data)
 
-        # Generate the request id up front so we can notify the reviewer *and* pause on
-        # the same id. The email is sent by a downstream executor (NotifyExecutor), not
-        # here, so only this activity's committed id ever reaches the notifier: if this
-        # executor is retried, the superseded attempts notify no one.
-        request_id = str(uuid4())
+        # Pause the workflow for human input. request_info generates the request id;
+        # read it back so a downstream NotifyExecutor can build the respond URL -- no
+        # need to mint an id by hand.
+        await ctx.request_info(
+            request_data=approval_request,
+            response_type=HumanApprovalResponse,
+        )
+        request_id = await WorkflowHitlContext.pending_request_id(ctx)
+        assert request_id is not None  # always set immediately after request_info
 
         # Side-branch: hand the request id to the notifier so it can build the respond
-        # URL and alert the reviewer. This runs before the workflow pauses -- the
-        # orchestrator drains this message before entering the HITL wait.
+        # URL and alert the reviewer. The email is sent by the downstream NotifyExecutor
+        # (a separate activity), so only this activity's committed id ever reaches the
+        # notifier -- retries of this executor notify no one. The orchestrator drains
+        # this message before entering the HITL wait.
         await ctx.send_message(
             HumanReviewNotification(
                 request_id=request_id,
@@ -266,13 +271,6 @@ class HumanReviewExecutor(Executor):
                 prompt=prompt,
             ),
             target_id="notify_executor",
-        )
-
-        # Pause the workflow until a response arrives for this request id.
-        await ctx.request_info(
-            request_data=approval_request,
-            response_type=HumanApprovalResponse,
-            request_id=request_id,
         )
 
     @response_handler

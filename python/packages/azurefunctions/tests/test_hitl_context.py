@@ -163,3 +163,39 @@ class TestNestedPrefix:
         assert hitl is not None
         assert hitl.request_path_prefix == ""
         assert hitl.build_respond_url("rid") == ("https://app.example.com/api/workflow/wf/respond/inst-1/rid")
+
+
+def _ctx_with_pending(pending: dict[str, Any] | None, *, has_getter: bool = True) -> SimpleNamespace:
+    """Build a ctx whose runner context returns the given pending request-info events."""
+    if not has_getter:
+        return SimpleNamespace(_runner_context=SimpleNamespace())
+
+    async def _get() -> dict[str, Any]:
+        return pending or {}
+
+    return SimpleNamespace(_runner_context=SimpleNamespace(get_pending_request_info_events=_get))
+
+
+class TestPendingRequestId:
+    """Reading back the framework-generated request id after request_info."""
+
+    async def test_returns_latest_request_id(self) -> None:
+        # Dicts preserve insertion order; the most recently emitted request wins.
+        ctx = _ctx_with_pending({"r1": object(), "r2": object()})
+        assert await WorkflowHitlContext.pending_request_id(ctx) == "r2"
+
+    async def test_returns_single_request_id(self) -> None:
+        ctx = _ctx_with_pending({"only-one": object()})
+        assert await WorkflowHitlContext.pending_request_id(ctx) == "only-one"
+
+    async def test_returns_none_when_no_pending(self) -> None:
+        ctx = _ctx_with_pending({})
+        assert await WorkflowHitlContext.pending_request_id(ctx) is None
+
+    async def test_returns_none_when_no_runner_context(self) -> None:
+        assert await WorkflowHitlContext.pending_request_id(SimpleNamespace()) is None
+
+    async def test_returns_none_when_getter_absent(self) -> None:
+        # A runner context that doesn't track request-info events degrades to None.
+        ctx = _ctx_with_pending(None, has_getter=False)
+        assert await WorkflowHitlContext.pending_request_id(ctx) is None
