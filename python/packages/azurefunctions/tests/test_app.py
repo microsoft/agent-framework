@@ -1667,6 +1667,31 @@ class TestAgentFunctionAppSubworkflow:
         ):
             AgentFunctionApp(workflow=outer)
 
+    def test_cross_registration_nested_collision_is_atomic(self) -> None:
+        """A later top-level workflow whose nested child collides aborts before committing it.
+
+        Hosting ``[first, second]`` where ``second``'s nested sub-workflow reuses
+        ``first``'s child name must raise *before* ``second`` registers any primitives,
+        so the app is never left with ``second`` half-configured.
+        """
+        shared_a, _ = self._inner_agent_wf("shared", "agent_node")
+        shared_b, _ = self._inner_agent_wf("shared", "other_node")  # different instance, same name
+        first = self._outer_wf("first", shared_a)
+        second = self._outer_wf("second", shared_b)
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+            pytest.raises(ValueError, match="collides"),
+        ):
+            AgentFunctionApp(workflows=[first, second])
+
+        # Only 'first' and its child 'shared' committed primitives; the collision aborted
+        # before 'second' (or its colliding child) registered anything.
+        registered = {call.args[0].name for call in setup_orch.call_args_list}
+        assert registered == {"first", "shared"}
+        assert "second" not in registered
+
     def test_executor_id_with_reserved_separator_is_rejected(self) -> None:
         """An executor id containing the nested-HITL separator is rejected at registration."""
         from agent_framework import Executor

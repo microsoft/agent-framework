@@ -421,6 +421,32 @@ class TestSubworkflowRegistration:
         with pytest.raises(ValueError, match="different workflow|different workflows"):
             agent_worker.configure_workflow(outer)
 
+    def test_cross_registration_nested_collision_is_atomic(
+        self, agent_worker: DurableAIAgentWorker, mock_grpc_worker: Mock
+    ) -> None:
+        """A later configure_workflow whose nested child collides leaves the worker unchanged.
+
+        Reproduces the partial-registration path: configure one workflow, then configure
+        a second whose nested sub-workflow reuses the first's child name. The second call
+        must raise *before* mutating any state, so the second top-level workflow is not
+        left half-registered (which would also wedge a corrected retry on the duplicate
+        guard).
+        """
+        shared_a = self._inner_agent_workflow("shared", "agent_node")
+        agent_worker.configure_workflow(self._outer_workflow("first", shared_a))
+
+        orchestrators_before = mock_grpc_worker.add_orchestrator.call_count
+
+        # A *different* 'shared' instance nested under a new top-level workflow collides.
+        shared_b = self._inner_agent_workflow("shared", "other_node")
+        with pytest.raises(ValueError, match="collides"):
+            agent_worker.configure_workflow(self._outer_workflow("second", shared_b))
+
+        # The worker is not partially configured: 'second' was never added, and no new
+        # orchestration was registered.
+        assert agent_worker.registered_workflow_names == ["first"]
+        assert mock_grpc_worker.add_orchestrator.call_count == orchestrators_before
+
     def test_executor_id_with_reserved_separator_is_rejected(self, agent_worker: DurableAIAgentWorker) -> None:
         """An executor id containing the nested-HITL separator is rejected at registration."""
         workflow = self._agent_workflow_with_executor_id("orders", "bad~id")

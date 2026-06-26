@@ -244,20 +244,27 @@ class DurableAIAgentWorker:
             for executor_id in hosted.executors:
                 validate_executor_id(executor_id)
 
-        self._workflows[workflow_name] = workflow
-
-        # Register the top-level workflow and every nested sub-workflow (deduped by
-        # name), so the parent can drive sub-workflows as durable child orchestrations.
+        # Check every cross-call collision *before* mutating any state, so a clash
+        # between a nested sub-workflow and an already-registered orchestration cannot
+        # leave the worker partially configured (e.g. the top-level name added to
+        # ``_workflows`` while a later child fails). Registration below is then a pure
+        # commit step.
         for hosted in hosted_workflows:
             existing = self._registered_orchestrations.get(hosted.name.casefold())
-            if existing is not None:
-                if existing is not hosted:
-                    raise ValueError(
-                        f"A different workflow named '{hosted.name}' collides with already-registered "
-                        f"'{existing.name}' on this worker. A workflow name maps to a single durable "
-                        f"orchestration ('dafx-{hosted.name}'), compared case-insensitively; rename one "
-                        "of them."
-                    )
+            if existing is not None and existing is not hosted:
+                raise ValueError(
+                    f"A different workflow named '{hosted.name}' collides with already-registered "
+                    f"'{existing.name}' on this worker. A workflow name maps to a single durable "
+                    f"orchestration ('dafx-{hosted.name}'), compared case-insensitively; rename one "
+                    "of them."
+                )
+
+        self._workflows[workflow_name] = workflow
+
+        # Commit: register the top-level workflow and every nested sub-workflow (deduped
+        # by name), so the parent can drive sub-workflows as durable child orchestrations.
+        for hosted in hosted_workflows:
+            if hosted.name.casefold() in self._registered_orchestrations:
                 continue
             self._register_single_workflow(hosted, callback)
 

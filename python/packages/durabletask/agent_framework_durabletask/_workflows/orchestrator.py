@@ -53,6 +53,7 @@ from .context import WorkflowOrchestrationContext
 from .naming import workflow_executor_activity_name, workflow_orchestrator_name, workflow_scoped_executor_id
 from .serialization import (
     SUBWORKFLOW_INPUT_KEY,
+    SUBWORKFLOW_RESULT_KEY,
     deserialize_value,
     reconstruct_to_type,
     resolve_type,
@@ -365,6 +366,29 @@ def _process_activity_result(
     )
 
 
+def _unpack_subworkflow_result(child_result: Any) -> tuple[list[Any], list[dict[str, Any]]]:
+    """Split a child orchestration's return value into ``(outputs, events)``.
+
+    A child run by this engine returns a :data:`SUBWORKFLOW_RESULT_KEY` envelope of
+    ``{"outputs": [...], "events": [...]}``. A bare list / ``None`` (a child that
+    produced no envelope, or a defensively-handled legacy shape) is treated as
+    outputs with no events.
+    """
+    if isinstance(child_result, dict):
+        envelope = cast("dict[str, Any]", child_result)
+        if envelope.get(SUBWORKFLOW_RESULT_KEY):
+            raw_outputs = envelope.get("outputs")
+            outputs = cast("list[Any]", raw_outputs) if isinstance(raw_outputs, list) else []
+            raw_events = envelope.get("events")
+            events = cast("list[dict[str, Any]]", raw_events) if isinstance(raw_events, list) else []
+            return outputs, events
+    if isinstance(child_result, list):
+        return cast("list[Any]", child_result), []
+    if child_result is None:
+        return [], []
+    return [child_result], []
+
+
 def _process_subworkflow_result(
     child_result: Any,
     executor: WorkflowExecutor,
@@ -372,21 +396,27 @@ def _process_subworkflow_result(
 ) -> ExecutorResult:
     """Process a child orchestration's result into an ``ExecutorResult``.
 
-    The child orchestration returns the inner workflow's outputs (a list of values
-    already encoded by the inner activity via ``serialize_value``). Mirroring the
-    in-process :class:`~agent_framework.WorkflowExecutor`:
+    The child orchestration returns a result envelope (see
+    :data:`SUBWORKFLOW_RESULT_KEY`) carrying the inner workflow's outputs (a list of
+    values already encoded by the inner activity via ``serialize_value``) plus its
+    accumulated event timeline. Mirroring the in-process
+    :class:`~agent_framework.WorkflowExecutor`:
 
     * ``allow_direct_output`` is ``False`` (default): each inner output becomes a
       message routed through the ``WorkflowExecutor`` node's outgoing edges.
     * ``allow_direct_output`` is ``True``: each inner output becomes one of the
       parent workflow's own outputs.
+
+    The inner workflow's *intermediate* events are bubbled into the parent's event
+    stream **re-tagged with this node's id** (``executor.id``), matching the
+    in-process ``WorkflowExecutor`` which forwards child intermediate emissions as
+    ``WorkflowEvent("intermediate", executor_id=self.id, ...)`` so an outer observer
+    sees nested progress without needing to know the child's internal executor
+    layout. Other inner event types are intentionally not re-emitted: inner *outputs*
+    already flow back as this node's outputs/messages above, and inner lifecycle
+    events (invoked/completed) are child-internal detail.
     """
-    if isinstance(child_result, list):
-        outputs: list[Any] = cast("list[Any]", child_result)
-    elif child_result is None:
-        outputs = []
-    else:
-        outputs = [child_result]
+    outputs, child_events = _unpack_subworkflow_result(child_result)
 
     sent_messages: list[dict[str, Any]] = []
     if executor.allow_direct_output:
@@ -398,10 +428,17 @@ def _process_subworkflow_result(
         # deserializes each "message" value before routing through edge groups.
         sent_messages = [{"message": output, "target_id": None, "source_id": executor.id} for output in outputs]
 
+    # Bubble the child's intermediate events up, re-tagged with this node's id (see
+    # docstring). These already-serialized event dicts are appended to the parent's
+    # timeline by the caller via append_activity_events (which re-stamps iteration).
+    bubbled_events = [
+        {**event, "executor_id": executor.id} for event in child_events if event.get("type") == "intermediate"
+    ]
+
     return ExecutorResult(
         executor_id=executor.id,
         output_message=None,
-        activity_result={"sent_messages": sent_messages, "outputs": [], "events": []},
+        activity_result={"sent_messages": sent_messages, "outputs": [], "events": bubbled_events},
         task_type=TaskType.SUBWORKFLOW,
     )
 
@@ -840,7 +877,7 @@ def run_workflow_orchestrator(
     workflow: Workflow,
     initial_message: Any,
     shared_state: dict[str, Any] | None = None,
-) -> Generator[Any, Any, list[Any]]:
+) -> Generator[Any, Any, list[Any] | dict[str, Any]]:
     """Traverse and execute the workflow graph as a durable orchestration.
 
     This is a generator-based orchestrator that works with any host by
@@ -863,13 +900,24 @@ def run_workflow_orchestrator(
         shared_state: Optional dict for cross-executor state sharing.
 
     Returns:
-        List of workflow outputs collected from executor activities.
+        For a top-level run, the list of workflow outputs collected from executor
+        activities. For a sub-workflow run (``initial_message`` carries
+        :data:`SUBWORKFLOW_INPUT_KEY`), a :data:`SUBWORKFLOW_RESULT_KEY` envelope
+        ``{"outputs": [...], "events": [...]}`` so the parent can bubble nested
+        progress.
     """
     pending_messages: dict[str, list[tuple[Any, str]]] = {
         workflow.start_executor_id: [(_coerce_initial_input(workflow, initial_message), SOURCE_WORKFLOW_START)]
     }
     workflow_outputs: list[Any] = []
     iteration = 0
+
+    # When this run is itself a sub-workflow (the parent dispatched it via
+    # call_sub_orchestrator with a SUBWORKFLOW_INPUT_KEY envelope), the orchestrator
+    # returns a SUBWORKFLOW_RESULT_KEY envelope so the parent recovers both the inner
+    # outputs and the inner event timeline. A top-level run returns a bare list, so the
+    # external client output path is unchanged.
+    is_subworkflow = isinstance(initial_message, dict) and SUBWORKFLOW_INPUT_KEY in initial_message
 
     # Monotonic, replay-stable counter for deriving child orchestration instance ids;
     # persists across supersteps so repeated sub-workflow invocations never collide.
@@ -984,6 +1032,10 @@ def run_workflow_orchestrator(
                 elif metadata.task_type == TaskType.SUBWORKFLOW:
                     subworkflow_executor = cast(WorkflowExecutor, workflow.executors[metadata.executor_id])
                     result = _process_subworkflow_result(raw_result, subworkflow_executor, workflow_outputs)
+                    # Bubble the child's (re-tagged) intermediate events into this
+                    # parent's timeline before the node's completed event, preserving
+                    # chronological order: node invoked -> child progress -> completed.
+                    append_activity_events(result.activity_result)
                     emit_event("executor_completed", metadata.executor_id)
                 else:
                     result = _process_activity_result(raw_result, metadata.executor_id, shared_state, workflow_outputs)
@@ -1092,4 +1144,8 @@ def run_workflow_orchestrator(
     if pending_messages:
         raise WorkflowConvergenceException(f"Workflow did not converge after {workflow.max_iterations} iterations.")
 
+    # A sub-workflow returns the outputs + event timeline envelope so the parent can
+    # bubble nested progress; a top-level run returns the bare outputs list.
+    if is_subworkflow:
+        return {SUBWORKFLOW_RESULT_KEY: True, "outputs": workflow_outputs, "events": live_events}
     return workflow_outputs  # noqa: B901

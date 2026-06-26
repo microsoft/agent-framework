@@ -117,6 +117,14 @@ def strip_pickle_markers(data: Any) -> Any:
 # via call_sub_orchestrator) apart from untrusted top-level client input.
 SUBWORKFLOW_INPUT_KEY = "__subworkflow_input__"
 
+# When a workflow runs as a sub-workflow, its orchestrator returns this envelope
+# instead of a bare outputs list, so the parent can recover both the inner outputs
+# *and* the inner event timeline (a child orchestration is a separate durable
+# instance; its return value is the only deterministic, replay-safe channel back to
+# the parent). A top-level run still returns a bare list, so the client output path
+# is unchanged. See ``orchestrator._process_subworkflow_result``.
+SUBWORKFLOW_RESULT_KEY = "__subworkflow_result__"
+
 
 def strip_subworkflow_markers(data: Any) -> Any:
     """Remove the reserved sub-workflow envelope key from untrusted top-level input.
