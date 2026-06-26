@@ -2,8 +2,8 @@
 # requires-python = ">=3.11"
 # dependencies = [
 #   "microsoft-teams-apps",
-#   "agent-framework-core",
-#   "agent-framework-openai",
+#   "agent-framework-foundry",
+#   "azure-identity",
 # ]
 # ///
 # Copyright (c) Microsoft. All rights reserved.
@@ -16,7 +16,8 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Agent, AgentSession, tool
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from microsoft_teams.api import CardAction, CardActionType, MessageActivity, MessageActivityInput, SuggestedActions
 from microsoft_teams.apps import ActivityContext, App
@@ -35,13 +36,13 @@ This sample demonstrates how to build an AI agent using the Agent Framework,
 hosted as a Microsoft Teams bot through the Teams SDK.
 
 Key features:
-- Loads OpenAI credentials and Teams bot configuration from environment variables.
+- Loads Foundry project configuration and Teams bot credentials from environment variables.
 - Demonstrates agent creation and tool registration.
 - Streams the agent response token-by-token into the Teams chat.
 - Maintains per-conversation AgentSession for multi-turn memory.
 
-To run, set the Teams bot credentials and OpenAI credentials (check .env.example),
-then point your bot's messaging endpoint at this app (e.g. via a dev tunnel).
+To run, set the Teams bot credentials and Foundry project settings (check .env.example) and
+run `az login`, then point your bot's messaging endpoint at this app (e.g. via a dev tunnel).
 """
 
 
@@ -58,8 +59,7 @@ def get_weather(
 
 def build_agent() -> Agent:
     """Create and return the agent instance with the weather tool registered."""
-    # Reads AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, and AZURE_OPENAI_CHAT_COMPLETION_MODEL from the environment.
-    client = OpenAIChatClient()
+    client = FoundryChatClient(credential=AzureCliCredential())
     return Agent(
         client=client,
         name="WeatherAgent",
