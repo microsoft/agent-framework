@@ -1794,7 +1794,7 @@ class SkillsProvider(ContextProvider):
     **Tool approval:** every tool exposed by this provider
     (``load_skill``, ``read_skill_resource``, and ``run_skill_script``) is
     registered with ``approval_mode="always_require"``, so each skill operation
-    needs host approval.  To run unattended, pass one of the static
+    needs approval.  To run unattended, pass one of the static
     auto-approval rules to :class:`~agent_framework.ToolApprovalMiddleware` (via
     ``auto_approval_rules``):
     :meth:`read_only_tools_auto_approval_rule` approves only the read-only tools
@@ -1974,7 +1974,7 @@ class SkillsProvider(ContextProvider):
 
         .. note::
 
-            All skill tools require host approval. To approve them
+            All skill tools require approval. To approve them
             automatically, pass :meth:`read_only_tools_auto_approval_rule` or
             :meth:`all_tools_auto_approval_rule` to
             :class:`~agent_framework.ToolApprovalMiddleware`. See
@@ -2062,7 +2062,7 @@ class SkillsProvider(ContextProvider):
 
         .. note::
 
-            All skill tools require host approval. To approve them
+            All skill tools require approval. To approve them
             automatically, pass :meth:`read_only_tools_auto_approval_rule` or
             :meth:`all_tools_auto_approval_rule` to
             :class:`~agent_framework.ToolApprovalMiddleware`.
@@ -2244,7 +2244,7 @@ class SkillsProvider(ContextProvider):
 
         Always includes ``load_skill``, ``read_skill_resource``, and
         ``run_skill_script``.  Every tool is registered with
-        ``approval_mode="always_require"`` so each skill operation needs host
+        ``approval_mode="always_require"`` so each skill operation needs
         approval; use :meth:`read_only_tools_auto_approval_rule` or
         :meth:`all_tools_auto_approval_rule` with
         :class:`~agent_framework.ToolApprovalMiddleware` to approve them
