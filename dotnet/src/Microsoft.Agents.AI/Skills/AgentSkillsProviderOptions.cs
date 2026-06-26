@@ -35,12 +35,4 @@ public sealed class AgentSkillsProviderOptions
     /// Only enable this when the skills and their scripts come from a trusted source.
     /// </remarks>
     public bool IncludeDetailedErrors { get; set; }
-
-    /// <summary>
-    /// Gets or sets a value indicating whether caching of tools and instructions is disabled.
-    /// When <see langword="false"/> (the default), the provider caches the tools and instructions
-    /// after the first build and returns the cached instance on subsequent calls.
-    /// Set to <see langword="true"/> to rebuild tools and instructions on every invocation.
-    /// </summary>
-    public bool DisableCaching { get; set; }
 }

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Aspire.Hosting.ApplicationModel;
@@ -14,6 +15,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Aspire.Hosting.AgentFramework.DevUI.UnitTests;
 
@@ -257,6 +259,72 @@ public class DevUIAggregatorHostedServiceTests
 
     #endregion
 
+    #region Backend Endpoint Selection Tests
+
+    /// <summary>
+    /// Verifies that ResolveBackends prefers the HTTPS endpoint when both HTTP and HTTPS are allocated.
+    /// </summary>
+    [Fact]
+    public void ResolveBackends_WithHttpAndHttpsEndpoints_PrefersHttps()
+    {
+        // Arrange
+        var devui = new DevUIResource("devui");
+        var agentService = new TestEndpointResource("writer-agent");
+        AddAllocatedEndpoint(agentService, "http", "http", 5050);
+        AddAllocatedEndpoint(agentService, "https", "https", 7443);
+        devui.Annotations.Add(new AgentServiceAnnotation(agentService));
+        var aggregator = new DevUIAggregatorHostedService(devui, NullLogger.Instance);
+
+        // Act
+        var backends = aggregator.ResolveBackends();
+
+        // Assert
+        Assert.Equal("https://localhost:7443", backends["writer-agent"]);
+    }
+
+    /// <summary>
+    /// Verifies that ResolveBackends falls back to HTTP when the HTTPS endpoint is not present.
+    /// </summary>
+    [Fact]
+    public void ResolveBackends_WithOnlyHttpEndpoint_UsesHttp()
+    {
+        // Arrange
+        var devui = new DevUIResource("devui");
+        var agentService = new TestEndpointResource("writer-agent");
+        AddAllocatedEndpoint(agentService, "http", "http", 5050);
+        devui.Annotations.Add(new AgentServiceAnnotation(agentService));
+        var aggregator = new DevUIAggregatorHostedService(devui, NullLogger.Instance);
+
+        // Act
+        var backends = aggregator.ResolveBackends();
+
+        // Assert
+        Assert.Equal("http://localhost:5050", backends["writer-agent"]);
+    }
+
+    /// <summary>
+    /// Verifies that ResolveBackends falls back to HTTP when the HTTPS endpoint has not been allocated yet.
+    /// </summary>
+    [Fact]
+    public void ResolveBackends_WithUnallocatedHttpsEndpoint_UsesHttp()
+    {
+        // Arrange
+        var devui = new DevUIResource("devui");
+        var agentService = new TestEndpointResource("writer-agent");
+        AddEndpoint(agentService, "https", "https");
+        AddAllocatedEndpoint(agentService, "http", "http", 5050);
+        devui.Annotations.Add(new AgentServiceAnnotation(agentService));
+        var aggregator = new DevUIAggregatorHostedService(devui, NullLogger.Instance);
+
+        // Act
+        var backends = aggregator.ResolveBackends();
+
+        // Assert
+        Assert.Equal("http://localhost:5050", backends["writer-agent"]);
+    }
+
+    #endregion
+
     #region Entity ID Parsing Tests
 
     /// <summary>
@@ -307,6 +375,34 @@ public class DevUIAggregatorHostedServiceTests
 
         return mockBuilder.Object;
     }
+
+    private static void AddAllocatedEndpoint(
+        TestEndpointResource resource,
+        string name,
+        string uriScheme,
+        int port)
+    {
+        var endpoint = AddEndpoint(resource, name, uriScheme);
+        endpoint.AllocatedEndpoint = new AllocatedEndpoint(endpoint, "localhost", port);
+    }
+
+    private static EndpointAnnotation AddEndpoint(
+        TestEndpointResource resource,
+        string name,
+        string uriScheme)
+    {
+        var endpoint = new EndpointAnnotation(
+            ProtocolType.Tcp,
+            uriScheme: uriScheme,
+            name: name,
+            port: null,
+            isProxied: false);
+
+        resource.Annotations.Add(endpoint);
+        return endpoint;
+    }
+
+    private sealed class TestEndpointResource(string name) : Resource(name), IResourceWithEndpoints;
 
     #endregion
 
@@ -492,7 +588,7 @@ public class DevUIAggregatorHostedServiceTests
         var resource = new TestBackendResource("test-backend");
 
         var endpoint = new EndpointAnnotation(
-            System.Net.Sockets.ProtocolType.Tcp,
+            ProtocolType.Tcp,
             uriScheme: "http",
             name: "http",
             port: backendUri.Port,

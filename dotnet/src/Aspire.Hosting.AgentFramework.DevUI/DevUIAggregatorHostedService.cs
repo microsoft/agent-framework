@@ -30,6 +30,7 @@ namespace Aspire.Hosting.AgentFramework;
 internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 {
     private static readonly FileExtensionContentTypeProvider s_contentTypeProvider = new();
+    private static readonly string[] s_preferredBackendEndpointNames = ["https", "http"];
 
     private WebApplication? _app;
     private readonly DevUIResource _resource;
@@ -283,7 +284,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
     /// Resolves backend URLs from the resource's <see cref="AgentServiceAnnotation"/> annotations.
     /// This method does not cache results to ensure late-allocated backends are always discovered.
     /// </summary>
-    private Dictionary<string, string> ResolveBackends()
+    internal Dictionary<string, string> ResolveBackends()
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -296,21 +297,39 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
             var prefix = annotation.EntityIdPrefix ?? annotation.AgentService.Name;
 
-            try
+            var endpointUrl = this.ResolveBackendUrl(rwe, prefix);
+            if (endpointUrl is not null)
             {
-                var endpoint = rwe.GetEndpoint("http");
-                if (endpoint.IsAllocated)
-                {
-                    result[prefix] = endpoint.Url;
-                }
-            }
-            catch (Exception ex)
-            {
-                this._logger.LogDebug(ex, "Backend '{Prefix}' endpoint not yet available", prefix);
+                result[prefix] = endpointUrl;
             }
         }
 
         return result;
+    }
+
+    private string? ResolveBackendUrl(IResourceWithEndpoints resource, string prefix)
+    {
+        foreach (var endpointName in s_preferredBackendEndpointNames)
+        {
+            try
+            {
+                var endpoint = resource.GetEndpoint(endpointName);
+                if (endpoint.IsAllocated)
+                {
+                    return endpoint.Url;
+                }
+            }
+            catch (InvalidOperationException ex)
+            {
+                this._logger.LogDebug(
+                    ex,
+                    "Backend '{Prefix}' {EndpointName} endpoint not yet available",
+                    prefix,
+                    endpointName);
+            }
+        }
+
+        return null;
     }
 
     private async Task<IResult> AggregateEntitiesAsync(HttpContext context)
