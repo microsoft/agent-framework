@@ -158,7 +158,6 @@ public sealed class AgentSkillsProviderBuilderTests
         // Act — all fluent methods should return the same builder
         var result = builder
             .UseSource(source)
-            .UseScriptApproval(false)
             .UsePromptTemplate("Skills:\n{skills}");
 
         // Assert
@@ -175,7 +174,7 @@ public sealed class AgentSkillsProviderBuilderTests
         // Act — UseOptions should not throw and successfully configure
         var provider = new AgentSkillsProviderBuilder()
             .UseSource(source)
-            .UseOptions(opts => opts.ScriptApproval = true)
+            .UseOptions(opts => opts.IncludeDetailedErrors = true)
             .Build();
 
         // Assert

@@ -157,17 +157,6 @@ public sealed class AgentSkillsProviderBuilder
     }
 
     /// <summary>
-    /// Enables or disables the script approval gate.
-    /// </summary>
-    /// <param name="enabled">Whether script execution requires approval.</param>
-    /// <returns>This builder instance for chaining.</returns>
-    public AgentSkillsProviderBuilder UseScriptApproval(bool enabled = true)
-    {
-        this.GetOrCreateOptions().ScriptApproval = enabled;
-        return this;
-    }
-
-    /// <summary>
     /// Sets the runner for file-based skill scripts.
     /// </summary>
     /// <param name="runner">The delegate that runs file-based scripts.</param>

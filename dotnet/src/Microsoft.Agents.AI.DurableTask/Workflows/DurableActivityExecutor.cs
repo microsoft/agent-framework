@@ -151,8 +151,13 @@ internal static class DurableActivityExecutor
             return supportedTypes.FirstOrDefault() ?? typeof(string);
         }
 
+        Type? loadedType = DurableTaskTypeResolver.Resolve(inputTypeName);
+        if (loadedType is not null && supportedTypes.Contains(loadedType))
+        {
+            return loadedType;
+        }
+
         Type? matchedType = supportedTypes.FirstOrDefault(t =>
-            t.AssemblyQualifiedName == inputTypeName ||
             t.FullName == inputTypeName ||
             t.Name == inputTypeName);
 
@@ -160,8 +165,6 @@ internal static class DurableActivityExecutor
         {
             return matchedType;
         }
-
-        Type? loadedType = Type.GetType(inputTypeName);
 
         // Fall back if type is string or string[] but executor doesn't support it
         if (loadedType is not null && !supportedTypes.Contains(loadedType))

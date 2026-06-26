@@ -19,13 +19,6 @@ public sealed class AgentSkillsProviderOptions
     public string? SkillsInstructionPrompt { get; set; }
 
     /// <summary>
-    /// Gets or sets a value indicating whether script execution requires approval.
-    /// When <see langword="true"/>, script execution is blocked until approved.
-    /// Defaults to <see langword="false"/>.
-    /// </summary>
-    public bool ScriptApproval { get; set; }
-
-    /// <summary>
     /// Gets or sets a value indicating whether detailed exception information is included
     /// in the error message returned to the model when a script execution fails.
     /// </summary>
