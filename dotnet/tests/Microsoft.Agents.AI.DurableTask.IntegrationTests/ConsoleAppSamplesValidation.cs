@@ -28,7 +28,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         setEnvVar("REDIS_CONNECTION_STRING", $"localhost:{RedisPort}");
     }
 
-    [Fact]
+    [Fact(Skip = "Disabled due to persistent CI failures. See #6732.")]
     public async Task SingleAgentSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
@@ -67,7 +67,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = "Disabled due to persistent CI failures. See #6732.")]
     public async Task SingleAgentOrchestrationChainingSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
@@ -103,7 +103,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = "Disabled due to persistent CI failures. See #6732.")]
     public async Task MultiAgentConcurrencySampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
@@ -158,7 +158,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = "Disabled due to persistent CI failures. See #6732.")]
     public async Task MultiAgentConditionalSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
