@@ -50,7 +50,7 @@ run `az login`, then point your bot's messaging endpoint at this app (e.g. via a
 # production; see samples/02-agents/tools/function_tool_with_approval.py.
 @tool(approval_mode="never_require")
 def get_weather(
-    location: Annotated[str, Field(description="The location to get the weather for.")],
+    location: Annotated[str, "The location to get the weather for."],
 ) -> str:
     """Generate a mock weather report for the provided location."""
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
