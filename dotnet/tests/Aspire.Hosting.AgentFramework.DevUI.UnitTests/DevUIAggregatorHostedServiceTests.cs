@@ -176,11 +176,12 @@ public class DevUIAggregatorHostedServiceTests
         var builder = DistributedApplication.CreateBuilder();
         var devui = builder.AddDevUI("devui");
 
-        // Assert - no AgentServiceAnnotation means no backends
+        // Act
         var annotations = devui.Resource.Annotations
             .OfType<AgentServiceAnnotation>()
             .ToList();
 
+        // Assert - no AgentServiceAnnotation means no backends
         Assert.Empty(annotations);
     }
 
@@ -274,10 +275,12 @@ public class DevUIAggregatorHostedServiceTests
         // - prefix is typically the resource name or custom prefix
         // - entityId is the original entity identifier from the backend
 
+        // Act
         var slashIndex = prefixedId.IndexOf('/');
         var prefix = prefixedId[..slashIndex];
         var rest = prefixedId[(slashIndex + 1)..];
 
+        // Assert
         Assert.Equal(expectedPrefix, prefix);
         Assert.Equal(expectedRest, rest);
     }
@@ -315,10 +318,14 @@ public class DevUIAggregatorHostedServiceTests
     [InlineData("http://localhost:5000", "/devui/index.html?v=1")]
     public void ValidateProxyTarget_TargetStaysOnConfiguredBackend_ReturnsTargetUri(string backendUrl, string path)
     {
+        // Arrange
+        var backendUri = new Uri(backendUrl);
+
+        // Act
         var target = DevUIAggregatorHostedService.ValidateProxyTarget(backendUrl, path);
 
+        // Assert
         Assert.NotNull(target);
-        var backendUri = new Uri(backendUrl);
         Assert.Equal(backendUri.Host, target!.Host);
         Assert.Equal(backendUri.Scheme, target.Scheme);
         Assert.Equal(backendUri.Port, target.Port);
@@ -332,18 +339,23 @@ public class DevUIAggregatorHostedServiceTests
     [InlineData("this is not a url", "/v1/conversations")]                 // malformed backend url
     public void ValidateProxyTarget_TargetLeavesConfiguredBackend_ReturnsNull(string backendUrl, string path)
     {
+        // Act
         var target = DevUIAggregatorHostedService.ValidateProxyTarget(backendUrl, path);
 
+        // Assert
         Assert.Null(target);
     }
 
     [Fact]
     public async Task ProxyRequest_ConversationRoute_ForwardsToConfiguredBackendAsync()
     {
+        // Arrange
         await using var proxy = await ProxyTestContext.StartAsync();
 
+        // Act
         var response = await proxy.SendAsync("/v1/conversations?limit=10");
 
+        // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var forwarded = Assert.Single(proxy.BackendRequests);
         Assert.Equal("/v1/conversations", forwarded.Path);
@@ -353,10 +365,13 @@ public class DevUIAggregatorHostedServiceTests
     [Fact]
     public async Task ProxyRequest_DevUIRoute_ForwardsToConfiguredBackendAsync()
     {
+        // Arrange
         await using var proxy = await ProxyTestContext.StartAsync();
 
+        // Act
         var response = await proxy.SendAsync("/devui/index.html?v=1");
 
+        // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var forwarded = Assert.Single(proxy.BackendRequests);
         Assert.Equal("/devui/index.html", forwarded.Path);
@@ -368,10 +383,13 @@ public class DevUIAggregatorHostedServiceTests
     [InlineData("/devui/../devui/index.html")]
     public async Task ProxyRequest_NormalizedPath_ForwardsToConfiguredBackendAsync(string requestPath)
     {
+        // Arrange
         await using var proxy = await ProxyTestContext.StartAsync();
 
+        // Act
         var response = await proxy.SendAsync(requestPath);
 
+        // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Single(proxy.BackendRequests);
     }
