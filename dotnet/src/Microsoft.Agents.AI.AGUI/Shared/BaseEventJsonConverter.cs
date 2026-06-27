@@ -47,6 +47,7 @@ internal sealed class BaseEventJsonConverter : JsonConverter<BaseEvent>
             AGUIEventTypes.ToolCallEnd => jsonElement.Deserialize(options.GetTypeInfo(typeof(ToolCallEndEvent))) as ToolCallEndEvent,
             AGUIEventTypes.ToolCallResult => jsonElement.Deserialize(options.GetTypeInfo(typeof(ToolCallResultEvent))) as ToolCallResultEvent,
             AGUIEventTypes.StateSnapshot => jsonElement.Deserialize(options.GetTypeInfo(typeof(StateSnapshotEvent))) as StateSnapshotEvent,
+            AGUIEventTypes.StateDelta => jsonElement.Deserialize(options.GetTypeInfo(typeof(StateDeltaEvent))) as StateDeltaEvent,
             AGUIEventTypes.ReasoningStart => jsonElement.Deserialize(options.GetTypeInfo(typeof(ReasoningStartEvent))) as ReasoningStartEvent,
             AGUIEventTypes.ReasoningMessageStart => jsonElement.Deserialize(options.GetTypeInfo(typeof(ReasoningMessageStartEvent))) as ReasoningMessageStartEvent,
             AGUIEventTypes.ReasoningMessageContent => jsonElement.Deserialize(options.GetTypeInfo(typeof(ReasoningMessageContentEvent))) as ReasoningMessageContentEvent,
