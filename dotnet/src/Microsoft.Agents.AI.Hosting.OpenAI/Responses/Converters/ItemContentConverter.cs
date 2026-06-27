@@ -171,6 +171,11 @@ internal static class ItemContentConverter
 
     private static Dictionary<string, object?>? ParseArguments(JsonElement argumentsJson)
     {
+        if (argumentsJson.ValueKind is not JsonValueKind.Object)
+        {
+            return null;
+        }
+
         try
         {
             using var doc = JsonDocument.Parse(argumentsJson.GetRawText());
