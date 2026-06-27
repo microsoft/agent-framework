@@ -9,6 +9,8 @@ concepts of **Agent Framework** one step at a time.
 pip install agent-framework
 ```
 
+Sample 0 runs locally and does not require cloud credentials. Samples 1-8 use Azure Foundry models with the Responses API.
+
 Set the required environment variables:
 
 ```bash
@@ -20,6 +22,7 @@ export FOUNDRY_MODEL="gpt-4o"   # optional, defaults to gpt-4o
 
 | # | File | What you'll learn |
 |---|------|-------------------|
+| 0 | [00_local_echo_agent.py](00_local_echo_agent.py) | Run an agent locally with a deterministic custom chat client. |
 | 1 | [01_hello_agent.py](01_hello_agent.py) | Create your first agent and run it (streaming and non-streaming). |
 | 2 | [02_add_tools.py](02_add_tools.py) | Define a function tool with `@tool` and attach it to an agent. |
 | 3 | [03_multi_turn.py](03_multi_turn.py) | Keep conversation history across turns with `AgentSession`. |
