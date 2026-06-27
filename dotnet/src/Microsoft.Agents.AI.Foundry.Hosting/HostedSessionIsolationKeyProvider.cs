@@ -32,7 +32,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// 500 from the hosting layer.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public abstract class HostedSessionIsolationKeyProvider
 {
     /// <summary>

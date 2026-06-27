@@ -160,8 +160,7 @@ public sealed class AgentInlineSkillTests
 
         // Assert — resources are rendered in the body so the model can discover them
         Assert.Contains("<available_resources>", content);
-        Assert.Contains("<resource name=\"config\"/>", content);
-        Assert.DoesNotContain("A config resource.", content);
+        Assert.Contains("<resource name=\"config\" description=\"A config resource.\"/>", content);
     }
 
     [Fact]
@@ -466,7 +465,7 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public async Task Content_ScriptWithDescription_DoesNotEmitDescriptionAttributeAsync()
+    public async Task Content_ScriptWithDescription_EmitsDescriptionAttributeAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
@@ -475,9 +474,9 @@ public sealed class AgentInlineSkillTests
         // Act
         var content = await skill.GetContentAsync();
 
-        // Assert — only the script name is emitted; the description is not rendered as an attribute
+        // Assert — the script description is emitted as an attribute
         Assert.Contains("<script name=\"my-script\"", content);
-        Assert.DoesNotContain("description=\"Runs something.\"", content);
+        Assert.Contains("description=\"Runs something.\"", content);
     }
 
     [Fact]
@@ -496,7 +495,7 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public async Task Content_ResourceWithDescription_RenderedInBodyWithoutDescriptionAsync()
+    public async Task Content_ResourceWithDescription_RenderedInBodyWithDescriptionAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
@@ -506,11 +505,10 @@ public sealed class AgentInlineSkillTests
         // Act
         var content = await skill.GetContentAsync();
 
-        // Assert — resources are rendered by name in the body; descriptions are not emitted
+        // Assert — resources with descriptions include the attribute; those without omit it
         Assert.Contains("<available_resources>", content);
-        Assert.Contains("<resource name=\"with-desc\"/>", content);
+        Assert.Contains("<resource name=\"with-desc\" description=\"A described resource.\"/>", content);
         Assert.Contains("<resource name=\"no-desc\"/>", content);
-        Assert.DoesNotContain("A described resource.", content);
     }
 
     [Fact]

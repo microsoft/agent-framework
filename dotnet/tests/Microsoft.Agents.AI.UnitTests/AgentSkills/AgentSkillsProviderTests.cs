@@ -100,7 +100,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         this.CreateSkill("custom-prompt-skill", "Custom prompt", "Body.");
         var options = new AgentSkillsProviderOptions
         {
-            SkillsInstructionPrompt = "Custom template: {skills}\n{resource_instructions}\n{script_instructions}"
+            SkillsInstructionPrompt = "Custom template: {skills}"
         };
         var provider = new AgentSkillsProvider(new AgentFileSkillsSource(this._testRoot, s_noOpExecutor), options);
         var inputContext = new AIContext();
@@ -122,7 +122,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         // Arrange
         var options = new AgentSkillsProviderOptions
         {
-            SkillsInstructionPrompt = "No skills placeholder here {resource_instructions} {script_instructions}"
+            SkillsInstructionPrompt = "No skills placeholder here"
         };
 
         // Act & Assert
@@ -133,28 +133,12 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
-    public void Constructor_PromptWithoutRunnerInstructionsPlaceholder_ThrowsArgumentException()
+    public void Constructor_PromptWithOnlySkillsPlaceholder_Succeeds()
     {
         // Arrange
         var options = new AgentSkillsProviderOptions
         {
-            SkillsInstructionPrompt = "Has skills {skills} but no runner instructions {resource_instructions}"
-        };
-
-        // Act & Assert
-        var ex = Assert.Throws<ArgumentException>(() =>
-            new AgentSkillsProvider(new AgentFileSkillsSource(this._testRoot, s_noOpExecutor), options));
-        Assert.Contains("{script_instructions}", ex.Message);
-        Assert.Equal("options", ex.ParamName);
-    }
-
-    [Fact]
-    public void Constructor_PromptWithBothPlaceholders_Succeeds()
-    {
-        // Arrange
-        var options = new AgentSkillsProviderOptions
-        {
-            SkillsInstructionPrompt = "Skills: {skills}\nResources: {resource_instructions}\nRunner: {script_instructions}"
+            SkillsInstructionPrompt = "Skills: {skills}"
         };
 
         // Act — should not throw
@@ -165,19 +149,25 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
-    public void Constructor_PromptWithoutResourceInstructionsPlaceholder_ThrowsArgumentException()
+    public async Task InvokingCoreAsync_CustomTemplateWithLegacyPlaceholders_RendersThemLiterallyAsync()
     {
-        // Arrange
+        // Arrange — template contains legacy placeholder tokens that are no longer substituted
+        this.CreateSkill("literal-test-skill", "Literal test", "Body.");
         var options = new AgentSkillsProviderOptions
         {
-            SkillsInstructionPrompt = "Has skills {skills} and runner {script_instructions} but no resource instructions"
+            SkillsInstructionPrompt = "Skills: {skills}\nRes: {resource_instructions}\nScript: {script_instructions}"
         };
+        var provider = new AgentSkillsProvider(new AgentFileSkillsSource(this._testRoot, s_noOpExecutor), options);
+        var inputContext = new AIContext();
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, inputContext);
 
-        // Act & Assert
-        var ex = Assert.Throws<ArgumentException>(() =>
-            new AgentSkillsProvider(new AgentFileSkillsSource(this._testRoot, s_noOpExecutor), options));
-        Assert.Contains("{resource_instructions}", ex.Message);
-        Assert.Equal("options", ex.ParamName);
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — legacy tokens render literally, not substituted
+        Assert.NotNull(result.Instructions);
+        Assert.Contains("{resource_instructions}", result.Instructions);
+        Assert.Contains("{script_instructions}", result.Instructions);
     }
 
     [Fact]
@@ -274,7 +264,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         [
             new AgentInlineSkill("concurrent-skill", "Concurrent test", "Body.")
         ]);
-        var provider = new AgentSkillsProvider(source);
+        var provider = new AgentSkillsProvider(new CachingAgentSkillsSource(source));
 
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
 
@@ -284,7 +274,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
             .ToArray();
         await Task.WhenAll(tasks);
 
-        // Assert — GetSkillsAsync should have been called exactly once (provider-level caching)
+        // Assert — GetSkillsAsync should have been called exactly once (source-level caching)
         Assert.Equal(1, source.GetSkillsCallCount);
     }
 
@@ -357,7 +347,6 @@ public sealed class AgentSkillsProviderTests : IDisposable
         var provider = new AgentSkillsProviderBuilder()
             .UseFileSkill(this._testRoot, options)
             .UseFileScriptRunner(s_noOpExecutor)
-            .UseOptions(o => o.DisableCaching = true)
             .Build();
 
         // Act
@@ -383,7 +372,6 @@ public sealed class AgentSkillsProviderTests : IDisposable
         var provider = new AgentSkillsProviderBuilder()
             .UseFileSkills(new[] { dir1, dir2 }, options)
             .UseFileScriptRunner(s_noOpExecutor)
-            .UseOptions(o => o.DisableCaching = true)
             .Build();
 
         // Act
@@ -907,29 +895,6 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task Build_WithCachingDisabled_ReloadsSkillsOnEachCallAsync()
-    {
-        // Arrange
-        var source = new CountingAgentSkillsSource(
-        [
-            new AgentInlineSkill("no-cache-skill", "No cache test", "Body.")
-        ]);
-        var provider = new AgentSkillsProviderBuilder()
-            .UseSource(source)
-            .UseOptions(o => o.DisableCaching = true)
-            .Build();
-
-        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
-
-        // Act
-        await provider.InvokingAsync(invokingContext, CancellationToken.None);
-        await provider.InvokingAsync(invokingContext, CancellationToken.None);
-
-        // Assert — source should be called more than once since caching is disabled
-        Assert.True(source.GetSkillsCallCount > 1);
-    }
-
-    [Fact]
     public async Task Build_WithCachingEnabled_CachesSkillsAsync()
     {
         // Arrange
@@ -989,7 +954,6 @@ public sealed class AgentSkillsProviderTests : IDisposable
             .UseSkills(inlineSkill)
             .UseFileSkill(dir2)
             .UseFileScriptRunner(s_noOpExecutor)
-            .UseOptions(o => o.DisableCaching = true)
             .Build();
 
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
@@ -1030,7 +994,6 @@ public sealed class AgentSkillsProviderTests : IDisposable
             .UseSkills(inlineSkill)
             .UseFileSkill(dir)
             .UseFileScriptRunner(s_noOpExecutor)
-            .UseOptions(o => o.DisableCaching = true)
             .Build();
 
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
@@ -1046,9 +1009,9 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task InvokingCoreAsync_WithScriptsAndScriptApproval_WrapsRunScriptToolAsync()
+    public async Task InvokingCoreAsync_WithScripts_AllToolsRequireApprovalAsync()
     {
-        // Arrange — create a skill with a script and enable ScriptApproval
+        // Arrange — create a skill with a script; all tools should require approval by default
         string skillDir = Path.Combine(this._testRoot, "approval-skill");
         Directory.CreateDirectory(Path.Combine(skillDir, "scripts"));
         File.WriteAllText(
@@ -1059,84 +1022,82 @@ public sealed class AgentSkillsProviderTests : IDisposable
             "print('hello')");
 
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
-        var options = new AgentSkillsProviderOptions { ScriptApproval = true };
-        var provider = new AgentSkillsProvider(source, options);
+        var provider = new AgentSkillsProvider(source);
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
 
         // Act
         var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
 
-        // Assert — run_skill_script tool should be wrapped in ApprovalRequiredAIFunction
+        // Assert — all tools should be wrapped in ApprovalRequiredAIFunction
         Assert.NotNull(result.Tools);
         var scriptTool = result.Tools!.FirstOrDefault(t => t.Name == "run_skill_script");
         Assert.NotNull(scriptTool);
         Assert.IsType<ApprovalRequiredAIFunction>(scriptTool);
+
+        var loadTool = result.Tools!.FirstOrDefault(t => t.Name == "load_skill");
+        Assert.NotNull(loadTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(loadTool);
+
+        var readTool = result.Tools!.FirstOrDefault(t => t.Name == "read_skill_resource");
+        Assert.NotNull(readTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(readTool);
     }
 
     [Fact]
-    public async Task InvokingCoreAsync_WithScriptsNoScriptApproval_DoesNotWrapRunScriptToolAsync()
+    public async Task ReadOnlyToolsAutoApprovalRule_ApprovesReadOnlyToolsAsync()
     {
-        // Arrange — create a skill with a script, default options (no approval)
-        string skillDir = Path.Combine(this._testRoot, "no-approval-skill");
-        Directory.CreateDirectory(Path.Combine(skillDir, "scripts"));
-        File.WriteAllText(
-            Path.Combine(skillDir, "SKILL.md"),
-            "---\nname: no-approval-skill\ndescription: No approval test\n---\nBody.");
-        File.WriteAllText(
-            Path.Combine(skillDir, "scripts", "run.py"),
-            "print('hello')");
+        // Arrange
+        var loadSkillCall = new FunctionCallContent("call1", AgentSkillsProvider.LoadSkillToolName, null);
+        var readResourceCall = new FunctionCallContent("call2", AgentSkillsProvider.ReadSkillResourceToolName, null);
+        var runScriptCall = new FunctionCallContent("call3", AgentSkillsProvider.RunSkillScriptToolName, null);
+        var unrelatedCall = new FunctionCallContent("call4", "some_other_tool", null);
 
-        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
-        var provider = new AgentSkillsProvider(source);
-        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+        // Act & Assert — read-only tools should be approved
+        Assert.True(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(loadSkillCall));
+        Assert.True(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(readResourceCall));
 
-        // Act
-        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
-
-        // Assert — run_skill_script tool should NOT be wrapped
-        Assert.NotNull(result.Tools);
-        var scriptTool = result.Tools!.FirstOrDefault(t => t.Name == "run_skill_script");
-        Assert.NotNull(scriptTool);
-        Assert.IsNotType<ApprovalRequiredAIFunction>(scriptTool);
+        // Act & Assert — script tool and unrelated tools should not be approved
+        Assert.False(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(runScriptCall));
+        Assert.False(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(unrelatedCall));
     }
 
     [Fact]
-    public async Task InvokingCoreAsync_MultipleInvocations_ToolsAreSharedWhenCachedAsync()
+    public async Task AllToolsAutoApprovalRule_ApprovesAllSkillToolsAsync()
     {
-        // Arrange — with default caching, tools should be the same reference
-        this.CreateSkill("cached-tools-skill", "Cached tools test", "Body.");
-        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
-        var provider = new AgentSkillsProvider(source);
+        // Arrange
+        var loadSkillCall = new FunctionCallContent("call1", AgentSkillsProvider.LoadSkillToolName, null);
+        var readResourceCall = new FunctionCallContent("call2", AgentSkillsProvider.ReadSkillResourceToolName, null);
+        var runScriptCall = new FunctionCallContent("call3", AgentSkillsProvider.RunSkillScriptToolName, null);
+        var unrelatedCall = new FunctionCallContent("call4", "some_other_tool", null);
+
+        // Act & Assert — all skill tools should be approved
+        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(loadSkillCall));
+        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(readResourceCall));
+        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(runScriptCall));
+
+        // Act & Assert — unrelated tools should not be approved
+        Assert.False(await AgentSkillsProvider.AllToolsAutoApprovalRule(unrelatedCall));
+    }
+
+    [Fact]
+    public async Task InvokingCoreAsync_MultipleInvocations_SourceIsCalledOnceWhenCachedAsync()
+    {
+        // Arrange — with CachingAgentSkillsSource, the inner source should only be called once
+        var source = new CountingAgentSkillsSource(
+        [
+            new AgentInlineSkill("cached-tools-skill", "Cached tools test", "Body.")
+        ]);
+        var provider = new AgentSkillsProvider(new CachingAgentSkillsSource(source));
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
 
         // Act
         var result1 = await provider.InvokingAsync(invokingContext, CancellationToken.None);
         var result2 = await provider.InvokingAsync(invokingContext, CancellationToken.None);
 
-        // Assert — tool lists should be the same reference (cached)
+        // Assert — source should be called exactly once (cached at source level)
         Assert.NotNull(result1.Tools);
         Assert.NotNull(result2.Tools);
-        Assert.Same(result1.Tools, result2.Tools);
-    }
-
-    [Fact]
-    public async Task InvokingCoreAsync_MultipleInvocations_ToolsAreNotSharedWhenCachingDisabledAsync()
-    {
-        // Arrange — with caching disabled, tools should be rebuilt per invocation
-        this.CreateSkill("fresh-tools-skill", "Fresh tools test", "Body.");
-        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
-        var options = new AgentSkillsProviderOptions { DisableCaching = true };
-        var provider = new AgentSkillsProvider(source, options);
-        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
-
-        // Act
-        var result1 = await provider.InvokingAsync(invokingContext, CancellationToken.None);
-        var result2 = await provider.InvokingAsync(invokingContext, CancellationToken.None);
-
-        // Assert — tool lists should not be the same reference
-        Assert.NotNull(result1.Tools);
-        Assert.NotNull(result2.Tools);
-        Assert.NotSame(result1.Tools, result2.Tools);
+        Assert.Equal(1, source.GetSkillsCallCount);
     }
 
     [Fact]
