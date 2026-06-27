@@ -27,7 +27,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// such as Redis, SQL Server, or Azure Cosmos DB.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class InMemoryAgentSessionStore : AgentSessionStore
 {
     private readonly ConcurrentDictionary<string, JsonElement> _sessions = new();

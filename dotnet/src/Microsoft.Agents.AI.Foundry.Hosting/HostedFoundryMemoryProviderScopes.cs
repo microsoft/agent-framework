@@ -23,7 +23,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// That happens when the agent runs outside the Foundry hosting layer (e.g., a console app); in
 /// that case write a custom <c>stateInitializer</c> instead of using these helpers.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class HostedFoundryMemoryProviderScopes
 {
     /// <summary>

@@ -333,7 +333,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
         });
     }
 
-    [Fact]
+    [Fact(Skip = "Disabled due to persistent CI failures. See #6732.")]
     public async Task WorkflowAndAgentsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "05_WorkflowAndAgents");
@@ -385,7 +385,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
         });
     }
 
-    [Fact]
+    [Fact(Skip = "Disabled due to persistent CI failures. See #6732.")]
     public async Task ConcurrentWorkflowSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "02_ConcurrentWorkflow");

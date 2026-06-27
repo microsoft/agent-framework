@@ -25,7 +25,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <see cref="HostedSessionContextExtensions.GetHostedContext"/>.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class HostedSessionContext
 {
     /// <summary>

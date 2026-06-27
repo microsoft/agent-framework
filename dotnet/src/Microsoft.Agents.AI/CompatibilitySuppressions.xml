@@ -94,7 +94,21 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkillsProviderOptions.get_DisableCaching</Target>
+    <Left>lib/net10.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net10.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
     <Target>M:Microsoft.Agents.AI.AgentSkillsProviderOptions.get_ScriptApproval</Target>
+    <Left>lib/net10.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net10.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkillsProviderOptions.set_DisableCaching(System.Boolean)</Target>
     <Left>lib/net10.0/Microsoft.Agents.AI.dll</Left>
     <Right>lib/net10.0/Microsoft.Agents.AI.dll</Right>
     <IsBaselineSuppression>true</IsBaselineSuppression>
@@ -199,7 +213,21 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkillsProviderOptions.get_DisableCaching</Target>
+    <Left>lib/net472/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net472/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
     <Target>M:Microsoft.Agents.AI.AgentSkillsProviderOptions.get_ScriptApproval</Target>
+    <Left>lib/net472/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net472/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkillsProviderOptions.set_DisableCaching(System.Boolean)</Target>
     <Left>lib/net472/Microsoft.Agents.AI.dll</Left>
     <Right>lib/net472/Microsoft.Agents.AI.dll</Right>
     <IsBaselineSuppression>true</IsBaselineSuppression>
@@ -304,7 +332,21 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkillsProviderOptions.get_DisableCaching</Target>
+    <Left>lib/net8.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net8.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
     <Target>M:Microsoft.Agents.AI.AgentSkillsProviderOptions.get_ScriptApproval</Target>
+    <Left>lib/net8.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net8.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkillsProviderOptions.set_DisableCaching(System.Boolean)</Target>
     <Left>lib/net8.0/Microsoft.Agents.AI.dll</Left>
     <Right>lib/net8.0/Microsoft.Agents.AI.dll</Right>
     <IsBaselineSuppression>true</IsBaselineSuppression>
@@ -409,7 +451,21 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkillsProviderOptions.get_DisableCaching</Target>
+    <Left>lib/net9.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net9.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
     <Target>M:Microsoft.Agents.AI.AgentSkillsProviderOptions.get_ScriptApproval</Target>
+    <Left>lib/net9.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/net9.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkillsProviderOptions.set_DisableCaching(System.Boolean)</Target>
     <Left>lib/net9.0/Microsoft.Agents.AI.dll</Left>
     <Right>lib/net9.0/Microsoft.Agents.AI.dll</Right>
     <IsBaselineSuppression>true</IsBaselineSuppression>
@@ -514,7 +570,21 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkillsProviderOptions.get_DisableCaching</Target>
+    <Left>lib/netstandard2.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/netstandard2.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
     <Target>M:Microsoft.Agents.AI.AgentSkillsProviderOptions.get_ScriptApproval</Target>
+    <Left>lib/netstandard2.0/Microsoft.Agents.AI.dll</Left>
+    <Right>lib/netstandard2.0/Microsoft.Agents.AI.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Microsoft.Agents.AI.AgentSkillsProviderOptions.set_DisableCaching(System.Boolean)</Target>
     <Left>lib/netstandard2.0/Microsoft.Agents.AI.dll</Left>
     <Right>lib/netstandard2.0/Microsoft.Agents.AI.dll</Right>
     <IsBaselineSuppression>true</IsBaselineSuppression>

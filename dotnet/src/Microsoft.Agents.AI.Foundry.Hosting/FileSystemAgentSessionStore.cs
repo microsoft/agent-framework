@@ -41,7 +41,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// rename so a partially-written file cannot be observed by a concurrent reader.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class FileSystemAgentSessionStore : AgentSessionStore
 {
     /// <summary>
