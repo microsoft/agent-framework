@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.Text.Json;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.AI;
 
@@ -69,6 +71,13 @@ internal static class ItemContentConverter
                 new DataContent(inputAudio.Data, AudioFormatToMediaType(inputAudio.Format)),
             ItemContentOutputAudio outputAudio =>
                 new DataContent(outputAudio.Data, "audio/*"),
+            ItemContentFunctionApprovalResponse functionApprovalResponse => new ToolApprovalResponseContent(
+                functionApprovalResponse.RequestId,
+                functionApprovalResponse.Approved,
+                new FunctionCallContent(
+                    functionApprovalResponse.FunctionCall.Id,
+                    functionApprovalResponse.FunctionCall.Name,
+                    ParseArguments(functionApprovalResponse.FunctionCall.Arguments))),
 
             _ => null
         };
@@ -158,5 +167,32 @@ internal static class ItemContentConverter
         }
 
         return null;
+    }
+
+    private static Dictionary<string, object?>? ParseArguments(JsonElement argumentsJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(argumentsJson.GetRawText());
+            var result = new Dictionary<string, object?>();
+            foreach (var property in doc.RootElement.EnumerateObject())
+            {
+                result[property.Name] = property.Value.ValueKind switch
+                {
+                    JsonValueKind.String => property.Value.GetString(),
+                    JsonValueKind.Number => property.Value.GetDouble(),
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    JsonValueKind.Null => null,
+                    _ => property.Value.GetRawText()
+                };
+            }
+
+            return result;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 }
