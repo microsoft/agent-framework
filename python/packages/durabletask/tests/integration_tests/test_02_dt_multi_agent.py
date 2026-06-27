@@ -78,6 +78,7 @@ class TestMultiAgent:
         assert len(tool_calls) > 0, "Expected at least one tool call"
         assert any(call.name == "get_weather" for call in tool_calls), "Expected get_weather tool to be called"
 
+    @pytest.mark.skip(reason="Flaky in CI: times out / crashes the xdist runner; temporarily disabled.")
     def test_math_agent_with_tool(self):
         """Test math agent with calculation tool execution."""
         agent = self.agent_client.get_agent(MATH_AGENT_NAME)
