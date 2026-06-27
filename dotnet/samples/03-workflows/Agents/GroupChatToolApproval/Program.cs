@@ -54,14 +54,14 @@ public static class Program
         // 2. Create specialized agents with their tools
         ChatClientAgent qaEngineer = aiProjectClient.AsAIAgent(
             model: deploymentName,
-            instructions: "You are a QA engineer responsible for running tests before deployment. Run the appropriate test suites and report results clearly.",
+            instructions: "You are a QA engineer responsible for running tests before deployment. Run the appropriate test suites and report the results clearly in your response, including pass/fail counts.",
             name: "QAEngineer",
             description: "QA engineer who runs tests",
             tools: [AIFunctionFactory.Create(RunTests)]);
 
         ChatClientAgent devopsEngineer = aiProjectClient.AsAIAgent(
             model: deploymentName,
-            instructions: "You are a DevOps engineer responsible for deployments. Call CheckStagingStatus, then CreateRollbackPlan, then DeployToProduction — in that order. Do not ask for confirmation before deploying; deployment approval is handled automatically by the system.",
+            instructions: "You are a DevOps engineer responsible for deployments. Call CheckStagingStatus, then CreateRollbackPlan, then DeployToProduction — in that order. Do not ask for confirmation before deploying; deployment approval is handled automatically by the system. After all tools complete, summarize each step and its result in your text response.",
             name: "DevOpsEngineer",
             description: "DevOps engineer who handles deployments",
             tools:

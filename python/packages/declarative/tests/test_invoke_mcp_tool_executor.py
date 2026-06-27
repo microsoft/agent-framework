@@ -244,7 +244,7 @@ class TestOutput:
         factory = WorkflowFactory(mcp_tool_handler=handler)
         workflow = factory.create_workflow_from_definition(_yaml(_action(output={"result": "Local.Result"})))
         await workflow.run({})
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert decl["Local"]["Result"] == [{"k": "v", "n": 1}]
 
     @pytest.mark.asyncio
@@ -253,7 +253,7 @@ class TestOutput:
         factory = WorkflowFactory(mcp_tool_handler=handler)
         workflow = factory.create_workflow_from_definition(_yaml(_action(output={"result": "Local.Result"})))
         await workflow.run({})
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert decl["Local"]["Result"] == ["plain text not json"]
 
     @pytest.mark.asyncio
@@ -262,7 +262,7 @@ class TestOutput:
         factory = WorkflowFactory(mcp_tool_handler=handler)
         workflow = factory.create_workflow_from_definition(_yaml(_action(output={"messages": "Local.Messages"})))
         await workflow.run({})
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         msg = decl["Local"]["Messages"]
         # Single Tool-role message containing both contents (parity with .NET).
         assert isinstance(msg, Message)
@@ -276,7 +276,7 @@ class TestOutput:
         factory = WorkflowFactory(mcp_tool_handler=handler)
         workflow = factory.create_workflow_from_definition(_yaml(_action(output={"result": "Local.Result"})))
         await workflow.run({})
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert decl["Local"]["Result"] == ["https://example.com/file.txt"]
 
     @pytest.mark.asyncio
@@ -285,7 +285,7 @@ class TestOutput:
         factory = WorkflowFactory(mcp_tool_handler=handler)
         workflow = factory.create_workflow_from_definition(_yaml(_action(output={"result": {"path": "Local.Result"}})))
         await workflow.run({})
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert decl["Local"]["Result"] == ["ok"]
 
 
@@ -306,7 +306,7 @@ class TestConversation:
             )
         )
         await workflow.run({})
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         conv = decl["System"]["conversations"]["conv-42"]
         msgs = conv["messages"] if isinstance(conv, dict) else conv.messages
         assert len(msgs) == 1
@@ -328,7 +328,7 @@ class TestConversation:
             )
         )
         await workflow.run({})
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         # Empty conversation id must not produce a `""` entry under System.conversations.
         conversations = decl.get("System", {}).get("conversations", {})
         assert "" not in conversations
@@ -529,7 +529,7 @@ class TestErrorHandling:
         factory = WorkflowFactory(mcp_tool_handler=handler)
         workflow = factory.create_workflow_from_definition(_yaml(_action(output={"result": "Local.Result"})))
         await workflow.run({})
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert decl["Local"]["Result"] == "Error: server down"
 
     @pytest.mark.asyncio
@@ -538,7 +538,7 @@ class TestErrorHandling:
         factory = WorkflowFactory(mcp_tool_handler=handler)
         workflow = factory.create_workflow_from_definition(_yaml(_action(output={"result": "Local.Result"})))
         await workflow.run({})
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert decl["Local"]["Result"] == "Error: invalid arguments"
 
     @pytest.mark.asyncio
@@ -547,7 +547,7 @@ class TestErrorHandling:
         factory = WorkflowFactory(mcp_tool_handler=handler)
         workflow = factory.create_workflow_from_definition(_yaml(_action(output={"result": "Local.Result"})))
         await workflow.run({})
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         result = decl["Local"]["Result"]
         assert isinstance(result, str)
         assert result.startswith("Error:")

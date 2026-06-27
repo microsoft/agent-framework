@@ -23,10 +23,8 @@ from agent_framework_openai import OpenAIChatClient
 
 pytestmark = pytest.mark.azure
 
-skip_if_azure_openai_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.openai.azure.com")
-    or (os.getenv("AZURE_OPENAI_CHAT_MODEL", "") == "" and os.getenv("AZURE_OPENAI_MODEL", "") == ""),
-    reason="No real Azure OpenAI endpoint or responses deployment provided; skipping integration tests.",
+skip_if_azure_openai_integration_tests_disabled = pytest.mark.skip(
+    reason="Azure OpenAI integration tests temporarily disabled: crashes the xdist runner in CI.",
 )
 
 

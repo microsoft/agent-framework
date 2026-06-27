@@ -12,6 +12,8 @@ from typing import Any, cast
 import pytest
 from agent_framework import AgentResponse, AgentResponseUpdate, AgentSession, Content, Message, ResponseStream
 from agent_framework._workflows._events import WorkflowEvent
+from opentelemetry import context as otel_context
+from opentelemetry import trace
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Route
@@ -1185,6 +1187,117 @@ class TestBoundResponseStream:
         names = [n for n, _ in prov.events]
         assert names.count("enter") == 1
         assert names.count("exit") == 1
+
+    async def test_deferred_streaming_keeps_captured_otel_parent_context(self) -> None:
+        """`run_stream()` captures the current OTel context and reuses it for deferred pulls.
+
+        Reproduces channel behavior where stream consumption starts later than stream
+        construction (for example via StreamingResponse body iteration).
+        """
+
+        class _SpanRecordingAgent:
+            id = "span-recorder"
+            name: str | None = "SpanRecorder"
+            description: str | None = "Records active span ids during stream pulls/finalization."
+
+            def __init__(self) -> None:
+                self.seen_span_ids: list[int] = []
+
+            def run(self, messages: Any = None, *, stream: bool = False, **kwargs: Any) -> Any:
+                if not stream:
+                    raise AssertionError("non-streaming path not exercised here")
+
+                async def _gen() -> AsyncIterator[AgentResponseUpdate]:
+                    self.seen_span_ids.append(trace.get_current_span().get_span_context().span_id)
+                    yield AgentResponseUpdate(contents=[Content.from_text("chunk")], role="assistant")
+
+                async def _finalize(items: Sequence[AgentResponseUpdate]) -> AgentResponse:  # noqa: RUF029
+                    self.seen_span_ids.append(trace.get_current_span().get_span_context().span_id)
+                    return AgentResponse.from_updates(items)
+
+                return ResponseStream(_gen(), finalizer=_finalize)
+
+        agent = _SpanRecordingAgent()
+        ch = _RecordingChannel(name="responses")
+        host = AgentFrameworkHost(target=cast(Any, agent), channels=[ch])
+        _ = host.app
+        assert ch.context is not None
+
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="hi",
+            stream=True,
+            attributes={"response_id": "resp_otel"},
+        )
+
+        parent_ctx = trace.SpanContext(
+            trace_id=0x123456789ABCDEF0123456789ABCDEF0,
+            span_id=0x123456789ABCDEF0,
+            is_remote=False,
+            trace_flags=trace.TraceFlags(0x01),
+            trace_state=trace.TraceState(),
+        )
+        parent_span = trace.NonRecordingSpan(parent_ctx)
+        token = otel_context.attach(trace.set_span_in_context(parent_span))
+        try:
+            stream = await ch.context.run_stream(req)
+        finally:
+            otel_context.detach(token)
+
+        # Consumption happens after the caller context has ended.
+        chunks = [u.text async for u in stream]
+        final = await stream.get_final_response()
+
+        assert chunks == ["chunk"]
+        assert final.text == "chunk"
+        assert agent.seen_span_ids == [parent_ctx.span_id, parent_ctx.span_id]
+
+    async def test_run_stream_captures_otel_context_before_target_run(self, monkeypatch: Any) -> None:
+        """Guard the evaluation-order pitfall called out in review.
+
+        ``_invoke_stream`` must capture OTel context before calling
+        ``target.run(...)``. If that order flips, deferred streaming can bind to
+        the wrong parent context.
+        """
+
+        from agent_framework_hosting import _host as host_module
+
+        order: list[str] = []
+
+        def _capture() -> None:
+            order.append("capture")
+            return
+
+        monkeypatch.setattr(host_module, "_capture_current_otel_context", _capture)
+
+        class _OrderAgent:
+            id = "order-agent"
+            name: str | None = "OrderAgent"
+            description: str | None = "Records call order."
+
+            def run(self, messages: Any = None, *, stream: bool = False, **kwargs: Any) -> Any:
+                order.append("run")
+
+                async def _gen() -> AsyncIterator[AgentResponseUpdate]:
+                    yield AgentResponseUpdate(contents=[Content.from_text("chunk")], role="assistant")
+
+                async def _finalize(items: Sequence[AgentResponseUpdate]) -> AgentResponse:  # noqa: RUF029
+                    return AgentResponse.from_updates(items)
+
+                return ResponseStream(_gen(), finalizer=_finalize)
+
+        ch = _RecordingChannel(name="responses")
+        host = AgentFrameworkHost(target=cast(Any, _OrderAgent()), channels=[ch])
+        _ = host.app
+        assert ch.context is not None
+
+        stream = await ch.context.run_stream(
+            ChannelRequest(channel="responses", operation="op", input="hi", stream=True),
+        )
+        await cast(Any, stream).aclose()
+
+        assert order[:2] == ["capture", "run"]
 
 
 # --------------------------------------------------------------------------- #
