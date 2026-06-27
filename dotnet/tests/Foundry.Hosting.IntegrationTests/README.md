@@ -111,6 +111,18 @@ To self-serve the `Search Index Data Reader` grant above, you need `User Access 
 need `Search Index Data Contributor`. These are typically granted once per onboarded engineer
 and reused for every new IT scenario that needs Search.
 
+### OAuth consent toolbox prerequisite (one time, out of band)
+
+The `toolbox-oauth-consent` scenario assumes a Foundry **toolbox** named by `IT_TOOLBOX_NAME`
+(default `auth-paths-oauth-toolbox`) already exists in the target project and references a tool
+source fronted by a **per-user OAuth connection** that returns `CONSENT_REQUIRED` for an
+unconsented caller (for example a delegated GitHub or Microsoft Graph connection). The test does
+not consent on the caller's behalf; it asserts only that the first invocation surfaces an
+`oauth_consent_request` consent link to the consumer and that the container stays routable. See
+`dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Toolbox-AuthPaths/README.md`
+(auth path #4) for how the toolbox/connection is set up. No automated provisioning script ships
+for the toolbox; it is treated as pre-existing project configuration.
+
 ## Building and pushing the test container image
 
 The test container source lives at `dotnet/tests/Foundry.Hosting.IntegrationTests.TestContainer`.
@@ -196,6 +208,7 @@ human-only operation; CI only adds and deletes versions under existing agents.
 | `ToolCallingHostedAgentFixture` | `tool-calling` | `it-tool-calling` | Server side AIFunction invocation; arguments; multi turn referencing prior tool result. |
 | `ToolCallingApprovalHostedAgentFixture` | `tool-calling-approval` | `it-tool-calling-approval` | Approval requests raised, approved, denied. |
 | `McpToolboxHostedAgentFixture` | `mcp-toolbox` | `it-mcp-toolbox` | MCP backed tool invocation against `https://learn.microsoft.com/api/mcp` (placeholder). |
+| `ToolboxOAuthConsentHostedAgentFixture` | `toolbox-oauth-consent` | `it-toolbox-oauth-consent` | Per-user OAuth toolbox consent: pre-registers a consent-gated Foundry toolbox (`IT_TOOLBOX_NAME`), invokes the agent, asserts the consumer captures an `oauth_consent_request` consent link (and the container stays routable, no 424). Requires a consent-gated toolbox in the project (see prerequisite below). |
 | `CustomStorageHostedAgentFixture` | `custom-storage` | `it-custom-storage` | Round trip with custom `IResponsesStorageProvider`; multi turn reads from the custom store (placeholder). |
 | `AzureSearchRagHostedAgentFixture` | `azure-search-rag` | `it-azure-search-rag` | RAG against a real Azure AI Search index seeded with Contoso Outdoors documents; verifies the model cites the retrieved sources. |
 | `SessionFilesHostedAgentFixture` | `session-files` | `it-session-files` | End-to-end: upload via `AgentSessionFiles` (alpha) into a pinned `agent_session_id`, invoke the agent, assert it reads the file via the container's `ReadFile` tool. |

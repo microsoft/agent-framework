@@ -104,6 +104,37 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
     }
 
     /// <summary>
+    /// Gets the background tasks for the specified session that have not yet completed (i.e., are still running).
+    /// </summary>
+    /// <remarks>
+    /// The status of in-flight tasks is refreshed before the result is computed, so tasks that have finished since the
+    /// last interaction are finalized and excluded. Only tasks whose <see cref="BackgroundTaskInfo.Status"/> is
+    /// <see cref="BackgroundTaskStatus.Running"/> are returned; <see cref="BackgroundTaskStatus.Completed"/>,
+    /// <see cref="BackgroundTaskStatus.Failed"/>, and <see cref="BackgroundTaskStatus.Lost"/> are all terminal and are
+    /// not included. The returned <see cref="BackgroundTaskInfo"/> instances are live references to internal state.
+    /// </remarks>
+    /// <param name="session">The agent session whose background tasks should be inspected.</param>
+    /// <returns>A read-only list of the background tasks that are still running.</returns>
+    public IReadOnlyList<BackgroundTaskInfo> GetIncompleteTasks(AgentSession? session)
+    {
+        BackgroundAgentState state = this._sessionState.GetOrInitializeState(session);
+        BackgroundAgentRuntimeState runtimeState = this._runtimeSessionState.GetOrInitializeState(session);
+
+        this.TryRefreshTaskState(state, runtimeState, session);
+
+        var incomplete = new List<BackgroundTaskInfo>();
+        foreach (BackgroundTaskInfo task in state.Tasks)
+        {
+            if (task.Status == BackgroundTaskStatus.Running)
+            {
+                incomplete.Add(task);
+            }
+        }
+
+        return incomplete;
+    }
+
+    /// <summary>
     /// Validates the agent collection and builds a case-insensitive name dictionary.
     /// </summary>
     private static Dictionary<string, AIAgent> ValidateAndBuildAgentDictionary(IEnumerable<AIAgent> agents)

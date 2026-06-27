@@ -47,6 +47,7 @@ public sealed class AgentSkillsProviderBuilder
     private ILoggerFactory? _loggerFactory;
     private AgentFileSkillScriptRunner? _scriptRunner;
     private Func<AgentSkill, bool>? _filter;
+    private bool _disableCaching;
 
     /// <summary>
     /// Adds a file-based skill source that discovers skills from a filesystem directory.
@@ -148,24 +149,11 @@ public sealed class AgentSkillsProviderBuilder
     /// <summary>
     /// Sets a custom system prompt template.
     /// </summary>
-    /// <param name="promptTemplate">The prompt template with <c>{skills}</c> placeholder for the skills list,
-    /// <c>{resource_instructions}</c> for optional resource instructions,
-    /// and <c>{script_instructions}</c> for optional script instructions.</param>
+    /// <param name="promptTemplate">The prompt template with <c>{skills}</c> placeholder for the skills list.</param>
     /// <returns>This builder instance for chaining.</returns>
     public AgentSkillsProviderBuilder UsePromptTemplate(string promptTemplate)
     {
         this.GetOrCreateOptions().SkillsInstructionPrompt = promptTemplate;
-        return this;
-    }
-
-    /// <summary>
-    /// Enables or disables the script approval gate.
-    /// </summary>
-    /// <param name="enabled">Whether script execution requires approval.</param>
-    /// <returns>This builder instance for chaining.</returns>
-    public AgentSkillsProviderBuilder UseScriptApproval(bool enabled = true)
-    {
-        this.GetOrCreateOptions().ScriptApproval = enabled;
         return this;
     }
 
@@ -221,6 +209,17 @@ public sealed class AgentSkillsProviderBuilder
     }
 
     /// <summary>
+    /// Disables caching of the resolved skill list. By default, skills are fetched once and cached;
+    /// calling this method causes the source pipeline to be invoked on every request.
+    /// </summary>
+    /// <returns>This builder instance for chaining.</returns>
+    public AgentSkillsProviderBuilder DisableCaching()
+    {
+        this._disableCaching = true;
+        return this;
+    }
+
+    /// <summary>
     /// Builds the <see cref="AgentSkillsProvider"/>.
     /// </summary>
     /// <returns>A configured <see cref="AgentSkillsProvider"/>.</returns>
@@ -240,6 +239,11 @@ public sealed class AgentSkillsProviderBuilder
         else
         {
             source = new AggregatingAgentSkillsSource(resolvedSources);
+        }
+
+        if (!this._disableCaching)
+        {
+            source = new CachingAgentSkillsSource(source);
         }
 
         // Apply user-specified filter, then dedup.
