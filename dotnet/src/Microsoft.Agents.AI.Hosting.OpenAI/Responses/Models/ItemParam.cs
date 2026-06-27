@@ -533,6 +533,33 @@ internal sealed class MCPApprovalResponseItemParam : ItemParam
 }
 
 /// <summary>
+/// A function approval response item parameter.
+/// This is a non-standard DevUI extension for human-in-the-loop scenarios.
+/// </summary>
+internal sealed class FunctionApprovalResponseItemParam : ItemParam
+{
+    /// <summary>
+    /// The constant item type identifier for function approval response items.
+    /// </summary>
+    public const string ItemType = "function_approval_response";
+
+    /// <inheritdoc/>
+    public override string Type => ItemType;
+
+    /// <summary>
+    /// The unique identifier of the approval request being responded to.
+    /// </summary>
+    [JsonPropertyName("request_id")]
+    public required string RequestId { get; init; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the function call was approved.
+    /// </summary>
+    [JsonPropertyName("approved")]
+    public bool Approved { get; init; }
+}
+
+/// <summary>
 /// An MCP call item parameter.
 /// </summary>
 internal sealed class MCPCallItemParam : ItemParam
