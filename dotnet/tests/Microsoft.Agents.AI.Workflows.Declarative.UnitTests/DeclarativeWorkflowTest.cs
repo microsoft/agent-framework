@@ -91,6 +91,25 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.AssertNotExecuted("sendActivity_3");
     }
 
+    /// <summary>
+    /// Regression test for issue #3743: DeclarativeActionCompletedEvent must be raised
+    /// for parent actions when GotoAction bypasses the default terminal edge.
+    /// </summary>
+    [Fact]
+    public async Task GotoInsideCondition_RaisesParentCompletionEventAsync()
+    {
+        await this.RunWorkflowAsync("GotoInsideCondition.yaml", 1);
+
+        this.AssertExecuted("goto_end");
+
+        Assert.Contains(
+            this.WorkflowEvents.OfType<DeclarativeActionCompletedEvent>(),
+            e => e.ActionId == "condition_test");
+
+        this.AssertNotExecuted("send_activity_normal");
+        this.AssertNotExecuted("send_activity_after");
+    }
+
     [Theory]
     [InlineData(12)]
     [InlineData(37)]
@@ -180,7 +199,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("ClearAllVariables.yaml", 1, "clear_all")]
     [InlineData("ResetVariable.yaml", 2, "clear_var")]
     [InlineData("MixedScopes.yaml", 2, "activity_input")]
-    [InlineData("CaseInsensitive.yaml", 6, "end_when_match")]
+    [InlineData("CaseInsensitive.yaml", 7, "end_when_match")]
     [InlineData("HttpRequest.yaml", 1, "http_request")]
     public async Task ExecuteActionAsync(string workflowFile, int expectedCount, string expectedId)
     {
