@@ -30,6 +30,7 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowException,
     WorkflowMessage,
+    WorkflowRunResult,
     WorkflowRunState,
     handler,
     response_handler,
@@ -1177,9 +1178,12 @@ def test_workflow_instance_can_be_reused_across_event_loops():
 
     workflow = WorkflowBuilder(start_executor=_Echo(id="echo")).build()
 
+    async def _run(message: str) -> WorkflowRunResult:
+        return await workflow.run(message)
+
     # A fresh event loop per run; reuse must not raise "bound to a different event loop".
-    result_1 = asyncio.run(workflow.run("a"))
-    result_2 = asyncio.run(workflow.run("b"))
+    result_1 = asyncio.run(_run("a"))
+    result_2 = asyncio.run(_run("b"))
 
     assert result_1.get_final_state() == WorkflowRunState.IDLE
     assert result_2.get_final_state() == WorkflowRunState.IDLE
