@@ -135,7 +135,7 @@ jobs:
           packages/openai/tests/openai/test_openai_chat_client_azure.py
           packages/openai/tests/openai/test_openai_embedding_client_azure.py
           -m integration
-          -n 4 --dist worksteal
+          -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
           --junitxml=pytest.xml
@@ -308,7 +308,7 @@ jobs:
           packages/azurefunctions/tests/integration_tests
           packages/durabletask/tests/integration_tests
           -m integration
-          -n 4 --dist worksteal
+          -n logical --dist worksteal
           -x
           --timeout=480 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5

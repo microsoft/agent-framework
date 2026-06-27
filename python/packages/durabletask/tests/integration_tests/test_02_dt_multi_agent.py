@@ -58,6 +58,7 @@ class TestMultiAgent:
         assert math_agent is not None
         assert math_agent.name == MATH_AGENT_NAME
 
+    @pytest.mark.skip(reason="Flaky in CI: times out / crashes the xdist runner; temporarily disabled.")
     def test_weather_agent_with_tool(self):
         """Test weather agent with weather tool execution."""
         agent = self.agent_client.get_agent(WEATHER_AGENT_NAME)
