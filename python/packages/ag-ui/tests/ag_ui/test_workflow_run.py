@@ -1351,6 +1351,87 @@ async def test_workflow_run_approval_via_messages_approved() -> None:
     assert not resumed_finished.get("interrupt")
 
 
+async def test_workflow_run_explicit_resume_overrides_stale_message_approval() -> None:
+    """Explicit resume payloads should not be overwritten by stale function_approvals in messages."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345", "amount": "$89.99"},
+            )
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+            del original_request
+            status = "approved" if bool(response.approved) else "rejected"
+            await ctx.yield_output(f"Refund {status}.")
+
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    first_events = [
+        event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
+    ]
+    first_finished_events = [event for event in first_events if event.type == "RUN_FINISHED"]
+    assert len(first_finished_events) == 1
+    first_finished = first_finished_events[0].model_dump()
+    interrupt_payload = first_finished.get("interrupt")
+    assert isinstance(interrupt_payload, list)
+    assert len(interrupt_payload) == 1
+    interrupt_entry = interrupt_payload[0]
+    assert isinstance(interrupt_entry, dict)
+    interrupt_value = interrupt_entry.get("value")
+    assert isinstance(interrupt_value, dict)
+
+    resumed_events = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "",
+                        "function_approvals": [
+                            {
+                                "approved": True,
+                                "id": "approval-1",
+                                "call_id": "refund-call",
+                                "name": "submit_refund",
+                                "arguments": {"order_id": "12345", "amount": "$89.99"},
+                            }
+                        ],
+                    }
+                ],
+                "resume": {
+                    "interrupts": [
+                        {
+                            "id": "approval-1",
+                            "value": {
+                                "type": "function_approval_response",
+                                "approved": False,
+                                "id": interrupt_value.get("id", "approval-1"),
+                                "function_call": interrupt_value.get("function_call"),
+                            },
+                        }
+                    ]
+                },
+            },
+            workflow,
+        )
+    ]
+
+    assistant_text = "".join(event.delta for event in resumed_events if event.type == "TEXT_MESSAGE_CONTENT")
+    assert "rejected" in assistant_text
+    assert "approved" not in assistant_text
+
+
 async def test_workflow_run_approval_argument_mismatch_keeps_interrupt_pending() -> None:
     """Workflow approval responses must not resume with changed function arguments."""
 
