@@ -3077,7 +3077,13 @@ class TestCheckpointContextPathValidation:
         )
         input_item = ItemMessage({"type": "message", "role": "user", "content": "next turn"})
 
-        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[input_item])):
+        with (
+            patch(
+                "agent_framework_foundry_hosting._responses.copy_workflow_agent_for_hosted_turn",
+                return_value=agent,
+            ),
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[input_item])),
+        ):
             async for _ in server._handle_inner_workflow(request, context):  # pyright: ignore[reportPrivateUsage]
                 pass
 
@@ -3689,6 +3695,9 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
         self.run_count = 0
         self.last_run_messages: list[Message] = []
 
+    def __deepcopy__(self, memo: dict[int, Any]) -> _ToolApprovalWorkflowAgentMock:
+        return self
+
     def create_session(self, **kwargs: Any) -> AgentSession:
         return AgentSession()
 
@@ -3884,6 +3893,29 @@ def _build_text_workflow_agent(text: str) -> WorkflowAgent:
     return WorkflowAgent(workflow=workflow, name="Text Workflow Agent")
 
 
+def _build_stateful_workflow_agent() -> WorkflowAgent:
+    """Build a workflow agent that exposes shared workflow state in its output."""
+
+    @executor
+    async def start(messages: list[Message], ctx: WorkflowContext[Any, Message]) -> None:
+        turn_count = int(ctx.get_state("turn_count", 0)) + 1
+        ctx.set_state("turn_count", turn_count)
+        await ctx.yield_output(Message(role="assistant", contents=[Content.from_text(f"turn_count={turn_count}")]))
+
+    workflow = WorkflowBuilder(name="Stateful Workflow", start_executor=start, output_from=[start]).build()
+    return WorkflowAgent(workflow=workflow, name="Stateful Workflow Agent")
+
+
+def _output_texts(body: dict[str, Any]) -> list[str]:
+    return [
+        part["text"]
+        for item in body["output"]
+        if item["type"] == "message"
+        for part in item.get("content", [])
+        if part.get("type") == "output_text"
+    ]
+
+
 def _build_approval_workflow_agent(
     *,
     approval_request_id: str,
@@ -3948,6 +3980,39 @@ class TestWorkflowAgentHosting:
         assert "response.output_text.delta" in types
         text_done = [e for e in events if e["event"] == "response.output_text.done"]
         assert any(e["data"]["text"] == "hello stream" for e in text_done)
+
+    async def test_fresh_requests_do_not_share_workflow_state(self) -> None:
+        workflow_agent = _build_stateful_workflow_agent()
+        server = _make_server(workflow_agent)
+
+        first = await _post(server, input_text="first", stream=False)
+        second = await _post(server, input_text="second", stream=False)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert _output_texts(first.json()) == ["turn_count=1"]
+        assert _output_texts(second.json()) == ["turn_count=1"]
+
+    async def test_previous_response_id_continues_workflow_state_from_checkpoint(self) -> None:
+        workflow_agent = _build_stateful_workflow_agent()
+        server = _make_server(workflow_agent)
+
+        first = await _post(server, input_text="first", stream=False)
+        first_body = first.json()
+        second = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": "second",
+                "stream": False,
+                "previous_response_id": first_body["id"],
+            },
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert _output_texts(first_body) == ["turn_count=1"]
+        assert _output_texts(second.json()) == ["turn_count=2"]
 
     async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
         workflow_agent, mock_agent = _build_approval_workflow_agent(approval_request_id="apr_wf_ns")

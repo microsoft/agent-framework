@@ -12,14 +12,12 @@ import threading
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
 from dataclasses import asdict, dataclass, is_dataclass
-from pathlib import Path
 from typing import Protocol, cast
 
 from agent_framework import (
     ChatOptions,
     Content,
     ContextProvider,
-    FileCheckpointStorage,
     HistoryProvider,
     Message,
     RawAgent,
@@ -72,7 +70,6 @@ from azure.ai.agentserver.responses.models import (
     MessageContentOutputTextContent,
     MessageContentReasoningTextContent,
     MessageContentRefusalContent,
-    MessageRole,
     OAuthConsentRequestOutputItem,
     OutputItem,
     OutputItemApplyPatchToolCall,
@@ -115,9 +112,17 @@ from azure.ai.agentserver.responses.streaming._builders import (
 from mcp import McpError
 from typing_extensions import Any
 
+from ._hosted_workflow_conversation import (
+    AZURE_RESPONSES_MESSAGE_ROLE_TYPE,
+    HostedWorkflowConversationAdapter,
+    checkpoint_storage_for_context,
+    copy_workflow_agent_for_hosted_turn,
+)
+
 logger = logging.getLogger(__name__)
 
-_AZURE_RESPONSES_MESSAGE_ROLE_TYPE = f"{MessageRole.__module__}:{MessageRole.__qualname__}"
+_AZURE_RESPONSES_MESSAGE_ROLE_TYPE = AZURE_RESPONSES_MESSAGE_ROLE_TYPE
+_checkpoint_storage_for_context = checkpoint_storage_for_context
 
 
 # region Approval Storage
@@ -212,52 +217,6 @@ class FileBasedFunctionApprovalStorage:
 
     async def load_approval_request(self, approval_request_id: str) -> Content:
         return await asyncio.to_thread(self._load_sync, approval_request_id)
-
-
-def _checkpoint_storage_for_context(root: str, context_id: str) -> FileCheckpointStorage:
-    """Build a ``FileCheckpointStorage`` for ``context_id`` rooted under ``root``.
-
-    ``context_id`` originates from caller-controlled fields such as
-    ``previous_response_id`` or from server-generated fields such as
-    ``conversation_id`` / ``response_id``. In every case it must be treated as
-    an untrusted single path segment: path separators, drive letters, parent
-    references and similar would otherwise let the resulting directory escape
-    the configured checkpoint root (CWE-22). The check resolves the joined
-    path and verifies it stays under the resolved root before any directory is
-    created on disk.
-    """
-    if not isinstance(context_id, str) or not context_id:
-        raise RuntimeError("Invalid checkpoint context id: must be a non-empty string.")
-    # Reject any segment that is not a single safe path component. This covers
-    # POSIX/Windows separators, NUL bytes, drive letters, and all-dot segments
-    # (``.``, ``..``, ``...``, ...). We deliberately do not URL-decode the id
-    # here: the hosting layer never decodes context ids before joining them, so
-    # forms such as ``%2e%2e`` are accepted as literal directory names. Do NOT
-    # add decoding here without re-validating after the decode -- decode-then-
-    # join is exactly the pattern that reintroduces traversal. We also do not
-    # attempt to "sanitize" by stripping characters because that can introduce
-    # collisions between distinct ids.
-    if (
-        "/" in context_id
-        or "\\" in context_id
-        or "\x00" in context_id
-        # All-dot segments (``.``, ``..``, ``...``, ...) reduce to "" after stripping dots.
-        or context_id.strip(".") == ""
-        or os.path.isabs(context_id)
-        or os.path.splitdrive(context_id)[0]
-    ):
-        raise RuntimeError(f"Invalid checkpoint context id: {context_id!r}")
-
-    root_path = Path(root).resolve()
-    storage_path = (root_path / context_id).resolve()
-    if not storage_path.is_relative_to(root_path):
-        raise RuntimeError(f"Invalid checkpoint context id: {context_id!r}")
-    return FileCheckpointStorage(
-        storage_path,
-        # Keep this provider-specific allowlist narrow. Hosted workflow
-        # checkpoints can persist Azure's role enum inside Message objects.
-        allowed_checkpoint_types=[_AZURE_RESPONSES_MESSAGE_ROLE_TYPE],
-    )
 
 
 # endregion Approval Storage
@@ -574,89 +533,32 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if are_options_set:
                 logger.warning("Workflow agent doesn't support runtime options. They will be ignored.")
 
-            if request.previous_response_id is not None and context.conversation_id is not None:
-                raise RuntimeError("Previous response ID cannot be used in conjunction with conversation ID.")
-            context_id = request.previous_response_id or context.conversation_id
-
             # The following should never happen due to the checks above.
             # This is for type safety and defensive programming.
             if self._checkpoint_storage_path is None:
                 raise RuntimeError("Checkpoint storage path is not configured for workflow agent.")
             if not isinstance(self._agent, WorkflowAgent):
                 raise RuntimeError("Agent is not a workflow agent.")
+            workflow_agent_template = self._agent
+            workflow_conversation_adapter = HostedWorkflowConversationAdapter(
+                self._checkpoint_storage_path,
+                lambda: copy_workflow_agent_for_hosted_turn(workflow_agent_template),
+            )
 
             # Workflow agents are not async context managers in any built-in path,
             # but call _ensure_agent_ready for symmetry with the regular path so
             # any future async resources owned by the workflow are entered here.
             await self._ensure_agent_ready()
 
-            # Determine the latest checkpoint (if any) so we can resume the
-            # workflow's prior state for this turn. The directory is keyed by
-            # the inbound context id (conversation_id when set, otherwise
-            # previous_response_id). Multi-turn declarative workflows need the
-            # workflow's internal state (e.g. Conversation.messages,
-            # intermediate Local.* variables) to survive across user turns;
-            # the only place that state lives is the workflow checkpoint, so
-            # on every turn we restore the latest checkpoint and feed the new
-            # input back into the start executor as a continuation rather than
-            # a fresh run.
-            latest_checkpoint_id: str | None = None
-            restore_storage: FileCheckpointStorage | None = None
-            if context_id is not None:
-                restore_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, context_id)
-                latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
-                if latest_checkpoint is not None:
-                    latest_checkpoint_id = latest_checkpoint.checkpoint_id
-
-            # Storage that will receive checkpoints written during this turn.
-            # When the caller chains with previous_response_id, the next turn
-            # will reference the current response_id as its previous_response_id,
-            # so new checkpoints must land under the current response_id (or the
-            # conversation_id when set). When conversation_id is set, this
-            # matches restore_storage; when only previous_response_id was
-            # supplied, restore_storage points at the *prior* response's
-            # directory and write_storage points at the *current* response's.
-            write_context_id = context.conversation_id or context.response_id
-            write_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, write_context_id)
-
-            # Multi-turn pattern: when we have a prior checkpoint, restore it
-            # first (drive the workflow back to idle with prior state intact),
-            # then make a separate call that delivers the new user input. This
-            # depends on Workflow.run preserving shared state across calls. The
-            # restore-only call may yield events from any pending in-flight
-            # work in the checkpoint; we consume those internally here so they
-            # don't surface to the response stream as duplicates.
-            #
-            # If the restored checkpoint had pending request_info events, the
-            # restore-only call replays them through
-            # ``WorkflowAgent._convert_workflow_event_to_agent_response_updates``
-            # and populates ``self._agent.pending_requests``. That is the correct
-            # state: those requests are genuinely outstanding, and the next
-            # ``run(input_messages, ...)`` call may contain ``function_call_output``
-            # items (carried as FunctionResult/FunctionApprovalResponse content)
-            # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
-            if latest_checkpoint_id is not None:
-                if is_streaming_request:
-                    async for _ in self._agent.run(
-                        stream=True,
-                        checkpoint_id=latest_checkpoint_id,
-                        checkpoint_storage=restore_storage,
-                    ):
-                        pass
-                else:
-                    await self._agent.run(
-                        stream=False,
-                        checkpoint_id=latest_checkpoint_id,
-                        checkpoint_storage=restore_storage,
-                    )
+            turn = await workflow_conversation_adapter.prepare_turn(
+                response_id=context.response_id,
+                previous_response_id=request.previous_response_id,
+                conversation_id=context.conversation_id,
+            )
 
             if not is_streaming_request:
                 # Run the agent in non-streaming mode with the new user input.
-                response = await self._agent.run(
-                    input_messages,
-                    stream=False,
-                    checkpoint_storage=write_storage,
-                )
+                response = await turn.run_non_streaming(input_messages)
 
                 async for item in _to_outputs_for_messages(
                     response_event_stream,
@@ -665,18 +567,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 ):
                     yield item
 
-                await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
+                await turn.delete_not_latest_checkpoints(turn.agent.workflow.name)
                 yield response_event_stream.emit_completed()
                 return
 
             tracker = _OutputItemTracker(response_event_stream)
 
             # Run the workflow agent in streaming mode with the new user input.
-            async for update in self._agent.run(
-                input_messages,
-                stream=True,
-                checkpoint_storage=write_storage,
-            ):
+            async for update in turn.run_streaming(input_messages):
                 for content in update.contents:
                     for event in tracker.handle(content):
                         yield event
@@ -691,25 +589,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             for event in tracker.close():
                 yield event
 
-            await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
+            await turn.delete_not_latest_checkpoints(turn.agent.workflow.name)
             yield response_event_stream.emit_completed()
         except Exception as ex:
             logger.exception("Failed to produce response for workflow agent")
             for event in self._emit_failure(response_event_stream, tracker, ex):
                 yield event
-
-    @staticmethod
-    async def _delete_not_latest_checkpoints(checkpoint_storage: FileCheckpointStorage, workflow_name: str) -> None:
-        """Delete all checkpoints except the latest one.
-
-        We only need the last checkpoint for each invocation.
-        """
-        latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=workflow_name)
-        if latest_checkpoint is not None:
-            all_checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow_name)
-            for checkpoint in all_checkpoints:
-                if checkpoint.checkpoint_id != latest_checkpoint.checkpoint_id:
-                    await checkpoint_storage.delete(checkpoint.checkpoint_id)
 
     @staticmethod
     def _emit_failure(
