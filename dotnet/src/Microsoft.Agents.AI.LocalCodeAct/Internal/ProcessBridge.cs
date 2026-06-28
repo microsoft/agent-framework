@@ -327,7 +327,7 @@ internal sealed class ProcessBridge
         }
     }
 
-    private static async Task<(string Text, bool Truncated)> ReadCappedAsync(StreamReader reader, int maxBytes, CancellationToken cancellationToken)
+    internal static async Task<(string Text, bool Truncated)> ReadCappedAsync(StreamReader reader, int maxBytes, CancellationToken cancellationToken)
     {
         var sb = new StringBuilder();
         var buffer = new char[4096];
@@ -351,7 +351,7 @@ internal sealed class ProcessBridge
                     var remaining = Math.Max(0, maxBytes - totalBytes);
                     if (remaining > 0)
                     {
-                        sb.Append(chunk[..Math.Min(chunk.Length, remaining)]);
+                        sb.Append(TruncateToUtf8ByteCount(chunk, remaining));
                     }
 
                     truncated = true;
@@ -374,6 +374,30 @@ internal sealed class ProcessBridge
         }
 
         return (sb.ToString(), truncated);
+    }
+
+    private static string TruncateToUtf8ByteCount(string text, int maxBytes)
+    {
+        if (string.IsNullOrEmpty(text) || maxBytes <= 0)
+        {
+            return string.Empty;
+        }
+
+        var bytesUsed = 0;
+        var charsUsed = 0;
+        foreach (var rune in text.EnumerateRunes())
+        {
+            var runeBytes = rune.Utf8SequenceLength;
+            if (bytesUsed + runeBytes > maxBytes)
+            {
+                break;
+            }
+
+            bytesUsed += runeBytes;
+            charsUsed += rune.Utf16SequenceLength;
+        }
+
+        return charsUsed == text.Length ? text : text[..charsUsed];
     }
 
     private static void TryKill(Process process)
