@@ -2,20 +2,31 @@
 
 """Steering integration test for ResponsesHostServer.
 
-Verifies steerable_conversations=True with a slow mock agent running on a
-real local HTTP server (Hypercorn).  No Foundry deployment is required.
+Verifies steerable_conversations=True with a real FoundryChatClient agent
+running on a local HTTP server (Hypercorn).
+
+Setup
+-----
+Copy .env.example to .env and fill in your values:
+
+    FOUNDRY_PROJECT_ENDPOINT=https://...
+    AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+
+Run ``az login`` first, then:
+
+    uv run python test_steering.py       (from the 01_basic/ directory)
 
 Design
 ------
 Two concurrent HTTP requests drive the steering flow:
 
-  1. Turn 1 — foreground streaming POST; the slow mock agent takes ~2.4 s to
-     finish.  The SSE stream is read in real-time to extract the response_id
-     from the ``response.created`` event.
+  1. Turn 1 — foreground streaming POST asking the agent for a long response.
+     The SSE stream is consumed in real-time.
 
-  2. Turn 2 — sent 0.5 s after turn 1 starts, with ``previous_response_id``
-     pointing at turn 1.  With ``steerable_conversations=True`` the server
-     queues turn 2 (status=queued) instead of returning 409 conflict.
+  2. Turn 2 — sent 2 s after turn 1 starts (while the agent is still streaming),
+     with ``background=True`` and the same ``conversation`` value.  With
+     ``steerable_conversations=True`` the server returns ``status=queued``
+     instead of HTTP 409 conflict.
 
   3. The steering signal fires in turn 1's handler.  Turn 1 emits
      ``response.completed`` with partial output and its SSE stream ends.
@@ -23,14 +34,11 @@ Two concurrent HTTP requests drive the steering flow:
   4. The framework drains the queue and runs turn 2.  Polling
      ``GET /responses/{id}`` confirms it reaches ``completed``.
 
-Run with:
-    uv run python test_steering.py       (from the 01_basic/ directory)
-
 Expected output:
     Server started on 127.0.0.1:18088
     [turn 1] streaming started  id=resp_...
     [turn 2] status=queued      id=resp_...   <- queued instead of 409
-    [turn 1] stream ended: response.completed <- steered-out turn completed cleanly
+    [turn 1] terminal: response.completed     <- steered-out turn completed cleanly
     [turn 2] polled: in_progress
     [turn 2] polled: completed               <- steered turn ran and finished
     PASS: steering flow completed successfully
@@ -40,50 +48,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
-from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
 
 _PORT = 18088
 _BASE = f"http://127.0.0.1:{_PORT}"
-
-
-# ---------------------------------------------------------------------------
-# Minimal slow mock agent — streams N chunks with a configurable delay.
-# ---------------------------------------------------------------------------
-
-
-def _build_slow_agent(*, chunks: int = 8, delay: float = 0.3) -> Any:
-    """Return a mock agent that streams *chunks* text updates *delay* seconds apart."""
-    from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream
-
-    class SlowAgent:
-        def run(  # type: ignore[override]
-            self, *args: object, stream: bool = False, **kwargs: object
-        ) -> Any:
-            # sync def (not async def): returns the right type based on stream kwarg.
-            if stream:
-                async def _gen() -> AsyncIterator[AgentResponseUpdate]:
-                    for i in range(chunks):
-                        await asyncio.sleep(delay)
-                        yield AgentResponseUpdate(
-                            contents=[Content.from_text(f"chunk {i} ")],
-                            role="assistant",
-                        )
-
-                return ResponseStream(_gen())  # type: ignore[arg-type]
-
-            async def _result() -> AgentResponse:
-                await asyncio.sleep(delay)
-                return AgentResponse(
-                    messages=[Message("assistant", [Content.from_text("done")])]
-                )
-
-            return _result()
-
-    return SlowAgent()
 
 
 # ---------------------------------------------------------------------------
@@ -143,60 +118,66 @@ def _parse_sse_chunk(chunk: str) -> dict[str, Any] | None:
 
 
 async def run_steering_test() -> None:
+    """Run the steering integration test against a real Foundry agent."""
     import uuid
 
+    from agent_framework.foundry import FoundryChatClient
     from agent_framework_foundry_hosting import ResponsesHostServer
     from azure.ai.agentserver.responses import InMemoryResponseProvider
+    from azure.identity import AzureCliCredential
 
-    # Use a unique conversation ID per run to avoid conflicts with stale
-    # task state from previous test runs.
-    conv_id = f"steer-test-{uuid.uuid4().hex[:8]}"
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
+    agent = client.as_agent(
+        name="steering-test-agent",
+        instructions=(
+            "You are a helpful assistant. When asked to count or list things, "
+            "produce a long response with many items so that streaming takes several seconds."
+        ),
+    )
 
-    agent = _build_slow_agent(chunks=8, delay=0.3)  # ~2.4 s to complete naturally
     server = ResponsesHostServer(
         agent,
         store=InMemoryResponseProvider(),
         steerable_conversations=True,
     )
 
+    # Use a unique conversation ID per run to avoid conflicts with stale
+    # task state from previous test runs.
+    conv_id = f"steer-test-{uuid.uuid4().hex[:8]}"
+
     shutdown_event = await _start_server(server, _PORT)
     print(f"Server started on 127.0.0.1:{_PORT}")
 
     try:
-        # Use limits to allow many concurrent requests on the same host.
         limits = httpx.Limits(max_keepalive_connections=5, max_connections=5)
-        async with httpx.AsyncClient(base_url=_BASE, timeout=60, limits=limits) as client:
+        async with httpx.AsyncClient(base_url=_BASE, timeout=120, limits=limits) as http:
             r1_id: str | None = None
-            r1_id_ready = asyncio.Event()
             r1_terminal: str | None = None
 
             # -------------------------------------------------------------- #
-            # Strategy: send both turns concurrently using asyncio.          #
-            # Turn 1 streams SSE inline (blocks until agent finishes or is   #
-            # steered).  Turn 2 is sent 0.5 s later while turn 1 is still   #
-            # running.  Both turns share the same conversation ID — no need  #
-            # to pass turn 1's response_id to turn 2.                        #
+            # Turn 1 — stream a long response, read it in real-time.         #
             # -------------------------------------------------------------- #
-
             async def stream_turn1() -> None:
                 nonlocal r1_id, r1_terminal
-                async with client.stream(
+                async with http.stream(
                     "POST",
                     "/responses",
-                    # "conversation" (not "conversation_id") is the b8 field.
-                    # Both turns carry the same value → same multi-turn task.
-                    # store=True ensures the multi-turn resilient task is used.
                     json={
-                        "model": "test-model",
-                        "input": "start counting slowly",
+                        "model": os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+                        "input": "Count from 1 to 100, one number per line.",
                         "stream": True,
                         "store": True,
+                        # "conversation" (not "conversation_id") is the b8 field name.
+                        # Both turns must carry the same value to share the same
+                        # multi-turn steerable task.
                         "conversation": conv_id,
                     },
                 ) as response:
-                    assert response.status_code == 200, (
-                        f"Turn 1 failed: {response.status_code}"
-                    )
+                    assert response.status_code == 200, f"Turn 1 failed: {response.status_code}"
                     async for chunk in response.aiter_text():
                         event = _parse_sse_chunk(chunk)
                         if event is None:
@@ -204,29 +185,25 @@ async def run_steering_test() -> None:
                         et = event.get("type", "")
                         if et == "response.created" and r1_id is None:
                             r1_id = event["response"]["id"]
-                            r1_id_ready.set()
                         if et in ("response.completed", "response.failed", "response.cancelled"):
                             r1_terminal = et.split(".")[-1]
                             break
 
             # -------------------------------------------------------------- #
-            # Task 2 — wait 0.5 s then steer the conversation.              #
+            # Turn 2 — sent while turn 1 is still streaming.                 #
+            # background=True returns status=queued immediately.             #
             # -------------------------------------------------------------- #
             async def send_turn2() -> dict[str, Any]:
-                # Give turn 1 time to start its handler before we steer.
-                await asyncio.sleep(0.5)
+                # Give turn 1 time to start streaming before we steer.
+                await asyncio.sleep(2)
 
-                r2 = await client.post(
+                r2 = await http.post(
                     "/responses",
                     json={
-                        "model": "test-model",
-                        "input": "stop counting, tell me a joke",
-                        # background=True so the POST returns immediately with
-                        # status=queued (the acceptance response) instead of
-                        # blocking until the handler runs.
+                        "model": os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+                        "input": "Stop — instead, tell me a short joke.",
                         "background": True,
                         "store": True,
-                        # same conversation value → queued into the running steerable task
                         "conversation": conv_id,
                     },
                 )
@@ -243,9 +220,10 @@ async def run_steering_test() -> None:
 
             assert r2_status == "queued", (
                 f"Expected status=queued (turn 2 queued behind turn 1), got {r2_status!r}.\n"
-                "  status=conflict  → steerable_conversations may not be enabled.\n"
-                "  status=failed    → the steerable task may have already completed.\n"
-                "  Note: requires 'conversation' field on both turns to share the same task."
+                "  status=conflict   → steerable_conversations may not be enabled.\n"
+                "  status=in_progress → turn 1 already completed before turn 2 arrived;\n"
+                "                       try increasing the asyncio.sleep(2) in send_turn2.\n"
+                "  Note: both turns must carry the same 'conversation' value."
             )
 
             # Wait for turn 1 to terminate (it was steered out).
@@ -256,12 +234,10 @@ async def run_steering_test() -> None:
                 "  None or 'failed' → the cancellation terminal fix may be missing."
             )
 
-            # -------------------------------------------------------------- #
-            # Poll turn 2 until terminal.                                    #
-            # -------------------------------------------------------------- #
-            for _ in range(80):
-                await asyncio.sleep(0.25)
-                s2 = (await client.get(f"/responses/{r2_id}")).json()["status"]
+            # Poll turn 2 until terminal.
+            for _ in range(120):
+                await asyncio.sleep(0.5)
+                s2 = (await http.get(f"/responses/{r2_id}")).json()["status"]
                 print(f"[turn 2] polled: {s2}")
                 if s2 in ("completed", "failed", "cancelled"):
                     break
@@ -272,7 +248,7 @@ async def run_steering_test() -> None:
 
     finally:
         shutdown_event.set()
-        await asyncio.sleep(1.5)  # allow graceful shutdown
+        await asyncio.sleep(1.5)
 
     print("PASS: steering flow completed successfully")
 
