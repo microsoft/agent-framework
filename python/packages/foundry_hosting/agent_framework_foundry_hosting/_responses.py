@@ -113,7 +113,7 @@ from azure.ai.agentserver.responses.streaming._builders import (
     TextContentBuilder,
 )
 from mcp import McpError
-from typing_extensions import Any
+from typing_extensions import Any, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -214,50 +214,96 @@ class FileBasedFunctionApprovalStorage:
         return await asyncio.to_thread(self._load_sync, approval_request_id)
 
 
-def _checkpoint_storage_for_context(root: str, context_id: str) -> FileCheckpointStorage:
+def _validate_path_segment(segment: str, *, kind: Literal["context id", "user id"]) -> None:
+    """Validate that ``segment`` is a single safe path component (CWE-22).
+
+    ``segment`` originates from caller-controlled fields (such as
+    ``previous_response_id``), server-generated fields (``conversation_id`` /
+    ``response_id``), or the platform-injected per-user partition key
+    (``x-agent-user-id``). In every case it must be treated as an untrusted
+    single path segment: path separators, drive letters, parent references and
+    similar would otherwise let the resulting directory escape the configured
+    storage root.
+
+    We deliberately do not URL-decode the value here: the hosting layer never
+    decodes these ids before joining them, so forms such as ``%2e%2e`` are
+    accepted as literal directory names. Do NOT add decoding here without
+    re-validating after the decode -- decode-then-join is exactly the pattern
+    that reintroduces traversal. We also do not attempt to "sanitize" by
+    stripping characters because that can introduce collisions between distinct
+    ids.
+    """
+    if not isinstance(segment, str) or not segment:
+        raise RuntimeError(f"Invalid {kind}: must be a non-empty string.")
+    # Reject any value that is not a single safe path component. This covers
+    # POSIX/Windows separators, NUL bytes, drive letters, and all-dot segments
+    # (``.``, ``..``, ``...``, ...).
+    if (
+        "/" in segment
+        or "\\" in segment
+        or "\x00" in segment
+        # All-dot segments (``.``, ``..``, ``...``, ...) reduce to "" after stripping dots.
+        or segment.strip(".") == ""
+        or os.path.isabs(segment)
+        or os.path.splitdrive(segment)[0]
+    ):
+        raise RuntimeError(f"Invalid {kind}: {segment!r}")
+
+
+def _checkpoint_storage_for_context(root: str, context_id: str, *, user_id: str | None = None) -> FileCheckpointStorage:
     """Build a ``FileCheckpointStorage`` for ``context_id`` rooted under ``root``.
 
-    ``context_id`` originates from caller-controlled fields such as
-    ``previous_response_id`` or from server-generated fields such as
-    ``conversation_id`` / ``response_id``. In every case it must be treated as
-    an untrusted single path segment: path separators, drive letters, parent
-    references and similar would otherwise let the resulting directory escape
-    the configured checkpoint root (CWE-22). The check resolves the joined
-    path and verifies it stays under the resolved root before any directory is
-    created on disk.
-    """
-    if not isinstance(context_id, str) or not context_id:
-        raise RuntimeError("Invalid checkpoint context id: must be a non-empty string.")
-    # Reject any segment that is not a single safe path component. This covers
-    # POSIX/Windows separators, NUL bytes, drive letters, and all-dot segments
-    # (``.``, ``..``, ``...``, ...). We deliberately do not URL-decode the id
-    # here: the hosting layer never decodes context ids before joining them, so
-    # forms such as ``%2e%2e`` are accepted as literal directory names. Do NOT
-    # add decoding here without re-validating after the decode -- decode-then-
-    # join is exactly the pattern that reintroduces traversal. We also do not
-    # attempt to "sanitize" by stripping characters because that can introduce
-    # collisions between distinct ids.
-    if (
-        "/" in context_id
-        or "\\" in context_id
-        or "\x00" in context_id
-        # All-dot segments (``.``, ``..``, ``...``, ...) reduce to "" after stripping dots.
-        or context_id.strip(".") == ""
-        or os.path.isabs(context_id)
-        or os.path.splitdrive(context_id)[0]
-    ):
-        raise RuntimeError(f"Invalid checkpoint context id: {context_id!r}")
+    When the platform supplies a per-user partition key (``user_id``, from the
+    ``x-agent-user-id`` header on container protocol v2), the per-conversation
+    checkpoint directory is nested under it: ``<root>/<user_id>/<context_id>``.
+    This isolates each tenant's workflow state so one user can never restore or
+    observe another user's checkpoint, even with a guessed or forged
+    ``context_id``. An absent (``None``) or empty ``user_id`` -- local
+    development or protocol v1 -- falls back to the unscoped
+    ``<root>/<context_id>`` layout.
 
-    root_path = Path(root).resolve()
-    storage_path = (root_path / context_id).resolve()
-    if not storage_path.is_relative_to(root_path):
-        raise RuntimeError(f"Invalid checkpoint context id: {context_id!r}")
+    Both ``context_id`` and ``user_id`` are validated as single safe path
+    segments, and each resolved directory is verified to stay under its parent
+    before any directory is created on disk (CWE-22).
+    """
+    _validate_path_segment(context_id, kind="context id")
+
+    base_path = Path(root).resolve()
+    if user_id:
+        _validate_path_segment(user_id, kind="user id")
+        user_path = (base_path / user_id).resolve()
+        if not user_path.is_relative_to(base_path):
+            raise RuntimeError(f"Invalid user id: {user_id!r}")
+        base_path = user_path
+
+    storage_path = (base_path / context_id).resolve()
+    if not storage_path.is_relative_to(base_path):
+        raise RuntimeError(f"Invalid context id: {context_id!r}")
     return FileCheckpointStorage(
         storage_path,
         # Keep this provider-specific allowlist narrow. Hosted workflow
         # checkpoints can persist Azure's role enum inside Message objects.
         allowed_checkpoint_types=[_AZURE_RESPONSES_MESSAGE_ROLE_TYPE],
     )
+
+
+def _approval_storage_path_for_user(base_path: str, user_id: str) -> str:
+    """Return the per-user approval storage file path under the base directory.
+
+    Inserts the validated ``user_id`` as a directory segment between the base
+    directory and the file name (``<dir>/<user_id>/<file>``), mirroring the
+    per-user checkpoint partitioning so one tenant can never read another
+    tenant's saved approval requests. The user id is validated as a single safe
+    path segment and the resulting directory is verified to stay under the base
+    directory before use (CWE-22).
+    """
+    _validate_path_segment(user_id, kind="user id")
+    directory, filename = os.path.split(base_path)
+    base_dir = Path(directory or ".").resolve()
+    user_dir = (base_dir / user_id).resolve()
+    if not user_dir.is_relative_to(base_dir):
+        raise RuntimeError(f"Invalid user id: {user_id!r}")
+    return str(user_dir / filename)
 
 
 # endregion Approval Storage
@@ -406,6 +452,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if self.config.is_hosted
             else InMemoryFunctionApprovalStorage()
         )
+        # Per-user (multi-tenant) approval stores. Hosted file-based approval
+        # storage is partitioned by the platform per-user partition key so one
+        # tenant can never read another tenant's saved approval requests.
+        # Instances are cached so concurrent requests for the same user share one
+        # lock, preserving serialized read-modify-write on the JSON file. Local
+        # (in-memory) dev and protocol v1 (no user id) keep the single shared
+        # ``self._approval_storage``.
+        self._approval_storages_by_user: dict[str, ApprovalStorage] = {}
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
         # failures during MCP connect can be surfaced to the client as an
@@ -443,6 +497,29 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             self._agent_stack = None
             await stack.aclose()
 
+    def _approval_storage_for_user(self, user_id: str | None) -> ApprovalStorage:
+        """Return the approval storage scoped to ``user_id`` when applicable.
+
+        For hosted multi-tenant deployments the file-based store is partitioned
+        by the platform per-user partition key, so one tenant can never read
+        another tenant's saved approval requests. Falls back to the single shared
+        store for local (in-memory) hosting or when no per-user partition key is
+        available (protocol v1 / local development). Instances are cached so
+        concurrent requests for the same user share one lock.
+
+        Raises:
+            RuntimeError: If ``user_id`` is not a safe single path segment.
+        """
+        if not self.config.is_hosted or not user_id:
+            return self._approval_storage
+        storage = self._approval_storages_by_user.get(user_id)
+        if storage is None:
+            storage = FileBasedFunctionApprovalStorage(
+                _approval_storage_path_for_user(self.FUNCTION_APPROVAL_STORAGE_PATH, user_id)
+            )
+            self._approval_storages_by_user[user_id] = storage
+        return storage
+
     async def _handle_response(
         self,
         request: CreateResponse,
@@ -470,13 +547,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         tracker: _OutputItemTracker | None = None
 
         try:
+            user_id = context.platform_context.user_id_key
+            approval_storage = self._approval_storage_for_user(user_id)
             input_items = await context.get_input_items()
-            input_messages = await _items_to_messages(input_items, approval_storage=self._approval_storage)
+            input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
 
             history = await context.get_history()
             run_kwargs: dict[str, Any] = {
                 "messages": [
-                    *(await _output_items_to_messages(history, approval_storage=self._approval_storage)),
+                    *(await _output_items_to_messages(history, approval_storage=approval_storage)),
                     *input_messages,
                 ]
             }
@@ -522,7 +601,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 async for item in _to_outputs_for_messages(
                     response_event_stream,
                     response.messages,
-                    approval_storage=self._approval_storage,
+                    approval_storage=approval_storage,
                 ):
                     yield item
             else:
@@ -537,7 +616,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             async for item in _to_outputs(
                                 response_event_stream,
                                 content,
-                                approval_storage=self._approval_storage,
+                                approval_storage=approval_storage,
                             ):
                                 yield item
                             tracker.needs_async = False
@@ -566,8 +645,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         tracker: _OutputItemTracker | None = None
 
         try:
+            user_id = context.platform_context.user_id_key
+            approval_storage = self._approval_storage_for_user(user_id)
             input_items = await context.get_input_items()
-            input_messages = await _items_to_messages(input_items, approval_storage=self._approval_storage)
+            input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
             is_streaming_request = request.stream is not None and request.stream is True
 
             _, are_options_set = _to_chat_options(request)
@@ -590,6 +671,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # any future async resources owned by the workflow are entered here.
             await self._ensure_agent_ready()
 
+            # Per-user checkpoint isolation for multi-tenant hosting (container
+            # protocol v2): the per-user partition key computed above
+            # (``x-agent-user-id``) scopes every checkpoint directory for this turn,
+            # so one tenant can never restore or observe another tenant's workflow
+            # state -- even with a guessed or forged context id. The key is stable
+            # per user across turns, so multi-turn continuity is preserved. Absent
+            # (``None``)/empty in local development or protocol v1, where the
+            # unscoped single-tenant layout is used.
+
             # Determine the latest checkpoint (if any) so we can resume the
             # workflow's prior state for this turn. The directory is keyed by
             # the inbound context id (conversation_id when set, otherwise
@@ -603,7 +693,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             latest_checkpoint_id: str | None = None
             restore_storage: FileCheckpointStorage | None = None
             if context_id is not None:
-                restore_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, context_id)
+                restore_storage = _checkpoint_storage_for_context(
+                    self._checkpoint_storage_path, context_id, user_id=user_id
+                )
                 latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
                 if latest_checkpoint is not None:
                     latest_checkpoint_id = latest_checkpoint.checkpoint_id
@@ -617,7 +709,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # supplied, restore_storage points at the *prior* response's
             # directory and write_storage points at the *current* response's.
             write_context_id = context.conversation_id or context.response_id
-            write_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, write_context_id)
+            write_storage = _checkpoint_storage_for_context(
+                self._checkpoint_storage_path, write_context_id, user_id=user_id
+            )
 
             # Multi-turn pattern: when we have a prior checkpoint, restore it
             # first (drive the workflow back to idle with prior state intact),
@@ -661,7 +755,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 async for item in _to_outputs_for_messages(
                     response_event_stream,
                     response.messages,
-                    approval_storage=self._approval_storage,
+                    approval_storage=approval_storage,
                 ):
                     yield item
 
@@ -682,7 +776,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         yield event
                     if tracker.needs_async:
                         async for item in _to_outputs(
-                            response_event_stream, content, approval_storage=self._approval_storage
+                            response_event_stream, content, approval_storage=approval_storage
                         ):
                             yield item
                         tracker.needs_async = False
