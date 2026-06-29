@@ -47,7 +47,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public abstract class CompactionStrategy
+public abstract partial class CompactionStrategy
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="CompactionStrategy"/> class.
