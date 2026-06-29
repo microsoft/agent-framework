@@ -135,7 +135,7 @@ def _assemble_context_providers(
     disable_file_access: bool,
     file_access_store: AgentFileStore | None,
     skills_provider: SkillsProvider | None,
-    skills_paths: Sequence[str] | None,
+    skills_paths: str | Path | Sequence[str | Path] | None,
     background_agents: Sequence[SupportsAgentRun] | None,
     background_agents_instructions: str | None,
     shell_context_provider: ContextProvider | None,
@@ -173,7 +173,7 @@ def _assemble_context_providers(
     if skills_provider:
         providers.append(skills_provider)
     if skills_paths:
-        providers.append(SkillsProvider.from_paths(*skills_paths))
+        providers.append(SkillsProvider.from_paths(skills_paths))
 
     # Background agents are opt-in: only added when agents are provided.
     if background_agents:
@@ -263,7 +263,7 @@ def create_harness_agent(
     disable_file_access: bool = False,
     file_access_store: AgentFileStore | None = None,
     skills_provider: SkillsProvider | None = None,
-    skills_paths: Sequence[str] | None = None,
+    skills_paths: str | Path | Sequence[str | Path] | None = None,
     background_agents: Sequence[SupportsAgentRun] | None = None,
     background_agents_instructions: str | None = None,
     shell_executor: ShellExecutor | None = None,
@@ -377,8 +377,10 @@ def create_harness_agent(
         skills_provider: Custom SkillsProvider instance for code-defined skills.
             Can be combined with ``skills_paths`` to aggregate file and code-based skills.
         skills_paths: Paths for file-based skill discovery (looks for SKILL.md files).
-            Can be combined with ``skills_provider``. When neither ``skills_provider``
-            nor ``skills_paths`` is provided, no SkillsProvider is added.
+            Accepts a single ``str`` or :class:`~pathlib.Path`, or a sequence of
+            ``str | Path``. Can be combined with ``skills_provider``. When neither
+            ``skills_provider`` nor ``skills_paths`` is provided, no SkillsProvider
+            is added.
         background_agents: Collection of agents available for background task delegation.
             When provided, a ``BackgroundAgentsProvider`` is automatically included,
             enabling the agent to start, monitor, and retrieve results from background tasks.

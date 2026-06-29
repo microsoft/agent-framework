@@ -47,6 +47,7 @@ public sealed class AgentSkillsProviderBuilder
     private ILoggerFactory? _loggerFactory;
     private AgentFileSkillScriptRunner? _scriptRunner;
     private Func<AgentSkill, bool>? _filter;
+    private bool _disableCaching;
 
     /// <summary>
     /// Adds a file-based skill source that discovers skills from a filesystem directory.
@@ -157,17 +158,6 @@ public sealed class AgentSkillsProviderBuilder
     }
 
     /// <summary>
-    /// Enables or disables the script approval gate.
-    /// </summary>
-    /// <param name="enabled">Whether script execution requires approval.</param>
-    /// <returns>This builder instance for chaining.</returns>
-    public AgentSkillsProviderBuilder UseScriptApproval(bool enabled = true)
-    {
-        this.GetOrCreateOptions().ScriptApproval = enabled;
-        return this;
-    }
-
-    /// <summary>
     /// Sets the runner for file-based skill scripts.
     /// </summary>
     /// <param name="runner">The delegate that runs file-based scripts.</param>
@@ -219,6 +209,17 @@ public sealed class AgentSkillsProviderBuilder
     }
 
     /// <summary>
+    /// Disables caching of the resolved skill list. By default, skills are fetched once and cached;
+    /// calling this method causes the source pipeline to be invoked on every request.
+    /// </summary>
+    /// <returns>This builder instance for chaining.</returns>
+    public AgentSkillsProviderBuilder DisableCaching()
+    {
+        this._disableCaching = true;
+        return this;
+    }
+
+    /// <summary>
     /// Builds the <see cref="AgentSkillsProvider"/>.
     /// </summary>
     /// <returns>A configured <see cref="AgentSkillsProvider"/>.</returns>
@@ -238,6 +239,11 @@ public sealed class AgentSkillsProviderBuilder
         else
         {
             source = new AggregatingAgentSkillsSource(resolvedSources);
+        }
+
+        if (!this._disableCaching)
+        {
+            source = new CachingAgentSkillsSource(source);
         }
 
         // Apply user-specified filter, then dedup.

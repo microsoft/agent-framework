@@ -4,7 +4,7 @@ description = "Built-in tools for the Microsoft Agent Framework (local shell, an
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0a260424"
+version = "1.0.0a260625"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -22,7 +22,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.2.2,<2",
+    "agent-framework-core>=1.10.0,<2",
     # psutil powers cross-OS process-tree termination on timeout. It's a
     # mandatory dep because it's the difference between "child processes
     # may survive timeout on Windows" and "they don't" — a security-relevant

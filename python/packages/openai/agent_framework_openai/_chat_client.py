@@ -64,7 +64,7 @@ from agent_framework.exceptions import (
 )
 from agent_framework.observability import ChatTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
-from openai.types.responses import FunctionShellTool
+from openai.types.responses import FunctionShellToolParam
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
 from openai.types.responses.function_tool_param import FunctionToolParam
 from openai.types.responses.parsed_response import (
@@ -911,7 +911,7 @@ class RawOpenAIChatClient(
             if isinstance(tool_item, FunctionTool) and tool_item.kind == SHELL_TOOL_KIND_VALUE:
                 shell_env = (tool_item.additional_properties or {}).get(OPENAI_SHELL_ENVIRONMENT_KEY)
                 response_tools.append(
-                    FunctionShellTool(
+                    FunctionShellToolParam(
                         type="shell",
                         environment=shell_env,
                     )
@@ -1161,7 +1161,7 @@ class RawOpenAIChatClient(
             )
             if env_config.get("type") == "local":
                 raise ValueError("Local shell requires func. Provide func for local execution.")
-            return FunctionShellTool(type="shell", environment=env_config)  # type: ignore[typeddict-item]
+            return FunctionShellToolParam(type="shell", environment=env_config)  # type: ignore[typeddict-item]
 
         if isinstance(environment, dict):
             raise ValueError("When func is provided, environment config is not supported.")
@@ -1867,6 +1867,111 @@ class RawOpenAIChatClient(
         """Join shell commands into a single executable command string."""
         return "\n".join(command for command in commands if command).strip()
 
+    def _shell_item_to_contents(self, item: Any, local_shell_tool_name: str | None) -> list[Content]:
+        """Convert a shell output item into framework ``Content`` objects.
+
+        Handles ``shell_call``, ``local_shell_call``, and ``shell_call_output`` items.
+        Used by both the non-streaming parser and the streaming
+        ``response.output_item.done`` handler, where the item carries the fully
+        populated ``action`` (commands are not available on the earlier
+        ``response.output_item.added`` event, and there are no shell-specific
+        streaming delta events).
+        """
+        contents: list[Content] = []
+        item_type = getattr(item, "type", None)
+        if item_type == "shell_call":
+            shell_call_id = getattr(item, "call_id", None) or ""
+            shell_commands: list[str] = []
+            shell_timeout_ms: int | None = None
+            shell_max_output: int | None = None
+            if action := getattr(item, "action", None):
+                shell_commands = list(getattr(action, "commands", []) or [])
+                shell_timeout_ms = getattr(action, "timeout_ms", None)
+                shell_max_output = getattr(action, "max_output_length", None)
+            if local_shell_tool_name:
+                command_text = self._join_shell_commands(shell_commands)
+                contents.append(
+                    Content.from_function_call(
+                        call_id=shell_call_id,
+                        name=local_shell_tool_name,
+                        arguments=json.dumps({"command": command_text}),
+                        additional_properties={
+                            OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL,
+                            OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY: shell_commands,
+                        },
+                        raw_representation=item,
+                    )
+                )
+            else:
+                contents.append(
+                    Content.from_shell_tool_call(
+                        call_id=shell_call_id,
+                        commands=shell_commands,
+                        timeout_ms=shell_timeout_ms,
+                        max_output_length=shell_max_output,
+                        status=getattr(item, "status", None),
+                        raw_representation=item,
+                    )
+                )
+        elif item_type == "local_shell_call":
+            local_call_id = getattr(item, "call_id", None) or ""
+            local_command_parts = list(getattr(getattr(item, "action", None), "command", []) or [])
+            local_command = shlex.join(local_command_parts) if local_command_parts else ""
+            if local_shell_tool_name:
+                contents.append(
+                    Content.from_function_call(
+                        call_id=local_call_id,
+                        name=local_shell_tool_name,
+                        arguments=json.dumps({"command": local_command}),
+                        additional_properties={
+                            OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL,
+                            OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY: getattr(item, "id", None),
+                            OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY: local_command_parts,
+                        },
+                        raw_representation=item,
+                    )
+                )
+            else:
+                contents.append(
+                    Content.from_shell_tool_call(
+                        call_id=local_call_id,
+                        commands=[local_command] if local_command else [],
+                        timeout_ms=getattr(getattr(item, "action", None), "timeout_ms", None),
+                        status=getattr(item, "status", None),
+                        raw_representation=item,
+                    )
+                )
+        elif item_type == "shell_call_output":
+            shell_output_call_id = getattr(item, "call_id", None) or ""
+            shell_outputs: list[Content] = []
+            for shell_out in getattr(item, "output", []) or []:
+                s_exit_code: int | None = None
+                s_timed_out: bool | None = None
+                if outcome := getattr(shell_out, "outcome", None):
+                    if getattr(outcome, "type", None) == "exit":
+                        s_exit_code = getattr(outcome, "exit_code", None)
+                        s_timed_out = False
+                    elif getattr(outcome, "type", None) == "timeout":
+                        s_timed_out = True
+                shell_outputs.append(
+                    Content.from_shell_command_output(
+                        stdout=getattr(shell_out, "stdout", None),
+                        stderr=getattr(shell_out, "stderr", None),
+                        exit_code=s_exit_code,
+                        timed_out=s_timed_out,
+                        raw_representation=shell_out,
+                    )
+                )
+            contents.append(
+                Content.from_shell_tool_result(
+                    call_id=shell_output_call_id,
+                    outputs=shell_outputs,
+                    max_output_length=getattr(item, "max_output_length", None),
+                    raw_representation=item,
+                )
+            )
+        return contents
+
     @staticmethod
     def _stringify_mcp_arguments(arguments: Any) -> str:
         """Render hosted-MCP tool-call arguments as a JSON string for the Responses API."""
@@ -2440,97 +2545,8 @@ class RawOpenAIChatClient(
                             raw_representation=item,
                         )
                     )
-                case "shell_call":  # ResponseFunctionShellToolCall
-                    shell_call_id = item.call_id if hasattr(item, "call_id") else ""
-                    shell_commands: list[str] = []
-                    shell_timeout_ms: int | None = None
-                    shell_max_output: int | None = None
-                    if action := getattr(item, "action", None):
-                        shell_commands = list(getattr(action, "commands", []) or [])
-                        shell_timeout_ms = getattr(action, "timeout_ms", None)
-                        shell_max_output = getattr(action, "max_output_length", None)
-                    if local_shell_tool_name:
-                        command_text = self._join_shell_commands(shell_commands)
-                        contents.append(
-                            Content.from_function_call(
-                                call_id=shell_call_id,
-                                name=local_shell_tool_name,
-                                arguments=json.dumps({"command": command_text}),
-                                additional_properties={
-                                    OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL,
-                                    OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY: shell_commands,
-                                },
-                                raw_representation=item,
-                            )
-                        )
-                    else:
-                        contents.append(
-                            Content.from_shell_tool_call(
-                                call_id=shell_call_id,
-                                commands=shell_commands,
-                                timeout_ms=shell_timeout_ms,
-                                max_output_length=shell_max_output,
-                                status=getattr(item, "status", None),
-                                raw_representation=item,
-                            )
-                        )
-                case "local_shell_call":
-                    local_call_id = getattr(item, "call_id", None) or ""
-                    local_command_parts = list(getattr(getattr(item, "action", None), "command", []) or [])
-                    local_command = shlex.join(local_command_parts) if local_command_parts else ""
-                    if local_shell_tool_name:
-                        contents.append(
-                            Content.from_function_call(
-                                call_id=local_call_id,
-                                name=local_shell_tool_name,
-                                arguments=json.dumps({"command": local_command}),
-                                additional_properties={
-                                    OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL,
-                                    OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY: getattr(item, "id", None),
-                                    OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY: local_command_parts,
-                                },
-                                raw_representation=item,
-                            )
-                        )
-                    else:
-                        contents.append(
-                            Content.from_shell_tool_call(
-                                call_id=local_call_id,
-                                commands=[local_command] if local_command else [],
-                                timeout_ms=getattr(getattr(item, "action", None), "timeout_ms", None),
-                                status=getattr(item, "status", None),
-                                raw_representation=item,
-                            )
-                        )
-                case "shell_call_output":  # ResponseFunctionShellToolCallOutput
-                    shell_output_call_id = item.call_id if hasattr(item, "call_id") else ""
-                    shell_outputs: list[Content] = []
-                    for shell_out in getattr(item, "output", []) or []:
-                        s_exit_code: int | None = None
-                        s_timed_out: bool | None = None
-                        if outcome := getattr(shell_out, "outcome", None):
-                            if getattr(outcome, "type", None) == "exit":
-                                s_exit_code = getattr(outcome, "exit_code", None)
-                                s_timed_out = False
-                            elif getattr(outcome, "type", None) == "timeout":
-                                s_timed_out = True
-                        shell_outputs.append(
-                            Content.from_shell_command_output(
-                                stdout=getattr(shell_out, "stdout", None),
-                                stderr=getattr(shell_out, "stderr", None),
-                                exit_code=s_exit_code,
-                                timed_out=s_timed_out,
-                                raw_representation=shell_out,
-                            )
-                        )
-                    contents.append(
-                        Content.from_shell_tool_result(
-                            call_id=shell_output_call_id,
-                            outputs=shell_outputs,
-                            max_output_length=getattr(item, "max_output_length", None),
-                            raw_representation=item,
-                        )
-                    )
+                case "shell_call" | "local_shell_call" | "shell_call_output":
+                    contents.extend(self._shell_item_to_contents(item, local_shell_tool_name))
                 case _:
                     logger.debug("Unparsed output of type: %s: %s", item.type, item)
         response_message = Message(role="assistant", contents=contents)
@@ -2850,101 +2866,12 @@ class RawOpenAIChatClient(
                                 raw_representation=event_item,
                             )
                         )
-                    case "shell_call":  # ResponseFunctionShellToolCall
-                        s_call_id = getattr(event_item, "call_id", None) or ""
-                        s_commands: list[str] = []
-                        s_timeout_ms: int | None = None
-                        s_max_output: int | None = None
-                        if s_action := getattr(event_item, "action", None):
-                            s_commands = list(getattr(s_action, "commands", []) or [])
-                            s_timeout_ms = getattr(s_action, "timeout_ms", None)
-                            s_max_output = getattr(s_action, "max_output_length", None)
-                        if local_shell_tool_name:
-                            command_text = self._join_shell_commands(s_commands)
-                            contents.append(
-                                Content.from_function_call(
-                                    call_id=s_call_id,
-                                    name=local_shell_tool_name,
-                                    arguments=json.dumps({"command": command_text}),
-                                    additional_properties={
-                                        OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL,
-                                        OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY: s_commands,
-                                    },
-                                    raw_representation=event_item,
-                                )
-                            )
-                        else:
-                            contents.append(
-                                Content.from_shell_tool_call(
-                                    call_id=s_call_id,
-                                    commands=s_commands,
-                                    timeout_ms=s_timeout_ms,
-                                    max_output_length=s_max_output,
-                                    status=getattr(event_item, "status", None),
-                                    raw_representation=event_item,
-                                )
-                            )
-                    case "local_shell_call":
-                        local_call_id = getattr(event_item, "call_id", None) or ""
-                        local_command_parts = list(getattr(getattr(event_item, "action", None), "command", []) or [])
-                        local_command = shlex.join(local_command_parts) if local_command_parts else ""
-                        if local_shell_tool_name:
-                            contents.append(
-                                Content.from_function_call(
-                                    call_id=local_call_id,
-                                    name=local_shell_tool_name,
-                                    arguments=json.dumps({"command": local_command}),
-                                    additional_properties={
-                                        OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL,
-                                        OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY: getattr(event_item, "id", None),
-                                        OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY: local_command_parts,
-                                    },
-                                    raw_representation=event_item,
-                                )
-                            )
-                        else:
-                            contents.append(
-                                Content.from_shell_tool_call(
-                                    call_id=local_call_id,
-                                    commands=[local_command] if local_command else [],
-                                    timeout_ms=getattr(
-                                        getattr(event_item, "action", None),
-                                        "timeout_ms",
-                                        None,
-                                    ),
-                                    status=getattr(event_item, "status", None),
-                                    raw_representation=event_item,
-                                )
-                            )
-                    case "shell_call_output":  # ResponseFunctionShellToolCallOutput
-                        s_out_call_id = getattr(event_item, "call_id", None) or ""
-                        s_outputs: list[Content] = []
-                        for s_out in getattr(event_item, "output", []) or []:
-                            s_exit_code: int | None = None
-                            s_timed_out: bool | None = None
-                            if s_outcome := getattr(s_out, "outcome", None):
-                                if getattr(s_outcome, "type", None) == "exit":
-                                    s_exit_code = getattr(s_outcome, "exit_code", None)
-                                    s_timed_out = False
-                                elif getattr(s_outcome, "type", None) == "timeout":
-                                    s_timed_out = True
-                            s_outputs.append(
-                                Content.from_shell_command_output(
-                                    stdout=getattr(s_out, "stdout", None),
-                                    stderr=getattr(s_out, "stderr", None),
-                                    exit_code=s_exit_code,
-                                    timed_out=s_timed_out,
-                                    raw_representation=s_out,
-                                )
-                            )
-                        contents.append(
-                            Content.from_shell_tool_result(
-                                call_id=s_out_call_id,
-                                outputs=s_outputs,
-                                max_output_length=getattr(event_item, "max_output_length", None),
-                                raw_representation=event_item,
-                            )
-                        )
+                    case "shell_call" | "local_shell_call" | "shell_call_output":
+                        # Shell items carry their command/output only on the
+                        # `response.output_item.done` event; the `.added` snapshot is an
+                        # in-progress skeleton with an empty action. Parsed in the
+                        # `response.output_item.done` handler instead.
+                        pass
                     case "reasoning":  # ResponseOutputReasoning
                         reasoning_id = getattr(event_item, "id", None)
                         added_reasoning = False
@@ -3153,6 +3080,10 @@ class RawOpenAIChatClient(
                     )
                 elif getattr(done_item, "type", None) in ("web_search_call", "file_search_call"):
                     contents.append(self._parse_search_tool_result_content(done_item))
+                elif getattr(done_item, "type", None) in ("shell_call", "local_shell_call", "shell_call_output"):
+                    # Shell items are parsed here (not on `response.output_item.added`) because the
+                    # command/output is only populated on the completed item.
+                    contents.extend(self._shell_item_to_contents(done_item, local_shell_tool_name))
                 elif getattr(done_item, "type", None) == _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
                     pass
             case _:

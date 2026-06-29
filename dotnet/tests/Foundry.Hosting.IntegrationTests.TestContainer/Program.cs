@@ -34,6 +34,7 @@ AIAgent agent = scenario switch
     "tool-calling" => CreateToolCallingAgent(projectClient, deployment),
     "tool-calling-approval" => CreateToolCallingApprovalAgent(projectClient, deployment),
     "mcp-toolbox" => CreateMcpToolboxAgent(projectClient, deployment),
+    "toolbox-oauth-consent" => CreateToolboxOAuthConsentAgent(projectClient, deployment),
     "custom-storage" => CreateCustomStorageAgent(projectClient, deployment),
     "memory" => await CreateMemoryAgentAsync(projectClient, deployment).ConfigureAwait(false),
     "azure-search-rag" => CreateAzureSearchRagAgent(projectClient, deployment),
@@ -51,6 +52,16 @@ if (!string.IsNullOrEmpty(port))
 }
 
 builder.Services.AddFoundryResponses(agent);
+
+// toolbox-oauth-consent scenario: pre-register a Foundry toolbox whose tool source is fronted by a
+// per-user OAuth connection. IT_TOOLBOX_NAME names that toolbox (the fixture sets it). With the
+// startup-deferral fix the container stays routable even though the toolbox cannot enumerate without
+// a consented user, and the first user request surfaces an oauth_consent_request.
+var consentToolboxName = Environment.GetEnvironmentVariable("IT_TOOLBOX_NAME");
+if (!string.IsNullOrEmpty(consentToolboxName))
+{
+    builder.Services.AddFoundryToolboxes(consentToolboxName);
+}
 
 var app = builder.Build();
 app.MapFoundryResponses();
@@ -92,6 +103,18 @@ static AIAgent CreateMcpToolboxAgent(AIProjectClient client, string deployment) 
         instructions: "You are an assistant with access to Microsoft Learn documentation via MCP.",
         name: "mcp-toolbox-agent",
         description: "MCP toolbox test agent (placeholder).");
+
+// toolbox-oauth-consent scenario: a plain agent whose tools come from a pre-registered Foundry
+// toolbox (wired via AddFoundryToolboxes from IT_TOOLBOX_NAME). The toolbox's tool source requires
+// per-user OAuth consent, so the first request that needs the tool surfaces an oauth_consent_request
+// instead of running the tool.
+static AIAgent CreateToolboxOAuthConsentAgent(AIProjectClient client, string deployment) =>
+    client.AsAIAgent(
+        model: deployment,
+        instructions: "You are an assistant that can act on the user's behalf using OAuth-protected tools. " +
+                      "When the user asks you to do something that needs such a tool, call it.",
+        name: "toolbox-oauth-consent-agent",
+        description: "Per-user OAuth toolbox consent test agent.");
 
 static AIAgent CreateCustomStorageAgent(AIProjectClient client, string deployment) =>
     // TODO: substitute custom IResponsesStorageProvider in DI.
@@ -276,7 +299,13 @@ static AIAgent CreateAgentSkillsAgent(AIProjectClient client, string deployment)
             Instructions = "You are a customer-support assistant for Contoso Outdoors.",
         },
         AIContextProviders = [skillsProvider]
-    });
+    })
+    .AsBuilder()
+    .UseToolApproval(new ToolApprovalAgentOptions
+    {
+        AutoApprovalRules = [AgentSkillsProvider.AllToolsAutoApprovalRule],
+    })
+    .Build();
 }
 #pragma warning restore MEAI001
 

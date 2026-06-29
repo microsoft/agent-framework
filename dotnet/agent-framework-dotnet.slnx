@@ -117,10 +117,12 @@
     <Project Path="samples/02-agents/AgentSkills/Agent_Step04_MixedSkills/Agent_Step04_MixedSkills.csproj" />
     <Project Path="samples/02-agents/AgentSkills/Agent_Step05_SkillsWithDI/Agent_Step05_SkillsWithDI.csproj" />
     <Project Path="samples/02-agents/AgentSkills/Agent_Step06_McpBasedSkills/Agent_Step06_McpBasedSkills.csproj" />
+    <Project Path="samples/02-agents/AgentSkills/Agent_Step07_SkillsAutoApproval/Agent_Step07_SkillsAutoApproval.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/Harness/">
     <File Path="samples/02-agents/Harness/README.md" />
     <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step01_MeetYourClaw/Claw_Step01_MeetYourClaw.csproj" />
+    <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step02_WorkingWithData/Claw_Step02_WorkingWithData.csproj" />
     <Project Path="samples/02-agents/Harness/ConsoleReactiveComponents/ConsoleReactiveComponents.csproj" />
     <Project Path="samples/02-agents/Harness/ConsoleReactiveFramework/ConsoleReactiveFramework.csproj" />
     <Project Path="samples/02-agents/Harness/Harness_Shared_Console/Harness_Shared_Console.csproj" />
@@ -241,6 +243,7 @@
   </Folder>
   <Folder Name="/Samples/03-workflows/Declarative/">
     <File Path="samples/03-workflows/Declarative/README.md" />
+    <Project Path="samples/03-workflows/Declarative/AotCheckpointing/AotCheckpointing.csproj" />
     <Project Path="samples/03-workflows/Declarative/ConfirmInput/ConfirmInput.csproj" />
     <Project Path="samples/03-workflows/Declarative/CustomerSupport/CustomerSupport.csproj" />
     <Project Path="samples/03-workflows/Declarative/DeepResearch/DeepResearch.csproj" />
@@ -366,6 +369,7 @@
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Simple/HostedWorkflowSimple.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/Hosted-Toolbox-AuthPaths-Client/Hosted-Toolbox-AuthPaths-Client.csproj" />
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SessionFilesClient/SessionFilesClient.csproj" />
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent/SimpleAgent.csproj" />
   </Folder>
