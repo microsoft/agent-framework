@@ -249,6 +249,105 @@ public sealed class FileSystemAgentSessionStoreTests : IDisposable
         Assert.False(Directory.Exists(this._root), "Read miss must not create the root directory.");
     }
 
+    [Fact]
+    public void ResolveDefaultRootDirectory_Hosted_RootsUnderHome()
+    {
+        // Arrange / Act
+        var root = FileSystemAgentSessionStore.ResolveDefaultRootDirectory(
+            isHosted: true,
+            homeDirectory: "/home/session",
+            currentDirectory: "/some/cwd");
+
+        // Assert
+        Assert.Equal(
+            Path.Combine("/home/session", FileSystemAgentSessionStore.LocalCheckpointDirectoryName),
+            root);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ResolveDefaultRootDirectory_HostedWithoutHome_UsesDefaultSessionDataDirectory(string? home)
+    {
+        // Arrange / Act
+        var root = FileSystemAgentSessionStore.ResolveDefaultRootDirectory(
+            isHosted: true,
+            homeDirectory: home,
+            currentDirectory: "/some/cwd");
+
+        // Assert: falls back to the spec default ("/home/session"), never the filesystem root.
+        Assert.Equal(
+            Path.Combine(
+                FileSystemAgentSessionStore.DefaultHostedSessionDataDirectory,
+                FileSystemAgentSessionStore.LocalCheckpointDirectoryName),
+            root);
+        Assert.NotEqual("/.checkpoints", root);
+    }
+
+    [Fact]
+    public void ResolveDefaultRootDirectory_NotHosted_UsesCurrentDirectory()
+    {
+        // Arrange / Act
+        var root = FileSystemAgentSessionStore.ResolveDefaultRootDirectory(
+            isHosted: false,
+            homeDirectory: "/home/session",
+            currentDirectory: "/some/cwd");
+
+        // Assert
+        Assert.Equal(
+            Path.Combine("/some/cwd", FileSystemAgentSessionStore.LocalCheckpointDirectoryName),
+            root);
+    }
+
+    [Theory]
+    [InlineData("/")]
+    public void ResolveDefaultRootDirectory_HostedWithFilesystemRootHome_FallsBackToDefault(string home)
+    {
+        // Arrange / Act: a filesystem-root HOME (e.g. "/") must NOT root the store at
+        // "/.checkpoints", which is read-only in the container and caused issue #6231.
+        var root = FileSystemAgentSessionStore.ResolveDefaultRootDirectory(
+            isHosted: true,
+            homeDirectory: home,
+            currentDirectory: "/some/cwd");
+
+        // Assert: falls back to the default session-data directory, never the filesystem root.
+        Assert.Equal(
+            Path.Combine(
+                FileSystemAgentSessionStore.DefaultHostedSessionDataDirectory,
+                FileSystemAgentSessionStore.LocalCheckpointDirectoryName),
+            root);
+        Assert.NotEqual(
+            Path.Combine(Path.GetPathRoot(Path.GetFullPath(home))!, FileSystemAgentSessionStore.LocalCheckpointDirectoryName),
+            root);
+    }
+
+    [Fact]
+    public async Task SaveSessionAsync_NonWritableDirectory_ThrowsClearActionableIOExceptionAsync()
+    {
+        // Arrange: place a file where the store's root directory needs to be created. Creating
+        // a directory under an existing file fails with IOException on every OS, standing in for
+        // the read-only root filesystem of a Foundry hosted container (issue #6231).
+        Directory.CreateDirectory(this._root);
+        var blockingFile = Path.Combine(this._root, "blocking-file");
+        File.WriteAllText(blockingFile, "x");
+
+        var store = new FileSystemAgentSessionStore(Path.Combine(blockingFile, ".checkpoints"));
+        var agent = new TestAgent();
+
+        // Act
+        var ex = await Assert.ThrowsAsync<IOException>(
+            async () => await store.SaveSessionAsync(agent, "conv-fatal", NewSession()));
+
+        // Assert: failure stays fatal but the message is clear and actionable, and the original
+        // IO error is preserved as the inner exception.
+        Assert.Contains("could not be created or written to", ex.Message, StringComparison.Ordinal);
+        Assert.Contains(FileSystemAgentSessionStore.SessionDataDirectoryEnvironmentVariable, ex.Message, StringComparison.Ordinal);
+        Assert.Contains(FileSystemAgentSessionStore.DefaultHostedSessionDataDirectory, ex.Message, StringComparison.Ordinal);
+        Assert.Contains(store.RootDirectory, ex.Message, StringComparison.Ordinal);
+        Assert.NotNull(ex.InnerException);
+    }
+
     private static TestSession NewSession() => new();
 
     private sealed class TestSession : AgentSession

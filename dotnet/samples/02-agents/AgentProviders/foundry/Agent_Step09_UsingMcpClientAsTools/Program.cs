@@ -33,7 +33,7 @@ List<AITool> agentTools = [.. mcpTools.Cast<AITool>()];
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 AIAgent agent = aiProjectClient.AsAIAgent(deploymentName,
-    instructions: "You are a helpful assistant that can help with Microsoft documentation questions. Use the Microsoft Learn MCP tool to search for documentation.",
+    instructions: "You are a helpful assistant that can help with Microsoft documentation questions. Use the Microsoft Learn MCP tool to search for documentation. In the output, indicate which tool you used if any.",
     name: "DocsAgent",
     tools: agentTools);
 
