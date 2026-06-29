@@ -68,7 +68,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         var source = new AgentMcpSkillsSource(client, options);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         var skill = Assert.Single(skills);
@@ -87,7 +87,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         var source = new AgentMcpSkillsSource(client, options);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         var skill = Assert.Single(skills);
@@ -110,7 +110,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         var source = new AgentMcpSkillsSource(client, options);
 
         // Act
-        var skill = Assert.Single(await source.GetSkillsAsync());
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
         var resource = await skill.GetResourceAsync("scripts/run.py");
 
         // Assert - the .py file is readable as a resource (not an executable script).
@@ -133,8 +133,8 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         var sourceB = new AgentMcpSkillsSource(clientB, new() { ArchiveSkillsDirectory = Path.Combine(this._extractionRoot, "b") });
 
         // Act
-        var skillA = Assert.Single(await sourceA.GetSkillsAsync());
-        var skillB = Assert.Single(await sourceB.GetSkillsAsync());
+        var skillA = Assert.Single(await sourceA.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        var skillB = Assert.Single(await sourceB.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
 
         // Assert - each source kept its own content despite the shared skill name.
         Assert.Equal("shared-skill", skillA.Frontmatter.Name);
@@ -157,7 +157,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         var source = new AgentMcpSkillsSource(client, options);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert - the leftover directory is pruned and only the advertised skill remains.
         Assert.False(Directory.Exists(staleDir));
@@ -172,7 +172,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         await using var fullServer = new InMemoryMcpServer(builder => builder.WithResources<TwoSkillServer>());
         await using var fullClient = await fullServer.CreateClientAsync();
         var firstSource = new AgentMcpSkillsSource(fullClient, new() { ArchiveSkillsDirectory = this._extractionRoot });
-        var firstSkills = await firstSource.GetSkillsAsync();
+        var firstSkills = await firstSource.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
         Assert.Equal(2, firstSkills.Count);
         Assert.True(Directory.Exists(Path.Combine(this._extractionRoot, "skill-b")));
 
@@ -180,7 +180,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         await using var partialServer = new InMemoryMcpServer(builder => builder.WithResources<OneSkillServer>());
         await using var partialClient = await partialServer.CreateClientAsync();
         var secondSource = new AgentMcpSkillsSource(partialClient, new() { ArchiveSkillsDirectory = this._extractionRoot });
-        var secondSkills = await secondSource.GetSkillsAsync();
+        var secondSkills = await secondSource.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert - skill-b's directory was pruned; only skill-a remains.
         var skill = Assert.Single(secondSkills);
@@ -203,7 +203,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         var source = new AgentMcpSkillsSource(client, options);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert - the leftover directory is pruned and no skills are returned.
         Assert.Empty(skills);
@@ -218,14 +218,14 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         await using (var clientA = await serverA.CreateClientAsync())
         {
             var firstSource = new AgentMcpSkillsSource(clientA, new() { ArchiveSkillsDirectory = this._extractionRoot });
-            Assert.Single(await firstSource.GetSkillsAsync());
+            Assert.Single(await firstSource.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
         }
 
         // Act - a second run over the same directory re-extracts server B's content.
         await using var serverB = new InMemoryMcpServer(builder => builder.WithResources<SharedNameServerB>());
         await using var clientB = await serverB.CreateClientAsync();
         var source = new AgentMcpSkillsSource(clientB, new() { ArchiveSkillsDirectory = this._extractionRoot });
-        var skill = Assert.Single(await source.GetSkillsAsync());
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
 
         // Assert - the content was replaced with server B's.
         Assert.Contains("Content from server B.", await skill.GetContentAsync());
@@ -258,7 +258,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert - failed cleanup prevents the stale directory from being proxied to AgentFileSkillsSource.
         Assert.Empty(skills);
@@ -412,7 +412,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -432,7 +432,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         var source = new AgentMcpSkillsSource(client, options);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -452,7 +452,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         var source = new AgentMcpSkillsSource(client, options);
 
         // Act
-        var skill = Assert.Single(await source.GetSkillsAsync());
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
 
         // Assert
         Assert.Equal("archived-skill", skill.Frontmatter.Name);
@@ -468,7 +468,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         var source = new AgentMcpSkillsSource(client, options);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert - the invalid entry is skipped; no skills are surfaced.
         Assert.Empty(skills);
@@ -484,7 +484,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         var source = new AgentMcpSkillsSource(client, options);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -500,7 +500,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         var source = new AgentMcpSkillsSource(client, options);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -517,7 +517,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         var source = new AgentMcpSkillsSource(client, options);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -533,7 +533,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         var source = new AgentMcpSkillsSource(client, options);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);

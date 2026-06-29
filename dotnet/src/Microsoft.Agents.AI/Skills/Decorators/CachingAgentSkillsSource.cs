@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,42 +19,52 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 internal sealed class CachingAgentSkillsSource : DelegatingAgentSkillsSource
 {
-    private Task<IList<AgentSkill>>? _cachedTask;
+    private const string SharedCacheKey = "";
+
+    private readonly ConcurrentDictionary<string, Task<IList<AgentSkill>>> _cachedTasks = new(StringComparer.Ordinal);
+    private readonly CachingAgentSkillsSourceOptions? _options;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CachingAgentSkillsSource"/> class.
     /// </summary>
     /// <param name="innerSource">The inner source whose results will be cached.</param>
-    internal CachingAgentSkillsSource(AgentSkillsSource innerSource)
+    /// <param name="options">Optional cache configuration.</param>
+    internal CachingAgentSkillsSource(AgentSkillsSource innerSource, CachingAgentSkillsSourceOptions? options = null)
         : base(innerSource)
     {
+        this._options = options;
     }
 
     /// <inheritdoc/>
-    public override async Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+    public override async Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
+        var cacheKey = this._options?.CacheIsolationKeySelector?.Invoke(context) ?? SharedCacheKey;
+
         var tcs = new TaskCompletionSource<IList<AgentSkill>>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        if (Interlocked.CompareExchange(ref this._cachedTask, tcs.Task, null) is { } existing)
+        while (!this._cachedTasks.TryAdd(cacheKey, tcs.Task))
         {
-            return await existing.ConfigureAwait(false);
+            if (this._cachedTasks.TryGetValue(cacheKey, out var existing))
+            {
+                return await existing.ConfigureAwait(false);
+            }
         }
 
         try
         {
-            var result = await this.InnerSource.GetSkillsAsync(cancellationToken).ConfigureAwait(false);
+            var result = await this.InnerSource.GetSkillsAsync(context, cancellationToken).ConfigureAwait(false);
             tcs.SetResult(result);
             return result;
         }
         catch (OperationCanceledException)
         {
-            Volatile.Write(ref this._cachedTask, null);
+            this._cachedTasks.TryRemove(cacheKey, out _);
             tcs.TrySetCanceled(cancellationToken);
             throw;
         }
         catch (Exception ex)
         {
-            Volatile.Write(ref this._cachedTask, null);
+            this._cachedTasks.TryRemove(cacheKey, out _);
             tcs.TrySetException(ex);
             throw;
         }

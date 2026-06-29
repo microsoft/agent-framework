@@ -46,8 +46,9 @@ public sealed class AgentSkillsProviderBuilder
     private AgentSkillsProviderOptions? _options;
     private ILoggerFactory? _loggerFactory;
     private AgentFileSkillScriptRunner? _scriptRunner;
-    private Func<AgentSkill, bool>? _filter;
+    private Func<AgentSkillFilterContext, bool>? _filter;
     private bool _disableCaching;
+    private CachingAgentSkillsSourceOptions? _cachingOptions;
 
     /// <summary>
     /// Adds a file-based skill source that discovers skills from a filesystem directory.
@@ -189,7 +190,7 @@ public sealed class AgentSkillsProviderBuilder
     /// </remarks>
     /// <param name="predicate">A predicate that determines which skills to include.</param>
     /// <returns>This builder instance for chaining.</returns>
-    public AgentSkillsProviderBuilder UseFilter(Func<AgentSkill, bool> predicate)
+    public AgentSkillsProviderBuilder UseFilter(Func<AgentSkillFilterContext, bool> predicate)
     {
         _ = Throw.IfNull(predicate);
         this._filter = predicate;
@@ -220,6 +221,19 @@ public sealed class AgentSkillsProviderBuilder
     }
 
     /// <summary>
+    /// Configures skill caching behavior.
+    /// </summary>
+    /// <param name="configure">A delegate to configure caching options.</param>
+    /// <returns>This builder instance for chaining.</returns>
+    public AgentSkillsProviderBuilder UseCachingOptions(Action<CachingAgentSkillsSourceOptions> configure)
+    {
+        _ = Throw.IfNull(configure);
+        this._cachingOptions ??= new CachingAgentSkillsSourceOptions();
+        configure(this._cachingOptions);
+        return this;
+    }
+
+    /// <summary>
     /// Builds the <see cref="AgentSkillsProvider"/>.
     /// </summary>
     /// <returns>A configured <see cref="AgentSkillsProvider"/>.</returns>
@@ -243,7 +257,7 @@ public sealed class AgentSkillsProviderBuilder
 
         if (!this._disableCaching)
         {
-            source = new CachingAgentSkillsSource(source);
+            source = new CachingAgentSkillsSource(source, this._cachingOptions);
         }
 
         // Apply user-specified filter, then dedup.

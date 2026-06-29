@@ -114,7 +114,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     }
 
     /// <inheritdoc/>
-    public override Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+    public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
         var discoveredPaths = DiscoverSkillDirectories(this._skillPaths);
 

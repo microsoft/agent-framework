@@ -402,7 +402,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         var source = new AgentFileSkillsSource(skillDir, s_noOpExecutor, options);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(this._agent));
 
         // Assert
         Assert.Single(skills);
@@ -1277,6 +1277,66 @@ public sealed class AgentSkillsProviderTests : IDisposable
         Assert.Contains("First instructions.", content!.ToString()!);
     }
 
+    [Fact]
+    public async Task InvokingCoreAsync_PassesAgentAndSessionToSourceContextAsync()
+    {
+        // Arrange
+        var capturingSource = new CapturingAgentSkillsSource(
+            new AgentInlineSkill("skill-a", "A", "Instructions A."));
+        var provider = new AgentSkillsProvider(capturingSource);
+        var session = new TestAgentSession();
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session, new AIContext());
+
+        // Act
+        await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(capturingSource.LastContext);
+        Assert.Same(this._agent, capturingSource.LastContext!.Agent);
+        Assert.Same(session, capturingSource.LastContext.Session);
+    }
+
+    [Fact]
+    public async Task InvokingCoreAsync_NullSession_PassesNullSessionToSourceContextAsync()
+    {
+        // Arrange
+        var capturingSource = new CapturingAgentSkillsSource(
+            new AgentInlineSkill("skill-a", "A", "Instructions A."));
+        var provider = new AgentSkillsProvider(capturingSource);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(capturingSource.LastContext);
+        Assert.Same(this._agent, capturingSource.LastContext!.Agent);
+        Assert.Null(capturingSource.LastContext.Session);
+    }
+
+    private sealed class TestAgentSession : AgentSession;
+
+    /// <summary>
+    /// A test skill source that captures the most recent <see cref="AgentSkillsSourceContext"/> it received.
+    /// </summary>
+    private sealed class CapturingAgentSkillsSource : AgentSkillsSource
+    {
+        private readonly IList<AgentSkill> _skills;
+
+        public CapturingAgentSkillsSource(params AgentSkill[] skills)
+        {
+            this._skills = skills;
+        }
+
+        public AgentSkillsSourceContext? LastContext { get; private set; }
+
+        public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
+        {
+            this.LastContext = context;
+            return Task.FromResult(this._skills);
+        }
+    }
+
     /// <summary>
     /// A test skill source that counts how many times <see cref="GetSkillsAsync"/> is called.
     /// </summary>
@@ -1292,7 +1352,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
 
         public int GetSkillsCallCount => this._callCount;
 
-        public override Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+        public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref this._callCount);
             return Task.FromResult(this._skills);

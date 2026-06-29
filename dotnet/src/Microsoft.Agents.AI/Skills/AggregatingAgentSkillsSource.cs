@@ -31,12 +31,12 @@ internal sealed class AggregatingAgentSkillsSource : AgentSkillsSource
     }
 
     /// <inheritdoc/>
-    public override async Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+    public override async Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
         var allSkills = new List<AgentSkill>();
         foreach (var source in this._sources)
         {
-            var skills = await source.GetSkillsAsync(cancellationToken).ConfigureAwait(false);
+            var skills = await source.GetSkillsAsync(context, cancellationToken).ConfigureAwait(false);
             allSkills.AddRange(skills);
         }
 

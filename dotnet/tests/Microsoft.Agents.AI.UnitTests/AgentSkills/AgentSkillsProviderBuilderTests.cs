@@ -14,9 +14,9 @@ public sealed class AgentSkillsProviderBuilderTests
 {
     private readonly TestAIAgent _agent = new();
 
-    private AIContextProvider.InvokingContext CreateInvokingContext()
+    private AIContextProvider.InvokingContext CreateInvokingContext(AIAgent? agent = null)
     {
-        return new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+        return new AIContextProvider.InvokingContext(agent ?? this._agent, session: null, new AIContext());
     }
 
     [Fact]
@@ -89,6 +89,16 @@ public sealed class AgentSkillsProviderBuilderTests
     }
 
     [Fact]
+    public void UseCachingOptions_NullConfigure_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var builder = new AgentSkillsProviderBuilder();
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => builder.UseCachingOptions(null!));
+    }
+
+    [Fact]
     public async Task Build_WithFilter_AppliesFilterToSkillsAsync()
     {
         // Arrange
@@ -97,7 +107,7 @@ public sealed class AgentSkillsProviderBuilderTests
             new TestAgentSkill("drop-me", "Drop", "Instructions."));
         var provider = new AgentSkillsProviderBuilder()
             .UseSource(source)
-            .UseFilter(skill => skill.Frontmatter.Name.StartsWith("keep", StringComparison.OrdinalIgnoreCase))
+            .UseFilter(context => context.Skill.Frontmatter.Name.StartsWith("keep", StringComparison.OrdinalIgnoreCase))
             .Build();
 
         // Act
@@ -146,6 +156,28 @@ public sealed class AgentSkillsProviderBuilderTests
 
         // Assert — without caching, each call should hit the inner source
         Assert.Equal(3, countingSource.CallCount);
+    }
+
+    [Fact]
+    public async Task Build_WithCacheIsolationKey_CachesPerKeyAsync()
+    {
+        // Arrange
+        var agent1 = new TestAIAgent();
+        var agent2 = new TestAIAgent();
+        var countingSource = new CountingSource(
+            new TestAgentSkill("skill-a", "A", "Instructions."));
+        var provider = new AgentSkillsProviderBuilder()
+            .UseSource(countingSource)
+            .UseCachingOptions(options => options.CacheIsolationKeySelector = context => ReferenceEquals(context.Agent, agent1) ? "agent-1" : "agent-2")
+            .Build();
+
+        // Act
+        await provider.InvokingAsync(this.CreateInvokingContext(agent1), CancellationToken.None);
+        await provider.InvokingAsync(this.CreateInvokingContext(agent1), CancellationToken.None);
+        await provider.InvokingAsync(this.CreateInvokingContext(agent2), CancellationToken.None);
+
+        // Assert
+        Assert.Equal(2, countingSource.CallCount);
     }
 
     [Fact]
@@ -220,7 +252,7 @@ public sealed class AgentSkillsProviderBuilderTests
 
         public int CallCount => this._callCount;
 
-        public override Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+        public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref this._callCount);
             return Task.FromResult<IList<AgentSkill>>(this._skills);

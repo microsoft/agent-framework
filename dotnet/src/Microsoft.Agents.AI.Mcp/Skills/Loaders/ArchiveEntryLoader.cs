@@ -50,7 +50,7 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader
     public string EntryType => "archive";
 
     /// <inheritdoc/>
-    public async Task<IList<AgentSkill>> LoadAsync(IReadOnlyList<McpSkillIndexEntry> entries, CancellationToken cancellationToken)
+    public async Task<IList<AgentSkill>> LoadAsync(IReadOnlyList<McpSkillIndexEntry> entries, AgentSkillsSourceContext context, CancellationToken cancellationToken)
     {
         // Filter out entries that are missing required fields or have invalid names.
         var archiveEntries = this.FilterValidEntries(entries);
@@ -81,7 +81,7 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader
         // Delegate discovery of extracted content to a file-based skills source.
         AgentFileSkillsSource fileSource = this.CreateFileSkillsSource(skillDirectories);
 
-        return await fileSource.GetSkillsAsync(cancellationToken).ConfigureAwait(false);
+        return await fileSource.GetSkillsAsync(context, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
