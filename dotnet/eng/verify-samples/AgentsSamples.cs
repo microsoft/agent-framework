@@ -1052,8 +1052,8 @@ internal static class AgentsSamples
         {
             Name = "FoundryAgent_Step15_ComputerUse",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step15_ComputerUse",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "AZURE_AI_COMPUTER_USE_DEPLOYMENT_NAME"],
+            OptionalEnvironmentVariables = [],
             ExpectedOutputDescription = ["The output should show a computer automation session processing simulated browser screenshots with iteration steps and a final response describing search results."],
         },
 

@@ -26,27 +26,41 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// Foundry's data model.
 /// </para>
 /// <para>
-/// When running in a Foundry hosted environment, sessions are stored under the well-known
-/// <c>/.checkpoints</c> path; locally, they fall under <c>{cwd}/.checkpoints</c>. The session
-/// JSON produced when the agent serializes the session already contains the workflow's
-/// in-memory checkpoint manager state, so a single file per (agent, conversation) pair is
-/// sufficient to resume long-running workflows across process restarts.
+/// When running in a Foundry hosted environment, sessions are stored under
+/// <c>{$HOME}/.checkpoints</c> (the platform sets <c>HOME</c> to <c>/home/session</c> by
+/// default). This is the only container directory that is writable and durably preserved
+/// across requests for the lifetime of the session; the container's root filesystem is
+/// read-only and paths outside <c>$HOME</c> may be cleared between requests. Locally,
+/// sessions fall under <c>{cwd}/.checkpoints</c>. The session JSON produced when the agent
+/// serializes the session already contains the workflow's in-memory checkpoint manager
+/// state, so a single file per (agent, conversation) pair is sufficient to resume
+/// long-running workflows across process restarts.
 /// </para>
 /// <para>
 /// Files are written atomically via a temp-file + <see cref="File.Move(string, string, bool)"/>
 /// rename so a partially-written file cannot be observed by a concurrent reader.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class FileSystemAgentSessionStore : AgentSessionStore
 {
     /// <summary>
-    /// The well-known absolute path used when running inside a Foundry hosted environment.
+    /// The name of the environment variable whose value is the writable, durable session-data
+    /// directory in a Foundry hosted container. The platform injects it (default
+    /// <see cref="DefaultHostedSessionDataDirectory"/>).
     /// </summary>
-    public const string HostedCheckpointDirectory = "/.checkpoints";
+    public const string SessionDataDirectoryEnvironmentVariable = "HOME";
 
     /// <summary>
-    /// The directory name used under the current working directory when running locally.
+    /// The default value of <see cref="SessionDataDirectoryEnvironmentVariable"/> used when the
+    /// platform has not injected <c>HOME</c>. This is the only writable, durable location in a
+    /// Foundry hosted container; the container's root filesystem is read-only.
+    /// </summary>
+    public const string DefaultHostedSessionDataDirectory = "/home/session";
+
+    /// <summary>
+    /// The directory name used for checkpoint files, appended under the hosted session-data
+    /// directory (<c>$HOME</c>) or, locally, under the current working directory.
     /// </summary>
     public const string LocalCheckpointDirectoryName = ".checkpoints";
 
@@ -71,16 +85,65 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
 
     /// <summary>
     /// Creates a <see cref="FileSystemAgentSessionStore"/> rooted at the default location:
-    /// <see cref="HostedCheckpointDirectory"/> when running in a Foundry hosted environment,
-    /// otherwise <see cref="LocalCheckpointDirectoryName"/> under the current working directory.
+    /// <c>{$HOME}/.checkpoints</c> when running in a Foundry hosted environment (the platform
+    /// sets <c>HOME</c> to <see cref="DefaultHostedSessionDataDirectory"/> by default), otherwise
+    /// <see cref="LocalCheckpointDirectoryName"/> under the current working directory.
     /// </summary>
     /// <returns>A new <see cref="FileSystemAgentSessionStore"/> instance.</returns>
     public static FileSystemAgentSessionStore CreateDefault()
+        => new(ResolveDefaultRootDirectory(
+            FoundryEnvironment.IsHosted,
+            Environment.GetEnvironmentVariable(SessionDataDirectoryEnvironmentVariable),
+            Environment.CurrentDirectory));
+
+    /// <summary>
+    /// Resolves the default root directory for <see cref="CreateDefault"/>. Factored out so the
+    /// hosted-vs-local path selection can be unit-tested without depending on the process-wide,
+    /// statically-cached <c>FoundryEnvironment.IsHosted</c> value.
+    /// </summary>
+    /// <param name="isHosted">Whether the process is running in a Foundry hosted environment.</param>
+    /// <param name="homeDirectory">The value of the <c>HOME</c> environment variable, if any.</param>
+    /// <param name="currentDirectory">The current working directory, used for the local fallback.</param>
+    /// <returns>The root directory under which session files are written.</returns>
+    internal static string ResolveDefaultRootDirectory(bool isHosted, string? homeDirectory, string currentDirectory)
     {
-        string root = FoundryEnvironment.IsHosted
-            ? HostedCheckpointDirectory
-            : Path.Combine(Environment.CurrentDirectory, LocalCheckpointDirectoryName);
-        return new FileSystemAgentSessionStore(root);
+        if (isHosted)
+        {
+            // In a Foundry hosted container only the session-state directory ($HOME, default
+            // /home/session) is writable and durably preserved across requests. Writing under the
+            // filesystem root (the previous "/.checkpoints" default) fails because the root
+            // filesystem is read-only — see issue #6231. HOME is settable on the agent definition,
+            // so fall back to the default when it is missing, blank, a filesystem root (e.g. "/"),
+            // or otherwise unusable, to guarantee the store never lands directly under the root.
+            string home = IsUsableHostedHomeDirectory(homeDirectory) ? homeDirectory! : DefaultHostedSessionDataDirectory;
+            return Path.Combine(home, LocalCheckpointDirectoryName);
+        }
+
+        return Path.Combine(currentDirectory, LocalCheckpointDirectoryName);
+    }
+
+    /// <summary>
+    /// Determines whether a hosted <c>HOME</c> value can safely root the session store. Rejects
+    /// null/blank values, a filesystem root (e.g. <c>"/"</c> or a drive root, which would put the
+    /// store back under the read-only container root and reintroduce issue #6231), and paths that
+    /// cannot be normalized.
+    /// </summary>
+    private static bool IsUsableHostedHomeDirectory(string? homeDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(homeDirectory))
+        {
+            return false;
+        }
+
+        try
+        {
+            string full = Path.GetFullPath(homeDirectory);
+            return !string.Equals(full, Path.GetPathRoot(full), StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
     }
 
     /// <inheritdoc/>
@@ -92,14 +155,7 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
 
         JsonElement serialized = await agent.SerializeSessionAsync(session, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        Directory.CreateDirectory(this.RootDirectory);
-
         string path = this.GetSessionPath(agent, conversationId);
-        string? parentDir = Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(parentDir))
-        {
-            Directory.CreateDirectory(parentDir);
-        }
 
         // Each save writes to its own temp file before atomically renaming over the
         // destination. Last writer wins for the final file, but no reader can observe
@@ -108,6 +164,14 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
 
         try
         {
+            Directory.CreateDirectory(this.RootDirectory);
+
+            string? parentDir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(parentDir))
+            {
+                Directory.CreateDirectory(parentDir);
+            }
+
             using (FileStream stream = new(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
             using (Utf8JsonWriter writer = new(stream))
             {
@@ -116,12 +180,32 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
 
             File.Move(tempPath, path, overwrite: true);
         }
-        catch
+        catch (Exception ex)
         {
             try { File.Delete(tempPath); } catch { /* best-effort cleanup */ }
+
+            // A non-writable session directory is fatal: the caller asked to persist the session
+            // and we could not. Replace the opaque raw error (e.g. "Read-only file system :
+            // '/.checkpoints'") with an actionable message — in a Foundry hosted container only
+            // $HOME (default /home/session) is writable and durable. See issue #6231.
+            if (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new IOException(this.BuildNotWritableMessage(path), ex);
+            }
+
             throw;
         }
     }
+
+    private string BuildNotWritableMessage(string sessionFilePath) =>
+        $"Failed to persist the agent session to '{sessionFilePath}'. The session store directory " +
+        $"'{this.RootDirectory}' could not be created or written to. In a Foundry hosted container only the " +
+        $"session-state directory referenced by the '{SessionDataDirectoryEnvironmentVariable}' environment " +
+        $"variable (default '{DefaultHostedSessionDataDirectory}') is writable and durably preserved across " +
+        "requests; the container's root filesystem is read-only and paths outside it may be cleared between " +
+        $"requests. Use {nameof(FileSystemAgentSessionStore)}.{nameof(CreateDefault)}() (which targets that " +
+        $"directory), construct the store with a path under it, or register a different {nameof(AgentSessionStore)} " +
+        $"(for example {nameof(InMemoryAgentSessionStore)}) via AddFoundryResponses(agent, agentSessionStore).";
 
     /// <inheritdoc/>
     public override async ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)

@@ -70,7 +70,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         self,
         context: AgentContext,
         call_next: Callable[[], Awaitable[None]],
-    ) -> None:  # type: ignore[override]
+    ) -> None:
         resolved_user_id: str | None = None
         session_id: str | None = None
         try:
@@ -182,7 +182,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
         self,
         context: ChatContext,
         call_next: Callable[[], Awaitable[None]],
-    ) -> None:  # type: ignore[override]
+    ) -> None:
         resolved_user_id: str | None = None
         session_id: str | None = None
         try:

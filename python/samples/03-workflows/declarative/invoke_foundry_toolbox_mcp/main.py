@@ -29,7 +29,10 @@ from agent_framework.declarative import (
 from agent_framework.foundry import FoundryChatClient
 from azure.core.credentials import TokenCredential
 from azure.identity import AzureCliCredential, get_bearer_token_provider
-from toolbox_provisioning import FOUNDRY_FEATURES_HEADERS, create_sample_toolbox
+from toolbox_provisioning import (  # ty: ignore[unresolved-import]  # pyrefly: ignore[missing-import]
+    FOUNDRY_FEATURES_HEADERS,
+    create_sample_toolbox,
+)
 
 AGENT_NAME = "FoundryToolboxMcpAgent"
 TOOLBOX_NAME = "declarative_foundry_toolbox_mcp"

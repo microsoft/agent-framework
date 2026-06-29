@@ -399,7 +399,7 @@ async def test_summarization_strategy_adds_bidirectional_trace_links() -> None:
         Message(role="user", contents=["u3"]),
         Message(role="assistant", contents=["a3"]),
     ]
-    strategy = SummarizationStrategy(client=_FakeSummarizer(), target_count=2, threshold=0)
+    strategy = SummarizationStrategy(client=_FakeSummarizer(), target_count=2, threshold=0)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     annotate_message_groups(messages)
 
     changed = await strategy(messages)
@@ -432,7 +432,7 @@ async def test_summarization_strategy_returns_false_when_summary_generation_fail
         Message(role="user", contents=["u3"]),
         Message(role="assistant", contents=["a3"]),
     ]
-    strategy = SummarizationStrategy(client=_FailingSummarizer(), target_count=2, threshold=0)
+    strategy = SummarizationStrategy(client=_FailingSummarizer(), target_count=2, threshold=0)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     annotate_message_groups(messages)
 
     with caplog.at_level(logging.WARNING, logger="agent_framework"):
@@ -454,7 +454,7 @@ async def test_summarization_strategy_returns_false_when_summary_is_empty(
         Message(role="user", contents=["u3"]),
         Message(role="assistant", contents=["a3"]),
     ]
-    strategy = SummarizationStrategy(client=_EmptySummarizer(), target_count=2, threshold=0)
+    strategy = SummarizationStrategy(client=_EmptySummarizer(), target_count=2, threshold=0)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     annotate_message_groups(messages)
 
     with caplog.at_level(logging.WARNING, logger="agent_framework"):
@@ -721,7 +721,7 @@ async def test_summarization_strategy_summary_has_full_annotations() -> None:
         Message(role="user", contents=["u3"]),
         Message(role="assistant", contents=["a3"]),
     ]
-    strategy = SummarizationStrategy(client=_FakeSummarizer(), target_count=2, threshold=0)
+    strategy = SummarizationStrategy(client=_FakeSummarizer(), target_count=2, threshold=0)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     annotate_message_groups(messages)
 
     changed = await strategy(messages)

@@ -50,9 +50,9 @@ except ImportError as _copilot_import_error:
     ) from _copilot_import_error
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar
+    from typing_extensions import TypeVar  # pragma: no cover
 
 
 DEFAULT_TIMEOUT_SECONDS: float = 60.0
@@ -201,6 +201,9 @@ class GitHubCopilotOptions(TypedDict, total=False):
     Lets applications point the CLI at project-specific or team-shared instruction
     files beyond the default locations.
     """
+
+    base_directory: str
+    """Directory where the CLI stores session state, configuration, and other persistent data."""
 
     on_function_approval: FunctionApprovalCallback
     """Approval callback for ``FunctionTool`` instances declared with
@@ -441,7 +444,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         session: AgentSession | None = None,
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,  # type: ignore[override]
+        **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Get a response from the agent.
 
@@ -732,7 +735,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             if isinstance(provider, HistoryProvider) and not provider.load_messages:
                 continue
             await provider.before_run(
-                agent=self,  # type: ignore[arg-type]
+                agent=self,
                 session=session,
                 context=session_context,
                 state=session.state.setdefault(provider.source_id, {}),
@@ -781,7 +784,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             if isinstance(tool, CopilotTool):
                 copilot_tools.append(tool)
             elif isinstance(tool, FunctionTool):
-                copilot_tools.append(self._tool_to_copilot_tool(tool))  # type: ignore
+                copilot_tools.append(self._tool_to_copilot_tool(tool))
             elif isinstance(tool, MutableMapping):
                 copilot_tools.append(tool)  # type: ignore[arg-type]
             # Note: Other tool types (e.g., dict-based hosted tools) are skipped

@@ -2,6 +2,8 @@
 
 """Tests for AG-UI event converter."""
 
+from typing import Any, cast
+
 from agent_framework_ag_ui._event_converters import AGUIEventConverter
 
 
@@ -20,6 +22,8 @@ class TestAGUIEventConverter:
         update = converter.convert_event(event)
 
         assert update is not None
+        assert update.additional_properties is not None
+        assert update.additional_properties is not None
         assert update.role == "assistant"
         assert update.additional_properties["thread_id"] == "thread_123"
         assert update.additional_properties["run_id"] == "run_456"
@@ -67,7 +71,7 @@ class TestAGUIEventConverter:
             {"type": "TEXT_MESSAGE_CONTENT", "messageId": "msg_1", "delta": "!"},
         ]
 
-        updates = [converter.convert_event(event) for event in events]
+        updates = cast(list[Any], [converter.convert_event(event) for event in events])
 
         assert all(update is not None for update in updates)
         assert all(update.message_id == "msg_1" for update in updates)
@@ -148,7 +152,7 @@ class TestAGUIEventConverter:
             {"type": "TOOL_CALL_ARGS", "delta": 'latest news"}'},
         ]
 
-        updates = [converter.convert_event(event) for event in events]
+        updates = cast(list[Any], [converter.convert_event(event) for event in events])
 
         assert all(update is not None for update in updates)
         assert updates[0].contents[0].arguments == '{"query": "'
@@ -204,8 +208,8 @@ class TestAGUIEventConverter:
         assert update is not None
         assert update.role == "assistant"
         assert update.finish_reason == "stop"
-        assert update.additional_properties["thread_id"] == "thread_123"
-        assert update.additional_properties["run_id"] == "run_456"
+        assert update.additional_properties["thread_id"] == "thread_123"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+        assert update.additional_properties["run_id"] == "run_456"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
     def test_run_finished_event_with_interrupt(self) -> None:
         """RUN_FINISHED interrupt metadata is preserved in additional_properties."""
@@ -224,6 +228,7 @@ class TestAGUIEventConverter:
         update = converter.convert_event(event)
 
         assert update is not None
+        assert update.additional_properties is not None
         assert update.additional_properties["interrupt"] == [{"id": "req_1", "value": {"question": "Continue?"}}]
         assert update.additional_properties["result"] == {"status": "paused"}
 
@@ -271,6 +276,7 @@ class TestAGUIEventConverter:
         update = converter.convert_event(event)
 
         assert update is not None
+        assert update.additional_properties is not None
         assert update.additional_properties["ag_ui_custom_event"]["name"] == "progress"
         assert update.additional_properties["ag_ui_custom_event"]["value"] == {"percent": 10}
         assert update.additional_properties["ag_ui_custom_event"]["raw_type"] == "CUSTOM"
@@ -283,7 +289,7 @@ class TestAGUIEventConverter:
             {"type": "custom_event", "name": "alias_lower", "value": {"v": 2}},
         ]
 
-        updates = [converter.convert_event(event) for event in events]
+        updates = cast(list[Any], [converter.convert_event(event) for event in events])
 
         assert updates[0] is not None
         assert updates[1] is not None
@@ -310,7 +316,7 @@ class TestAGUIEventConverter:
             {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
         ]
 
-        updates = [converter.convert_event(event) for event in events]
+        updates = cast(list[Any], [converter.convert_event(event) for event in events])
         non_none_updates = [u for u in updates if u is not None]
 
         assert len(non_none_updates) == 10
@@ -330,7 +336,7 @@ class TestAGUIEventConverter:
             {"type": "TOOL_CALL_END", "toolCallId": "call_2"},
         ]
 
-        updates = [converter.convert_event(event) for event in events]
+        updates = cast(list[Any], [converter.convert_event(event) for event in events])
         non_none_updates = [u for u in updates if u is not None]
 
         assert len(non_none_updates) == 4

@@ -382,9 +382,10 @@ public sealed class AgentClassSkillTests
         // Arrange
         var skill = new AttributedFullSkill();
 
-        // Act & Assert — Content no longer includes resources in body; scripts are in script_schemas
-        Assert.DoesNotContain("<resources>", await skill.GetContentAsync());
-        Assert.Contains("<script_schemas>", await skill.GetContentAsync());
+        // Act & Assert — Content includes resources in body; scripts are in available_scripts
+        Assert.Contains("<available_resources>", await skill.GetContentAsync());
+        Assert.Contains("conversion-table", await skill.GetContentAsync());
+        Assert.Contains("<available_scripts>", await skill.GetContentAsync());
         Assert.Contains("convert", await skill.GetContentAsync());
 
         // Act & Assert — discovered members are cached
@@ -502,7 +503,7 @@ public sealed class AgentClassSkillTests
     }
 
     [Fact]
-    public async Task Content_DoesNotRenderResources_InBodyAsync()
+    public async Task Content_RendersResources_InBodyAsync()
     {
         // Arrange
         var skill = new AttributedResourcePropertiesSkill();
@@ -510,8 +511,10 @@ public sealed class AgentClassSkillTests
         // Act
         var content = await skill.GetContentAsync();
 
-        // Assert — resources are no longer rendered in body content
-        Assert.DoesNotContain("<resources>", content);
+        // Assert — resources are rendered in body content; described resources include description attribute
+        Assert.Contains("<available_resources>", content);
+        Assert.Contains("ref-data", content);
+        Assert.Contains("description=\"Some important data.\"", content);
     }
 
     [Fact]

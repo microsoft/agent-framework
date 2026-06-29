@@ -43,7 +43,7 @@ The end-to-end alpha-SDK round trip (client uploads via `AgentSessionFiles.Uploa
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- An Azure AI Foundry project with a deployed model (e.g., `gpt-4o`)
+- A Foundry project with a deployed model (e.g., `gpt-4o`)
 - Azure CLI logged in (`az login`)
 
 ## Configuration

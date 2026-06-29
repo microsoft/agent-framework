@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import dataclasses
 import gc
+import importlib
 import importlib.metadata
 import importlib.util
 import inspect
@@ -13,10 +14,12 @@ import json
 import sys
 import threading
 import time
-from collections.abc import Awaitable, Callable, Mapping, MutableSequence
+from collections.abc import Awaitable, Callable, Coroutine, Generator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from tempfile import TemporaryDirectory
+from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 from agent_framework import (
@@ -31,6 +34,10 @@ from agent_framework import (
     ResponseStream,
     tool,
 )
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from pytest import fixture
 
 from agent_framework_hyperlight import AllowedDomain, FileMount, HyperlightCodeActProvider, HyperlightExecuteCodeTool
 from agent_framework_hyperlight import _execute_code_tool as execute_code_module
@@ -87,6 +94,54 @@ skip_if_hyperlight_integration_tests_disabled = pytest.mark.skipif(
     (reason := _hyperlight_integration_static_skip_reason()) is not None,
     reason=reason or "Hyperlight integration tests are disabled.",
 )
+
+
+@fixture
+def span_exporter(monkeypatch) -> Generator[InMemorySpanExporter]:
+    env_vars = [
+        "ENABLE_INSTRUMENTATION",
+        "ENABLE_SENSITIVE_DATA",
+        "ENABLE_CONSOLE_EXPORTERS",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_PROTOCOL",
+        "OTEL_EXPORTER_OTLP_HEADERS",
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+        "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+        "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+        "OTEL_SERVICE_NAME",
+        "OTEL_SERVICE_VERSION",
+        "OTEL_RESOURCE_ATTRIBUTES",
+    ]
+
+    for key in env_vars:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "True")
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "True")
+
+    import agent_framework.observability as observability
+    from opentelemetry import trace
+
+    importlib.reload(observability)
+    observability_settings = observability.ObservabilitySettings()
+    tracer_provider = TracerProvider(resource=observability.create_resource())
+    trace.set_tracer_provider(tracer_provider)
+    monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", observability_settings, raising=False)
+
+    with (
+        patch("agent_framework.observability.OBSERVABILITY_SETTINGS", observability_settings),
+        patch("agent_framework.observability.configure_otel_providers"),
+    ):
+        exporter = InMemorySpanExporter()
+        current_tracer_provider = trace.get_tracer_provider()
+        if not hasattr(current_tracer_provider, "add_span_processor"):
+            raise RuntimeError("Tracer provider does not support adding span processors.")
+
+        cast(Any, current_tracer_provider).add_span_processor(SimpleSpanProcessor(exporter))
+        yield exporter
+        exporter.clear()
 
 
 @pytest.fixture(scope="module")
@@ -216,7 +271,7 @@ class _FakeSandbox:
 
         result = callback(**kwargs)
         if inspect.isawaitable(result):
-            return _run_in_thread(lambda: asyncio.run(result))
+            return _run_in_thread(lambda: asyncio.run(cast(Coroutine[Any, Any, Any], result)))
         return result
 
     def run(self, code: str) -> _FakeResult:
@@ -264,10 +319,11 @@ class _FakeSandboxWithDelayedUnlistedOutput(_FakeSandboxWithoutOutputListing):
         if 'Path("/output/report.txt").write_text("artifact", encoding="utf-8")' in code:
             if self.output_dir is None:
                 raise AssertionError("Expected output directory for delayed output test.")
+            output_dir = self.output_dir
 
             def _write_file() -> None:
                 time.sleep(0.15)
-                Path(self.output_dir, "report.txt").write_text("artifact", encoding="utf-8")
+                Path(output_dir, "report.txt").write_text("artifact", encoding="utf-8")
 
             writer_thread = threading.Thread(target=_write_file)
             writer_thread.start()
@@ -317,7 +373,7 @@ class _FakeCodeActChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
     def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[Message],
+        messages: Sequence[Message],
         stream: bool,
         options: Mapping[str, Any],
         **kwargs: Any,
@@ -375,6 +431,38 @@ def test_execute_code_tool_replaces_tools_with_the_same_name() -> None:
     assert len(tools) == 1
     assert tools[0] is replacement_compute
     assert execute_code.approval_mode == "always_require"
+
+
+async def test_execute_code_tool_parent_span_for_host_tools(
+    span_exporter: InMemorySpanExporter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+
+    execute_code = HyperlightExecuteCodeTool(tools=[compute])
+
+    span_exporter.clear()
+    await execute_code.invoke(
+        arguments={"code": 'total = call_tool("compute", a=20, b=22)\nprint(total)'},
+        skip_parsing=True,
+    )
+
+    spans = span_exporter.get_finished_spans()
+    execute_code_spans = [span for span in spans if span.name == "execute_tool execute_code"]
+    compute_spans = [span for span in spans if span.name == "execute_tool compute"]
+
+    assert len(execute_code_spans) == 1
+    assert len(compute_spans) == 1
+
+    execute_code_span = execute_code_spans[0]
+    compute_span = compute_spans[0]
+
+    assert compute_span.context is not None
+    assert execute_code_span.context is not None
+    assert compute_span.context.trace_id == execute_code_span.context.trace_id
+    assert compute_span.parent is not None
+    assert compute_span.parent.span_id == execute_code_span.context.span_id
 
 
 def test_execute_code_tool_accepts_string_and_tuple_file_mounts_without_mode_flags(
@@ -594,6 +682,141 @@ def test_path_tree_signature_walks_through_symlinked_root(tmp_path: Path) -> Non
     assert signature_v1 != signature_v2, "signature should change when symlinked target contents change"
 
 
+class _OutputDirShim:
+    """Minimal stand-in for ``TemporaryDirectory`` exposing only ``.name``."""
+
+    def __init__(self, path: Path) -> None:
+        self.name = str(path)
+
+
+class _SandboxWithListing:
+    def __init__(self, output_files: list[str]) -> None:
+        self._output_files = output_files
+
+    def get_output_files(self) -> list[str]:
+        return self._output_files
+
+
+def _decode_content_bytes(item: Content) -> bytes:
+    import base64
+
+    assert item.uri is not None
+    _, _, encoded = item.uri.partition("base64,")
+    return base64.b64decode(encoded)
+
+
+def test_collect_output_relative_paths_skips_symlinked_file(tmp_path: Path) -> None:
+    """A final-component symlink planted in /output must not be surfaced."""
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    (output_root / "report.txt").write_text("real-report", encoding="utf-8")
+    secret = tmp_path / "host_secret.txt"
+    secret.write_text("HOST_SECRET", encoding="utf-8")
+    (output_root / "leak.txt").symlink_to(secret)
+
+    relative_paths = execute_code_module._collect_output_relative_paths(sandbox=object(), root=output_root)
+
+    assert "report.txt" in relative_paths
+    assert "leak.txt" not in relative_paths
+
+
+def test_collect_output_relative_paths_skips_symlinked_directory(tmp_path: Path) -> None:
+    """A symlinked directory in /output must not be descended into."""
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "deep.txt").write_text("deep-secret", encoding="utf-8")
+    (output_root / "linked_dir").symlink_to(outside_dir, target_is_directory=True)
+
+    relative_paths = execute_code_module._collect_output_relative_paths(sandbox=object(), root=output_root)
+
+    assert relative_paths == set()
+
+
+def test_parse_output_files_skips_symlink_to_host_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """End-to-end: a /output symlink to a host file is never returned as Content."""
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    monkeypatch.setattr(execute_code_module, "OUTPUT_FILE_RETRY_ATTEMPTS", 1)
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    (output_root / "report.txt").write_text("real-report", encoding="utf-8")
+    secret = tmp_path / "host_secret.txt"
+    secret.write_text("HOST_SECRET", encoding="utf-8")
+    (output_root / "leak.txt").symlink_to(secret)
+
+    contents = execute_code_module._parse_output_files(
+        sandbox=object(),
+        output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
+        expect_output_files=False,
+    )
+
+    paths = {item.additional_properties["path"] for item in contents if item.type == "data"}
+    assert "/output/report.txt" in paths
+    assert "/output/leak.txt" not in paths
+    assert all(b"HOST_SECRET" not in _decode_content_bytes(item) for item in contents if item.type == "data")
+
+
+def test_parse_output_files_rejects_intermediate_dir_symlink_from_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A backend-listed path traversing an intermediate dir symlink must be rejected."""
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    monkeypatch.setattr(execute_code_module, "OUTPUT_FILE_RETRY_ATTEMPTS", 1)
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "leak.txt").write_text("HOST_SECRET", encoding="utf-8")
+    (output_root / "sub").symlink_to(outside_dir, target_is_directory=True)
+
+    contents = execute_code_module._parse_output_files(
+        sandbox=_SandboxWithListing(["output/sub/leak.txt"]),
+        output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
+        expect_output_files=False,
+    )
+
+    assert all(b"HOST_SECRET" not in _decode_content_bytes(item) for item in contents if item.type == "data")
+    assert all(item.additional_properties.get("path") != "/output/sub/leak.txt" for item in contents)
+
+
+def test_is_safe_output_file_rejects_parent_traversal(tmp_path: Path) -> None:
+    """A lexical ``..`` component must be rejected even without any symlink."""
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("HOST_SECRET", encoding="utf-8")
+
+    assert (
+        execute_code_module._is_safe_output_file(root=output_root, host_path=output_root / ".." / "secret.txt") is False
+    )
+    assert execute_code_module._is_safe_output_file(root=output_root, host_path=secret) is False
+
+
+def test_parse_output_files_collects_real_output_file(tmp_path: Path) -> None:
+    """Regression: a genuine /output file is still collected and returned."""
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    (output_root / "report.txt").write_text("artifact", encoding="utf-8")
+
+    contents = execute_code_module._parse_output_files(
+        sandbox=object(),
+        output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
+        expect_output_files=True,
+    )
+
+    data_items = [item for item in contents if item.type == "data"]
+    assert len(data_items) == 1
+    assert data_items[0].additional_properties["path"] == "/output/report.txt"
+    assert _decode_content_bytes(data_items[0]) == b"artifact"
+
+
 def test_execute_code_tool_allowed_domains_use_structured_entries_and_replace_by_target() -> None:
     execute_code = HyperlightExecuteCodeTool(_registry=_FakeRuntime())
 
@@ -789,7 +1012,7 @@ async def test_provider_injects_run_scoped_execute_code_tool() -> None:
     context = _FakeSessionContext(tools=[dangerous_compute])
     state: dict[str, Any] = {}
 
-    await provider.before_run(agent=object(), session=None, context=context, state=state)
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
 
     assert context.options["tools"] == [dangerous_compute]
     assert len(context.instructions) == 1
@@ -850,7 +1073,7 @@ async def test_provider_run_tool_writes_files_with_real_sandbox(tmp_path: Path) 
 
     context = _FakeSessionContext()
     state: dict[str, Any] = {}
-    await provider.before_run(agent=object(), session=None, context=context, state=state)
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
 
     run_tool = context.tools[0][1][0]
     assert isinstance(run_tool, HyperlightExecuteCodeTool)
@@ -903,7 +1126,7 @@ async def test_provider_run_tool_pings_bing_with_real_sandbox() -> None:
 
     context = _FakeSessionContext()
     state: dict[str, Any] = {}
-    await provider.before_run(agent=object(), session=None, context=context, state=state)
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
 
     run_tool = context.tools[0][1][0]
     assert isinstance(run_tool, HyperlightExecuteCodeTool)
@@ -1046,7 +1269,7 @@ async def test_output_dir_cleared_between_invocations() -> None:
     provider = HyperlightCodeActProvider(workspace_root=Path(__file__).parent)
     context = _FakeSessionContext()
     state: dict[str, Any] = {}
-    await provider.before_run(agent=object(), session=None, context=context, state=state)
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
 
     run_tool = context.tools[0][1][0]
     assert isinstance(run_tool, HyperlightExecuteCodeTool)
@@ -1080,7 +1303,7 @@ async def test_run_code_does_not_block_event_loop() -> None:
     provider = HyperlightCodeActProvider()
     context = _FakeSessionContext()
     state: dict[str, Any] = {}
-    await provider.before_run(agent=object(), session=None, context=context, state=state)
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
 
     run_tool = context.tools[0][1][0]
     assert isinstance(run_tool, HyperlightExecuteCodeTool)
@@ -1181,8 +1404,9 @@ async def test_sandbox_calls_are_pinned_to_owning_worker_thread(
     sandbox = _ThreadAffinityFakeSandbox.instances[0]
     # All sandbox-touching calls must have stayed on a single owning thread, distinct from the
     # caller thread that asyncio.to_thread used for dispatch.
-    assert sandbox.thread_ids == {sandbox._owner_thread}
-    assert sandbox._owner_thread != threading.get_ident()
+    sandbox_with_thread_data = cast(Any, sandbox)
+    assert sandbox_with_thread_data.thread_ids == {sandbox_with_thread_data._owner_thread}
+    assert sandbox_with_thread_data._owner_thread != threading.get_ident()
 
 
 async def test_sandbox_owner_thread_persists_across_dispatch_threads(

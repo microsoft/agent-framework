@@ -3,17 +3,18 @@
 // This sample shows how to create and use a simple AI agent that stores chat messages in a vector store using the ChatHistoryMemoryProvider.
 // It can then use the chat history from prior conversations to inform responses in new conversations.
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.VectorData;
 using Microsoft.SemanticKernel.Connectors.InMemory;
-using OpenAI.Chat;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
-var embeddingDeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-3-large";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
+var embeddingDeploymentName = Environment.GetEnvironmentVariable("FOUNDRY_EMBEDDING_MODEL") ?? "text-embedding-3-large";
+
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create a vector store to store the chat messages in.
 // For demonstration purposes, we are using an in-memory vector store.
@@ -23,19 +24,17 @@ VectorStore vectorStore = new InMemoryVectorStore(new InMemoryVectorStoreOptions
     // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
     // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
     // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-    EmbeddingGenerator = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
+    EmbeddingGenerator = aiProjectClient
+        .GetProjectOpenAIClient()
         .GetEmbeddingClient(embeddingDeploymentName)
         .AsIEmbeddingGenerator()
 });
 
 // Create the agent and add the ChatHistoryMemoryProvider to store chat messages in the vector store.
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
+AIAgent agent = aiProjectClient
     .AsAIAgent(new ChatClientAgentOptions
     {
-        ChatOptions = new() { Instructions = "You are good at telling jokes." },
+        ChatOptions = new() { ModelId = deploymentName, Instructions = "You are good at telling jokes." },
         Name = "Joker",
         AIContextProviders = [new ChatHistoryMemoryProvider(
             vectorStore,

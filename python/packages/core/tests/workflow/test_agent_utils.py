@@ -33,16 +33,16 @@ class MockAgent:
         session: AgentSession | None = ...,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
-    def run(
+    def run(  # type: ignore[empty-body]
         self,
         messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...  # ty: ignore[empty-body]
 
-    def create_session(self, **kwargs: Any) -> AgentSession:
+    def create_session(self, **kwargs: Any) -> AgentSession:  # type: ignore[empty-body]  # ty: ignore[empty-body]
         """Creates a new conversation session for the agent."""
         ...
 
@@ -53,27 +53,27 @@ class MockAgent:
 def test_resolve_agent_id_with_name() -> None:
     """Test that resolve_agent_id returns name when agent has a name."""
     agent = MockAgent(agent_id="agent-123", name="MyAgent")
-    result = resolve_agent_id(agent)
+    result = resolve_agent_id(agent)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     assert result == "MyAgent"
 
 
 def test_resolve_agent_id_without_name() -> None:
     """Test that resolve_agent_id returns id when agent has no name."""
     agent = MockAgent(agent_id="agent-456", name=None)
-    result = resolve_agent_id(agent)
+    result = resolve_agent_id(agent)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     assert result == "agent-456"
 
 
 def test_resolve_agent_id_with_empty_name() -> None:
     """Test that resolve_agent_id returns id when agent has empty string name."""
     agent = MockAgent(agent_id="agent-789", name="")
-    result = resolve_agent_id(agent)
+    result = resolve_agent_id(agent)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     assert result == "agent-789"
 
 
 def test_resolve_agent_id_prefers_name_over_id() -> None:
     """Test that resolve_agent_id prefers name over id when both are set."""
     agent = MockAgent(agent_id="agent-abc", name="PreferredName")
-    result = resolve_agent_id(agent)
+    result = resolve_agent_id(agent)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     assert result == "PreferredName"
     assert result != "agent-abc"
