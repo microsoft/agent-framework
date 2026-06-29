@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// allowing conversations to be resumed across HTTP requests, application restarts,
 /// or different service instances in hosted scenarios.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public abstract class AgentSessionStore
 {
     /// <summary>

@@ -72,7 +72,14 @@ internal static class AgentInlineSkillContentBuilder
 
         foreach (var resource in resources)
         {
-            sb.Append($"  <resource name=\"{EscapeXmlString(resource.Name)}\"/>\n");
+            if (!string.IsNullOrWhiteSpace(resource.Description))
+            {
+                sb.Append($"  <resource name=\"{EscapeXmlString(resource.Name)}\" description=\"{EscapeXmlString(resource.Description)}\"/>\n");
+            }
+            else
+            {
+                sb.Append($"  <resource name=\"{EscapeXmlString(resource.Name)}\"/>\n");
+            }
         }
 
         sb.Append("</available_resources>");
@@ -108,14 +115,18 @@ internal static class AgentInlineSkillContentBuilder
         foreach (var script in scripts)
         {
             var parametersSchema = script.ParametersSchema;
+            var nameAttr = $"name=\"{EscapeXmlString(script.Name)}\"";
+            var descAttr = !string.IsNullOrWhiteSpace(script.Description)
+                ? $" description=\"{EscapeXmlString(script.Description)}\""
+                : string.Empty;
 
             if (parametersSchema is null)
             {
-                sb.Append($"  <script name=\"{EscapeXmlString(script.Name)}\"/>\n");
+                sb.Append($"  <script {nameAttr}{descAttr}/>\n");
             }
             else
             {
-                sb.Append($"  <script name=\"{EscapeXmlString(script.Name)}\">\n");
+                sb.Append($"  <script {nameAttr}{descAttr}>\n");
                 sb.Append($"    <parameters_schema>{EscapeXmlString(parametersSchema.Value.GetRawText(), preserveQuotes: true)}</parameters_schema>\n");
                 sb.Append("  </script>\n");
             }

@@ -92,7 +92,7 @@ await DownloadSkillsAsync(skillsClient, requestedSkills, downloadedSkillsDir);
 // body is loaded on demand when the model calls the load_skill tool.
 AgentSkillsProvider skillsProvider = new(downloadedSkillsDir);
 
-ChatClientAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions
+AIAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions
 {
     Name = Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-agent-skills",
     ChatOptions = new ChatOptions
@@ -101,7 +101,13 @@ ChatClientAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions
         Instructions = "You are a customer-support assistant for Contoso Outdoors.",
     },
     AIContextProviders = [skillsProvider]
-});
+})
+.AsBuilder()
+.UseToolApproval(new ToolApprovalAgentOptions
+{
+    AutoApprovalRules = [AgentSkillsProvider.AllToolsAutoApprovalRule],
+})
+.Build();
 
 // Host the agent as a Foundry Hosted Agent using the Responses API.
 var builder = WebApplication.CreateBuilder(args);

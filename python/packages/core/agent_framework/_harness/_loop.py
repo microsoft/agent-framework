@@ -9,7 +9,8 @@ going. It serves two common patterns through a single configurable class:
 1. A user-supplied ``should_continue`` predicate - for example, keep looping while a response does
    not yet contain a completion marker, while a :class:`~agent_framework.TodoProvider` still has
    open items, or while a :class:`~agent_framework.BackgroundAgentsProvider` still has running
-   tasks (see the :func:`todos_remaining` and :func:`background_tasks_running` helpers). The loop
+   tasks (see the :func:`todos_remaining` and :func:`background_tasks_running` helpers, which resolve
+   their provider from the running agent). The loop
    can track a **feedback log** across iterations (``record_feedback``): each pass contributes an
    entry that is exposed to every callback via the ``progress`` keyword and (by default) injected
    into the next iteration's input. Set ``fresh_context=True`` to restart each pass from the
@@ -53,6 +54,7 @@ __all__ = [
     "AgentLoopMiddleware",
     "JudgeVerdict",
     "background_tasks_running",
+    "background_tasks_running_message",
     "todos_remaining",
     "todos_remaining_message",
 ]
@@ -777,33 +779,71 @@ class AgentLoopMiddleware(AgentMiddleware):
         return list(next_msgs)
 
 
-def background_tasks_running(provider: Any) -> ShouldContinueCallable:
-    """Build a ``should_continue`` predicate that loops while a ``BackgroundAgentsProvider`` is busy.
+def _running_background_tasks(session: Any, agent: Any) -> list[Any]:
+    """Return the still-running ``BackgroundTaskInfo`` entries for the agent's provider.
+
+    Resolves the :class:`~agent_framework.BackgroundAgentsProvider` from the running agent
+    (``agent.context_providers``) and reads its persisted task state. Returns an empty list when the
+    session/agent/provider is unavailable or no task is currently running.
+    """
+    from ._background_agents import BackgroundAgentsProvider, BackgroundTaskInfo, BackgroundTaskStatus
+
+    if session is None or agent is None:
+        return []
+    provider = _resolve_context_provider(agent, BackgroundAgentsProvider)
+    if provider is None:
+        return []
+    state = session.state.get(provider.source_id)
+    if not state:
+        return []
+    tasks = [BackgroundTaskInfo.from_dict(task) for task in state.get("tasks", [])]
+    return [task for task in tasks if task.status == BackgroundTaskStatus.RUNNING]
+
+
+def background_tasks_running() -> ShouldContinueCallable:
+    """Build a ``should_continue`` predicate that loops while the agent's background tasks are busy.
+
+    This resolves the :class:`~agent_framework.BackgroundAgentsProvider` from the running agent
+    (``agent.context_providers``).
 
     The predicate inspects the provider's persisted task state and continues while any task is still
     marked as running. Pair it with ``max_iterations`` so the loop is guaranteed to stop even if a
     task's persisted status is never refreshed.
 
-    Args:
-        provider: A :class:`~agent_framework.BackgroundAgentsProvider` attached to the same session
-            as the loop.
-
     Returns:
-        A predicate suitable for :class:`AgentLoopMiddleware`'s ``should_continue`` argument.
+        A predicate suitable for :class:`AgentLoopMiddleware`'s ``should_continue`` argument (and for
+        ``create_harness_agent``'s ``loop_should_continue``).
     """
-    from ._background_agents import BackgroundTaskInfo, BackgroundTaskStatus
 
-    def _should_continue(*, session: Any = None, **kwargs: Any) -> bool:
-        if session is None:
-            return False
-        state = session.state.get(provider.source_id)
-        if not state:
-            return False
-        return any(
-            BackgroundTaskInfo.from_dict(task).status == BackgroundTaskStatus.RUNNING for task in state.get("tasks", [])
-        )
+    def _should_continue(*, session: Any = None, agent: Any = None, **kwargs: Any) -> bool:
+        return bool(_running_background_tasks(session, agent))
 
     return _should_continue
+
+
+def background_tasks_running_message(*, session: Any = None, agent: Any = None, **kwargs: Any) -> str | None:
+    """``next_message`` callable that reminds the agent which background tasks are still running.
+
+    Designed to pair with :func:`background_tasks_running` as a loop's ``next_message`` (e.g.
+    ``create_harness_agent``'s ``loop_next_message``): between iterations it resolves the
+    :class:`~agent_framework.BackgroundAgentsProvider` from the agent, lists the still-running tasks,
+    and instructs the agent to wait for them to finish (and retrieve their results) before finishing.
+
+    Returns ``None`` when the session/agent/provider is unavailable or no task is running. In that
+    case the loop's default ``next_message`` handling applies. In normal looping a ``None`` here is
+    rare, since "no running tasks" also makes :func:`background_tasks_running` stop the loop before
+    the next message is consulted.
+    """
+    running = _running_background_tasks(session, agent)
+    if not running:
+        return None
+    task_lines = "\n".join(f"- #{task.id} ({task.agent_name}): {task.description}" for task in running)
+    return (
+        f"You still have {len(running)} background task(s) running that must finish before you can "
+        f"complete the work:\n{task_lines}\n\n"
+        "Wait for these tasks to complete, retrieve their results, and incorporate them. Only stop "
+        "once every background task has finished."
+    )
 
 
 def _resolve_context_provider(agent: Any, provider_type: type) -> Any:

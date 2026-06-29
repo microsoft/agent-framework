@@ -224,6 +224,12 @@ dotnet run
 - **Thread IDs** (as `ConversationId`) for conversation context
 - **Run IDs** (as `ResponseId`) for tracking individual executions
 
+## Security considerations
+
+`ConversationId` keeps request/response continuity. It is not proof that the caller owns that conversation. In multi-user deployments, authenticate each AG-UI request and authorize conversation access using your application's real boundary, such as the authenticated user, tenant, or workspace.
+
+If your ASP.NET Core host shares session storage across users, pair `MapAGUI` with an isolation strategy such as `UseClaimsBasedSessionIsolation(...)` so the storage key includes a principal-specific dimension instead of relying on the conversation identifier alone.
+
 ## Troubleshooting
 
 ### Connection Refused
