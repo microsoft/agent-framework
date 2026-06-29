@@ -91,21 +91,23 @@ public class CopilotStudioAgent : AIAgent
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
-        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, typedSession.ConversationId, cancellationToken), streaming: false, this._logger);
-        var responseMessagesList = new List<ChatMessage>();
-        await foreach (var message in responseMessages.ConfigureAwait(false))
+        IAsyncEnumerable<ChatMessage> responseMessages = ActivityProcessor.ProcessActivityAsync(
+            this.Client.AskQuestionAsync(question, typedSession.ConversationId, cancellationToken),
+            streaming: false,
+            this._logger);
+
+        List<ChatMessage> responseMessagesList = [];
+        IActivity? lastActivity = null;
+        await foreach (ChatMessage message in responseMessages.ConfigureAwait(false))
         {
             responseMessagesList.Add(message);
+            if (message.RawRepresentation is IActivity activity)
+            {
+                lastActivity = activity;
+            }
         }
 
-        // TODO: Review list of ChatResponse properties to ensure we set all availble values.
-        // Setting ResponseId and MessageId end up being particularly important for streaming consumers
-        // so that they can tell things like response boundaries.
-        return new AgentResponse(responseMessagesList)
-        {
-            AgentId = this.Id,
-            ResponseId = responseMessagesList.LastOrDefault()?.MessageId,
-        };
+        return ActivityProcessor.CreateAgentResponse(this.Id, responseMessagesList, lastActivity);
     }
 
     /// <inheritdoc/>
@@ -119,7 +121,6 @@ public class CopilotStudioAgent : AIAgent
 
         // Ensure that we have a valid session to work with.
         // If the session ID is null, we need to start a new conversation and set the session ID accordingly.
-
         session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         if (session is not CopilotStudioAgentSession typedSession)
         {
@@ -130,23 +131,14 @@ public class CopilotStudioAgent : AIAgent
 
         // Invoke the Copilot Studio agent with the provided messages.
         string question = string.Join("\n", messages.Select(m => m.Text));
-        var responseMessages = ActivityProcessor.ProcessActivityAsync(this.Client.AskQuestionAsync(question, typedSession.ConversationId, cancellationToken), streaming: true, this._logger);
+        IAsyncEnumerable<ChatMessage> responseMessages = ActivityProcessor.ProcessActivityAsync(
+            this.Client.AskQuestionAsync(question, typedSession.ConversationId, cancellationToken),
+            streaming: true,
+            this._logger);
 
-        // Enumerate the response messages
-        await foreach (ChatMessage message in responseMessages.ConfigureAwait(false))
+        await foreach (AgentResponseUpdate update in CreateStreamingUpdatesAsync(this.Id, responseMessages, cancellationToken).ConfigureAwait(false))
         {
-            // TODO: Review list of ChatResponse properties to ensure we set all availble values.
-            // Setting ResponseId and MessageId end up being particularly important for streaming consumers
-            // so that they can tell things like response boundaries.
-            yield return new AgentResponseUpdate(message.Role, message.Contents)
-            {
-                AgentId = this.Id,
-                AdditionalProperties = message.AdditionalProperties,
-                AuthorName = message.AuthorName,
-                RawRepresentation = message.RawRepresentation,
-                ResponseId = message.MessageId,
-                MessageId = message.MessageId,
-            };
+            yield return update;
         }
     }
 
@@ -167,6 +159,34 @@ public class CopilotStudioAgent : AIAgent
         }
 
         return conversationId!;
+    }
+
+    private static async IAsyncEnumerable<AgentResponseUpdate> CreateStreamingUpdatesAsync(
+        string agentId,
+        IAsyncEnumerable<ChatMessage> responseMessages,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        IAsyncEnumerator<ChatMessage> enumerator = responseMessages.GetAsyncEnumerator(cancellationToken);
+        try
+        {
+            if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+            {
+                yield break;
+            }
+
+            ChatMessage currentMessage = enumerator.Current;
+            while (await enumerator.MoveNextAsync().ConfigureAwait(false))
+            {
+                yield return ActivityProcessor.CreateAgentResponseUpdate(agentId, currentMessage, isTerminalUpdate: false);
+                currentMessage = enumerator.Current;
+            }
+
+            yield return ActivityProcessor.CreateAgentResponseUpdate(agentId, currentMessage, isTerminalUpdate: true);
+        }
+        finally
+        {
+            await enumerator.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     /// <inheritdoc/>
