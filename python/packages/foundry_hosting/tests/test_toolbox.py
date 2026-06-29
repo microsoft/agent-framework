@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from agent_framework import SkillsProvider
 from azure.ai.agentserver.core import (
     FoundryAgentRequestContext,
     reset_request_context,
@@ -17,6 +18,7 @@ from azure.ai.agentserver.core import (
 
 from agent_framework_foundry_hosting import FoundryToolbox
 from agent_framework_foundry_hosting._toolbox import (  # pyright: ignore[reportPrivateUsage]
+    _FoundryToolboxSkillsSource,
     _resolve_toolbox_endpoint,
     _toolbox_name_from_endpoint,
     _ToolboxAuth,
@@ -148,3 +150,50 @@ async def test_close_closes_owned_http_client() -> None:
     # Idempotent: a second close does not re-close the client.
     await toolbox.close()
     client.aclose.assert_awaited_once()
+
+
+def test_as_skills_provider_returns_provider() -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore[arg-type]
+        url="https://h/toolboxes/tb/mcp",
+    )
+    provider = toolbox.as_skills_provider(source_id="toolbox-skills")
+    assert isinstance(provider, SkillsProvider)
+    assert provider.source_id == "toolbox-skills"
+
+
+async def test_skills_source_requires_connection() -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore[arg-type]
+        url="https://h/toolboxes/tb/mcp",
+    )
+    # The toolbox has not been connected, so there is no MCP session yet.
+    assert toolbox.session is None
+    source = _FoundryToolboxSkillsSource(toolbox)
+    with pytest.raises(RuntimeError, match="not connected"):
+        await source.get_skills()
+
+
+async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore[arg-type]
+        url="https://h/toolboxes/tb/mcp",
+    )
+    sentinel_session = object()
+    toolbox.session = sentinel_session  # type: ignore[assignment]
+
+    captured: dict[str, object] = {}
+
+    class _StubSkillsSource:
+        def __init__(self, *, client: object) -> None:
+            captured["client"] = client
+
+        async def get_skills(self) -> list[str]:
+            return ["skill-a"]
+
+    monkeypatch.setattr("agent_framework_foundry_hosting._toolbox.MCPSkillsSource", _StubSkillsSource)
+
+    result = await _FoundryToolboxSkillsSource(toolbox).get_skills()
+
+    assert result == ["skill-a"]
+    assert captured["client"] is sentinel_session

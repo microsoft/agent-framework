@@ -8,12 +8,13 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import httpx
-from agent_framework import MCPStreamableHTTPTool
+from agent_framework import MCPSkillsSource, MCPStreamableHTTPTool, SkillsProvider, SkillsSource
 from azure.ai.agentserver.core import get_request_context
 
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+    from agent_framework import Skill
     from azure.core.credentials import TokenCredential
 
 logger = logging.getLogger(__name__)
@@ -187,3 +188,76 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             if self._owns_http_client and client is not None:
                 self._owns_http_client = False
                 await client.aclose()
+
+    def as_skills_provider(
+        self,
+        *,
+        source_id: str | None = None,
+        instruction_template: str | None = None,
+        disable_caching: bool = False,
+    ) -> SkillsProvider:
+        """Return a :class:`~agent_framework.SkillsProvider` backed by this toolbox.
+
+        A Foundry toolbox can serve Agent Skills (SEP-2640) over MCP. This discovers
+        them from the well-known ``skill://index.json`` resource on the toolbox's MCP
+        session and exposes them through a provider you can pass to an agent via
+        ``context_providers=[...]``.
+
+        The toolbox must be **connected** before its skills are discovered (which
+        happens lazily on the first agent run). Connect it by passing the toolbox to
+        the agent via ``tools=`` -- set ``load_tools=False`` if you want skills only
+        and no tools -- or by entering it as an ``async with`` context manager.
+
+        Keyword Args:
+            source_id: Unique identifier for the provider instance.
+            instruction_template: Custom system-prompt template for advertising
+                skills; see :class:`~agent_framework.SkillsProvider`.
+            disable_caching: Re-query the toolbox on every agent run instead of
+                caching after the first discovery.
+
+        Returns:
+            A :class:`~agent_framework.SkillsProvider` that advertises and loads the
+            toolbox's skills.
+
+        Examples:
+            .. code-block:: python
+
+                toolbox = FoundryToolbox(credential, load_tools=False)
+                agent = Agent(
+                    client=FoundryChatClient(credential=credential),
+                    # ``tools=toolbox`` connects the MCP session; ``load_tools=False``
+                    # keeps its tools hidden so only its skills are surfaced.
+                    tools=toolbox,
+                    context_providers=[toolbox.as_skills_provider()],
+                    default_options={"store": False},
+                )
+                await ResponsesHostServer(agent).run_async()
+        """
+        return SkillsProvider(
+            _FoundryToolboxSkillsSource(self),
+            source_id=source_id,
+            instruction_template=instruction_template,
+            disable_caching=disable_caching,
+        )
+
+
+class _FoundryToolboxSkillsSource(SkillsSource):
+    """Discovers skills from a connected :class:`FoundryToolbox` MCP session.
+
+    The toolbox's MCP ``session`` is established lazily when the toolbox connects
+    (via the agent or an ``async with`` block), so the session is resolved at
+    discovery time rather than captured at construction.
+    """
+
+    def __init__(self, toolbox: FoundryToolbox) -> None:
+        self._toolbox = toolbox
+
+    async def get_skills(self) -> list[Skill]:
+        session = self._toolbox.session
+        if session is None:
+            raise RuntimeError(
+                "FoundryToolbox is not connected, so its skills cannot be discovered. "
+                "Pass the toolbox to the agent (tools=...) or enter it as an async "
+                "context manager before the agent runs."
+            )
+        return await MCPSkillsSource(client=session).get_skills()
