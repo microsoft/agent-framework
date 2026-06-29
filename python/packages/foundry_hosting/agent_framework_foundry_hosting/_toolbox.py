@@ -1,0 +1,189 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+from __future__ import annotations
+
+import logging
+import os
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
+
+import httpx
+from agent_framework import MCPStreamableHTTPTool
+from azure.ai.agentserver.core import get_request_context
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from azure.core.credentials import TokenCredential
+
+logger = logging.getLogger(__name__)
+
+# Default Microsoft Entra scope for Foundry data-plane access.
+DEFAULT_TOOLBOX_SCOPE = "https://ai.azure.com/.default"
+# Default timeout (seconds) for toolbox MCP requests.
+_DEFAULT_TIMEOUT = 120.0
+
+
+def _resolve_toolbox_endpoint() -> str:
+    """Resolve the toolbox MCP endpoint URL from the environment.
+
+    Prefers the explicit ``TOOLBOX_ENDPOINT`` env var; falls back to building the
+    URL from ``FOUNDRY_PROJECT_ENDPOINT`` and ``TOOLBOX_NAME``.
+    """
+    endpoint = os.environ.get("TOOLBOX_ENDPOINT")
+    if endpoint is not None:
+        if not endpoint:
+            raise ValueError("TOOLBOX_ENDPOINT is set but empty.")
+        return endpoint
+    project_endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
+    toolbox_name = os.environ.get("TOOLBOX_NAME")
+    if not project_endpoint or not toolbox_name:
+        raise ValueError(
+            "Pass 'url', or set TOOLBOX_ENDPOINT, or set both FOUNDRY_PROJECT_ENDPOINT "
+            "and TOOLBOX_NAME to build the toolbox MCP endpoint."
+        )
+    return f"{project_endpoint.rstrip('/')}/toolboxes/{toolbox_name}/mcp?api-version=v1"
+
+
+def _toolbox_name_from_endpoint(endpoint: str) -> str:
+    """Extract the toolbox name from a toolbox MCP endpoint URL.
+
+    Handles both the versioned (``.../toolboxes/<name>/versions/<n>/mcp``) and
+    unversioned (``.../toolboxes/<name>/mcp``) endpoint shapes that Foundry
+    produces. Falls back to ``"toolbox"`` when the path has no ``toolboxes`` segment.
+    """
+    segments = urlsplit(endpoint).path.split("/")
+    if "toolboxes" in segments:
+        idx = segments.index("toolboxes")
+        if idx + 1 < len(segments) and segments[idx + 1]:
+            return segments[idx + 1]
+    return "toolbox"
+
+
+class _ToolboxAuth(httpx.Auth):
+    """Injects a fresh bearer token and the platform call-id on every request.
+
+    ``auth_flow`` runs for *every* outbound request (connection handshake as well
+    as tool calls), so the bearer token is always present. The per-request
+    ``x-agent-foundry-call-id`` is read from the request-scoped context populated
+    by the hosting endpoint; it resolves to a fresh value on each request and is
+    absent (no header) for protocol ``1.0.0`` or local development.
+    """
+
+    def __init__(self, credential: TokenCredential, scope: str) -> None:
+        self._credential = credential
+        self._scope = scope
+
+    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
+        # azure-core credentials cache the token internally and only refresh near
+        # expiry, so calling get_token per request is cheap.
+        token = self._credential.get_token(self._scope).token
+        request.headers["Authorization"] = f"Bearer {token}"
+        for key, value in get_request_context().platform_headers().items():
+            request.headers[key] = value
+        yield request
+
+
+class FoundryToolbox(MCPStreamableHTTPTool):
+    """A Foundry toolbox exposed as an MCP tool, with hosting wired in.
+
+    This is a thin convenience wrapper over :class:`~agent_framework.MCPStreamableHTTPTool`
+    that targets a Microsoft Foundry toolbox endpoint. Compared to constructing an
+    ``MCPStreamableHTTPTool`` by hand it:
+
+    - resolves the toolbox endpoint and tool name from the environment when not given,
+    - authenticates every request with a bearer token from ``credential``, and
+    - forwards the platform per-request call-id (``x-agent-foundry-call-id``) so the
+      Foundry MCP proxy can resolve the caller context server-side.
+
+    The call-id forwarding is transparent: it is read from the request-scoped context
+    the hosting endpoint binds on each request, so no per-request wiring is needed.
+    Because the toolbox endpoint is a first-party Foundry service, forwarding the
+    opaque caller token to it is safe.
+
+    Like any MCP tool, the connection lifecycle is driven by the agent: the hosting
+    server enters the agent, which connects the toolbox on first use and closes it
+    (and the HTTP client it owns) at shutdown. Using it as an ``async with`` context
+    manager directly is supported but not required.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Agent
+            from agent_framework.foundry import FoundryChatClient
+            from agent_framework_foundry_hosting import FoundryToolbox, ResponsesHostServer
+            from azure.identity import DefaultAzureCredential
+
+            credential = DefaultAzureCredential()
+            # The hosting server enters the agent, which connects/closes the toolbox.
+            toolbox = FoundryToolbox(credential)
+            agent = Agent(
+                client=FoundryChatClient(credential=credential),
+                tools=toolbox,
+                default_options={"store": False},
+            )
+            await ResponsesHostServer(agent).run_async()
+    """
+
+    def __init__(
+        self,
+        credential: TokenCredential,
+        *,
+        url: str | None = None,
+        name: str | None = None,
+        token_scope: str = DEFAULT_TOOLBOX_SCOPE,
+        load_prompts: bool = False,
+        timeout: float = _DEFAULT_TIMEOUT,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize a Foundry toolbox tool.
+
+        Args:
+            credential: A Microsoft Entra credential used to obtain bearer tokens for
+                the toolbox endpoint. Tokens are requested per outbound request and
+                cached by the credential.
+
+        Keyword Args:
+            url: The toolbox MCP endpoint URL. When ``None``, it is resolved from
+                ``TOOLBOX_ENDPOINT`` or from ``FOUNDRY_PROJECT_ENDPOINT`` plus
+                ``TOOLBOX_NAME``.
+            name: The local tool name. When ``None``, it is taken from ``TOOLBOX_NAME``
+                or derived from the endpoint path.
+            token_scope: The token scope to request. Defaults to the Foundry data-plane
+                scope.
+            load_prompts: Whether to load prompts from the toolbox. Defaults to ``False``
+                because toolboxes expose tools.
+            timeout: Request timeout in seconds for the underlying HTTP client.
+            kwargs: Additional keyword arguments forwarded to
+                :class:`~agent_framework.MCPStreamableHTTPTool`. Do not pass
+                ``http_client``; this class manages its own.
+        """
+        if "http_client" in kwargs:
+            raise TypeError("FoundryToolbox manages its own http_client; pass 'credential' instead.")
+
+        endpoint = url or _resolve_toolbox_endpoint()
+        tool_name = name or os.environ.get("TOOLBOX_NAME") or _toolbox_name_from_endpoint(endpoint)
+
+        http_client = httpx.AsyncClient(
+            auth=_ToolboxAuth(credential, token_scope),
+            timeout=timeout,
+        )
+
+        super().__init__(
+            name=tool_name,
+            url=endpoint,
+            http_client=http_client,
+            load_prompts=load_prompts,
+            **kwargs,
+        )
+        self._owns_http_client = True
+
+    async def close(self) -> None:
+        """Close the MCP session and the toolbox-owned HTTP client."""
+        try:
+            await super().close()
+        finally:
+            client = self._httpx_client
+            if self._owns_http_client and client is not None:
+                self._owns_http_client = False
+                await client.aclose()
