@@ -26,10 +26,6 @@ from agent_framework import (
     WorkflowRunState,
     handler,
 )
-from agent_framework_orchestrations._magentic import (
-    ORCHESTRATOR_TASK_LEDGER_FACTS_PROMPT,
-    ORCHESTRATOR_TASK_LEDGER_PLAN_PROMPT,
-)
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework.orchestrations import (
     GroupChatRequestMessage,
@@ -1195,8 +1191,8 @@ async def test_standard_manager_does_not_duplicate_history():
     multiple rounds, compounding the whole task/facts/plan). This drives a real ``Agent``
     through the real session machinery and asserts no such duplication reaches the client.
     """
-    facts_marker = ORCHESTRATOR_TASK_LEDGER_FACTS_PROMPT.split("{")[0].strip()
-    plan_marker = ORCHESTRATOR_TASK_LEDGER_PLAN_PROMPT.split("{")[0].strip()
+    facts_marker = "Below I will present you a request."
+    plan_marker = "Fantastic. To address this request"
 
     class RecordingChatClient(BaseChatClient):
         """Captures the exact message list handed to the model on each call."""
@@ -1235,32 +1231,32 @@ async def test_standard_manager_does_not_duplicate_history():
     assert sum(plan_marker in m.text for m in plan_call) == 1
 
 
-def test_standard_manager_checkpoint_preserves_session():
-    """Verify that checkpoint save/restore preserves the manager's session identity."""
-    agent = StubManagerAgent()
-    mgr = StandardMagenticManager(agent=agent)
-    original_session_id = mgr._session.session_id
+def test_standard_manager_checkpoint_preserves_task_ledger():
+    """Checkpoint save/restore round-trips the manager's task ledger (its only persisted state)."""
+    from agent_framework_orchestrations._magentic import _MagenticTaskLedger  # type: ignore
+
+    mgr = StandardMagenticManager(agent=StubManagerAgent())
+    mgr.task_ledger = _MagenticTaskLedger(
+        facts=Message("assistant", ["Custom facts"]),
+        plan=Message("assistant", ["Custom plan"]),
+    )
 
     state = mgr.on_checkpoint_save()
-    assert "agent_session" in state
+    assert "task_ledger" in state
 
-    # Restore into a fresh manager and verify session_id is preserved
-    mgr2 = StandardMagenticManager(agent=agent)
-    assert mgr2._session.session_id != original_session_id
+    mgr2 = StandardMagenticManager(agent=StubManagerAgent())
+    assert mgr2.task_ledger is None
     mgr2.on_checkpoint_restore(state)
-    assert mgr2._session.session_id == original_session_id
+    assert mgr2.task_ledger is not None
+    assert mgr2.task_ledger.facts.text == "Custom facts"
+    assert mgr2.task_ledger.plan.text == "Custom plan"
 
 
 def test_standard_manager_checkpoint_restore_empty_state():
-    """Verify that restoring from a state without agent_session leaves the session intact."""
-    agent = StubManagerAgent()
-    mgr = StandardMagenticManager(agent=agent)
-    original_session = mgr._session
-    original_session_id = original_session.session_id
-
+    """Restoring from a state without a task ledger leaves the manager unchanged."""
+    mgr = StandardMagenticManager(agent=StubManagerAgent())
     mgr.on_checkpoint_restore({})
-    assert mgr._session is original_session
-    assert mgr._session.session_id == original_session_id
+    assert mgr.task_ledger is None
 
 
 # endregion
