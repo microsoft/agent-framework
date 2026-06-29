@@ -107,7 +107,7 @@ public sealed class AgentSkillsProviderBuilderTests
             new TestAgentSkill("drop-me", "Drop", "Instructions."));
         var provider = new AgentSkillsProviderBuilder()
             .UseSource(source)
-            .UseFilter(context => context.Skill.Frontmatter.Name.StartsWith("keep", StringComparison.OrdinalIgnoreCase))
+            .UseFilter((skill, context) => skill.Frontmatter.Name.StartsWith("keep", StringComparison.OrdinalIgnoreCase))
             .Build();
 
         // Act

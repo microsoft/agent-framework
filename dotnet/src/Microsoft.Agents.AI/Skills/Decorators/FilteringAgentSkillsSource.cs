@@ -19,7 +19,7 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 internal sealed partial class FilteringAgentSkillsSource : DelegatingAgentSkillsSource
 {
-    private readonly Func<AgentSkillFilterContext, bool> _predicate;
+    private readonly Func<AgentSkill, AgentSkillsSourceContext, bool> _predicate;
     private readonly ILogger<FilteringAgentSkillsSource> _logger;
 
     /// <summary>
@@ -33,7 +33,7 @@ internal sealed partial class FilteringAgentSkillsSource : DelegatingAgentSkills
     /// <param name="loggerFactory">Optional logger factory.</param>
     public FilteringAgentSkillsSource(
         AgentSkillsSource innerSource,
-        Func<AgentSkillFilterContext, bool> predicate,
+        Func<AgentSkill, AgentSkillsSourceContext, bool> predicate,
         ILoggerFactory? loggerFactory = null)
         : base(innerSource)
     {
@@ -49,7 +49,7 @@ internal sealed partial class FilteringAgentSkillsSource : DelegatingAgentSkills
         var filtered = new List<AgentSkill>();
         foreach (var skill in allSkills)
         {
-            if (this._predicate(new AgentSkillFilterContext(skill, context)))
+            if (this._predicate(skill, context))
             {
                 filtered.Add(skill);
             }

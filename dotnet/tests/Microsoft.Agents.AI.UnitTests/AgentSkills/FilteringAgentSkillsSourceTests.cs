@@ -20,7 +20,7 @@ public sealed class FilteringAgentSkillsSourceTests
             new AgentInlineSkill("skill-a", "A", "Instructions A."),
             new AgentInlineSkill("skill-b", "B", "Instructions B."),
         });
-        var source = new FilteringAgentSkillsSource(inner, _ => true);
+        var source = new FilteringAgentSkillsSource(inner, (_, _) => true);
 
         // Act
         var result = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
@@ -38,7 +38,7 @@ public sealed class FilteringAgentSkillsSourceTests
             new AgentInlineSkill("skill-a", "A", "Instructions A."),
             new AgentInlineSkill("skill-b", "B", "Instructions B."),
         });
-        var source = new FilteringAgentSkillsSource(inner, _ => false);
+        var source = new FilteringAgentSkillsSource(inner, (_, _) => false);
 
         // Act
         var result = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
@@ -59,7 +59,7 @@ public sealed class FilteringAgentSkillsSourceTests
         });
         var source = new FilteringAgentSkillsSource(
             inner,
-            context => context.Skill.Frontmatter.Name.StartsWith("keep", StringComparison.OrdinalIgnoreCase));
+            (skill, context) => skill.Frontmatter.Name.StartsWith("keep", StringComparison.OrdinalIgnoreCase));
 
         // Act
         var result = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
@@ -82,10 +82,10 @@ public sealed class FilteringAgentSkillsSourceTests
         AgentSkill? actualSkill = null;
         var source = new FilteringAgentSkillsSource(
             inner,
-            context =>
+            (skill, context) =>
             {
-                actualSkill = context.Skill;
-                actualSkillsSourceContext = context.SkillsSourceContext;
+                actualSkill = skill;
+                actualSkillsSourceContext = context;
                 return true;
             });
 
@@ -103,7 +103,7 @@ public sealed class FilteringAgentSkillsSourceTests
     {
         // Arrange
         var inner = new AgentInMemorySkillsSource(Array.Empty<AgentSkill>());
-        var source = new FilteringAgentSkillsSource(inner, _ => true);
+        var source = new FilteringAgentSkillsSource(inner, (_, _) => true);
 
         // Act
         var result = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
@@ -126,7 +126,7 @@ public sealed class FilteringAgentSkillsSourceTests
     public void Constructor_NullInnerSource_Throws()
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new FilteringAgentSkillsSource(null!, _ => true));
+        Assert.Throws<ArgumentNullException>(() => new FilteringAgentSkillsSource(null!, (_, _) => true));
     }
 
     [Fact]
@@ -144,7 +144,7 @@ public sealed class FilteringAgentSkillsSourceTests
         // Keep only alpha and gamma
         var source = new FilteringAgentSkillsSource(
             inner,
-            context => context.Skill.Frontmatter.Name is "alpha" or "gamma");
+            (skill, context) => skill.Frontmatter.Name is "alpha" or "gamma");
 
         // Act
         var result = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);

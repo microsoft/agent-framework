@@ -46,7 +46,7 @@ public sealed class AgentSkillsProviderBuilder
     private AgentSkillsProviderOptions? _options;
     private ILoggerFactory? _loggerFactory;
     private AgentFileSkillScriptRunner? _scriptRunner;
-    private Func<AgentSkillFilterContext, bool>? _filter;
+    private Func<AgentSkill, AgentSkillsSourceContext, bool>? _filter;
     private bool _disableCaching;
     private CachingAgentSkillsSourceOptions? _cachingOptions;
 
@@ -190,7 +190,7 @@ public sealed class AgentSkillsProviderBuilder
     /// </remarks>
     /// <param name="predicate">A predicate that determines which skills to include.</param>
     /// <returns>This builder instance for chaining.</returns>
-    public AgentSkillsProviderBuilder UseFilter(Func<AgentSkillFilterContext, bool> predicate)
+    public AgentSkillsProviderBuilder UseFilter(Func<AgentSkill, AgentSkillsSourceContext, bool> predicate)
     {
         _ = Throw.IfNull(predicate);
         this._filter = predicate;
