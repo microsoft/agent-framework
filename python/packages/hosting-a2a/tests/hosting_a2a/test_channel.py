@@ -43,7 +43,10 @@ class _FakeUpdate:
 class _FakeStream:
     def __init__(self, chunks: list[str]) -> None:
         self._chunks = chunks
-        self._final = _FakeResp(text="".join(chunks))
+        self._final = _FakeResp(
+            text="".join(chunks),
+            messages=[Message(role=Role.ROLE_AGENT, parts=[Part(text="".join(chunks))])],
+        )
 
     def __aiter__(self) -> AsyncIterator[_FakeUpdate]:
         async def _gen() -> AsyncIterator[_FakeUpdate]:
@@ -287,6 +290,24 @@ async def test_execute_streaming_emits_artifacts() -> None:
     assert len(artifact_ids) == 1
     assert None not in artifact_ids
     assert ctx.requests[0].stream is True
+    assert TaskState.TASK_STATE_COMPLETED in _status_states(queue.events)
+
+
+async def test_execute_streaming_with_response_hook_emits_final_reply() -> None:
+    ctx = _FakeContext(chunks=["foo", "bar"])
+
+    def _hook(result: Any, **_: Any) -> Any:
+        return result
+
+    executor = HostAgentExecutor(cast(Any, ctx), channel_name="a2a", streaming=True, response_hook=_hook)
+    queue = _RecordingEventQueue()
+    request_context = _FakeRequestContext(context_id="conv-hook", text="hello")
+
+    await executor.execute(cast(Any, request_context), queue)
+
+    artifact_events = [e for e in queue.events if getattr(e, "artifact", None)]
+    # delta chunks + the projected final reply all land on a single stream artifact
+    assert len(artifact_events) >= 3
     assert TaskState.TASK_STATE_COMPLETED in _status_states(queue.events)
 
 

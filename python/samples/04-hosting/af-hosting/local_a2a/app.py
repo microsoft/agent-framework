@@ -33,6 +33,7 @@ Multi-process via Hypercorn::
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Annotated
@@ -103,3 +104,7 @@ def _build_app() -> AgentFrameworkHost:
 
 
 app = _build_app().app
+
+
+if __name__ == "__main__":
+    _build_app().serve(host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))

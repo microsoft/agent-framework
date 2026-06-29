@@ -46,8 +46,10 @@ def _contents_to_parts(contents: list[Content]) -> list[Part]:
     """Convert Agent Framework contents into A2A parts (text, uri, inline data)."""
     parts: list[Part] = []
     for content in contents:
-        if content.type == "text" and content.text:
-            parts.append(Part(text=content.text))
+        if content.type == "text":
+            # Empty text is not "unsupported" — just nothing to emit.
+            if content.text:
+                parts.append(Part(text=content.text))
         elif content.type == "uri" and content.uri:
             parts.append(Part(url=content.uri, media_type=content.media_type or ""))
         elif content.type == "data" and content.uri:
@@ -57,7 +59,9 @@ def _contents_to_parts(contents: list[Content]) -> list[Part]:
                 continue
             parts.append(Part(raw=base64.b64decode(match.group("data")), media_type=content.media_type or ""))
         else:
-            logger.warning("A2AChannel does not support content type: %s. Omitted.", content.type)
+            # function_call/function_result/usage etc. are routine intermediate
+            # content during a turn — debug, not a warning per chunk.
+            logger.debug("A2AChannel does not support content type: %s. Omitted.", content.type)
     return parts
 
 
@@ -218,4 +222,22 @@ class HostAgentExecutor(AgentExecutor):
                 append=True if appended else None,
             )
             appended = True
-        await stream.get_final_response()
+        final = await stream.get_final_response()
+        # A configured response_hook can rewrite/add the final assistant reply;
+        # only get_final_response() yields that shaped result. Project it so the
+        # hook's output reaches A2A clients (incremental deltas already cover the
+        # unhooked case, so skip this when no hook is configured to avoid dupes).
+        if self._response_hook is not None:
+            messages: list[Any] = list(getattr(final, "messages", None) or [])
+            get_outputs = cast("Any", getattr(final, "get_outputs", None))
+            if callable(get_outputs):
+                messages.extend(cast("list[Any]", get_outputs()))
+            for message in messages:
+                if getattr(message, "role", None) == "user":
+                    continue
+                parts = _value_to_parts(message)
+                if parts:
+                    await updater.add_artifact(
+                        parts=parts, artifact_id=stream_artifact_id, append=True if appended else None
+                    )
+                    appended = True
