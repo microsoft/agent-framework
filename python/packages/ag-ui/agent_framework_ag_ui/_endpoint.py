@@ -4,9 +4,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import copy
 import logging
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from inspect import isawaitable
 from typing import Any
 
@@ -28,6 +30,78 @@ from ._types import AGUIRequest
 from ._workflow import AgentFrameworkWorkflow
 
 logger = logging.getLogger(__name__)
+
+# Default idle interval after which a transport-level SSE keepalive comment is emitted.
+DEFAULT_KEEPALIVE_INTERVAL_SECONDS = 15.0
+
+# An SSE comment line (a line beginning with ``:``) is a protocol no-op: clients and
+# parsers ignore it, but it forces a write on the wire so idle-timeout proxies in front
+# of the endpoint keep the connection open during long silent gaps between events.
+_SSE_KEEPALIVE_COMMENT = ": keepalive\n\n"
+
+
+class _StreamEnd:
+    """Sentinel marking normal completion of the upstream event stream."""
+
+
+async def _with_sse_keepalive(
+    events: AsyncIterator[str],
+    interval_seconds: float,
+) -> AsyncGenerator[str]:
+    """Yield upstream SSE strings, inserting keepalive comments during idle gaps.
+
+    Real events flush immediately and in order; a keepalive comment is emitted only when no
+    upstream event arrives within ``interval_seconds``, so the heartbeat is limited to idle
+    periods and never delays or reorders genuine events.
+
+    The upstream generator is drained by a single dedicated task that owns its entire lifecycle
+    (creation, iteration, and cleanup). This keeps every ``__anext__`` and the terminal cleanup
+    hooks in one ``contextvars`` context, which the agent run/telemetry pipeline requires:
+    those hooks reset ``ContextVar`` tokens that must be reset in the same context that created
+    them. Racing each individual pull with ``asyncio.wait_for`` would instead scatter the pulls
+    across contexts and break that cleanup.
+    """
+    # Bound the queue so it acts as backpressure rather than an unbounded buffer: once the
+    # consumer (the StreamingResponse) falls behind, ``put`` blocks and the upstream generator
+    # is throttled to the drain rate instead of buffering arbitrarily many chunks in memory for
+    # a fast agent. A maxsize of 1 is enough to decouple the single producer pull from the single
+    # consumer emit while still pausing the producer the moment the consumer stops draining; a
+    # full queue simply means there is no idle gap, so no keepalive is needed during that window.
+    queue: asyncio.Queue[str | type[_StreamEnd] | Exception] = asyncio.Queue(maxsize=1)
+
+    async def _drain() -> None:
+        try:
+            async for event in events:
+                await queue.put(event)
+        except asyncio.CancelledError:
+            # Consumer went away; let cancellation propagate so the upstream generator closes.
+            raise
+        except Exception as exc:  # noqa: BLE001 - surfaced to the consumer via the queue
+            await queue.put(exc)
+        else:
+            await queue.put(_StreamEnd)
+
+    producer = asyncio.ensure_future(_drain())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), interval_seconds)
+            except asyncio.TimeoutError:
+                # Upstream produced nothing within the interval; emit a transport-level heartbeat.
+                yield _SSE_KEEPALIVE_COMMENT
+                continue
+            if item is _StreamEnd:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            yield item  # type: ignore[misc]
+    finally:
+        # Stop draining if the consumer goes away (e.g. client disconnect) and let the
+        # producer task observe cancellation so the upstream generator is closed cleanly.
+        if not producer.done():
+            producer.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await producer
 
 
 def _get_snapshot_store(
@@ -82,6 +156,7 @@ def add_agent_framework_fastapi_endpoint(
     dependencies: Sequence[Depends] | None = None,
     snapshot_store: AGUIThreadSnapshotStore | None = None,
     snapshot_scope_resolver: SnapshotScopeResolver | None = None,
+    keepalive_interval_seconds: float | None = DEFAULT_KEEPALIVE_INTERVAL_SECONDS,
 ) -> None:
     """Add an AG-UI endpoint to a FastAPI app.
 
@@ -103,7 +178,14 @@ def add_agent_framework_fastapi_endpoint(
             explicit Snapshot Scope resolver.
         snapshot_scope_resolver: Optional resolver for the application-defined Snapshot Scope. Required whenever
             a snapshot store is configured because an AG-UI Thread id is not an authorization boundary.
+        keepalive_interval_seconds: Idle interval (in seconds) after which a transport-level SSE keepalive
+            comment (``: keepalive``) is written to the stream when no agent event has been produced.
+            This prevents idle-timeout proxies (e.g. Azure ingress, nginx, serverless front doors) from
+            dropping a healthy but silent event stream during long-running tools. Real events still flush
+            immediately. Defaults to ``15.0``; pass ``None`` to disable keepalives entirely.
     """
+    if keepalive_interval_seconds is not None and keepalive_interval_seconds <= 0:
+        raise ValueError("keepalive_interval_seconds must be a positive number or None.")
     protocol_runner: AgentFrameworkAgent | AgentFrameworkWorkflow
     if isinstance(agent, AgentFrameworkWorkflow):
         protocol_runner = agent
@@ -208,8 +290,12 @@ def add_agent_framework_fastapi_endpoint(
                     except Exception:
                         logger.exception("[%s] Failed to encode RUN_ERROR event", path)
 
+            stream: AsyncGenerator[str] = event_generator()
+            if keepalive_interval_seconds is not None:
+                stream = _with_sse_keepalive(stream, keepalive_interval_seconds)
+
             return StreamingResponse(
-                event_generator(),
+                stream,
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
