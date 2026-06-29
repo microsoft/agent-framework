@@ -244,6 +244,7 @@ public sealed partial class ChatClientAgent : AIAgent
         // so let's update it and set the conversation id for the service session case.
         var forceEndOfRunPersistence = chatOptions?.ContinuationToken is not null || chatOptions?.AllowBackgroundResponses is true;
         this.UpdateSessionConversationIdAtEndOfRun(safeSession, chatResponse.ConversationId, cancellationToken, forceUpdate: forceEndOfRunPersistence);
+        chatOptions = SetResponseConversationId(chatOptions, chatResponse.ConversationId);
 
         // Ensure that the author name is set for each message in the response.
         foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
@@ -389,6 +390,7 @@ public sealed partial class ChatClientAgent : AIAgent
             // We can derive the type of supported session from whether we have a conversation id,
             // so let's update it and set the conversation id for the service session case.
             this.UpdateSessionConversationIdAtEndOfRun(safeSession, chatResponse.ConversationId, cancellationToken, forceUpdate: forceEndOfRunPersistence);
+            chatOptions = SetResponseConversationId(chatOptions, chatResponse.ConversationId);
 
             // Notify providers of all new messages unless persistence is handled per-service-call by the decorator.
             // When resuming from a continuation token or using background responses, force notification
@@ -1015,6 +1017,18 @@ public sealed partial class ChatClientAgent : AIAgent
         }
 
         return provider;
+    }
+
+    private static ChatOptions? SetResponseConversationId(ChatOptions? chatOptions, string? responseConversationId)
+    {
+        if (string.IsNullOrWhiteSpace(responseConversationId))
+        {
+            return chatOptions;
+        }
+
+        chatOptions ??= new();
+        chatOptions.ConversationId ??= responseConversationId;
+        return chatOptions;
     }
 
     /// <summary>
