@@ -4,13 +4,20 @@
 
 import pytest
 from ag_ui.core import EventType
+from ag_ui.core.events import (
+    ReasoningMessageContentEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
+)
 from agent_framework import Content
 
 from agent_framework_ag_ui import state_update
 from agent_framework_ag_ui._orchestration._predictive_state import PredictiveStateHandler
 from agent_framework_ag_ui._run_common import (
     FlowState,
+    _close_reasoning_block,
     _emit_mcp_tool_result,
+    _emit_text_reasoning,
     _emit_tool_result,
     _extract_resume_payload,
     _extract_tool_result_state,
@@ -449,3 +456,53 @@ class TestEmitMcpToolResultWithDisplay:
         assert _json.loads(result_events[0].content) == display_payload  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         # LLM-side accumulator keeps the short text.
         assert flow.tool_results[-1]["content"] == "2 rows returned"
+
+
+class TestReasoningCoalescing:
+    """Verify reasoning deltas without content.id coalesce into one block.
+
+    Regression test: Ollama streams reasoning with content.id=None, which
+    previously caused a new reasoning block per delta instead of one per turn.
+    """
+
+    def test_reasoning_coalesces_without_content_id(self):
+        """Multiple reasoning deltas without content.id share one message_id."""
+        flow = FlowState()
+
+        events1 = _emit_text_reasoning(Content.from_text_reasoning(text="First"), flow)
+        events2 = _emit_text_reasoning(Content.from_text_reasoning(text=" chunk"), flow)
+        events3 = _emit_text_reasoning(Content.from_text_reasoning(text=" here."), flow)
+
+        all_events = events1 + events2 + events3
+
+        content_events = [e for e in all_events if isinstance(e, ReasoningMessageContentEvent)]
+        ids = {e.message_id for e in content_events}
+        assert len(ids) == 1, f"Expected one message_id, got {ids}"
+
+        start_events = [e for e in all_events if isinstance(e, (ReasoningStartEvent, ReasoningMessageStartEvent))]
+        assert len(start_events) == 2, f"Expected 2 start events, got {len(start_events)}"
+
+    def test_reasoning_respects_explicit_content_id(self):
+        """When content.id is provided, it should be used."""
+        flow = FlowState()
+        custom_id = "my-custom-reasoning-id"
+
+        events = _emit_text_reasoning(Content.from_text_reasoning(id=custom_id, text="thinking"), flow)
+
+        content_events = [e for e in events if isinstance(e, ReasoningMessageContentEvent)]
+        assert all(e.message_id == custom_id for e in content_events)
+
+    def test_new_turn_gets_new_reasoning_id(self):
+        """After closing a reasoning block, a new one gets a fresh ID."""
+        flow = FlowState()
+
+        _emit_text_reasoning(Content.from_text_reasoning(text="Turn 1"), flow)
+        id1 = flow.reasoning_message_id
+        _close_reasoning_block(flow)
+
+        _emit_text_reasoning(Content.from_text_reasoning(text="Turn 2"), flow)
+        id2 = flow.reasoning_message_id
+
+        assert id1 is not None
+        assert id2 is not None
+        assert id1 != id2, "New turn should get a new reasoning message_id"
