@@ -25,19 +25,15 @@ else:
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
-    from azure.core.credentials import TokenCredential
-    from azure.core.credentials_async import AsyncTokenCredential
     from azure.cosmos.agent_memory.aio import AsyncCosmosMemoryClient
 
 try:
     from azure.cosmos.agent_memory.aio import AsyncCosmosMemoryClient
-    from azure.identity.aio import DefaultAzureCredential
 
     _memory_toolkit_available = True
 except ImportError:
     _memory_toolkit_available = False
     AsyncCosmosMemoryClient = None  # type: ignore
-    DefaultAzureCredential = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -101,13 +97,17 @@ class CosmosMemoryContextProvider(ContextProvider):
                 Can be set via ``AI_FOUNDRY_EMBEDDING_DEPLOYMENT_NAME``.
             chat_deployment_name: Chat model deployment name.
                 Can be set via ``AI_FOUNDRY_CHAT_DEPLOYMENT_NAME``.
-            credential: Azure credential for authentication. If None, uses DefaultAzureCredential.
+            credential: Azure credential for authentication. When provided it is used for both
+                Cosmos DB and AI Foundry; when ``None`` the toolkit builds (and owns) a
+                ``DefaultAzureCredential``.
             memory_client: Pre-created AsyncCosmosMemoryClient.
             top_k: Number of memories to retrieve in search.
             min_confidence: Minimum confidence score (0.0-1.0) for retrieved memories.
             memory_types: Types of memories to retrieve. Default: ["fact", "procedural"].
             context_prompt: Prompt to prepend to retrieved memories.
-            auto_extract: Enable automatic memory extraction after runs.
+            auto_extract: Enable automatic background memory extraction/summarization after
+                turn writes. When ``False`` the cadence thresholds are zeroed so nothing runs
+                automatically and callers drive processing via ``memory_client.process_now()``.
             processor_config: Optional processor configuration dict (e.g., extraction frequency).
 
         Raises:
@@ -137,6 +137,14 @@ class CosmosMemoryContextProvider(ContextProvider):
             for key, value in processor_config.items():
                 os.environ[key] = str(value)
 
+        # When auto_extract is disabled, zero the cadence thresholds so the toolkit's
+        # background auto-trigger never runs extraction/summarization on turn writes.
+        # Callers drive processing explicitly via ``memory_client.process_now(...)``.
+        if not auto_extract:
+            os.environ["FACT_EXTRACTION_EVERY_N"] = "0"
+            os.environ["THREAD_SUMMARY_EVERY_N"] = "0"
+            os.environ["USER_SUMMARY_EVERY_N"] = "0"
+
         # Initialize memory client if not provided
         if memory_client is None:
             # Load settings from environment if not provided
@@ -153,20 +161,31 @@ class CosmosMemoryContextProvider(ContextProvider):
             if not ai_foundry_endpoint:
                 raise ValueError("ai_foundry_endpoint must be provided or set via AI_FOUNDRY_ENDPOINT")
 
-            # Create Azure credential using the standard chain: EnvironmentCredential →
-            # ManagedIdentityCredential → AzureCliCredential → InteractiveBrowserCredential.
-            # This works seamlessly in production (via ManagedIdentity) and local dev (via az login).
-            if credential is None:
-                credential = DefaultAzureCredential()  # type: ignore
-
-            memory_client = AsyncCosmosMemoryClient(
-                cosmos_endpoint=cosmos_endpoint,
-                cosmos_database=cosmos_database,
-                ai_foundry_endpoint=ai_foundry_endpoint,
-                embedding_deployment_name=embedding_deployment_name,
-                chat_deployment_name=chat_deployment_name,
-                use_default_credential=True,
-            )
+            # Authentication: if the caller supplies a credential, wire it into both the Cosmos
+            # and AI Foundry clients and disable the toolkit's default-credential creation.
+            # Otherwise let the toolkit build a DefaultAzureCredential (EnvironmentCredential →
+            # ManagedIdentityCredential → AzureCliCredential → …), which it also owns and closes.
+            # This works in production (via ManagedIdentity) and local dev (via az login).
+            if credential is not None:
+                memory_client = AsyncCosmosMemoryClient(
+                    cosmos_endpoint=cosmos_endpoint,
+                    cosmos_database=cosmos_database,
+                    ai_foundry_endpoint=ai_foundry_endpoint,
+                    embedding_deployment_name=embedding_deployment_name,
+                    chat_deployment_name=chat_deployment_name,
+                    cosmos_credential=credential,
+                    ai_foundry_credential=credential,
+                    use_default_credential=False,
+                )
+            else:
+                memory_client = AsyncCosmosMemoryClient(
+                    cosmos_endpoint=cosmos_endpoint,
+                    cosmos_database=cosmos_database,
+                    ai_foundry_endpoint=ai_foundry_endpoint,
+                    embedding_deployment_name=embedding_deployment_name,
+                    chat_deployment_name=chat_deployment_name,
+                    use_default_credential=True,
+                )
             self._should_close_client = True
 
         self.memory_client = memory_client
@@ -328,37 +347,38 @@ class CosmosMemoryContextProvider(ContextProvider):
         thread_id = state.get("thread_id") or session.state.get("thread_id") or session.session_id or "default"
 
         try:
-            # Store input messages
+            # Store input messages (skip empty/whitespace-only content to avoid junk turns)
             for msg in context.input_messages:
-                if hasattr(msg, "role") and hasattr(msg, "text") and msg.text:
+                if hasattr(msg, "role") and hasattr(msg, "text") and msg.text and msg.text.strip():
                     role_value = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
                     if role_value in {"user", "assistant", "system"}:
                         await self.memory_client.add_cosmos(
                             user_id=user_id,
                             thread_id=thread_id,
                             role=self._ROLE_MAP.get(role_value, role_value),
-                            content=msg.text,
+                            content=msg.text.strip(),
                         )
 
-            # Store response messages
+            # Store response messages (skip empty/whitespace-only content)
             if context.response and context.response.messages:
                 for msg in context.response.messages:
-                    if hasattr(msg, "role") and hasattr(msg, "text") and msg.text:
+                    if hasattr(msg, "role") and hasattr(msg, "text") and msg.text and msg.text.strip():
                         role_value = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
                         if role_value in {"user", "assistant", "system"}:
                             await self.memory_client.add_cosmos(
                                 user_id=user_id,
                                 thread_id=thread_id,
                                 role=self._ROLE_MAP.get(role_value, role_value),
-                                content=msg.text,
+                                content=msg.text.strip(),
                             )
 
             # Auto-extraction and processing:
-            # The AsyncCosmosMemoryClient uses an InProcessProcessor that runs in the background
-            # and automatically extracts facts, generates summaries, and reconciles memories based on
-            # configured thresholds (FACT_EXTRACTION_EVERY_N, DEDUP_EVERY_N, etc.).
-            # This happens asynchronously after add_cosmos() completes, so no explicit process_now() call is needed.
-            # To disable auto-extraction, set auto_extract=False and call memory_client.process_now() manually.
+            # When auto_extract is True (default), add_cosmos() schedules cadence-aware background
+            # processing (fact extraction, summaries, reconciliation) based on the configured
+            # thresholds (FACT_EXTRACTION_EVERY_N, DEDUP_EVERY_N, etc.), so no explicit
+            # process_now() call is needed. When auto_extract is False, those thresholds were
+            # zeroed in __init__ so nothing runs automatically; call memory_client.process_now()
+            # to drive extraction manually.
 
         except Exception as e:
             logger.warning("Failed to store conversation turns: %s", e, exc_info=True)
@@ -380,11 +400,13 @@ class CosmosMemoryContextProvider(ContextProvider):
         for memory in memories:
             content = memory.get("content", "")
             memory_type = memory.get("memory_type", "")
-            confidence = memory.get("confidence", 0.0)
+            confidence = memory.get("confidence")
 
-            # Format: [Type] Content (confidence: X.XX)
-            if memory_type and confidence:
-                formatted.append(f"[{memory_type}] {content} (confidence: {confidence:.2f})")
+            # Format: [Type] Content (confidence: X.XX). Use an explicit None check so a
+            # confidence of 0.0 is still shown, and coerce to float in case the toolkit
+            # returns it as a string.
+            if memory_type and confidence is not None:
+                formatted.append(f"[{memory_type}] {content} (confidence: {float(confidence):.2f})")
             else:
                 formatted.append(content)
 

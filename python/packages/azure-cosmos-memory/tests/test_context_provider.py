@@ -66,15 +66,11 @@ class TestInit:
         assert provider.auto_extract is True
 
     def test_init_creates_client_when_none(self) -> None:
-        """When no client provided, creates AsyncCosmosMemoryClient with credentials."""
-        with (
-            patch(
-                "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
-            ) as mock_client_class,
-            patch("agent_framework_azure_cosmos_memory._context_provider.DefaultAzureCredential") as mock_cred_class,
-        ):
+        """When no client provided, creates AsyncCosmosMemoryClient with default credential."""
+        with patch(
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+        ) as mock_client_class:
             mock_client_class.return_value = AsyncMock()
-            mock_cred_class.return_value = MagicMock()
 
             provider = CosmosMemoryContextProvider(
                 cosmos_endpoint="https://test.documents.azure.com:443/",
@@ -83,7 +79,30 @@ class TestInit:
             )
 
             mock_client_class.assert_called_once()
+            # With no explicit credential, the toolkit builds its own DefaultAzureCredential.
+            _, kwargs = mock_client_class.call_args
+            assert kwargs["use_default_credential"] is True
+            assert "cosmos_credential" not in kwargs
             assert provider._should_close_client is True
+
+    def test_init_wires_explicit_credential(self) -> None:
+        """An explicit credential is passed to both Cosmos and AI Foundry, disabling default."""
+        with patch(
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+        ) as mock_client_class:
+            mock_client_class.return_value = AsyncMock()
+            sentinel = MagicMock()
+
+            CosmosMemoryContextProvider(
+                cosmos_endpoint="https://test.documents.azure.com:443/",
+                ai_foundry_endpoint="https://test.ai.azure.com",
+                credential=sentinel,
+            )
+
+            _, kwargs = mock_client_class.call_args
+            assert kwargs["cosmos_credential"] is sentinel
+            assert kwargs["ai_foundry_credential"] is sentinel
+            assert kwargs["use_default_credential"] is False
 
     def test_init_raises_without_endpoints(self) -> None:
         """Raises ValueError when endpoints not provided."""
@@ -110,6 +129,23 @@ class TestInit:
                 os.environ["FACT_EXTRACTION_EVERY_N"] = original_value
             else:
                 os.environ.pop("FACT_EXTRACTION_EVERY_N", None)
+
+    def test_auto_extract_false_zeroes_extraction_cadence(self, mock_memory_client: AsyncMock) -> None:
+        """auto_extract=False disables background extraction by zeroing the cadence thresholds."""
+        import os
+
+        keys = ("FACT_EXTRACTION_EVERY_N", "THREAD_SUMMARY_EVERY_N", "USER_SUMMARY_EVERY_N")
+        originals = {k: os.environ.get(k) for k in keys}
+        try:
+            CosmosMemoryContextProvider(memory_client=mock_memory_client, auto_extract=False)
+            for k in keys:
+                assert os.environ.get(k) == "0"
+        finally:
+            for k, v in originals.items():
+                if v is not None:
+                    os.environ[k] = v
+                else:
+                    os.environ.pop(k, None)
 
     def test_init_raises_when_memory_toolkit_not_available(self) -> None:
         """Raises ImportError when azure-cosmos-agent-memory not installed."""
@@ -419,6 +455,28 @@ class TestAfterRun:
         call_kwargs = mock_memory_client.add_cosmos.await_args_list[0].kwargs
         assert call_kwargs["content"] == "Valid message"
 
+    async def test_skips_whitespace_only_messages(self, mock_memory_client: AsyncMock) -> None:
+        """Whitespace-only turns are skipped and stored content is stripped."""
+        provider = CosmosMemoryContextProvider(memory_client=mock_memory_client)
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(
+            input_messages=[
+                Message(role="user", contents=["   "]),
+                Message(role="user", contents=["  Trimmed message  "]),
+            ],
+            session_id="s1",
+        )
+        ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["\n\t "])])
+
+        await provider.after_run(
+            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore
+
+        # Whitespace-only input and the whitespace-only response are both skipped.
+        assert mock_memory_client.add_cosmos.await_count == 1
+        call_kwargs = mock_memory_client.add_cosmos.await_args_list[0].kwargs
+        assert call_kwargs["content"] == "Trimmed message"
+
     async def test_storage_failure_logs_warning(self, mock_memory_client: AsyncMock, caplog: pytest.LogCaptureFixture) -> None:
         """Storage failures are logged but don't raise."""
         mock_memory_client.add_cosmos.side_effect = Exception("Storage failed")
@@ -463,6 +521,24 @@ class TestFormatMemories:
 
         assert result == "Some memory"
 
+    def test_formats_with_zero_confidence(self, mock_memory_client: AsyncMock) -> None:
+        """A confidence of 0.0 is still shown (not treated as missing metadata)."""
+        provider = CosmosMemoryContextProvider(memory_client=mock_memory_client)
+        memories = [{"content": "Edge fact", "memory_type": "fact", "confidence": 0.0}]
+
+        result = provider._format_memories(memories)
+
+        assert result == "[fact] Edge fact (confidence: 0.00)"
+
+    def test_formats_with_string_confidence(self, mock_memory_client: AsyncMock) -> None:
+        """A string confidence is coerced to float rather than raising."""
+        provider = CosmosMemoryContextProvider(memory_client=mock_memory_client)
+        memories = [{"content": "Str fact", "memory_type": "fact", "confidence": "0.5"}]
+
+        result = provider._format_memories(memories)
+
+        assert result == "[fact] Str fact (confidence: 0.50)"
+
 
 # -- Context manager tests -----------------------------------------------------
 
@@ -473,12 +549,9 @@ class TestContextManager:
     async def test_enters_and_exits_client(self, mock_memory_client: AsyncMock) -> None:
         """Enters and exits the memory client when provider owns it."""
         # When provider creates the client, it should manage its lifecycle
-        with (
-            patch(
-                "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
-            ) as mock_client_class,
-            patch("agent_framework_azure_cosmos_memory._context_provider.DefaultAzureCredential"),
-        ):
+        with patch(
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+        ) as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -560,14 +633,12 @@ class TestFlush:
         provider = CosmosMemoryContextProvider(memory_client=mock_memory_client)
         # Should not raise.
         await provider.flush()
+
     async def test_only_closes_owned_client(self) -> None:
         """Only closes client if provider created it."""
-        with (
-            patch(
-                "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
-            ) as mock_client_class,
-            patch("agent_framework_azure_cosmos_memory._context_provider.DefaultAzureCredential"),
-        ):
+        with patch(
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+        ) as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 

@@ -22,11 +22,10 @@ from typing import Any
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
-from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider
-from azure.cosmos.agent_memory.aio import AsyncCosmosMemoryClient
 from azure.identity.aio import DefaultAzureCredential
 from dotenv import load_dotenv
 
+from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider
 
 # Custom memory extraction rubric - defines WHAT gets remembered and HOW
 CUSTOM_EXTRACTION_RUBRIC = """You are a memory extraction specialist analyzing conversation transcripts.
