@@ -398,6 +398,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         prefix: str = "",
         options: ResponsesServerOptions | None = None,
         store: ResponseProviderProtocol | None = None,
+        steerable_conversations: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
@@ -405,8 +406,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         Args:
             agent: The agent to handle responses for.
             prefix: The URL prefix for the server.
-            options: Optional server options.
+            options: Optional server options. When provided, ``steerable_conversations``
+                is ignored in favour of whatever is set in the supplied options object.
             store: Optional response store.
+            steerable_conversations: When ``True``, concurrent turns on the same
+                conversation chain are queued rather than rejected with HTTP 409
+                ``conversation_locked``. The running handler is signalled via
+                ``cancellation_signal`` (``context.client_cancelled`` will be ``False``
+                to distinguish steering from a real client cancel), and the queued turn
+                is delivered once the current turn reaches a terminal event.
+                Requires ``store=True`` requests; composable with
+                ``resilient_background``. Defaults to ``False``.
             **kwargs: Additional keyword arguments.
 
         Note:
@@ -416,6 +426,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                in memory, because the hosting environment may get deactivated between
                requests, and any in-memory context would be lost.
         """
+        # When steerable_conversations is requested but no explicit options were
+        # provided, create a minimal options object to carry the flag.
+        if options is None and steerable_conversations:
+            options = ResponsesServerOptions(steerable_conversations=True)
+
         super().__init__(prefix=prefix, options=options, store=store, **kwargs)
 
         for provider in getattr(agent, "context_providers", []):
@@ -526,7 +541,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         context: ResponseContext,
         cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
-        """Handle the creation of a response."""
+        """Handle the creation of a response.
+
+        This must be an async generator (using ``yield``) rather than an
+        ``async def`` that returns an ``AsyncIterable``.  The b8 agentserver SDK
+        passes the raw result of calling this function directly to
+        ``_intercept_checkpoints``, which does ``async for raw in handler_iterator``
+        without first normalising coroutines.
+        """
         # Fail fast if the service is on protocol v1.0.0
         if self.config.is_hosted and context.platform_context.call_id is None:
             raise RuntimeError(
@@ -537,16 +559,31 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         if self._is_workflow_agent:
             # Workflow agents are handled differently because they require checkpoint restoration
-            return self._handle_inner_workflow(request, context)
-        return self._handle_inner_agent(request, context)
+            async for event in self._handle_inner_workflow(request, context, cancellation_signal):
+                yield event
+        else:
+            async for event in self._handle_inner_agent(request, context, cancellation_signal):
+                yield event
 
     async def _handle_inner_agent(
         self,
         request: CreateResponse,
         context: ResponseContext,
+        cancellation_signal: asyncio.Event | None = None,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response for a regular (non-workflow) agent."""
-        response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
+        # Seed the response event stream from the persisted snapshot when recovering
+        # from a crash, so the client can resume from where the previous attempt left off.
+        if bool(getattr(context, "is_recovery", False)):
+            persisted_response = getattr(context, "persisted_response", None)
+            if persisted_response is not None:
+                response_event_stream = ResponseEventStream(
+                    response=persisted_response, response_id=context.response_id
+                )
+            else:
+                response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
+        else:
+            response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
@@ -617,6 +654,27 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     raise RuntimeError("Streaming tracker was not initialized.")
                 # Run the agent in streaming mode
                 async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
+                    # Cooperative exit on shutdown: defer to crash recovery when durable.
+                    shutdown: asyncio.Event | None = getattr(context, "shutdown", None)
+                    if shutdown is not None and shutdown.is_set():
+                        for event in tracker.close():
+                            yield event
+                        await context.exit_for_recovery()  # raises; re-invoked on next start
+                    # Cooperative exit on cancellation (steering pressure or client cancel).
+                    if cancellation_signal is not None and cancellation_signal.is_set():
+                        for event in tracker.close():
+                            yield event
+                        # Emit a terminal so the framework can finalise this turn correctly.
+                        # The framework overrides completed → cancelled when
+                        # context.client_cancelled is True; for steering pressure
+                        # (client_cancelled=False) completed is the right terminal.
+                        client_cancelled = bool(getattr(context, "client_cancelled", False))
+                        logger.debug(
+                            "Response handler exiting early: %s",
+                            "client cancelled" if client_cancelled else "steering pressure",
+                        )
+                        yield response_event_stream.emit_completed()
+                        return
                     for content in update.contents:
                         for event in tracker.handle(content):
                             yield event
@@ -642,6 +700,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self,
         request: CreateResponse,
         context: ResponseContext,
+        cancellation_signal: asyncio.Event | None = None,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response for a workflow agent."""
         response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
@@ -779,6 +838,23 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 stream=True,
                 checkpoint_storage=write_storage,
             ):
+                # Cooperative exit on shutdown: defer to crash recovery when durable.
+                shutdown: asyncio.Event | None = getattr(context, "shutdown", None)
+                if shutdown is not None and shutdown.is_set():
+                    for event in tracker.close():
+                        yield event
+                    await context.exit_for_recovery()  # raises; re-invoked on next start
+                # Cooperative exit on cancellation (steering pressure or client cancel).
+                if cancellation_signal is not None and cancellation_signal.is_set():
+                    for event in tracker.close():
+                        yield event
+                    client_cancelled = bool(getattr(context, "client_cancelled", False))
+                    logger.debug(
+                        "Workflow response handler exiting early: %s",
+                        "client cancelled" if client_cancelled else "steering pressure",
+                    )
+                    yield response_event_stream.emit_completed()
+                    return
                 for content in update.contents:
                     for event in tracker.handle(content):
                         yield event
