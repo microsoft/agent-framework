@@ -1051,6 +1051,10 @@ class RawGeminiChatClient(
             details["output_token_count"] = v
         if (v := usage.total_token_count) is not None:
             details["total_token_count"] = v
+        if (v := usage.cached_content_token_count) is not None:
+            details["cache_read_input_token_count"] = v
+        if (v := usage.thoughts_token_count) is not None:
+            details["reasoning_output_token_count"] = v
         return details or None
 
     def _map_finish_reason(self, reason: str | None) -> FinishReasonLiteral | None:

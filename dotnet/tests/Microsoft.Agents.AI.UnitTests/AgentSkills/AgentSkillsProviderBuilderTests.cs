@@ -55,7 +55,7 @@ public sealed class AgentSkillsProviderBuilderTests
         var builder = new AgentSkillsProviderBuilder();
 
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => builder.UseSource(null!));
+        Assert.Throws<ArgumentNullException>(() => builder.UseSource((AgentSkillsSource)null!));
     }
 
     [Fact]
@@ -111,25 +111,6 @@ public sealed class AgentSkillsProviderBuilderTests
     }
 
     [Fact]
-    public async Task Build_WithCacheDisabled_ReloadsOnEachCallAsync()
-    {
-        // Arrange
-        var countingSource = new CountingSource(
-            new TestAgentSkill("skill-a", "A", "Instructions."));
-        var provider = new AgentSkillsProviderBuilder()
-            .UseSource(countingSource)
-            .UseOptions(o => o.DisableCaching = true)
-            .Build();
-
-        // Act
-        await provider.InvokingAsync(this.CreateInvokingContext(), CancellationToken.None);
-        await provider.InvokingAsync(this.CreateInvokingContext(), CancellationToken.None);
-
-        // Assert — inner source should be called each time (dedup still calls through)
-        Assert.True(countingSource.CallCount >= 2);
-    }
-
-    [Fact]
     public async Task Build_WithCacheEnabled_CachesSkillsAsync()
     {
         // Arrange
@@ -148,6 +129,26 @@ public sealed class AgentSkillsProviderBuilderTests
     }
 
     [Fact]
+    public async Task Build_WithCacheDisabled_InvokesSourceOnEachCallAsync()
+    {
+        // Arrange
+        var countingSource = new CountingSource(
+            new TestAgentSkill("skill-a", "A", "Instructions."));
+        var provider = new AgentSkillsProviderBuilder()
+            .UseSource(countingSource)
+            .DisableCaching()
+            .Build();
+
+        // Act
+        await provider.InvokingAsync(this.CreateInvokingContext(), CancellationToken.None);
+        await provider.InvokingAsync(this.CreateInvokingContext(), CancellationToken.None);
+        await provider.InvokingAsync(this.CreateInvokingContext(), CancellationToken.None);
+
+        // Assert — without caching, each call should hit the inner source
+        Assert.Equal(3, countingSource.CallCount);
+    }
+
+    [Fact]
     public void Build_FluentChaining_ReturnsSameBuilder()
     {
         // Arrange
@@ -158,8 +159,7 @@ public sealed class AgentSkillsProviderBuilderTests
         // Act — all fluent methods should return the same builder
         var result = builder
             .UseSource(source)
-            .UseScriptApproval(false)
-            .UsePromptTemplate("Skills:\n{skills}\n{resource_instructions}\n{script_instructions}");
+            .UsePromptTemplate("Skills:\n{skills}");
 
         // Assert
         Assert.Same(builder, result);
@@ -175,7 +175,7 @@ public sealed class AgentSkillsProviderBuilderTests
         // Act — UseOptions should not throw and successfully configure
         var provider = new AgentSkillsProviderBuilder()
             .UseSource(source)
-            .UseOptions(opts => opts.ScriptApproval = true)
+            .UseOptions(opts => opts.IncludeDetailedErrors = true)
             .Build();
 
         // Assert
