@@ -18,7 +18,7 @@ public sealed class AgentSkillsSourceContext
     /// </summary>
     /// <param name="agent">The agent requesting skills.</param>
     /// <param name="session">The session associated with the agent invocation, if any.</param>
-    internal AgentSkillsSourceContext(AIAgent agent, AgentSession? session)
+    public AgentSkillsSourceContext(AIAgent agent, AgentSession? session)
     {
         this.Agent = Throw.IfNull(agent);
         this.Session = session;

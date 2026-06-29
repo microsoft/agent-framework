@@ -19,7 +19,7 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 internal sealed class CachingAgentSkillsSource : DelegatingAgentSkillsSource
 {
-    private const string SharedCacheKey = "";
+    private const string SharedCacheKey = "CachingAgentSkillsSource-SharedCacheKey";
 
     private readonly ConcurrentDictionary<string, Task<IList<AgentSkill>>> _cachedTasks = new(StringComparer.Ordinal);
     private readonly CachingAgentSkillsSourceOptions? _options;

@@ -172,6 +172,29 @@ public sealed class CachingAgentSkillsSourceTests
         Assert.Equal(1, inner.CallCount);
     }
 
+    [Fact]
+    public async Task GetSkillsAsync_EmptyStringIsolationKey_IsolatedFromSharedCacheAsync()
+    {
+        // Arrange
+        string? isolationKey = null;
+        var inner = new CountingSkillsSource(
+        [
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+        ]);
+        var source = new CachingAgentSkillsSource(
+            inner,
+            new CachingAgentSkillsSourceOptions { CacheIsolationKeySelector = _ => isolationKey });
+        var context = TestAgentSkillsSourceContextFactory.Create();
+
+        // Act
+        await source.GetSkillsAsync(context, CancellationToken.None); // shared bucket
+        isolationKey = string.Empty;
+        await source.GetSkillsAsync(context, CancellationToken.None); // distinct empty-string bucket
+
+        // Assert
+        Assert.Equal(2, inner.CallCount);
+    }
+
     private sealed class CountingSkillsSource : AgentSkillsSource
     {
         private readonly IList<AgentSkill> _skills;
