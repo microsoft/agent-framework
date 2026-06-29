@@ -944,7 +944,12 @@ def _emit_text_reasoning(content: Content, flow: FlowState | None = None) -> lis
     if not text and content.protected_data is None:
         return []
 
-    message_id = content.id or generate_event_id()
+    if content.id:
+        message_id = content.id
+    elif flow is not None and flow.reasoning_message_id:
+        message_id = flow.reasoning_message_id
+    else:
+        message_id = generate_event_id()
 
     events: list[BaseEvent] = []
 
