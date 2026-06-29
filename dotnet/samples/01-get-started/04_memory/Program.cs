@@ -22,24 +22,34 @@ var model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 var projectClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential());
 
-// Get the underlying IChatClient to use for the memory component.
-// The memory provider needs direct IChatClient access for structured extraction.
-IChatClient chatClient = projectClient
-    .AsAIAgent(new ChatClientAgentOptions { ChatOptions = new() { ModelId = model } })
-    .GetService<IChatClient>()
-    ?? throw new InvalidOperationException("Could not retrieve IChatClient from AIProjectClient agent.");
+// Create a separate IChatClient for the memory component to use for structured extraction.
+// The memory component calls the model with a ResponseFormat (JSON schema) to extract user info.
+// Using a dedicated client here avoids mixing side-channel extraction calls with the agent's
+// conversation history, and avoids the chicken-and-egg problem of needing an IChatClient
+// before the main agent is constructed.
+IChatClient extractionClient =
+    new AIProjectClient(
+        new Uri(endpoint),
+        new DefaultAzureCredential())
+    .GetProjectOpenAIClient()
+    .GetResponsesClient()
+    .AsIChatClient(model);
 
-// Create the agent and provide a factory to add our custom memory component to
-// all sessions created by the agent. Here each new memory component will have its own
-// user info object, so each session will have its own memory.
+// Create the agent with instructions and the custom memory context provider.
+// The memory component is attached to all sessions created by the agent. Here each new memory
+// component will have its own user info object, so each session will have its own memory.
 // In real world applications/services, where the user info would be persisted in a database,
 // and preferably shared between multiple sessions used by the same user, ensure that the
 // factory reads the user id from the current context and scopes the memory component
 // and its storage to that user id.
-AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
+AIAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions
 {
-    ChatOptions = new() { Instructions = "You are a friendly assistant. Always address the user by their name." },
-    AIContextProviders = [new UserInfoMemory(chatClient)]
+    ChatOptions = new ChatOptions
+    {
+        ModelId = model,
+        Instructions = "You are a friendly assistant. Always address the user by their name.",
+    },
+    AIContextProviders = [new UserInfoMemory(extractionClient)]
 });
 
 // Create a new session for the conversation.
@@ -118,10 +128,17 @@ namespace SampleApp
             // Try and extract the user name and age from the message if we don't have it already and it's a user message.
             if ((userInfo.UserName is null || userInfo.UserAge is null) && context.RequestMessages.Any(x => x.Role == ChatRole.User))
             {
+                // The Foundry Responses API requires the model name in the request body.
+                // Retrieve it from the client's metadata so callers don't need to pass it separately.
+                var modelId = this._chatClient.GetService<ChatClientMetadata>()?.DefaultModelId
+                    ?? throw new InvalidOperationException(
+                        "Could not retrieve DefaultModelId from the extraction IChatClient. " +
+                        "Ensure the client was created with a model ID (e.g., via projectClient.AsAIAgent(...)).");
                 var result = await this._chatClient.GetResponseAsync<UserInfo>(
                     context.RequestMessages,
                     new ChatOptions()
                     {
+                        ModelId = modelId,
                         Instructions = "Extract the user's name and age from the message if present. If not present return nulls."
                     },
                     cancellationToken: cancellationToken);

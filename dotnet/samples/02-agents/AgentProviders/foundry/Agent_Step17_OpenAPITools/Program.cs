@@ -12,7 +12,7 @@ using Microsoft.Extensions.AI;
 string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
-const string AgentInstructions = "You are a helpful assistant that can use the countries API to retrieve information about countries by their currency code.";
+const string AgentInstructions = "You are a helpful assistant that can use the countries API to retrieve information about countries by their currency code. When calling the API, always pass fields=name to limit the response to just country names.";
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
@@ -55,6 +55,15 @@ OpenApiFunctionDefinition CreateOpenAPIFunctionDefinition()
             "in": "path",
             "description": "Currency code (e.g., USD, EUR, GBP)",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "description": "Comma-separated list of fields to include in the response (e.g., name,currencies)",
+            "required": false,
             "schema": {
               "type": "string"
             }

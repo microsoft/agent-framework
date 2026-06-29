@@ -202,6 +202,42 @@ def test_create_harness_agent_skills_paths_adds_provider() -> None:
     assert SkillsProvider in provider_types
 
 
+def test_create_harness_agent_skills_paths_single_str() -> None:
+    """skills_paths should accept a single str (not wrapped in a list)."""
+    agent = create_harness_agent(
+        client=_FakeChatClient(),
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        skills_paths="./test-skills",
+    )
+    provider_types = [type(p) for p in agent.context_providers]
+    assert SkillsProvider in provider_types
+
+
+def test_create_harness_agent_skills_paths_single_path(tmp_path: Path) -> None:
+    """skills_paths should accept a single pathlib.Path (not wrapped in a list)."""
+    agent = create_harness_agent(
+        client=_FakeChatClient(),
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        skills_paths=tmp_path,
+    )
+    provider_types = [type(p) for p in agent.context_providers]
+    assert SkillsProvider in provider_types
+
+
+def test_create_harness_agent_skills_paths_sequence_of_paths(tmp_path: Path) -> None:
+    """skills_paths should accept a sequence of pathlib.Path objects."""
+    agent = create_harness_agent(
+        client=_FakeChatClient(),
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        skills_paths=[tmp_path, tmp_path / "sub"],
+    )
+    provider_types = [type(p) for p in agent.context_providers]
+    assert SkillsProvider in provider_types
+
+
 def test_create_harness_agent_disable_compaction() -> None:
     """disable_compaction=True should exclude CompactionProvider."""
     agent = create_harness_agent(

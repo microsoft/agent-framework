@@ -2,23 +2,25 @@
 
 #pragma warning disable CA1869 // Cache and reuse 'JsonSerializerOptions' instances
 
-// This sample shows how to create and use a simple AI agent with custom ChatHistoryProvider that stores chat history in a custom storage location.
-// The state of the custom ChatHistoryProvider (SessionDbKey) is stored in the AgentSession's StateBag, so that when the session is resumed later,
-// the chat history can be retrieved from the custom storage location.
+// Third-Party Chat History Storage — Custom ChatHistoryProvider
+//
+// This sample shows how to use a custom ChatHistoryProvider that stores
+// chat history in an external location. The provider's state (SessionDbKey)
+// is stored in AgentSession.StateBag so conversations can be resumed later.
 
 using System.Text.Json;
-using Azure.AI.OpenAI;
+using Azure.AI.Extensions.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.VectorData;
 using Microsoft.SemanticKernel.Connectors.InMemory;
-using OpenAI.Chat;
 using SampleApp;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // Create a vector store to store the chat messages in.
 // Replace this with a vector store implementation of your choice if you want to persist the chat history to disk.
@@ -28,16 +30,18 @@ VectorStore vectorStore = new InMemoryVectorStore();
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(
+AIAgent agent = new AIProjectClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
+    .GetProjectOpenAIClient()
+    .GetProjectResponsesClient()
+    .AsIChatClientWithStoredOutputDisabled(deploymentName)
     .AsAIAgent(new ChatClientAgentOptions
     {
-        ChatOptions = new() { Instructions = "You are good at telling jokes." },
+        ChatOptions = new() { ModelId = deploymentName, Instructions = "You are good at telling jokes." },
         Name = "Joker",
         // Create a new ChatHistoryProvider for this agent that stores chat history in a vector store.
-        ChatHistoryProvider = new VectorChatHistoryProvider(vectorStore)
+        ChatHistoryProvider = new VectorChatHistoryProvider(vectorStore),
     });
 
 // Start a new session for the agent conversation.

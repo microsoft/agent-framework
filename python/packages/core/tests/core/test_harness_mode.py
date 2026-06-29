@@ -79,6 +79,50 @@ def test_agent_mode_context_provider_validates_configuration_and_is_experimental
     assert ".. warning:: Experimental" in set_agent_mode.__doc__
 
 
+async def test_external_read_with_provider_config_preserves_nondefault_mode(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A pre-run external mode read must honor the provider's configured default, not the built-in one.
+
+    Regression test for the harness console bug where ``configure_run_options`` read the mode with a
+    bare ``get_agent_mode(session)`` before the agent ran. Because ``get_agent_mode`` persists the
+    resolved default into session state, the built-in ``plan`` default was stored and the provider —
+    configured with ``default_mode="execute"`` — then read back ``plan``, so the agent ran in plan
+    mode while the console showed execute. Threading the provider's configuration into the read keeps
+    the two in sync.
+    """
+    provider = AgentModeProvider(default_mode="execute")
+
+    # A bare read (the original buggy call) would resolve and persist the built-in ``plan`` default,
+    # which does not match the provider's configured ``execute`` default.
+    poisoned_session = AgentSession(session_id="poisoned")
+    assert get_agent_mode(poisoned_session) == "plan"
+    agent = Agent(client=chat_client_base, context_providers=[provider])
+    _, poisoned_options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=poisoned_session,
+        input_messages=[Message(role="user", contents=["Go"])],
+    )
+    assert "You are currently operating in the plan mode." in poisoned_options["instructions"]
+
+    # Reading with the provider's own configuration resolves and persists ``execute``, so the
+    # provider injects execute-mode instructions on the run.
+    session = AgentSession(session_id="configured")
+    assert (
+        get_agent_mode(
+            session,
+            source_id=provider.source_id,
+            default_mode=provider.default_mode,
+            available_modes=provider.available_modes,
+        )
+        == "execute"
+    )
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Go"])],
+    )
+    assert "You are currently operating in the execute mode." in options["instructions"]
+
+
 async def test_agent_mode_context_provider_normalizes_custom_modes(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
