@@ -171,13 +171,10 @@ This sample shows **real-world usage** with Agent Framework. It demonstrates:
    ```bash
    pip install -e ".[dev,samples]"
    ```
-   Or install separately:
+   Or install the extras separately:
    ```bash
    pip install -e ".[dev]"
    pip install -e ".[samples]"
-   ``` with sample dependencies:
-   ```bash
-   pip install -e ".[dev,samples]"
    ```
 
 2. **Azure Resources** - You'll need:

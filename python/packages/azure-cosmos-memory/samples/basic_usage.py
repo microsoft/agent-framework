@@ -21,8 +21,9 @@ import os
 
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, SessionContext
-from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider
 from azure.identity.aio import DefaultAzureCredential
+
+from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider
 
 
 async def basic_example() -> None:
