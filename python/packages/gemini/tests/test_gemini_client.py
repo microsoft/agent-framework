@@ -800,20 +800,35 @@ def test_non_base64_data_uri_is_skipped(caplog: pytest.LogCaptureFixture) -> Non
 
 def test_data_uri_media_type_parameters_are_stripped() -> None:
     """Parameters in a data URI media type (e.g. charset) are dropped before reaching Gemini."""
-    import base64
-
     client, _ = _make_gemini_client()
-    encoded = base64.b64encode(b"hello").decode()
-    content = Content.from_text("placeholder")
-    content.type = "data"  # type: ignore[assignment]
-    content.uri = f"data:text/plain;charset=utf-8;base64,{encoded}"
-    content.media_type = None
+    content = Content.from_uri(uri="data:text/plain;charset=utf-8;base64,aGVsbG8=")
+    assert content.type == "data"
 
     parts = client._convert_message_contents([content], {})
 
     assert len(parts) == 1
     assert parts[0].inline_data is not None
     assert parts[0].inline_data.mime_type == "text/plain"
+
+
+def test_data_uri_media_type_detected_from_bytes_when_missing() -> None:
+    """When a data URI has no media_type, it is detected from the decoded bytes' magic bytes."""
+    import base64
+
+    client, _ = _make_gemini_client()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    content = Content.from_text("placeholder")
+    content.type = "data"  # type: ignore[assignment]
+    content.uri = f"data:;base64,{base64.b64encode(png).decode()}"
+    content.media_type = None
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].inline_data is not None
+    assert parts[0].inline_data.mime_type == "image/png"
 
 
 def test_external_uri_without_inferable_media_type_is_passed_through(caplog: pytest.LogCaptureFixture) -> None:

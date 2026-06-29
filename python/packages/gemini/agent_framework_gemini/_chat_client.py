@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import sys
@@ -25,10 +24,13 @@ from agent_framework import (
     Message,
     ResponseStream,
     UsageDetails,
+    detect_media_type_from_base64,
     validate_tool_mode,
 )
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent
+from agent_framework._types import _get_data_bytes  # type: ignore[reportPrivateUsage]
+from agent_framework.exceptions import ContentError
 from agent_framework.observability import ChatTelemetryLayer
 from google import genai
 from google.auth.credentials import Credentials
@@ -706,18 +708,17 @@ class RawGeminiChatClient(
             return None
 
         if uri.startswith("data:"):
-            if ";base64," not in uri:
-                logger.warning("Skipping data content for Gemini: data URI is not base64-encoded")
+            try:
+                raw_bytes = _get_data_bytes(content)
+            except ContentError:
+                logger.warning("Skipping data content for Gemini: data URI is not valid base64")
                 return None
-            header, encoded = uri.split(";base64,", 1)
-            mime_type = content.media_type or header[len("data:") :].split(";")[0] or None
+            if not raw_bytes:
+                logger.warning("Skipping data content for Gemini: no data found in URI")
+                return None
+            mime_type = content.media_type or detect_media_type_from_base64(data_bytes=raw_bytes)
             if not mime_type:
                 logger.warning("Skipping data content for Gemini: missing media_type")
-                return None
-            try:
-                raw_bytes = base64.b64decode(encoded)
-            except Exception:
-                logger.warning("Skipping data content for Gemini: failed to decode base64 data")
                 return None
             return types.Part.from_bytes(data=raw_bytes, mime_type=mime_type)
 
