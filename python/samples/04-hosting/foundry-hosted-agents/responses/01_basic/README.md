@@ -14,6 +14,35 @@ See [main.py](main.py) for the full implementation.
 
 The agent is hosted using the [Agent Framework](https://github.com/microsoft/agent-framework) with the `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
 
+### Durability behavior for background requests
+
+When deployed to a hosted Foundry environment, `ResponsesHostServer` automatically enables crash recovery for background requests (`resilient_background=True`). If the server process crashes while handling a background request, the Foundry platform automatically re-invokes the handler on the next process start without the client needing to retry. Persisted SSE events are replayed to clients that reconnect after the crash.
+
+This is the default in hosted environments because it provides better availability at no extra cost to the agent author.
+
+**Opting out:** if your agent makes non-idempotent external calls that must not be repeated on crash (and you prefer fail-fast semantics over automatic retry), pass explicit `options` to disable crash recovery:
+
+```python
+from azure.ai.agentserver.responses import ResponsesServerOptions
+
+server = ResponsesHostServer(
+    agent,
+    options=ResponsesServerOptions(resilient_background=False),
+)
+```
+
+With `resilient_background=False`, a crash during a background request marks the response as `failed` instead of re-invoking the handler. The client receives the failed status and is responsible for retrying if desired.
+
+### Steerable conversations
+
+To enable steerable conversations, pass `steerable_conversations=True`:
+
+```python
+server = ResponsesHostServer(agent, steerable_conversations=True)
+```
+
+With steering enabled, when a client sends a new turn while the current one is still in-progress, the new turn is queued and the running handler receives a cancellation signal instead of the client receiving HTTP 409 `conversation_locked`. Once the current turn reaches a terminal event, the queued turn runs with `context.is_steered_turn=True`. This provides a better interactive experience for long-running streaming responses.
+
 ## Running the Agent Host
 
 Follow the instructions in the [Running the Agent Host Locally](../../README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.
@@ -37,6 +66,17 @@ To have a multi-turn conversation with the agent, include the previous response 
 ```bash
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "How are you?", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID"}'
 ```
+
+### Background requests
+
+To send a background request that benefits from crash recovery, include `"background": true` in the request body:
+
+```bash
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
+  -d '{"input": "Summarize the latest news", "background": true}'
+```
+
+The server responds immediately with a response ID. You can poll the response status or stream the result separately.
 
 ## Deploying the Agent to Foundry
 

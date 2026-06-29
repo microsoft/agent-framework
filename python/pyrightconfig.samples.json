@@ -9,7 +9,14 @@
         "**/05-end-to-end/**",
         "**/harness/**",
         "**/agent_with_foundry_tracing.py",
-        "**/azure_responses_client_with_foundry.py"
+        "**/azure_responses_client_with_foundry.py",
+        "**/monty_code_act.py",
+        "**/monty_code_interpreter.py",
+        "**/monty_code_interpreter_manual_wiring.py",
+        "**/11_monty_codeact/**",
+        "**/local_shell_with_allowlist.py",
+        "**/local_shell_with_environment_provider.py",
+        "**/client_with_local_shell.py"
     ],
     "typeCheckingMode": "basic",
     "reportMissingImports": "error",
