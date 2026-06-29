@@ -55,7 +55,10 @@ def _build_approved_tool_roundtrip(
     return function_call, approval_request, approval_response
 
 
-def _force_blank_tool_choice_none_fallback(chat_client_base: Any) -> None:
+def _force_blank_tool_choice_none_fallback(
+    chat_client_base: Any,
+    final_contents: Sequence[Content] | None = None,
+) -> None:
     original_get_non_streaming_response = chat_client_base._get_non_streaming_response
     original_get_streaming_response = chat_client_base._get_streaming_response
 
@@ -66,7 +69,7 @@ def _force_blank_tool_choice_none_fallback(chat_client_base: Any) -> None:
         **kwargs: Any,
     ) -> ChatResponse:
         if options.get("tool_choice") == "none":
-            return ChatResponse(messages=Message(role="assistant", contents=[]))
+            return ChatResponse(messages=Message(role="assistant", contents=list(final_contents or [])))
         return await original_get_non_streaming_response(messages=messages, options=options, **kwargs)
 
     def _get_streaming_response(
@@ -1242,6 +1245,43 @@ async def test_max_iterations_blank_final_fallback_synthesizes_message(chat_clie
     assert last_msg.role == "assistant"
     assert last_msg.text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
     assert not any(content.type == "function_call" for content in last_msg.contents)
+
+
+async def test_max_iterations_reasoning_only_final_fallback_synthesizes_message(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Reasoning-only provider responses after max_iterations should not suppress the fallback."""
+    _force_blank_tool_choice_none_fallback(
+        chat_client_base,
+        final_contents=[Content.from_text_reasoning(text="thinking")],
+    )
+    exec_counter = 0
+
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_1", name="test_function", arguments='{"arg1": "v1"}')
+                ],
+            )
+        ),
+    ]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [ai_func]},
+    )
+
+    assert exec_counter == 1
+    assert response.messages[-1].text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
 
 
 async def test_max_iterations_preserves_all_fcc_messages(chat_client_base: SupportsChatGetResponse):
@@ -3044,8 +3084,45 @@ async def test_streaming_max_iterations_blank_final_fallback_synthesizes_update(
 
     updates = []
     async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]
-        "hello",
+        [Message(role="user", contents=["hello"])],
         options={"tool_choice": "auto", "tools": [ai_func]},
+        stream=True,
+    ):
+        updates.append(update)
+
+    assert exec_counter == 1
+    assert updates[-1].role == "assistant"
+    assert updates[-1].text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
+
+
+@pytest.mark.parametrize("max_iterations", [10])
+async def test_streaming_max_function_calls_blank_final_fallback_synthesizes_update(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Blank streaming provider responses after max_function_calls should emit a final text update."""
+    _force_blank_tool_choice_none_fallback(chat_client_base)
+    exec_counter = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Value for {key}"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    updates = []
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]
+        [Message(role="user", contents=["look up key"])],
+        options={"tool_choice": "auto", "tools": [lookup_func]},
         stream=True,
     ):
         updates.append(update)

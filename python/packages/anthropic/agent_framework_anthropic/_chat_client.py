@@ -602,7 +602,7 @@ class RawAnthropicClient(
         instructions = options.get("instructions")
         if instructions is not None:
             if self._is_text_instructions(instructions):
-                run_options["system"] = self._prepare_text_instructions_for_anthropic(instructions)
+                run_options["system"] = self._prepare_text_instructions_for_anthropic(messages, instructions)
             else:
                 run_options["system"] = self._extract_structured_instructions(messages, instructions)
         elif messages and isinstance(messages[0], Message) and messages[0].role == "system":
@@ -657,11 +657,16 @@ class RawAnthropicClient(
 
         return cast(Sequence[BetaTextBlockParam] | Sequence[Mapping[str, Any]], instructions)
 
-    def _prepare_text_instructions_for_anthropic(self, instructions: Any) -> str:
+    def _prepare_text_instructions_for_anthropic(self, messages: Sequence[Message], instructions: Any) -> str:
         if isinstance(instructions, str):
-            return instructions
+            text_instructions = instructions
+        else:
+            text_instructions = "\n\n".join(cast(Sequence[str], instructions))
 
-        return "\n\n".join(cast(Sequence[str], instructions))
+        if messages and isinstance(messages[0], Message) and messages[0].role == "system":
+            return "\n\n".join(part for part in [text_instructions, messages[0].text] if part)
+
+        return text_instructions
 
     def _is_text_instructions(self, instructions: Any) -> bool:
         if isinstance(instructions, str):

@@ -96,6 +96,7 @@ _FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
 )
+_USER_VISIBLE_CONTENT_TYPES: Final[set[str]] = {"data", "uri", "error", "hosted_file", "hosted_vector_store"}
 ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -1882,9 +1883,9 @@ def _response_has_visible_content(response: ChatResponse[Any]) -> bool:
     for message in response.messages:
         for content in message.contents:
             if content.type == "text":
-                if content.text:
+                if content.text and content.text.strip():
                     return True
-            else:
+            elif content.type in _USER_VISIBLE_CONTENT_TYPES:
                 return True
     return False
 
@@ -2776,6 +2777,14 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 # Get the finalized response from the inner stream
                 # This triggers the inner stream's finalizer and result hooks
                 response = await inner_stream.get_final_response()
+                response_had_visible_content = _response_has_visible_content(response)
+                function_call_limit_reached = (
+                    mutable_options.get("tool_choice") == "none"
+                    and max_function_calls is not None
+                    and total_function_calls >= max_function_calls
+                )
+                if function_call_limit_reached:
+                    response = _ensure_function_invocation_limit_fallback_response(response)
                 _update_continuation_state(
                     filtered_kwargs,
                     response,
@@ -2788,6 +2797,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     for msg in response.messages
                     for item in msg.contents
                 ):
+                    if function_call_limit_reached and not response_had_visible_content:
+                        yield _function_invocation_limit_fallback_update()
                     return
 
                 if response.conversation_id is not None:

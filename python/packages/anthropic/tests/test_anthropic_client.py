@@ -964,6 +964,23 @@ async def test_prepare_options_with_system_message(
     assert len(run_options["messages"]) == 1  # System message not in messages list
 
 
+async def test_prepare_options_with_text_instructions_and_system_message(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Text instructions should preserve an existing leading system message."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    messages = [
+        Message(role="system", contents=["You are helpful."]),
+        Message(role="user", contents=["Hello"]),
+    ]
+
+    run_options = client._prepare_options(messages, {"instructions": "Be concise."})
+
+    assert run_options["system"] == "Be concise.\n\nYou are helpful."
+    assert len(run_options["messages"]) == 1
+
+
 async def test_prepare_options_with_structured_system_blocks(
     mock_anthropic_client: MagicMock,
 ) -> None:
