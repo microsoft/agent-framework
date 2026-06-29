@@ -1901,6 +1901,67 @@ class TestGitHubCopilotAgentDeprecatedFunctionApproval:
 
         assert agent._build_session_hooks([dangerous], {}) is None  # type: ignore[reportPrivateUsage]
 
+    def test_both_options_in_default_options_raises(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Setting both on_function_approval and on_pre_tool_use at construction raises."""
+
+        def deny(_call: Content) -> bool:
+            return False
+
+        def hook(_input: Any, _context: Any) -> Any:
+            return None
+
+        with pytest.raises(ValueError, match="cannot both be set"):
+            GitHubCopilotAgent(
+                client=mock_client,
+                default_options=copilot_options({"on_function_approval": deny, "on_pre_tool_use": hook}),
+            )
+
+    async def test_runtime_on_pre_tool_use_with_deprecated_callback_raises(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """A per-run on_pre_tool_use combined with a construction-time on_function_approval raises."""
+
+        def deny(_call: Content) -> bool:
+            return False
+
+        def allow_hook(_input: Any, _context: Any) -> Any:
+            return {"permissionDecision": "allow"}
+
+        with pytest.warns(DeprecationWarning):
+            agent = GitHubCopilotAgent(
+                client=mock_client,
+                default_options=copilot_options({"on_function_approval": deny}),
+            )
+
+        with pytest.raises(ValueError, match="cannot be combined with the deprecated on_function_approval"):
+            await agent.run("hello", options=cast(Any, {"on_pre_tool_use": allow_hook}))
+
+    async def test_runtime_on_pre_tool_use_with_deprecated_callback_raises_streaming(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """The mutual-exclusivity check also applies on the streaming path."""
+
+        def deny(_call: Content) -> bool:
+            return False
+
+        def allow_hook(_input: Any, _context: Any) -> Any:
+            return {"permissionDecision": "allow"}
+
+        with pytest.warns(DeprecationWarning):
+            agent = GitHubCopilotAgent(
+                client=mock_client,
+                default_options=copilot_options({"on_function_approval": deny}),
+            )
+
+        with pytest.raises(ValueError, match="cannot be combined with the deprecated on_function_approval"):
+            async for _ in agent.run("hello", stream=True, options=cast(Any, {"on_pre_tool_use": allow_hook})):
+                pass
+
     async def test_runtime_on_function_approval_rejected(self, mock_client: MagicMock) -> None:
         """Passing on_function_approval at runtime raises rather than being silently ignored."""
         agent = GitHubCopilotAgent(client=mock_client)
@@ -1917,6 +1978,9 @@ class TestGitHubCopilotAgentDeprecatedFunctionApproval:
                 options=cast(Any, {"on_function_approval": lambda _c: True}),
             ):
                 pass
+
+
+class TestGitHubCopilotAgentErrorHandling:
     """Test cases for error handling."""
 
     async def test_start_raises_on_client_error(self, mock_client: MagicMock) -> None:
