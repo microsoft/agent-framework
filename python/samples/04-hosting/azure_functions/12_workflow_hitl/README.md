@@ -43,9 +43,9 @@ async def handle_approval_response(
 
 | Endpoint | Description |
 |----------|-------------|
-| `POST /api/workflow/run` | Start the workflow |
-| `GET /api/workflow/status/{instanceId}` | Check status and pending HITL requests |
-| `POST /api/workflow/respond/{instanceId}/{requestId}` | Send human response |
+| `POST /api/workflow/content_moderation/run` | Start the workflow |
+| `GET /api/workflow/content_moderation/status/{instanceId}` | Check status and pending HITL requests |
+| `POST /api/workflow/content_moderation/respond/{instanceId}/{requestId}` | Send human response |
 | `GET /api/health` | Health check |
 
 These routes expose workflow status and human-response operations. In production, put them behind your application's authentication and authorization layer and verify that the caller is allowed to inspect or resume the targeted workflow before returning status or accepting a response.
@@ -133,10 +133,10 @@ This launches the DevUI at http://localhost:8096 where you can interact with the
 
 Use the `demo.http` file with the VS Code REST Client extension:
 
-1. **Start workflow** - `POST /api/workflow/run` with content payload
-2. **Check status** - `GET /api/workflow/status/{instanceId}` to see pending HITL requests
-3. **Send response** - `POST /api/workflow/respond/{instanceId}/{requestId}` with approval
-4. **Check result** - `GET /api/workflow/status/{instanceId}` to see final output
+1. **Start workflow** - `POST /api/workflow/content_moderation/run` with content payload
+2. **Check status** - `GET /api/workflow/content_moderation/status/{instanceId}` to see pending HITL requests
+3. **Send response** - `POST /api/workflow/content_moderation/respond/{instanceId}/{requestId}` with approval
+4. **Check result** - `GET /api/workflow/content_moderation/status/{instanceId}` to see final output
 
 ## Related Samples
 

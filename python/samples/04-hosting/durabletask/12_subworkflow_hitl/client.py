@@ -1,16 +1,18 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Client that drives the standalone HITL workflow to completion.
+"""Client that drives the composed HITL workflow, responding to a nested sub-workflow request.
 
 The worker (``worker.py``) must be running first. This client:
 
-1. Starts the workflow with ``DurableWorkflowClient.start_workflow``.
-2. Polls ``get_pending_hitl_requests`` until the workflow pauses for human input.
-3. Sends a decision with ``send_hitl_response`` (the request_id correlates the
-   response back to the paused executor).
+1. Starts the *outer* workflow with ``DurableWorkflowClient.start_workflow``.
+2. Polls ``get_pending_hitl_requests`` until a request appears. Because the HITL pause
+   happens inside a sub-workflow, the request surfaces with a **qualified** request id
+   (``review_sub~0~{requestId}``).
+3. Sends the decision with ``send_hitl_response`` against the *top-level* instance id and
+   the qualified request id; the host routes it to the owning child orchestration.
 4. Reads the final output with ``await_workflow_output``.
 
-It runs two cases: appropriate content (approved) and spammy content (rejected).
+It runs two cases: approved content and rejected content.
 
 Prerequisites:
 - ``worker.py`` running and connected to the same Durable Task Scheduler.
@@ -33,7 +35,8 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-WORKFLOW_NAME = "content_moderation"
+# The client targets the outer workflow; the HITL pause lives in the sub-workflow.
+WORKFLOW_NAME = "moderation_pipeline"
 
 
 def get_client(taskhub: str | None = None, endpoint: str | None = None) -> DurableTaskSchedulerClient:
@@ -54,11 +57,10 @@ def get_client(taskhub: str | None = None, endpoint: str | None = None) -> Durab
 def _wait_for_hitl_request(
     client: DurableWorkflowClient, instance_id: str, timeout_seconds: int = 60
 ) -> list[dict[str, Any]]:
-    """Poll until the workflow has at least one pending HITL request.
+    """Poll until the workflow (or one of its sub-workflows) has a pending HITL request.
 
-    Stops early if the workflow reaches a terminal state (e.g. completed or failed)
-    without pausing, so a misconfiguration or early failure surfaces the real
-    status instead of a misleading timeout.
+    Stops early if the workflow reaches a terminal state without pausing, so a
+    misconfiguration surfaces the real status instead of a misleading timeout.
     """
     terminal_statuses = {"COMPLETED", "FAILED", "TERMINATED"}
     deadline = time.time() + timeout_seconds
@@ -76,12 +78,15 @@ def _wait_for_hitl_request(
 
 
 def run_case(client: DurableWorkflowClient, submission: dict[str, Any], *, approve: bool) -> None:
-    """Run one moderation case: start, respond to the HITL pause, print the result."""
+    """Run one moderation case: start, respond to the nested HITL pause, print the result."""
     instance_id = client.start_workflow(input=submission)
     logger.info("Started workflow instance: %s", instance_id)
 
     pending = _wait_for_hitl_request(client, instance_id)
     request = pending[0]
+    # The request id is qualified (e.g. "review_sub~0~<uuid>") because the pause lives
+    # in a sub-workflow. We pass it back verbatim against the top-level instance id;
+    # the host resolves it to the owning child orchestration.
     logger.info("Pending HITL request %s from %s", request["request_id"], request["source_executor_id"])
 
     decision = {
@@ -109,7 +114,6 @@ async def main() -> None:
                 "Artificial intelligence is improving healthcare by enabling faster diagnosis, "
                 "personalized treatment plans, and better patient outcomes."
             ),
-            "author": "Dr. Jane Smith",
         },
         approve=True,
     )
@@ -121,7 +125,6 @@ async def main() -> None:
             "content_id": "article-002",
             "title": "Get Rich Quick",
             "body": "Click here NOW to make $10,000 overnight! GUARANTEED! Limited time offer!",
-            "author": "Definitely Not Spam",
         },
         approve=False,
     )

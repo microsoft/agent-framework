@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Client that starts the standalone workflow orchestration and prints the result.
+"""Client that starts the composed workflow orchestration and prints the result.
 
-The worker (``worker.py``) must be running first. The workflow is started via
-``DurableWorkflowClient.start_workflow`` - which schedules the ``dafx-{name}``
-orchestration that ``DurableAIAgentWorker.configure_workflow`` auto-registers for
-the workflow named ``email_triage``.
+The worker (``worker.py``) must be running first. Only the *outer* workflow is
+started by the client; its embedded sub-workflow runs automatically as a durable
+child orchestration when the outer workflow reaches the ``WorkflowExecutor`` node.
+
+The workflow is started via ``DurableWorkflowClient.start_workflow`` - which
+schedules the ``dafx-review_pipeline`` orchestration that
+``DurableAIAgentWorker.configure_workflow`` auto-registers for the outer workflow.
 
 Prerequisites:
 - ``worker.py`` running and connected to the same Durable Task Scheduler.
@@ -26,7 +29,8 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-WORKFLOW_NAME = "email_triage"
+# The client targets the outer workflow; the sub-workflow runs as a child orchestration.
+WORKFLOW_NAME = "review_pipeline"
 
 
 def get_client(taskhub: str | None = None, endpoint: str | None = None) -> DurableTaskSchedulerClient:
@@ -44,9 +48,9 @@ def get_client(taskhub: str | None = None, endpoint: str | None = None) -> Durab
     )
 
 
-def run_workflow(client: DurableWorkflowClient, email_content: str) -> None:
-    """Start the workflow with an email and wait for the result."""
-    instance_id = client.start_workflow(input=email_content)
+def run_workflow(client: DurableWorkflowClient, review: str) -> None:
+    """Start the outer workflow with a review and wait for the result."""
+    instance_id = client.start_workflow(input=review)
     logger.info("Started workflow instance: %s", instance_id)
 
     output = client.await_workflow_output(instance_id)
@@ -54,20 +58,19 @@ def run_workflow(client: DurableWorkflowClient, email_content: str) -> None:
 
 
 async def main() -> None:
-    """Run the workflow against a legitimate email and a spam email."""
+    """Run the composed workflow against a couple of product reviews."""
     client = DurableWorkflowClient(get_client(), workflow_name=WORKFLOW_NAME)
 
-    logger.info("TEST 1: Legitimate email")
+    logger.info("TEST 1: Positive review")
     run_workflow(
         client,
-        "Hi team, just a reminder about our sprint planning meeting tomorrow at 10 AM. "
-        "Please review the agenda in Jira.",
+        "Absolutely love this espresso machine - it heats up fast and the coffee is consistently great.",
     )
 
-    logger.info("TEST 2: Spam email")
+    logger.info("TEST 2: Negative review")
     run_workflow(
         client,
-        "URGENT! You've won $1,000,000! Click here now to claim your prize! Limited time offer!",
+        "Disappointed. The device stopped working after two weeks and support never replied.",
     )
 
 

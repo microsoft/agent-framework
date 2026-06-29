@@ -31,6 +31,9 @@ pytestmark = [
     pytest.mark.usefixtures("function_app_for_test"),
 ]
 
+# Must match the workflow name in samples/04-hosting/azure_functions/12_workflow_hitl/function_app.py
+WORKFLOW_NAME = "content_moderation"
+
 
 @pytest.mark.orchestration
 class TestWorkflowHITL:
@@ -46,7 +49,7 @@ class TestWorkflowHITL:
         """Polls for a pending HITL request."""
         start_time = time.time()
         while time.time() - start_time < timeout:
-            status_response = self.helper.get(f"{self.base_url}/api/workflow/status/{instance_id}")
+            status_response = self.helper.get(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/status/{instance_id}")
             if status_response.status_code == 200:
                 status = status_response.json()
                 pending_requests = status.get("pendingHumanInputRequests", [])
@@ -69,7 +72,7 @@ class TestWorkflowHITL:
         }
 
         # Start orchestration
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", payload)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data
@@ -89,7 +92,7 @@ class TestWorkflowHITL:
 
         # Send approval
         approval_response = self.helper.post_json(
-            f"{self.base_url}/api/workflow/respond/{instance_id}/{request_id}",
+            f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/respond/{instance_id}/{request_id}",
             {"approved": True, "reviewer_notes": "Content is appropriate and well-written."},
         )
         assert approval_response.status_code == 200
@@ -112,7 +115,7 @@ class TestWorkflowHITL:
         }
 
         # Start orchestration
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", payload)
         assert response.status_code == 202
         data = response.json()
         instance_id = data["instanceId"]
@@ -127,7 +130,7 @@ class TestWorkflowHITL:
 
         # Send rejection
         rejection_response = self.helper.post_json(
-            f"{self.base_url}/api/workflow/respond/{instance_id}/{request_id}",
+            f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/respond/{instance_id}/{request_id}",
             {"approved": False, "reviewer_notes": "Content appears to be spam/scam material."},
         )
         assert rejection_response.status_code == 200
@@ -150,7 +153,7 @@ class TestWorkflowHITL:
         }
 
         # Start orchestration
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", payload)
         assert response.status_code == 202
         data = response.json()
         instance_id = data["instanceId"]
@@ -169,7 +172,7 @@ class TestWorkflowHITL:
         if pending_requests:
             request_id = pending_requests[0]["requestId"]
             self.helper.post_json(
-                f"{self.base_url}/api/workflow/respond/{instance_id}/{request_id}",
+                f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/respond/{instance_id}/{request_id}",
                 {"approved": True, "reviewer_notes": ""},
             )
 
@@ -189,7 +192,7 @@ class TestWorkflowHITL:
         }
 
         # Start orchestration
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", payload)
         assert response.status_code == 202
         data = response.json()
         instance_id = data["instanceId"]
@@ -203,7 +206,7 @@ class TestWorkflowHITL:
 
         # Approve
         self.helper.post_json(
-            f"{self.base_url}/api/workflow/respond/{instance_id}/{request_id}",
+            f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/respond/{instance_id}/{request_id}",
             {"approved": True, "reviewer_notes": "Approved after review."},
         )
 
