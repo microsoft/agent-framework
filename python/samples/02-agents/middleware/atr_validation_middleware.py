@@ -3,9 +3,10 @@
 import asyncio
 import logging
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from functools import lru_cache
 from random import randint
-from typing import Annotated
+from typing import Annotated, Any
 
 from agent_framework import (
     Agent,
@@ -16,7 +17,7 @@ from agent_framework import (
 )
 from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 """
 Deterministic validation at the tool-execution boundary (issue #5366).
@@ -69,9 +70,29 @@ _FALLBACK_PATTERNS: list[re.Pattern[str]] = [
 ]
 
 
-def _arguments_to_text(arguments: dict[str, object]) -> str:
-    """Flatten tool arguments into a single string for scanning."""
-    return " ".join(str(value) for value in arguments.values())
+def _arguments_to_text(arguments: BaseModel | Mapping[str, Any]) -> str:
+    """Flatten tool arguments into a single string for scanning.
+
+    ``FunctionInvocationContext.arguments`` is typed as ``BaseModel | Mapping[str, Any]``: pydantic
+    models are dumped to a plain dict first, mappings are scanned directly.
+    """
+    values = arguments.model_dump() if isinstance(arguments, BaseModel) else arguments
+    return " ".join(str(value) for value in values.values())
+
+
+@lru_cache(maxsize=1)
+def _load_atr_engine() -> Any:
+    """Import pyatr, build the engine once, and load the default rules.
+
+    Cached so the (relatively expensive) rule load happens a single time. Raises ``ImportError``
+    when pyatr is not installed; the caller catches it and falls back to the deny-list. The result
+    is intentionally untyped (``Any``) because pyatr is an optional, unstubbed runtime dependency.
+    """
+    from pyatr import ATREngine  # type: ignore  # optional runtime dep, not installed in CI typing env
+
+    engine = ATREngine()
+    engine.load_default_rules()
+    return engine
 
 
 def _detect_with_atr(text: str) -> str | None:
@@ -83,21 +104,18 @@ def _detect_with_atr(text: str) -> str | None:
     pyatr is not installed.
     """
     try:
-        from pyatr import AgentEvent, ATREngine
+        from pyatr import AgentEvent  # type: ignore  # optional runtime dep, not installed in CI typing env
+
+        engine = _load_atr_engine()
     except ImportError:
         return None
-
-    if not hasattr(_detect_with_atr, "_engine"):
-        engine = ATREngine()
-        engine.load_default_rules()
-        _detect_with_atr._engine = engine  # type: ignore[attr-defined]
 
     event = AgentEvent(
         content=text,
         event_type="tool_call",
         fields={"tool_args": text},
     )
-    matches = _detect_with_atr._engine.evaluate(event)  # type: ignore[attr-defined]
+    matches = engine.evaluate(event)
     return matches[0].rule_id if matches else None
 
 
@@ -109,7 +127,7 @@ def _detect_with_fallback(text: str) -> str | None:
     return None
 
 
-def detect_attack(arguments: dict[str, object]) -> str | None:
+def detect_attack(arguments: BaseModel | Mapping[str, Any]) -> str | None:
     """Return a rule id / pattern identifying a matched attack, or None when arguments look benign.
 
     Prefers the real ATR ruleset via pyatr and falls back to the built-in deny-list when pyatr is
