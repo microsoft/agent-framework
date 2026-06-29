@@ -64,6 +64,7 @@ if TYPE_CHECKING:
         KnowledgeBaseRetrievalResponse,
         KnowledgeRetrievalIntent,
         KnowledgeRetrievalSemanticIntent,
+        KnowledgeSourceParams,
     )
     from azure.search.documents.knowledgebases.models import (
         KnowledgeRetrievalLowReasoningEffort as KBRetrievalLowReasoningEffort,
@@ -239,6 +240,7 @@ class AzureAISearchContextProvider(ContextProvider):
         azure_openai_api_key: str | None = None,
         knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
+        knowledge_source_params: list[KnowledgeSourceParams] | None = None,
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -264,6 +266,8 @@ class AzureAISearchContextProvider(ContextProvider):
             azure_openai_api_key: Optional Azure OpenAI API key for Knowledge Base creation.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
             retrieval_reasoning_effort: Reasoning effort for query planning.
+            knowledge_source_params: Optional per-source retrieval parameters (for example an
+                OData ``filter_add_on``) forwarded to the agentic retrieval request.
             agentic_message_history_count: Number of recent messages included in retrieval.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -292,6 +296,7 @@ class AzureAISearchContextProvider(ContextProvider):
         azure_openai_api_key: str | None = None,
         knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
+        knowledge_source_params: list[KnowledgeSourceParams] | None = None,
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -317,6 +322,8 @@ class AzureAISearchContextProvider(ContextProvider):
             azure_openai_api_key: Unused when connecting to an existing Knowledge Base.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
             retrieval_reasoning_effort: Reasoning effort for query planning.
+            knowledge_source_params: Optional per-source retrieval parameters (for example an
+                OData ``filter_add_on``) forwarded to the agentic retrieval request.
             agentic_message_history_count: Number of recent messages included in retrieval.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -345,6 +352,7 @@ class AzureAISearchContextProvider(ContextProvider):
         azure_openai_api_key: str | None = None,
         knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
+        knowledge_source_params: list[KnowledgeSourceParams] | None = None,
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -374,6 +382,8 @@ class AzureAISearchContextProvider(ContextProvider):
             azure_openai_api_key: Optional Azure OpenAI API key for Knowledge Base creation.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
             retrieval_reasoning_effort: Reasoning effort for query planning.
+            knowledge_source_params: Optional per-source retrieval parameters (for example an
+                OData ``filter_add_on``) forwarded to the agentic retrieval request.
             agentic_message_history_count: Number of recent messages included in retrieval.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -401,6 +411,7 @@ class AzureAISearchContextProvider(ContextProvider):
         azure_openai_api_key: str | None = None,
         knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
+        knowledge_source_params: list[KnowledgeSourceParams] | None = None,
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -429,6 +440,8 @@ class AzureAISearchContextProvider(ContextProvider):
             azure_openai_api_key: Azure OpenAI API key.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
             retrieval_reasoning_effort: Reasoning effort for Knowledge Base query planning.
+            knowledge_source_params: Optional per-source retrieval parameters (for example an
+                OData ``filter_add_on``) forwarded to the agentic retrieval request.
             agentic_message_history_count: Number of recent messages for agentic mode.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
@@ -474,6 +487,9 @@ class AzureAISearchContextProvider(ContextProvider):
         if mode == "agentic" and settings.get("index_name") and not model:
             raise ValueError("model is required for agentic mode when creating Knowledge Base from index.")
 
+        if knowledge_source_params is not None and mode != "agentic":
+            raise ValueError("knowledge_source_params is only supported in agentic mode.")
+
         resolved_credential: AzureKeyCredential | AsyncTokenCredential
         if credential:
             resolved_credential = credential  # type: ignore[assignment]
@@ -505,6 +521,7 @@ class AzureAISearchContextProvider(ContextProvider):
         self.knowledge_base_output_mode = knowledge_base_output_mode
         self.retrieval_reasoning_effort = retrieval_reasoning_effort
         self.agentic_message_history_count = agentic_message_history_count
+        self._knowledge_source_params = knowledge_source_params
 
         self._use_existing_knowledge_base = False
         if mode == "agentic":
@@ -830,6 +847,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 retrieval_reasoning_effort=reasoning_effort,
                 output_mode=output_mode,
                 include_activity=True,
+                knowledge_source_params=self._knowledge_source_params,
             )
         else:
             kb_messages = self._prepare_messages_for_kb_search(messages)
@@ -838,6 +856,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 retrieval_reasoning_effort=reasoning_effort,
                 output_mode=output_mode,
                 include_activity=True,
+                knowledge_source_params=self._knowledge_source_params,
             )
 
         if not self._retrieval_client:

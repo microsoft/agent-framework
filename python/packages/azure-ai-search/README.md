@@ -19,5 +19,6 @@ See the [Azure AI Search context provider examples](../../samples/02-agents/cont
 
 - Semantic search with hybrid (vector + keyword) queries
 - Agentic mode with Knowledge Bases for complex multi-hop reasoning
+- Per-source retrieval parameters (e.g. OData filters) in agentic mode
 - Environment variable configuration with Settings class
 - API key and managed identity authentication

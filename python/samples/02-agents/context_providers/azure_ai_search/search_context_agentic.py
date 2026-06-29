@@ -85,6 +85,13 @@ async def main() -> None:
             # Optional: Configure retrieval behavior
             knowledge_base_output_mode="extractive_data",  # or "answer_synthesis"
             retrieval_reasoning_effort="minimal",  # or "medium", "low"
+            # Optional: per-source params, e.g. an OData filter for multi-tenant isolation
+            # (import SearchIndexKnowledgeSourceParams from azure.search.documents.knowledgebases.models):
+            # knowledge_source_params=[
+            #     SearchIndexKnowledgeSourceParams(
+            #         knowledge_source_name="my-source", filter_add_on="category eq 'public'"
+            #     )
+            # ],
         )
     else:
         # Auto-create Knowledge Base from index
