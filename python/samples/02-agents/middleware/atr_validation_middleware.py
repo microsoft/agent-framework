@@ -1,13 +1,20 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+# Dependencies (beyond agent-framework + azure-identity):
+#
+#     pip install pyatr
+#
+# ``pyatr`` is the published Agent Threat Rules (ATR) engine; it bundles the ATR ruleset and
+# evaluates it locally. Install it before running this sample.
+
 import asyncio
 import logging
-import re
 from collections.abc import Awaitable, Callable, Mapping
 from functools import lru_cache
 from random import randint
 from typing import Annotated, Any
 
+import pyatr  # type: ignore  # optional runtime dep, not installed in the CI typing env
 from agent_framework import (
     Agent,
     FunctionInvocationContext,
@@ -30,44 +37,13 @@ FunctionMiddleware that inspects the validated tool arguments in
 
 Detection is delegated to Agent Threat Rules (ATR) -- an open, MIT-licensed detection ruleset
 for AI-agent threats such as prompt injection, tool-argument tampering, and exfiltration. The
-sample loads the published ruleset and runs the real engine over the tool arguments:
-
-    pip install pyatr
-
-``pyatr`` bundles the ATR rules and evaluates them locally and deterministically, with no model
-call in the enforcement path, so the block/allow decision is reproducible and auditable. See
+sample loads the published ruleset (``pip install pyatr``) and runs the real engine over the tool
+arguments. ``pyatr`` evaluates the rules locally and deterministically, with no model call in the
+enforcement path, so the block/allow decision is reproducible and auditable. See
 https://github.com/Agent-Threat-Rule/agent-threat-rules.
-
-If ``pyatr`` is not installed, the sample falls back to a small, self-contained deny-list so it
-still runs; the fallback mirrors the intent of ATR but is not the maintained ruleset.
 """
 
 logger = logging.getLogger(__name__)
-
-
-# Fallback deny-list used only when pyatr is not installed. The whole-text scan and re.DOTALL
-# let `.` span newlines so multiline injection payloads are not missed.
-_FALLBACK_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(
-        r"\b(?:ignore|disregard|forget|override)\b.{0,40}"
-        r"\b(?:previous|prior|above|earlier)\b.{0,40}\binstructions?\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\bexfiltrat(?:e|ion)\b|\bsend\b.{0,40}"
-        r"\b(?:secret|token|api[_\s-]?key|password|credential)s?\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"\b(?:cat|read|open|load)\b.{0,40}"
-        r"(?:\.env|id_rsa|\.aws/credentials|/etc/(?:passwd|shadow))",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"https?://\S+.{0,40}\b(?:token|secret|api[_\s-]?key|credential)s?\b",
-        re.IGNORECASE | re.DOTALL,
-    ),
-]
 
 
 def _arguments_to_text(arguments: BaseModel | Mapping[str, Any]) -> str:
@@ -82,59 +58,37 @@ def _arguments_to_text(arguments: BaseModel | Mapping[str, Any]) -> str:
 
 @lru_cache(maxsize=1)
 def _load_atr_engine() -> Any:
-    """Import pyatr, build the engine once, and load the default rules.
+    """Build the ATR engine once and load the default rules.
 
-    Cached so the (relatively expensive) rule load happens a single time. Raises ``ImportError``
-    when pyatr is not installed; the caller catches it and falls back to the deny-list. The result
-    is intentionally untyped (``Any``) because pyatr is an optional, unstubbed runtime dependency.
+    Cached so the (relatively expensive) rule load happens a single time. The result is
+    intentionally untyped (``Any``) because pyatr is an unstubbed runtime dependency.
     """
-    from pyatr import ATREngine  # type: ignore  # optional runtime dep, not installed in CI typing env
-
-    engine = ATREngine()
+    engine = pyatr.ATREngine()
     engine.load_default_rules()
     return engine
 
 
-def _detect_with_atr(text: str) -> str | None:
-    """Run the real ATR engine over *text*; return the matched rule id, or None.
-
-    Evaluates the text as a ``tool_call`` event so it is checked against the rules' ``tool_args``
-    conditions. Returns the highest-severity rule id when one or more rules fire (``evaluate``
-    sorts matches critical-first), otherwise None. Returns None (so the caller falls back) when
-    pyatr is not installed.
-    """
-    try:
-        from pyatr import AgentEvent  # type: ignore  # optional runtime dep, not installed in CI typing env
-
-        engine = _load_atr_engine()
-    except ImportError:
-        return None
-
-    event = AgentEvent(
-        content=text,
-        event_type="tool_call",
-        fields={"tool_args": text},
-    )
-    matches = engine.evaluate(event)
-    return matches[0].rule_id if matches else None
-
-
-def _detect_with_fallback(text: str) -> str | None:
-    """Scan *text* with the built-in deny-list; return the matched pattern, or None."""
-    for pattern in _FALLBACK_PATTERNS:
-        if pattern.search(text):
-            return pattern.pattern
-    return None
-
-
 def detect_attack(arguments: BaseModel | Mapping[str, Any]) -> str | None:
-    """Return a rule id / pattern identifying a matched attack, or None when arguments look benign.
+    """Return the matched ATR rule id, or None when the arguments look benign.
 
-    Prefers the real ATR ruleset via pyatr and falls back to the built-in deny-list when pyatr is
-    not installed.
+    Runs the real ATR engine over the flattened tool arguments. The text is evaluated as a
+    ``tool_call`` event so it is checked against the rules' ``tool_args`` conditions; ``evaluate``
+    sorts matches critical-first, so the first rule id is the highest-severity hit.
+
+    The ruleset replaces a hand-rolled deny-list. For reference, the shape of the patterns ATR
+    encodes (and that the earlier version of this sample inlined) is, e.g.::
+
+        ignore (previous|prior|above) instructions        # instruction override / prompt injection
+        send (secret|token|api_key|password) to http...    # credential exfiltration
+        (cat|read|open) (.env|id_rsa|/etc/passwd)          # sensitive-file access
+
+    pyatr ships hundreds of such rules and keeps them maintained, so the sample stays a single
+    straight-line call instead of a local regex list.
     """
     text = _arguments_to_text(arguments)
-    return _detect_with_atr(text) or _detect_with_fallback(text)
+    event = pyatr.AgentEvent(content=text, event_type="tool_call", fields={"tool_args": text})
+    matches = _load_atr_engine().evaluate(event)
+    return matches[0].rule_id if matches else None
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
