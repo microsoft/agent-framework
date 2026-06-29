@@ -49,3 +49,12 @@ agent = GitHubCopilotAgent(
 >
 > Note: with the default (deny-all) permission handler, an `always_require` tool is denied
 > unless you wire an approving `on_permission_request`.
+
+### Deprecated: `on_function_approval`
+
+The `on_function_approval` callback is **deprecated**. It still works (and is still enforced
+inside the tool handler for backward compatibility), but it emits a `DeprecationWarning` and
+will be removed in a future version. Migrate to the `on_pre_tool_use` + `on_permission_request`
+model described above. While set (and when `on_pre_tool_use` is not), `on_function_approval`
+takes over approval for `always_require` tools and the default ask-hook is not installed.
+

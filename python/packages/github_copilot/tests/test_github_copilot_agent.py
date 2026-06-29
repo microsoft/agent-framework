@@ -1804,7 +1804,119 @@ class TestGitHubCopilotAgentFunctionApproval:
         assert "on_pre_tool_use" in hooks
 
 
-class TestGitHubCopilotAgentErrorHandling:
+class TestGitHubCopilotAgentDeprecatedFunctionApproval:
+    """Tests for the deprecated ``on_function_approval`` callback (still enforced)."""
+
+    def test_setting_callback_emits_deprecation_warning(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Configuring on_function_approval emits a DeprecationWarning."""
+
+        def approve(_call: Content) -> bool:
+            return True
+
+        with pytest.warns(DeprecationWarning, match="on_function_approval is deprecated"):
+            GitHubCopilotAgent(
+                client=mock_client,
+                default_options=copilot_options({"on_function_approval": approve}),
+            )
+
+    async def test_handler_denies_when_callback_returns_false(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """A falsy callback return value denies the call and skips execution."""
+        invocations: list[str] = []
+
+        def deny(_call: Content) -> bool:
+            return False
+
+        @tool(approval_mode="always_require")
+        def dangerous(path: str) -> str:
+            """A tool that requires human approval."""
+            invocations.append(path)
+            return f"deleted {path}"
+
+        with pytest.warns(DeprecationWarning):
+            agent = GitHubCopilotAgent(
+                client=mock_client,
+                default_options=copilot_options({"on_function_approval": deny}),
+            )
+        copilot_tool = agent._tool_to_copilot_tool(dangerous)  # type: ignore[reportPrivateUsage]
+
+        handler = cast("Any", copilot_tool.handler)
+        result = await handler(ToolInvocation(arguments={"path": "/critical"}))
+
+        assert invocations == []
+        assert result.result_type == "failure"
+        assert result.error == "approval_denied"
+
+    async def test_handler_executes_when_callback_returns_true(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """A truthy callback return value allows the tool to execute."""
+
+        def approve(_call: Content) -> bool:
+            return True
+
+        @tool(approval_mode="always_require")
+        def guarded(x: int) -> str:
+            """A tool that requires human approval."""
+            return f"result={x}"
+
+        with pytest.warns(DeprecationWarning):
+            agent = GitHubCopilotAgent(
+                client=mock_client,
+                default_options=copilot_options({"on_function_approval": approve}),
+            )
+        copilot_tool = agent._tool_to_copilot_tool(guarded)  # type: ignore[reportPrivateUsage]
+
+        handler = cast("Any", copilot_tool.handler)
+        result = await handler(ToolInvocation(arguments={"x": 42}))
+
+        assert result.result_type == "success"
+        assert result.text_result_for_llm == "result=42"
+
+    def test_default_hook_not_installed_when_callback_set(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """When on_function_approval is set, the default ask-hook is not installed."""
+
+        def approve(_call: Content) -> bool:
+            return True
+
+        @tool(approval_mode="always_require")
+        def dangerous(path: str) -> str:
+            """A tool that requires human approval."""
+            return f"deleted {path}"
+
+        with pytest.warns(DeprecationWarning):
+            agent = GitHubCopilotAgent(
+                client=mock_client,
+                default_options=copilot_options({"on_function_approval": approve}),
+            )
+
+        assert agent._build_session_hooks([dangerous], {}) is None  # type: ignore[reportPrivateUsage]
+
+    async def test_runtime_on_function_approval_rejected(self, mock_client: MagicMock) -> None:
+        """Passing on_function_approval at runtime raises rather than being silently ignored."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        with pytest.raises(ValueError, match="on_function_approval"):
+            await agent.run("hello", options=cast(Any, {"on_function_approval": lambda _c: True}))
+
+    async def test_runtime_on_function_approval_rejected_streaming(self, mock_client: MagicMock) -> None:
+        """Passing on_function_approval at runtime raises on the streaming path too."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        with pytest.raises(ValueError, match="on_function_approval"):
+            async for _ in agent.run(
+                "hello",
+                stream=True,
+                options=cast(Any, {"on_function_approval": lambda _c: True}),
+            ):
+                pass
     """Test cases for error handling."""
 
     async def test_start_raises_on_client_error(self, mock_client: MagicMock) -> None:

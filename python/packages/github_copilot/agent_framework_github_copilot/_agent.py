@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import sys
+import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Generic, Literal, TypedDict, overload
 
@@ -69,6 +71,53 @@ PermissionHandlerType = Callable[
     [PermissionRequest, dict[str, str]], "PermissionRequestResult | Awaitable[PermissionRequestResult]"
 ]
 """Type for permission request handlers. Supports both sync and async callbacks."""
+
+
+FunctionApprovalCallback = Callable[[Content], "bool | Awaitable[bool]"]
+"""Deprecated approval callback for ``FunctionTool`` instances declared with
+``approval_mode="always_require"``.
+
+.. deprecated::
+    Use the SDK ``on_pre_tool_use`` hook together with ``on_permission_request``
+    instead. The default ``on_pre_tool_use`` hook returns ``"ask"`` for
+    ``always_require`` tools and routes the decision to ``on_permission_request``.
+
+The callback receives a ``FunctionCallContent`` describing the pending call
+(``name``, ``arguments``, and a synthetic ``call_id``) and must return ``True``
+to allow execution or ``False`` to deny it. Both synchronous and ``await``-able
+return values are supported.
+"""
+
+
+async def _resolve_function_approval(
+    callback: FunctionApprovalCallback | None,
+    func_tool: FunctionTool,
+    arguments: Mapping[str, Any] | None,
+) -> bool:
+    """Run the deprecated agent-level approval callback for a pending tool call.
+
+    Returns ``True`` only when ``callback`` is configured and explicitly returns
+    a truthy value. A missing callback or any callback failure is treated as a
+    denial so the secure-by-default policy holds even if the user code raises.
+    """
+    if callback is None:
+        return False
+    request = Content.from_function_call(
+        call_id=f"af-copilot-approval::{func_tool.name}",
+        name=func_tool.name,
+        arguments=None if arguments is None else dict(arguments),
+    )
+    try:
+        outcome = callback(request)
+        if inspect.isawaitable(outcome):
+            outcome = await outcome
+    except Exception:
+        logger.exception(
+            "on_function_approval callback raised for tool '%s'; denying execution.",
+            func_tool.name,
+        )
+        return False
+    return bool(outcome)
 
 
 logger = logging.getLogger("agent_framework.github_copilot")
@@ -175,6 +224,21 @@ class GitHubCopilotOptions(TypedDict, total=False):
     gated through ``on_permission_request``. If you **do** supply your own hook, it
     takes precedence and **you** are responsible for enforcing approval for any
     ``always_require`` tool; the agent logs a warning naming such tools."""
+
+    on_function_approval: FunctionApprovalCallback
+    """Deprecated approval callback for ``FunctionTool`` instances declared with
+    ``approval_mode="always_require"``.
+
+    .. deprecated::
+        Use ``on_pre_tool_use`` together with ``on_permission_request`` instead.
+        When neither this callback nor ``on_pre_tool_use`` is set, the agent
+        installs a default ``on_pre_tool_use`` hook that returns ``"ask"`` for
+        ``always_require`` tools and routes the decision to ``on_permission_request``.
+
+    When set (and ``on_pre_tool_use`` is not), this callback is still enforced inside
+    the SDK tool-handler before the tool runs; a falsy return value denies the call.
+    Setting it emits a ``DeprecationWarning``. ``on_pre_tool_use`` takes precedence
+    over this callback."""
 
 
 OptionsT = TypeVar(
@@ -283,7 +347,18 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         provider: ProviderConfig | None = opts.pop("provider", None)
         instruction_directories: list[str] | None = opts.pop("instruction_directories", None)
         on_pre_tool_use: PreToolUseHandler | None = opts.pop("on_pre_tool_use", None)
+        on_function_approval: FunctionApprovalCallback | None = opts.pop("on_function_approval", None)
         base_directory = opts.pop("base_directory", None)
+
+        if on_function_approval is not None:
+            warnings.warn(
+                "on_function_approval is deprecated and will be removed in a future version. "
+                "Use the SDK 'on_pre_tool_use' hook together with 'on_permission_request' instead: "
+                "the default 'on_pre_tool_use' hook returns 'ask' for approval_mode='always_require' "
+                "tools and routes the decision to 'on_permission_request'.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         self._settings = load_settings(
             GitHubCopilotSettings,
@@ -300,6 +375,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self._tools = normalize_tools(tools)
         self._permission_handler = on_permission_request
         self._on_pre_tool_use: PreToolUseHandler | None = on_pre_tool_use
+        self._function_approval_handler: FunctionApprovalCallback | None = on_function_approval
         self._mcp_servers = mcp_servers
         self._provider = provider
         self._instruction_directories = instruction_directories
@@ -479,6 +555,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             session = self.create_session()
 
         opts: dict[str, Any] = dict(options) if options else {}
+        if "on_function_approval" in opts:
+            raise ValueError(
+                "on_function_approval is a security-sensitive option and must be set "
+                "via default_options at agent construction time. It cannot be overridden "
+                "per run."
+            )
         timeout = opts.get("timeout") or self._settings.get("timeout") or DEFAULT_TIMEOUT_SECONDS
 
         input_messages = normalize_messages(messages)
@@ -562,6 +644,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             session = self.create_session()
 
         opts: dict[str, Any] = dict(options) if options else {}
+        if "on_function_approval" in opts:
+            raise ValueError(
+                "on_function_approval is a security-sensitive option and must be set "
+                "via default_options at agent construction time. It cannot be overridden "
+                "per run."
+            )
 
         input_messages = normalize_messages(messages)
 
@@ -745,14 +833,34 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
     def _tool_to_copilot_tool(self, ai_func: FunctionTool) -> CopilotTool:
         """Convert an FunctionTool to a Copilot SDK tool.
 
-        Approval for tools declared with ``approval_mode="always_require"`` is enforced
-        by the Copilot SDK's native ``on_pre_tool_use`` hook (see
-        :meth:`_build_session_hooks`), not inside this handler.
+        Approval for tools declared with ``approval_mode="always_require"`` is normally
+        enforced by the Copilot SDK's native ``on_pre_tool_use`` hook (see
+        :meth:`_build_session_hooks`). When the deprecated ``on_function_approval``
+        callback is configured (and no ``on_pre_tool_use`` is supplied), approval is
+        instead enforced inside this handler for backward compatibility.
         """
+        approval_handler = self._function_approval_handler
+        enforce_deprecated_approval = approval_handler is not None and ai_func.approval_mode == "always_require"
 
         async def handler(invocation: ToolInvocation) -> ToolResult:
             args: dict[str, Any] = invocation.arguments or {}
             try:
+                if enforce_deprecated_approval and not await _resolve_function_approval(
+                    approval_handler, ai_func, args
+                ):
+                    logger.info(
+                        "Denying execution of tool '%s' (approval_mode='always_require', "
+                        "on_function_approval callback denied).",
+                        ai_func.name,
+                    )
+                    return ToolResult(
+                        text_result_for_llm=(
+                            f"Tool '{ai_func.name}' requires human approval "
+                            "(approval_mode='always_require') and the request was denied."
+                        ),
+                        result_type="failure",
+                        error="approval_denied",
+                    )
                 if ai_func.input_model:
                     args_instance = ai_func.input_model(**args)
                     result = await ai_func.invoke(arguments=args_instance)
@@ -802,6 +910,10 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         - Otherwise, when any approval-required tool is present, a default hook is
           installed that returns ``"ask"`` for those tools (routing the decision to
           ``on_permission_request``) and defers (``None``) for all other tools.
+        - The default hook is **not** installed when the deprecated
+          ``on_function_approval`` callback is configured: in that case approval is
+          enforced inside the tool handler (see :meth:`_tool_to_copilot_tool`) to
+          preserve backward-compatible behavior.
         - When there are no approval-required tools and no caller hook, ``None`` is
           returned so no hooks are registered.
 
@@ -830,6 +942,11 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             return {"on_pre_tool_use": user_hook}
 
         if not approval_required_names:
+            return None
+
+        # The deprecated on_function_approval callback enforces approval in the tool
+        # handler; don't also install the default ask-hook (which would double-gate).
+        if self._function_approval_handler is not None:
             return None
 
         def default_pre_tool_use(
