@@ -63,7 +63,21 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var agent = this.ResolveAgent(request);
         var sessionStore = this.ResolveSessionStore(request);
 
-        // 2. Resolve the per-request hosted session identity context FIRST, so the session can be
+        // Fail fast with a clear, actionable error when this 2.0.0-only image is served container
+        // protocol 1.0.0. The x-agent-foundry-call-id header is exclusive to protocol 2.0.0, so when the
+        // container is hosted by Foundry yet receives no call id, the platform is talking 1.0.0 to an
+        // image that does not support it. Detecting this here turns an opaque 500 into a 501 that names
+        // the cause and the fix instead of bubbling up as a generic server error on every request.
+        var unsupportedProtocolError = HostedProtocolCompatibility.GetUnsupportedProtocolError(
+            FoundryEnvironment.IsHosted, context.PlatformContext?.CallId);
+        if (unsupportedProtocolError is not null)
+        {
+            this._logger.LogError(
+                "Hosted container served unsupported Responses protocol 1.0.0 (no x-agent-foundry-call-id header); this image requires protocol 2.0.0.");
+            throw unsupportedProtocolError;
+        }
+
+        // 2. Resolve the per-request hosted session identity context, so the session can be
         // loaded from a per-user partition. Fresh sessions are tagged once; resumed sessions are
         // validated against the live request to detect cross-user session leaks and in-process tampering.
         var isolationKeyProvider = this._serviceProvider.GetService<HostedSessionIsolationKeyProvider>()
@@ -71,6 +85,9 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var resolvedHostedContext = await isolationKeyProvider.GetKeysAsync(context, request, cancellationToken).ConfigureAwait(false);
         if (resolvedHostedContext is null)
         {
+            // Reached only when the container is NOT hosted by Foundry (local development without a
+            // fallback provider), or in the unexpected case of a 2.0.0 request that carried a call id
+            // but no x-agent-user-id. Hosted 1.0.0 requests are already handled above.
             throw new InvalidOperationException(
                 $"The registered {nameof(HostedSessionIsolationKeyProvider)} returned null for the current request. " +
                 "Ensure the Foundry platform is providing the x-agent-user-id header, " +

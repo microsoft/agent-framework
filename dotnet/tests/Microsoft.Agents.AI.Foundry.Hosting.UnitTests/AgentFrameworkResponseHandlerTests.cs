@@ -1063,7 +1063,11 @@ public class AgentFrameworkResponseHandlerTests
         var root = NewIsolationTempRoot();
         try
         {
-            // Arrange: a hosted request whose x-agent-user-id was not captured (PlatformContext is null).
+            // Arrange: a non-hosted (local) request whose x-agent-user-id was not captured (PlatformContext
+            // is null). Under unit tests FoundryEnvironment.IsHosted is false, so the protocol-compatibility
+            // gate does not apply; the handler still rejects rather than persisting an unscoped session. The
+            // hosted 1.0.0 path (which returns the clear 501 instead) is covered by
+            // HostedProtocolCompatibilityTests and the UnsupportedProtocol integration test.
             var store = new FileSystemAgentSessionStore(root);
             var handler = BuildMultiAgentHandler(store, ("concierge", new RecordingAgent("concierge")));
             var (req, ctx) = BuildUserRequest("concierge", "trip", userId: null);
