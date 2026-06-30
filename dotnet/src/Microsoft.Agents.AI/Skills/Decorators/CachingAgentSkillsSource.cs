@@ -3,8 +3,10 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -17,7 +19,8 @@ namespace Microsoft.Agents.AI;
 /// a single in-flight fetch and all receive the same cached result.
 /// If the initial fetch fails, the cache is not populated and subsequent calls will retry.
 /// </remarks>
-internal sealed class CachingAgentSkillsSource : DelegatingAgentSkillsSource
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+public sealed class CachingAgentSkillsSource : DelegatingAgentSkillsSource
 {
     private const string SharedCacheKey = "CachingAgentSkillsSource-SharedCacheKey";
 
@@ -29,7 +32,7 @@ internal sealed class CachingAgentSkillsSource : DelegatingAgentSkillsSource
     /// </summary>
     /// <param name="innerSource">The inner source whose results will be cached.</param>
     /// <param name="options">Optional cache configuration.</param>
-    internal CachingAgentSkillsSource(AgentSkillsSource innerSource, CachingAgentSkillsSourceOptions? options = null)
+    public CachingAgentSkillsSource(AgentSkillsSource innerSource, CachingAgentSkillsSourceOptions? options = null)
         : base(innerSource)
     {
         this._options = options;

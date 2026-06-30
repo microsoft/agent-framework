@@ -2,17 +2,20 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// A skill source decorator that removes duplicate skills by name, keeping only the first occurrence.
 /// </summary>
-internal sealed partial class DeduplicatingAgentSkillsSource : DelegatingAgentSkillsSource
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+public sealed partial class DeduplicatingAgentSkillsSource : DelegatingAgentSkillsSource
 {
     private readonly ILogger<DeduplicatingAgentSkillsSource> _logger;
 
