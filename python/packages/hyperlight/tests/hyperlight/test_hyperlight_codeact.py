@@ -1296,6 +1296,10 @@ async def test_output_dir_cleared_between_invocations() -> None:
 
 
 @skip_if_hyperlight_integration_tests_disabled
+@pytest.mark.skipif(
+    sys.platform == "win32" and sys.version_info < (3, 11),
+    reason="Hyperlight sandbox initialization can fail on Windows Python 3.10 when run through asyncio.to_thread.",
+)
 async def test_run_code_does_not_block_event_loop() -> None:
     """Verify _run_code uses asyncio.to_thread so the event loop stays responsive (comment 26)."""
     _skip_if_hyperlight_integration_runtime_disabled()

@@ -9,9 +9,10 @@ import logging
 import os
 import tempfile
 import threading
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
 from dataclasses import asdict, dataclass, is_dataclass
+from inspect import isawaitable
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -118,6 +119,44 @@ from typing_extensions import Any
 logger = logging.getLogger(__name__)
 
 _AZURE_RESPONSES_MESSAGE_ROLE_TYPE = f"{MessageRole.__module__}:{MessageRole.__qualname__}"
+_HOSTED_SESSION_CONTEXT_FILE_NAME = "_hosted_session_context.afctx"
+
+
+@dataclass(frozen=True)
+class HostedSessionContext:
+    """Identity context that owns a hosted workflow checkpoint session.
+
+    Args:
+        user_id: Stable, non-whitespace user isolation key for the current caller.
+        chat_id: Stable, non-whitespace chat or conversation isolation key for the current caller.
+    """
+
+    user_id: str
+    chat_id: str
+
+    def __post_init__(self) -> None:
+        """Validate that hosted session identity values are usable as ownership keys."""
+        if not self.user_id.strip() or not self.chat_id.strip():
+            raise ValueError("Hosted session context requires non-empty user_id and chat_id values.")
+
+
+HostedSessionContextResolver = Callable[
+    [ResponseContext, CreateResponse],
+    HostedSessionContext | Awaitable[HostedSessionContext | None] | None,
+]
+"""Callable that resolves hosted workflow checkpoint ownership context for a request."""
+
+
+def _default_hosted_session_context_resolver(
+    context: ResponseContext, request: CreateResponse
+) -> HostedSessionContext | None:
+    del request
+    isolation = getattr(context, "isolation", None)
+    user_id = getattr(isolation, "user_key", None)
+    chat_id = getattr(isolation, "chat_key", None)
+    if not isinstance(user_id, str) or not user_id.strip() or not isinstance(chat_id, str) or not chat_id.strip():
+        return None
+    return HostedSessionContext(user_id=user_id, chat_id=chat_id)
 
 
 # region Approval Storage
@@ -260,6 +299,57 @@ def _checkpoint_storage_for_context(root: str, context_id: str) -> FileCheckpoin
     )
 
 
+def _hosted_session_context_path(checkpoint_storage: FileCheckpointStorage) -> Path:
+    return checkpoint_storage.storage_path / _HOSTED_SESSION_CONTEXT_FILE_NAME
+
+
+def _has_unstamped_checkpoint_data(checkpoint_storage: FileCheckpointStorage) -> bool:
+    return any(
+        child.name != _HOSTED_SESSION_CONTEXT_FILE_NAME and not child.name.startswith(".hosted-session-context-")
+        for child in checkpoint_storage.storage_path.iterdir()
+    )
+
+
+def _read_hosted_session_context_sync(path: Path) -> HostedSessionContext | None:
+    if not path.exists():
+        return None
+    with path.open(encoding="utf-8") as context_file:
+        raw_data: Any = json.load(context_file)
+    if not isinstance(raw_data, dict):
+        raise RuntimeError("Invalid hosted session context: expected object.")
+    data = cast(dict[str, Any], raw_data)
+    user_id = data.get("user_id")
+    chat_id = data.get("chat_id")
+    if not isinstance(user_id, str) or not isinstance(chat_id, str):
+        raise RuntimeError("Invalid hosted session context: expected string user_id and chat_id.")
+    return HostedSessionContext(user_id=user_id, chat_id=chat_id)
+
+
+async def _read_hosted_session_context(checkpoint_storage: FileCheckpointStorage) -> HostedSessionContext | None:
+    return await asyncio.to_thread(_read_hosted_session_context_sync, _hosted_session_context_path(checkpoint_storage))
+
+
+def _try_write_hosted_session_context_sync(path: Path, hosted_context: HostedSessionContext) -> bool:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(asdict(hosted_context))
+    try:
+        with path.open("x", encoding="utf-8") as context_file:
+            context_file.write(serialized)
+    except FileExistsError:
+        return False
+    return True
+
+
+async def _try_write_hosted_session_context(
+    checkpoint_storage: FileCheckpointStorage, hosted_context: HostedSessionContext
+) -> bool:
+    return await asyncio.to_thread(
+        _try_write_hosted_session_context_sync,
+        _hosted_session_context_path(checkpoint_storage),
+        hosted_context,
+    )
+
+
 # endregion Approval Storage
 
 # Foundry Toolbox Auth integration
@@ -352,6 +442,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         prefix: str = "",
         options: ResponsesServerOptions | None = None,
         store: ResponseProviderProtocol | None = None,
+        hosted_session_context_resolver: HostedSessionContextResolver | None = None,
+        strict_session_isolation: bool = True,
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
@@ -361,6 +453,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             prefix: The URL prefix for the server.
             options: Optional server options.
             store: Optional response store.
+            hosted_session_context_resolver: Optional callable that resolves the hosted workflow checkpoint ownership
+                context. The default reads Foundry platform isolation keys from ``ResponseContext.isolation``.
+            strict_session_isolation: Whether to reject hosted workflow checkpoint access when the resolver cannot
+                resolve ownership keys.
             **kwargs: Additional keyword arguments.
 
         Note:
@@ -401,6 +497,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             self._is_workflow_agent = True
 
         self._agent = agent
+        self._hosted_session_context_resolver = (
+            hosted_session_context_resolver or _default_hosted_session_context_resolver
+        )
+        self._strict_session_isolation = strict_session_isolation
         self._approval_storage = (
             FileBasedFunctionApprovalStorage(self.FUNCTION_APPROVAL_STORAGE_PATH)
             if self.config.is_hosted
@@ -604,9 +704,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             restore_storage: FileCheckpointStorage | None = None
             if context_id is not None:
                 restore_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, context_id)
-                latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
-                if latest_checkpoint is not None:
-                    latest_checkpoint_id = latest_checkpoint.checkpoint_id
 
             # Storage that will receive checkpoints written during this turn.
             # When the caller chains with previous_response_id, the next turn
@@ -618,6 +715,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # directory and write_storage points at the *current* response's.
             write_context_id = context.conversation_id or context.response_id
             write_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, write_context_id)
+
+            resolved_hosted_context = await self._resolve_hosted_session_context(context, request)
+            if restore_storage is not None:
+                await self._validate_or_stamp_hosted_session_context(restore_storage, resolved_hosted_context)
+                latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
+                if latest_checkpoint is not None:
+                    latest_checkpoint_id = latest_checkpoint.checkpoint_id
+            await self._validate_or_stamp_hosted_session_context(write_storage, resolved_hosted_context)
 
             # Multi-turn pattern: when we have a prior checkpoint, restore it
             # first (drive the workflow back to idle with prior state intact),
@@ -710,6 +815,47 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             for checkpoint in all_checkpoints:
                 if checkpoint.checkpoint_id != latest_checkpoint.checkpoint_id:
                     await checkpoint_storage.delete(checkpoint.checkpoint_id)
+
+    async def _resolve_hosted_session_context(
+        self, context: ResponseContext, request: CreateResponse
+    ) -> HostedSessionContext | None:
+        resolved_context = self._hosted_session_context_resolver(context, request)
+        if isawaitable(resolved_context):
+            resolved_context = await resolved_context
+        if resolved_context is None:
+            if self._strict_session_isolation:
+                raise RuntimeError(
+                    "Hosted session isolation keys are required for workflow checkpoint hosting. "
+                    "Ensure the Foundry platform provides isolation keys or configure a custom "
+                    "hosted_session_context_resolver."
+                )
+            return None
+        if not isinstance(resolved_context, HostedSessionContext):
+            raise TypeError("hosted_session_context_resolver must return HostedSessionContext or None.")
+        return resolved_context
+
+    async def _validate_or_stamp_hosted_session_context(
+        self,
+        checkpoint_storage: FileCheckpointStorage,
+        resolved_context: HostedSessionContext | None,
+    ) -> None:
+        existing_context = await _read_hosted_session_context(checkpoint_storage)
+        if existing_context is None:
+            if _has_unstamped_checkpoint_data(checkpoint_storage):
+                if resolved_context is None and not self._strict_session_isolation:
+                    return
+                raise PermissionError("hosted_session_identity_missing")
+            if resolved_context is None:
+                return
+            if await _try_write_hosted_session_context(checkpoint_storage, resolved_context):
+                return
+            existing_context = await _read_hosted_session_context(checkpoint_storage)
+            if existing_context is None:
+                raise RuntimeError("Hosted session identity context was created concurrently but could not be read.")
+        if resolved_context is None:
+            raise RuntimeError("Hosted session isolation keys are required to resume a stamped workflow checkpoint.")
+        if existing_context.user_id != resolved_context.user_id or existing_context.chat_id != resolved_context.chat_id:
+            raise PermissionError("hosted_session_identity_mismatch")
 
     @staticmethod
     def _emit_failure(
