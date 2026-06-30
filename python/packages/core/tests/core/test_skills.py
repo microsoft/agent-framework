@@ -5888,13 +5888,15 @@ class TestSkillScriptArgumentMarshaler:
     """
 
     @staticmethod
-    def _json_string_marshaler(args: dict[str, Any] | list[str] | str | None) -> dict[str, Any] | list[str] | None:
+    def _json_string_marshaler(args: dict[str, Any] | list[str] | str | None) -> dict[str, Any] | None:
         """Marshaler that decodes a JSON-string ``args`` into a dict."""
         import json as _json
 
         if isinstance(args, str):
             return _json.loads(args)
-        return args
+        if isinstance(args, dict):
+            return args
+        return None
 
     async def test_default_no_marshaler_passes_dict_unchanged(self) -> None:
         """Without a marshaler, dict args reach the callable unchanged."""
@@ -5911,7 +5913,7 @@ class TestSkillScriptArgumentMarshaler:
             argument_marshaler=self._json_string_marshaler,
         )
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
-        result = await script.run(skill, args='{"name": "Alice"}')  # type: ignore[arg-type]
+        result = await script.run(skill, args='{"name": "Alice"}')
         assert result == "hello Alice"
 
     async def test_script_marshaler_passes_dict_through(self) -> None:
@@ -5931,9 +5933,13 @@ class TestSkillScriptArgumentMarshaler:
         assert callable(marshaler)
 
     async def test_marshaler_returning_list_still_rejected(self) -> None:
-        """If a marshaler yields a list, the inline list guard still fires."""
+        """Defense-in-depth: even if a marshaler yields a list, the inline guard fires.
 
-        def to_list(args: dict[str, Any] | list[str] | str | None) -> dict[str, Any] | list[str] | None:
+        The marshaler output type forbids lists, so this scenario requires a
+        loosely-typed marshaler; the runtime guard still protects against it.
+        """
+
+        def to_list(args: dict[str, Any] | list[str] | str | None) -> Any:
             return ["a", "b"]
 
         script = InlineSkillScript(name="s1", function=lambda: "ok", argument_marshaler=to_list)
@@ -5956,7 +5962,7 @@ class TestSkillScriptArgumentMarshaler:
         script = await skill.get_script("greet")
         assert isinstance(script, InlineSkillScript)
         assert script.argument_marshaler is self._json_string_marshaler
-        result = await script.run(skill, args='{"name": "Carol"}')  # type: ignore[arg-type]
+        result = await script.run(skill, args='{"name": "Carol"}')
         assert result == "hi Carol"
 
     async def test_inline_skill_no_marshaler_leaves_scripts_unmarshaled(self) -> None:
@@ -5994,15 +6000,21 @@ class TestSkillScriptArgumentMarshaler:
         script = await skill.get_script("convert")
         assert isinstance(script, InlineSkillScript)
         assert script.argument_marshaler is marshaler
-        result = await script.run(skill, args='{"name": "Dan"}')  # type: ignore[arg-type]
+        result = await script.run(skill, args='{"name": "Dan"}')
         assert result == "converted Dan"
 
-    async def test_run_skill_script_marshals_string_args_via_provider(self) -> None:
-        """End-to-end: a marshaler lets string args flow through the provider to an inline script."""
+    async def test_run_skill_script_marshals_args_via_provider(self) -> None:
+        """End-to-end: a marshaler remaps args as they flow through the provider to an inline script."""
+
+        def remap(args: dict[str, Any] | list[str] | str | None) -> dict[str, Any] | None:
+            if isinstance(args, dict) and "q" in args:
+                return {"name": args["q"]}
+            return args if isinstance(args, dict) else None
+
         skill = InlineSkill(
             frontmatter=SkillFrontmatter(name="my-skill", description="test"),
             instructions="body",
-            argument_marshaler=self._json_string_marshaler,
+            argument_marshaler=remap,
         )
 
         @skill.script
@@ -6012,5 +6024,12 @@ class TestSkillScriptArgumentMarshaler:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
-        result = await run_tool.func(skill_name="my-skill", script_name="greet", args='{"name": "Eve"}')
+        result = await run_tool.func(skill_name="my-skill", script_name="greet", args={"q": "Eve"})
         assert result == "hello Eve"
+
+    async def test_inline_string_args_without_marshaler_raises(self) -> None:
+        """A raw string reaching an inline script with no marshaler raises a clear TypeError."""
+        script = InlineSkillScript(name="greet", function=lambda name="world": f"hello {name}")
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        with pytest.raises(TypeError, match="argument_marshaler"):
+            await script.run(skill, args='{"name": "Alice"}')

@@ -74,16 +74,16 @@ logger = logging.getLogger(__name__)
 # region Models
 
 
-SkillScriptArgumentMarshaler: TypeAlias = Callable[
-    [dict[str, Any] | list[str] | str | None], dict[str, Any] | list[str] | None
-]
+SkillScriptArgumentMarshaler: TypeAlias = Callable[[dict[str, Any] | list[str] | str | None], dict[str, Any] | None]
 """Callable that converts raw script arguments before an inline script runs.
 
 The marshaler receives the raw ``args`` value supplied by the agent/LLM (a
 ``dict`` of named arguments, a ``list[str]`` of positional arguments, a
 ``str`` for backends that send arguments as an unparsed JSON string, or
-``None``) and returns the value that should actually be passed to the script
-callable (a ``dict``, a ``list[str]``, or ``None``).
+``None``) and returns the named keyword arguments to pass to the inline
+script callable: a ``dict`` (or ``None`` for no arguments).  Inline scripts
+bind arguments by keyword name, so the marshaler must normalize whatever shape
+it receives into a ``dict`` or ``None``.
 
 When no marshaler is configured, inline scripts use the raw value unchanged.
 This hook lets callers plug in their own argument conversion logic to support
@@ -398,7 +398,7 @@ class InlineSkillScript(SkillScript):
             self._parameters_schema_resolved = True
         return self._parameters_schema
 
-    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | None = None, **kwargs: Any) -> Any:
+    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | str | None = None, **kwargs: Any) -> Any:
         """Run the script by invoking the callable in-process.
 
         When an ``argument_marshaler`` is configured, it is applied to
@@ -408,8 +408,10 @@ class InlineSkillScript(SkillScript):
         Args:
             skill: The skill that owns this script.
             args: Optional keyword arguments for the script, provided by the
-                agent/LLM.  After any configured ``argument_marshaler`` runs,
-                the result must be a ``dict`` or ``None``; a ``list`` raises
+                agent/LLM.  May be a raw ``str`` when an
+                ``argument_marshaler`` is configured to convert it.  After
+                any configured ``argument_marshaler`` runs, the result must
+                be a ``dict`` or ``None``; a ``list`` raises
                 :class:`TypeError` because inline scripts bind arguments by
                 keyword name.
             **kwargs: Runtime keyword arguments forwarded only to script
@@ -419,12 +421,19 @@ class InlineSkillScript(SkillScript):
             The script execution result.
 
         Raises:
-            TypeError: If ``args`` (after marshaling) is a ``list``
-                (array-style arguments are only supported for file-based
-                scripts).
+            TypeError: If ``args`` (after marshaling) is a ``str`` or a
+                ``list``.  A leftover ``str`` means no ``argument_marshaler``
+                converted it; a ``list`` is array-style and only supported
+                for file-based scripts.
         """
         if self.argument_marshaler is not None:
             args = self.argument_marshaler(args)
+        if isinstance(args, str):
+            raise TypeError(
+                f"Inline script '{self.name}' received string arguments that were not "
+                f"converted to a dict. Configure an 'argument_marshaler' to convert "
+                f"string-encoded arguments into named keyword arguments."
+            )
         if isinstance(args, list):
             raise TypeError(
                 f"Inline script '{self.name}' requires keyword arguments (dict), "
