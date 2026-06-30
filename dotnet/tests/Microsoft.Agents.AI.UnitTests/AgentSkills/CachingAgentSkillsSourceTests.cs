@@ -210,12 +210,13 @@ public sealed class CachingAgentSkillsSourceTests
         using var cts1 = new CancellationTokenSource();
         using var cts2 = new CancellationTokenSource();
 
-        // Act — the first caller holds the gate and fetches; the second caller queues behind it.
+        // Act — start the first caller and wait until it owns the gate and its fetch has started,
+        // so the second caller is guaranteed to queue behind it (and not become the fetch owner).
         var task1 = source.GetSkillsAsync(context, cts1.Token);
-        var task2 = source.GetSkillsAsync(context, cts2.Token);
-
-        // Wait until the first caller's fetch has started.
         await inner.Started;
+
+        // The second caller now queues behind the first on the cache gate.
+        var task2 = source.GetSkillsAsync(context, cts2.Token);
 
         // Cancel the first caller; its fetch is cancelled and the gate is released.
         cts1.Cancel();
