@@ -10,7 +10,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.10.0] - 2026-06-30
 
 ### Added
-- **agent-framework-core**: Add hosting core and Responses channel ([#6580](https://github.com/microsoft/agent-framework/pull/6580))
 - **agent-framework-core**: Explicitly emit `available_resources` and `available_scripts` in skill content ([#6694](https://github.com/microsoft/agent-framework/pull/6694))
 - **agent-framework-core**: Autolabelling MCP servers based on hints and GitHub MCP server interface labels ([#6171](https://github.com/microsoft/agent-framework/pull/6171))
 - **agent-framework-core**: `create_harness_agent` `skills_paths` accepts `str | Path | Sequence[str | Path] | None` ([#6717](https://github.com/microsoft/agent-framework/pull/6717))
@@ -20,9 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **agent-framework-foundry**: Add support for Foundry Adaptive evals ([#6267](https://github.com/microsoft/agent-framework/pull/6267))
 - **agent-framework-bedrock**, **agent-framework-gemini**: Surface cache and reasoning token counts ([#6640](https://github.com/microsoft/agent-framework/pull/6640))
 - **agent-framework-durabletask**: Host MAF workflows on a standalone Durable Task worker ([#6418](https://github.com/microsoft/agent-framework/pull/6418))
-- **agent-framework-hosting**: New hosting core package with OTel parent context support ([#6580](https://github.com/microsoft/agent-framework/pull/6580), [#6709](https://github.com/microsoft/agent-framework/pull/6709))
-- **agent-framework-hosting-responses**: New Responses channel for hosting ([#6580](https://github.com/microsoft/agent-framework/pull/6580))
-- **agent-framework-hosting-telegram**: Add Telegram channel for agent-framework-hosting ([#6698](https://github.com/microsoft/agent-framework/pull/6698))
 - **agent-framework-azure-ai-search**: Support stable and preview Azure AI Search (Foundry IQ) API versions ([#6603](https://github.com/microsoft/agent-framework/pull/6603))
 - **agent-framework-github-copilot**: Align function approval to use SDK `on_pre_tool_use` hook ([#6750](https://github.com/microsoft/agent-framework/pull/6750))
 
