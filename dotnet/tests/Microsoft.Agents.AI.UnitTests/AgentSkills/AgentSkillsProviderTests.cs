@@ -264,7 +264,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         [
             new AgentInlineSkill("concurrent-skill", "Concurrent test", "Body.")
         ]);
-        var provider = new AgentSkillsProvider(source);
+        var provider = new AgentSkillsProvider(new CachingAgentSkillsSource(source));
 
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
 
@@ -274,7 +274,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
             .ToArray();
         await Task.WhenAll(tasks);
 
-        // Assert — GetSkillsAsync should have been called exactly once (provider-level caching)
+        // Assert — GetSkillsAsync should have been called exactly once (source-level caching)
         Assert.Equal(1, source.GetSkillsCallCount);
     }
 
@@ -347,7 +347,6 @@ public sealed class AgentSkillsProviderTests : IDisposable
         var provider = new AgentSkillsProviderBuilder()
             .UseFileSkill(this._testRoot, options)
             .UseFileScriptRunner(s_noOpExecutor)
-            .UseOptions(o => o.DisableCaching = true)
             .Build();
 
         // Act
@@ -373,7 +372,6 @@ public sealed class AgentSkillsProviderTests : IDisposable
         var provider = new AgentSkillsProviderBuilder()
             .UseFileSkills(new[] { dir1, dir2 }, options)
             .UseFileScriptRunner(s_noOpExecutor)
-            .UseOptions(o => o.DisableCaching = true)
             .Build();
 
         // Act
@@ -897,29 +895,6 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task Build_WithCachingDisabled_ReloadsSkillsOnEachCallAsync()
-    {
-        // Arrange
-        var source = new CountingAgentSkillsSource(
-        [
-            new AgentInlineSkill("no-cache-skill", "No cache test", "Body.")
-        ]);
-        var provider = new AgentSkillsProviderBuilder()
-            .UseSource(source)
-            .UseOptions(o => o.DisableCaching = true)
-            .Build();
-
-        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
-
-        // Act
-        await provider.InvokingAsync(invokingContext, CancellationToken.None);
-        await provider.InvokingAsync(invokingContext, CancellationToken.None);
-
-        // Assert — source should be called more than once since caching is disabled
-        Assert.True(source.GetSkillsCallCount > 1);
-    }
-
-    [Fact]
     public async Task Build_WithCachingEnabled_CachesSkillsAsync()
     {
         // Arrange
@@ -979,7 +954,6 @@ public sealed class AgentSkillsProviderTests : IDisposable
             .UseSkills(inlineSkill)
             .UseFileSkill(dir2)
             .UseFileScriptRunner(s_noOpExecutor)
-            .UseOptions(o => o.DisableCaching = true)
             .Build();
 
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
@@ -1020,7 +994,6 @@ public sealed class AgentSkillsProviderTests : IDisposable
             .UseSkills(inlineSkill)
             .UseFileSkill(dir)
             .UseFileScriptRunner(s_noOpExecutor)
-            .UseOptions(o => o.DisableCaching = true)
             .Build();
 
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
@@ -1107,42 +1080,24 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task InvokingCoreAsync_MultipleInvocations_ToolsAreSharedWhenCachedAsync()
+    public async Task InvokingCoreAsync_MultipleInvocations_SourceIsCalledOnceWhenCachedAsync()
     {
-        // Arrange — with default caching, tools should be the same reference
-        this.CreateSkill("cached-tools-skill", "Cached tools test", "Body.");
-        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
-        var provider = new AgentSkillsProvider(source);
+        // Arrange — with CachingAgentSkillsSource, the inner source should only be called once
+        var source = new CountingAgentSkillsSource(
+        [
+            new AgentInlineSkill("cached-tools-skill", "Cached tools test", "Body.")
+        ]);
+        var provider = new AgentSkillsProvider(new CachingAgentSkillsSource(source));
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
 
         // Act
         var result1 = await provider.InvokingAsync(invokingContext, CancellationToken.None);
         var result2 = await provider.InvokingAsync(invokingContext, CancellationToken.None);
 
-        // Assert — tool lists should be the same reference (cached)
+        // Assert — source should be called exactly once (cached at source level)
         Assert.NotNull(result1.Tools);
         Assert.NotNull(result2.Tools);
-        Assert.Same(result1.Tools, result2.Tools);
-    }
-
-    [Fact]
-    public async Task InvokingCoreAsync_MultipleInvocations_ToolsAreNotSharedWhenCachingDisabledAsync()
-    {
-        // Arrange — with caching disabled, tools should be rebuilt per invocation
-        this.CreateSkill("fresh-tools-skill", "Fresh tools test", "Body.");
-        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
-        var options = new AgentSkillsProviderOptions { DisableCaching = true };
-        var provider = new AgentSkillsProvider(source, options);
-        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
-
-        // Act
-        var result1 = await provider.InvokingAsync(invokingContext, CancellationToken.None);
-        var result2 = await provider.InvokingAsync(invokingContext, CancellationToken.None);
-
-        // Assert — tool lists should not be the same reference
-        Assert.NotNull(result1.Tools);
-        Assert.NotNull(result2.Tools);
-        Assert.NotSame(result1.Tools, result2.Tools);
+        Assert.Equal(1, source.GetSkillsCallCount);
     }
 
     [Fact]

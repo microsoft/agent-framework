@@ -20,19 +20,18 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// </para>
 /// <para>
 /// The default implementation registered when no custom <see cref="HostedSessionIsolationKeyProvider"/>
-/// is present in DI maps the platform-injected <c>x-agent-user-isolation-key</c> and
-/// <c>x-agent-chat-isolation-key</c> headers via <see cref="ResponseContext.Isolation"/>. Hosting samples and contributor-only environments
+/// is present in DI maps the platform-injected <c>x-agent-user-id</c> header via
+/// <see cref="ResponseContext.PlatformContext"/>. Hosting samples and contributor-only environments
 /// can register an alternate implementation in DI to provide values when the platform headers are absent
 /// (e.g., during local Docker debugging).
 /// </para>
 /// <para>
 /// Implementations must return a <see cref="HostedSessionContext"/> whose <see cref="HostedSessionContext.UserId"/>
-/// and <see cref="HostedSessionContext.ChatId"/> are both non-null and non-whitespace. Returning either as null
-/// (or throwing from <see cref="GetKeysAsync"/>) is treated as a configuration error and surfaces as a
-/// 500 from the hosting layer.
+/// is non-null and non-whitespace. Returning null (or throwing from <see cref="GetKeysAsync"/>) is treated
+/// as a configuration error and surfaces as a 500 from the hosting layer.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public abstract class HostedSessionIsolationKeyProvider
 {
     /// <summary>
@@ -42,8 +41,8 @@ public abstract class HostedSessionIsolationKeyProvider
     /// <param name="request">The <see cref="CreateResponse"/> describing the incoming request.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>
-    /// A <see cref="HostedSessionContext"/> with non-null <see cref="HostedSessionContext.UserId"/> and
-    /// <see cref="HostedSessionContext.ChatId"/>, or <see langword="null"/> when the implementation cannot
+    /// A <see cref="HostedSessionContext"/> with non-null <see cref="HostedSessionContext.UserId"/>,
+    /// or <see langword="null"/> when the implementation cannot
     /// produce identity keys for the current request. A <see langword="null"/> result is treated as a
     /// configuration error by the hosting layer and surfaces as 500.
     /// </returns>

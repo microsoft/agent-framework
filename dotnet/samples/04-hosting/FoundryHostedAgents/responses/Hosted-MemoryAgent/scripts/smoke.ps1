@@ -1,4 +1,4 @@
-#requires -Version 7
+﻿#requires -Version 7
 <#
 .SYNOPSIS
   Local smoke test for the Hosted-MemoryAgent sample.
@@ -44,13 +44,12 @@ Write-Host '==> Fetching bearer token ...'
 $bearer = az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv
 if (-not $bearer) { throw 'Failed to obtain bearer token. Run az login.' }
 
-function Start-Container([string]$UserKey, [string]$ChatKey, [string]$ContainerName) {
+function Start-Container([string]$UserKey, [string]$ContainerName) {
     docker rm -f $ContainerName 2>$null | Out-Null
     docker run -d --name $ContainerName -p ${Port}:8088 `
         -e AGENT_NAME=hosted-memory-agent `
         -e AZURE_BEARER_TOKEN=$bearer `
         -e HOSTED_USER_ISOLATION_KEY=$UserKey `
-        -e HOSTED_CHAT_ISOLATION_KEY=$ChatKey `
         --env-file .env `
         $ImageName | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "docker run failed for $ContainerName." }
@@ -82,7 +81,7 @@ function Assert-NotContains([string]$Haystack, [string]$Needle, [string]$Label) 
 
 try {
     Write-Host '==> Phase 1: alice teaches the agent her trip details ...'
-    Start-Container -UserKey 'alice' -ChatKey 'alice-chat-1' -ContainerName 'hosted-memory-smoke-alice'
+    Start-Container -UserKey 'alice' -ContainerName 'hosted-memory-smoke-alice'
     $r1 = Invoke-Agent -Prompt 'Hi! My name is Taylor and I am planning a hiking trip to Patagonia in November.'
     $r2 = Invoke-Agent -Prompt 'I am travelling with my sister and we love finding scenic viewpoints.' -PreviousResponseId $r1.id
 
@@ -96,7 +95,7 @@ try {
     docker rm -f hosted-memory-smoke-alice | Out-Null
 
     Write-Host '==> Phase 2: bob starts a fresh container with a different user isolation key ...'
-    Start-Container -UserKey 'bob' -ChatKey 'bob-chat-1' -ContainerName 'hosted-memory-smoke-bob'
+    Start-Container -UserKey 'bob' -ContainerName 'hosted-memory-smoke-bob'
     $b1 = Invoke-Agent -Prompt 'Hello, what trip am I planning?'
     $bobText = ($b1.output | ForEach-Object { $_.content | ForEach-Object { $_.text } }) -join ' '
     Assert-NotContains $bobText 'Patagonia' 'bob isolation: no leak of alice memories'

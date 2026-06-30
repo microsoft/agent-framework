@@ -7,8 +7,8 @@
 // isolation key headers.
 //
 // Memory scope flows from request -> hosting layer -> session -> provider:
-//   1. Foundry sets x-agent-user-isolation-key on every inbound request.
-//   2. AgentFrameworkResponseHandler reads context.Isolation.UserIsolationKey via the registered
+//   1. Foundry sets x-agent-user-id on every inbound request.
+//   2. AgentFrameworkResponseHandler reads context.PlatformContext.UserIdKey via the registered
 //      HostedSessionIsolationKeyProvider and stores it on the session as a HostedSessionContext.
 //   3. FoundryMemoryProvider's stateInitializer reads HostedSessionContext.UserId and uses it as
 //      the FoundryMemoryProviderScope, partitioning memories per user.

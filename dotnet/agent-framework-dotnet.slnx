@@ -122,6 +122,7 @@
   <Folder Name="/Samples/02-agents/Harness/">
     <File Path="samples/02-agents/Harness/README.md" />
     <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step01_MeetYourClaw/Claw_Step01_MeetYourClaw.csproj" />
+    <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step02_WorkingWithData/Claw_Step02_WorkingWithData.csproj" />
     <Project Path="samples/02-agents/Harness/ConsoleReactiveComponents/ConsoleReactiveComponents.csproj" />
     <Project Path="samples/02-agents/Harness/ConsoleReactiveFramework/ConsoleReactiveFramework.csproj" />
     <Project Path="samples/02-agents/Harness/Harness_Shared_Console/Harness_Shared_Console.csproj" />
@@ -383,6 +384,7 @@
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Simple/HostedWorkflowSimple.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/Hosted-Toolbox-AuthPaths-Client/Hosted-Toolbox-AuthPaths-Client.csproj" />
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SessionFilesClient/SessionFilesClient.csproj" />
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent/SimpleAgent.csproj" />
   </Folder>

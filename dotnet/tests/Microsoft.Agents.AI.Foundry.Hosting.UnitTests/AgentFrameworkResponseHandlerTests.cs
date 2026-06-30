@@ -876,5 +876,183 @@ public class AgentFrameworkResponseHandlerTests
             new(new SimpleAgentSession());
     }
 
+    [Fact]
+    public async Task CreateAsync_PreviousResponseIdChain_NoConversation_ReusesOneSessionAsync()
+    {
+        // Arrange
+        var agent = new SessionCountingAgent();
+        var fakeProvider = new FakeHostedSessionIsolationKeyProvider("alice");
+        var store = new InMemoryAgentSessionStore();
+        var handler = BuildHandlerWith(agent, fakeProvider, store);
+
+        const string PartitionA = "aaaaaaaaaaaaaaaa00";
+        var responseA = "caresp_" + PartitionA + new string('1', 32);
+        var responseA2 = "caresp_" + PartitionA + new string('2', 32);
+
+        // Turn 1: cold start, no conversation, no previous_response_id. Key from minted responseA.
+        var (req1, ctx1) = BuildChainRequest(responseA, callId: null);
+        await DrainEventsAsync(handler.CreateAsync(req1, ctx1.Object, CancellationToken.None));
+        Assert.NotNull(agent.LastSession);
+
+        // Turn 2: client echoes previous_response_id sharing the same partition; minted responseA2.
+        var (req2, ctx2) = BuildChainRequest(responseA2, callId: null);
+        req2.PreviousResponseId = responseA;
+        agent.LastSession = null;
+        await DrainEventsAsync(handler.CreateAsync(req2, ctx2.Object, CancellationToken.None));
+
+        // Assert: both turns persisted under the same partition key → one created session.
+        Assert.NotNull(agent.LastSession);
+        Assert.Equal("alice", agent.LastSession!.GetHostedContext()!.UserId);
+        Assert.Equal(1, agent.SessionCount);
+    }
+
+    [Fact]
+    public async Task CreateAsync_SetsCallIdFromPlatformContext_VisibleDuringAgentRunAsync()
+    {
+        // Arrange
+        var agent = new CallIdCapturingAgent();
+        var handler = BuildHandlerWith(agent, new FakeHostedSessionIsolationKeyProvider("alice"), new InMemoryAgentSessionStore());
+        var (request, ctx) = BuildChainRequest("caresp_" + new string('0', 50), callId: "call-xyz");
+
+        // Act
+        await DrainEventsAsync(handler.CreateAsync(request, ctx.Object, CancellationToken.None));
+
+        // Assert: the call id observed inside the agent run (the same async flow that drives any
+        // downstream MCP/tool egress) matches the platform-provided value. This guards against the
+        // async-iterator AsyncLocal revert that would otherwise drop the call id before egress.
+        Assert.Equal("call-xyz", agent.ObservedCallId);
+    }
+
+    [Fact]
+    public async Task CreateAsync_NoCallIdInPlatformContext_LeavesAmbientNullAsync()
+    {
+        // Arrange
+        var agent = new CallIdCapturingAgent();
+        var handler = BuildHandlerWith(agent, new FakeHostedSessionIsolationKeyProvider("alice"), new InMemoryAgentSessionStore());
+        var (request, ctx) = BuildChainRequest("caresp_" + new string('0', 50), callId: null);
+
+        // Act
+        await DrainEventsAsync(handler.CreateAsync(request, ctx.Object, CancellationToken.None));
+
+        // Assert
+        Assert.Null(agent.ObservedCallId);
+    }
+
+    [Fact]
+    public async Task CreateAsync_AfterStreamCompletes_DoesNotLeakCallIdToCallerContextAsync()
+    {
+        // Arrange
+        var agent = new CallIdCapturingAgent();
+        var handler = BuildHandlerWith(agent, new FakeHostedSessionIsolationKeyProvider("alice"), new InMemoryAgentSessionStore());
+        var (request, ctx) = BuildChainRequest("caresp_" + new string('0', 50), callId: "call-xyz");
+
+        // The caller's ambient call id starts clear.
+        Assert.Null(HostedCallContext.CallId);
+
+        // Act
+        await DrainEventsAsync(handler.CreateAsync(request, ctx.Object, CancellationToken.None));
+
+        // Assert: HostedCallContext is documented request-scoped. The handler sets the AsyncLocal inside
+        // its streaming iterator (observed by the agent run — see VisibleDuringAgentRun above), but that
+        // write never escapes to the caller's execution context. After the stream completes the caller's
+        // ambient call id is still null, so a stale call id cannot leak into a subsequent request that is
+        // handled on the same thread.
+        Assert.Equal("call-xyz", agent.ObservedCallId);
+        Assert.Null(HostedCallContext.CallId);
+    }
+
+    private static AgentFrameworkResponseHandler BuildHandlerWith(AIAgent agent, HostedSessionIsolationKeyProvider provider, AgentSessionStore store)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(store);
+        services.AddSingleton(agent);
+        services.AddSingleton(provider);
+        return new AgentFrameworkResponseHandler(services.BuildServiceProvider(), NullLogger<AgentFrameworkResponseHandler>.Instance);
+    }
+
+    private static (CreateResponse Request, Mock<ResponseContext> Context) BuildChainRequest(string responseId, string? callId)
+    {
+        var request = new CreateResponse { Model = "test" };
+        request.Input = BinaryData.FromObjectAsJson(new[]
+        {
+            new { type = "message", id = "msg_1", status = "completed", role = "user",
+                  content = new[] { new { type = "input_text", text = "Hello" } } }
+        });
+        var ctx = new Mock<ResponseContext>(responseId) { CallBase = true };
+        ctx.Setup(x => x.PlatformContext).Returns(new PlatformContext("alice", callId));
+        ctx.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<OutputItem>());
+        ctx.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<Item>());
+        return (request, ctx);
+    }
+
+    private static async Task DrainEventsAsync(IAsyncEnumerable<ResponseStreamEvent> stream)
+    {
+        await foreach (var _ in stream)
+        {
+        }
+    }
+
+    /// <summary>Stateful agent that counts created sessions and round-trips its <see cref="AgentSessionStateBag"/>.</summary>
+    private sealed class SessionCountingAgent : AIAgent
+    {
+        public AgentSession? LastSession { get; set; }
+        public int SessionCount { get; private set; }
+
+        protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, CancellationToken cancellationToken = default)
+        {
+            this.LastSession = session;
+            return ToAsyncEnumerableAsync(new AgentResponseUpdate { MessageId = "resp_msg_1", Contents = [new MeaiTextContent("ok")] });
+        }
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+        {
+            this.SessionCount++;
+            return new(new StatefulSession());
+        }
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions, CancellationToken cancellationToken = default)
+            => new(((StatefulSession)session).Serialize());
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions, CancellationToken cancellationToken = default)
+            => new(StatefulSession.Deserialize(serializedState));
+    }
+
+    /// <summary>Reads <see cref="HostedCallContext.CallId"/> during its run, standing in for a downstream tool call.</summary>
+    private sealed class CallIdCapturingAgent : AIAgent
+    {
+        public string? ObservedCallId { get; private set; }
+
+        protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, CancellationToken cancellationToken = default)
+        {
+            this.ObservedCallId = HostedCallContext.CallId;
+            return ToAsyncEnumerableAsync(new AgentResponseUpdate { MessageId = "resp_msg_1", Contents = [new MeaiTextContent("ok")] });
+        }
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+            => new(new StatefulSession());
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions, CancellationToken cancellationToken = default)
+            => new(((StatefulSession)session).Serialize());
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions, CancellationToken cancellationToken = default)
+            => new(StatefulSession.Deserialize(serializedState));
+    }
+
+    private sealed class StatefulSession : AgentSession
+    {
+        public StatefulSession() { }
+        private StatefulSession(AgentSessionStateBag bag) { this.StateBag = bag; }
+        public JsonElement Serialize() => this.StateBag.Serialize();
+        public static StatefulSession Deserialize(JsonElement e) => new(AgentSessionStateBag.Deserialize(e));
+    }
+
     private sealed class SimpleAgentSession : AgentSession { }
 }

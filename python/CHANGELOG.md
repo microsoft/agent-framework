@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **agent-framework-azure-ai-search**: Support the stable/GA (`azure-search-documents` `12.0.0`, api-version `2026-04-01`) and preview (`12.1.0b1`, api-version `2026-05-01-preview`) Azure AI Search SDKs across semantic and agentic modes. Bump the dependency to `>=12.0.0,<13` and auto-detect the installed build: preview-only agentic features (output mode, low/medium reasoning effort) are enabled when a preview build is installed and otherwise raise an actionable error. The installed SDK selects its own data-plane api-version (no `api_version` parameter to configure). Also fixes semantic search with a semantic configuration on the 12.x SDK by passing string values for `query_type`/`query_caption` (the 12.x non-`str` enums serialized to a form the service rejected).
+
+## [1.10.0] - 2026-06-25
+
+### Added
+- **agent-framework-core**: Add hosting core and Responses channel ([#6580](https://github.com/microsoft/agent-framework/pull/6580))
+- **agent-framework-core**: Explicitly emit `available_resources` and `available_scripts` in skill content ([#6694](https://github.com/microsoft/agent-framework/pull/6694))
+- **agent-framework-foundry**: Add `FoundryAgent` conversation session helper ([#6623](https://github.com/microsoft/agent-framework/pull/6623))
+- **agent-framework-foundry**: Add support for Foundry Adaptive evals ([#6267](https://github.com/microsoft/agent-framework/pull/6267))
+- **agent-framework-bedrock**, **agent-framework-gemini**: Surface cache and reasoning token counts ([#6640](https://github.com/microsoft/agent-framework/pull/6640))
+- **agent-framework-durabletask**: Host MAF workflows on a standalone Durable Task worker ([#6418](https://github.com/microsoft/agent-framework/pull/6418))
+- **agent-framework-hosting**: New hosting core package with OTel parent context support ([#6580](https://github.com/microsoft/agent-framework/pull/6580), [#6709](https://github.com/microsoft/agent-framework/pull/6709))
+- **agent-framework-hosting-responses**: New Responses channel for hosting ([#6580](https://github.com/microsoft/agent-framework/pull/6580))
+- **agent-framework-hosting-telegram**: Add Telegram channel for agent-framework-hosting ([#6698](https://github.com/microsoft/agent-framework/pull/6698))
+
+### Changed
+- **agent-framework-core**: [BREAKING — experimental] Refactor `FileSkillsSource` for depth-based discovery and predicate filters ([#6488](https://github.com/microsoft/agent-framework/pull/6488))
+- **agent-framework-core**: [BREAKING — experimental] Require approval for file-access tools with read-only auto-approval ([#6599](https://github.com/microsoft/agent-framework/pull/6599))
+- **agent-framework-core**: [BREAKING — experimental] Integrate looping into `HarnessAgent` ([#6607](https://github.com/microsoft/agent-framework/pull/6607))
+- **agent-framework-core**: [BREAKING — experimental] Port `FileMemoryProvider` and integrate into harness agent ([#6547](https://github.com/microsoft/agent-framework/pull/6547))
+- **agent-framework-core**: Align serialized tool format to OTel GenAI tool definition format ([#6556](https://github.com/microsoft/agent-framework/pull/6556))
+- **agent-framework-foundry-hosting**: Add MCP as a hard dependency ([#6634](https://github.com/microsoft/agent-framework/pull/6634))
+- **agent-framework-purview**: Prefer token principal for user identity ([#6693](https://github.com/microsoft/agent-framework/pull/6693))
+
+### Fixed
+- **agent-framework-core**: Fix MCP metadata and tool name handling ([#6656](https://github.com/microsoft/agent-framework/pull/6656))
+- **agent-framework-core**: Ensure spans created inside sync preparations in streaming call are correctly nested ([#6552](https://github.com/microsoft/agent-framework/pull/6552))
+- **agent-framework-openai**: Preserve OTel parent context for deferred streams ([#6709](https://github.com/microsoft/agent-framework/pull/6709))
+- **agent-framework-ag-ui**: Fix tool history replay sanitization ([#6581](https://github.com/microsoft/agent-framework/pull/6581))
+- **agent-framework-anthropic**: Re-role trailing assistant message to user for Anthropic compatibility ([#6207](https://github.com/microsoft/agent-framework/pull/6207))
+- **agent-framework-hyperlight**: Fix CodeAct span parenting ([#6712](https://github.com/microsoft/agent-framework/pull/6712))
+- **agent-framework-hyperlight**: Harden output capture against symlinks ([#6601](https://github.com/microsoft/agent-framework/pull/6601))
+
 ## [1.9.0] - 2026-06-18
 
 ### Added
@@ -1220,7 +1255,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.9.0...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.10.0...HEAD
+[1.10.0]: https://github.com/microsoft/agent-framework/compare/python-1.9.0...python-1.10.0
 [1.9.0]: https://github.com/microsoft/agent-framework/compare/python-1.8.1...python-1.9.0
 [1.8.1]: https://github.com/microsoft/agent-framework/compare/python-1.8.0...python-1.8.1
 [1.8.0]: https://github.com/microsoft/agent-framework/compare/python-1.7.0...python-1.8.0
