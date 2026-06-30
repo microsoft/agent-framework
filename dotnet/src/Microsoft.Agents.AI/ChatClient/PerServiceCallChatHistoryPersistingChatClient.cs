@@ -200,7 +200,12 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
             while (hasUpdates)
             {
                 var update = enumerator.Current;
-                responseUpdates.Add(update.Clone());
+                // Keep the same reference (not a shallow clone). FunctionInvokingChatClient may
+                // reassign update.Contents later when rewriting FunctionCallContent →
+                // ToolApprovalRequestContent for ApprovalRequiredAIFunction tools; a Clone() here
+                // would freeze the pre-rewrite Contents list and the persisted history would miss
+                // the rewrite. See PerServiceCallChatHistoryPersistingChatClientTests.
+                responseUpdates.Add(update);
 
                 // If the service returned a real ConversationId on any update, remember that.
                 // Otherwise stamp our sentinel so FICC treats this as service-managed —
