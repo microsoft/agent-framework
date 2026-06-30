@@ -124,6 +124,16 @@ public sealed class AgentSkillsProviderBuilder
     /// <summary>
     /// Adds a custom skill source.
     /// </summary>
+    /// <remarks>
+    /// The provider returned by <see cref="Build"/> takes ownership of <paramref name="source"/> and
+    /// disposes it when the provider is disposed. Because the same instance is reused on every
+    /// <see cref="Build"/> call, do not build more than one provider from a builder that captures a
+    /// shared <paramref name="source"/>; otherwise disposing one provider would dispose the source out
+    /// from under the others. To build multiple providers, use the
+    /// <see cref="UseSource(Func{ILoggerFactory?, AgentSkillsSource})"/> overload, which creates a fresh
+    /// source per build, or pass the source directly to an <see cref="AgentSkillsProvider"/> constructor
+    /// with <c>ownsSource: false</c> to retain ownership.
+    /// </remarks>
     /// <param name="source">The custom skill source.</param>
     /// <returns>This builder instance for chaining.</returns>
     public AgentSkillsProviderBuilder UseSource(AgentSkillsSource source)
@@ -239,6 +249,13 @@ public sealed class AgentSkillsProviderBuilder
     /// <remarks>
     /// The returned provider owns the source pipeline constructed by this builder, so disposing the
     /// provider disposes the pipeline (including any sources added to this builder).
+    /// <para>
+    /// Build more than one provider from the same builder only when every source it produces is
+    /// independent per build (for example, sources added via
+    /// <see cref="UseSource(Func{ILoggerFactory?, AgentSkillsSource})"/>). A source captured as a shared
+    /// instance through <see cref="UseSource(AgentSkillsSource)"/> is reused across builds and would be
+    /// disposed by whichever provider is disposed first; build only one provider in that case.
+    /// </para>
     /// </remarks>
     /// <returns>A configured <see cref="AgentSkillsProvider"/>.</returns>
     public AgentSkillsProvider Build()
