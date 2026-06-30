@@ -577,10 +577,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         // Warn so the developer knows the ApprovalRequiredAIFunction marker(s) will not be automatically gated.
         if (sessionConfig.Hooks?.OnPreToolUse is not null)
         {
-            logger.LogWarning(
-                "A custom 'OnPreToolUse' hook is configured on the SessionConfig, so {Count} approval-required tool(s) ({Tools}) " +
-                "will not be automatically gated by GitHubCopilotAgent. The custom hook is responsible for enforcing approval " +
-                "(for example, by returning a 'deny' or 'ask' PreToolUseHookOutput).",
+            logger.LogApprovalGatingSkippedDueToCustomHook(
                 approvalRequiredToolNames.Count,
                 string.Join(", ", approvalRequiredToolNames));
             return sessionConfig;
