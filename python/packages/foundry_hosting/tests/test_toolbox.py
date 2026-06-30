@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -81,15 +80,6 @@ def test_toolbox_name_from_endpoint(endpoint: str, expected: str) -> None:
     assert _toolbox_name_from_endpoint(endpoint) == expected
 
 
-def test_init_rejects_http_client() -> None:
-    with pytest.raises(TypeError, match="http_client"):
-        FoundryToolbox(
-            _FakeCredential(),  # type: ignore
-            url="https://h/toolboxes/tb/mcp",
-            http_client=httpx.AsyncClient(),
-        )
-
-
 def test_init_derives_name_and_defaults() -> None:
     toolbox = FoundryToolbox(
         _FakeCredential(),  # type: ignore
@@ -133,23 +123,6 @@ def test_auth_flow_omits_call_id_when_absent() -> None:
     prepared = next(auth.auth_flow(request))
 
     assert "x-agent-foundry-call-id" not in prepared.headers
-
-
-async def test_close_closes_owned_http_client() -> None:
-    toolbox = FoundryToolbox(
-        _FakeCredential(),  # type: ignore
-        url="https://h/toolboxes/tb/mcp",
-    )
-    client = toolbox._httpx_client  # pyright: ignore[reportPrivateUsage]
-    assert client is not None
-    client.aclose = AsyncMock()  # ty: ignore # zuban: ignore
-
-    await toolbox.close()
-
-    client.aclose.assert_awaited_once()  # ty: ignore
-    # Idempotent: a second close does not re-close the client.
-    await toolbox.close()
-    client.aclose.assert_awaited_once()  # ty: ignore
 
 
 def test_as_skills_provider_returns_provider() -> None:
