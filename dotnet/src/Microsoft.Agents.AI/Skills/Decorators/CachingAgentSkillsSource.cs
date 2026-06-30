@@ -51,6 +51,8 @@ internal sealed class CachingAgentSkillsSource : DelegatingAgentSkillsSource
     /// <inheritdoc/>
     public override async Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
+        this.ThrowIfDisposed();
+
         var cacheKey = this._options?.CacheIsolationKeySelector?.Invoke(context) ?? SharedCacheKey;
 
         var entry = this._cachedEntries.GetOrAdd(cacheKey, _ => new CacheEntry());
@@ -102,6 +104,16 @@ internal sealed class CachingAgentSkillsSource : DelegatingAgentSkillsSource
         }
 
         return result;
+    }
+
+    private void ThrowIfDisposed()
+    {
+#pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
+        if (this._disposed)
+        {
+            throw new ObjectDisposedException(this.GetType().FullName);
+        }
+#pragma warning restore CA1513
     }
 
     /// <inheritdoc/>

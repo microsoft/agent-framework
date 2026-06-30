@@ -442,6 +442,19 @@ public sealed class CachingAgentSkillsSourceTests
         Assert.Equal(1, inner.DisposeCount);
     }
 
+    [Fact]
+    public async Task GetSkillsAsync_AfterDispose_ThrowsObjectDisposedExceptionAsync()
+    {
+        // Arrange
+        var inner = new DisposeTrackingSkillsSource();
+        var source = new CachingAgentSkillsSource(inner);
+        var context = TestAgentSkillsSourceContextFactory.Create();
+        source.Dispose();
+
+        // Act & Assert — calls after disposal fail deterministically and create no cache entries.
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => source.GetSkillsAsync(context, CancellationToken.None));
+    }
+
     private sealed class DisposeTrackingSkillsSource : AgentSkillsSource
     {
         public int DisposeCount { get; private set; }
