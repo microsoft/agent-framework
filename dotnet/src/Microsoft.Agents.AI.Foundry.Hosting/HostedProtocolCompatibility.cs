@@ -61,7 +61,7 @@ internal static class HostedProtocolCompatibility
     /// </returns>
     internal static ResponsesApiException? GetUnsupportedProtocolError(bool isHosted, string? callId)
     {
-        if (!isHosted || !string.IsNullOrEmpty(callId))
+        if (!isHosted || !string.IsNullOrWhiteSpace(callId))
         {
             return null;
         }

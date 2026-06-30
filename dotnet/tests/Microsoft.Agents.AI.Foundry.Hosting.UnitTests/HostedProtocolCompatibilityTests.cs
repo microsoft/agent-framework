@@ -27,12 +27,16 @@ public sealed class HostedProtocolCompatibilityTests
     [Fact]
     public void GetUnsupportedProtocolError_HostedWithEmptyCallId_ReturnsUnsupportedProtocolError()
     {
-        // An empty header value is treated the same as an absent one.
-        ResponsesApiException? error = HostedProtocolCompatibility.GetUnsupportedProtocolError(isHosted: true, callId: "");
+        // An empty or whitespace-only header value is treated the same as an absent one, so a proxy that
+        // injects whitespace cannot bypass the gate.
+        foreach (var callId in new[] { "", "   ", "\t" })
+        {
+            ResponsesApiException? error = HostedProtocolCompatibility.GetUnsupportedProtocolError(isHosted: true, callId: callId);
 
-        Assert.NotNull(error);
-        Assert.Equal(501, error!.StatusCode);
-        Assert.Equal(HostedProtocolCompatibility.UnsupportedProtocolErrorCode, error.Error.Code);
+            Assert.NotNull(error);
+            Assert.Equal(501, error!.StatusCode);
+            Assert.Equal(HostedProtocolCompatibility.UnsupportedProtocolErrorCode, error.Error.Code);
+        }
     }
 
     [Fact]
