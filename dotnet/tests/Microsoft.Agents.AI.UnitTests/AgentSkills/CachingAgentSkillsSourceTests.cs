@@ -511,7 +511,6 @@ public sealed class CachingAgentSkillsSourceTests
         private readonly IList<AgentSkill> _skills;
         private readonly TaskCompletionSource<bool> _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _callCount;
-        private CancellationToken _lastCancellationToken;
 
         public DelayedSkillsSource(Task gate, IList<AgentSkill> skills)
         {
@@ -521,7 +520,7 @@ public sealed class CachingAgentSkillsSourceTests
 
         public int CallCount => this._callCount;
 
-        public CancellationToken LastCancellationToken => this._lastCancellationToken;
+        public CancellationToken LastCancellationToken { get; private set; }
 
         /// <summary>Completes once the inner source has started executing at least once.</summary>
         public Task Started => this._started.Task;
@@ -529,7 +528,7 @@ public sealed class CachingAgentSkillsSourceTests
         public override async Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref this._callCount);
-            this._lastCancellationToken = cancellationToken;
+            this.LastCancellationToken = cancellationToken;
             this._started.TrySetResult(true);
 
             // Wait for the gate to open or for cancellation, whichever comes first.
