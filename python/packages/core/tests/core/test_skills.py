@@ -28,6 +28,7 @@ from agent_framework import (
     SkillFrontmatter,
     SkillResource,
     SkillScript,
+    SkillScriptArgumentMarshaler,
     SkillScriptRunner,
     SkillsProvider,
 )
@@ -5876,3 +5877,140 @@ class TestArrayStyleScriptArgs:
         content = await skill.get_content()
         assert "<available_resources>" in content
         assert '<resource name="ref-data"/>' in content
+
+
+class TestSkillScriptArgumentMarshaler:
+    """Tests for custom argument marshaling on inline skill scripts.
+
+    Mirrors the .NET PR #6498 that lets callers plug in their own argument
+    conversion logic (e.g. for vLLM backends that send tool-call arguments as
+    a JSON string instead of a JSON object).
+    """
+
+    @staticmethod
+    def _json_string_marshaler(args: dict[str, Any] | list[str] | str | None) -> dict[str, Any] | list[str] | None:
+        """Marshaler that decodes a JSON-string ``args`` into a dict."""
+        import json as _json
+
+        if isinstance(args, str):
+            return _json.loads(args)
+        return args
+
+    async def test_default_no_marshaler_passes_dict_unchanged(self) -> None:
+        """Without a marshaler, dict args reach the callable unchanged."""
+        script = InlineSkillScript(name="greet", function=lambda name="world": f"hello {name}")
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        result = await script.run(skill, args={"name": "Alice"})
+        assert result == "hello Alice"
+
+    async def test_script_marshaler_converts_json_string_to_dict(self) -> None:
+        """A marshaler converts a JSON-string args payload into named arguments."""
+        script = InlineSkillScript(
+            name="greet",
+            function=lambda name="world": f"hello {name}",
+            argument_marshaler=self._json_string_marshaler,
+        )
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        result = await script.run(skill, args='{"name": "Alice"}')  # type: ignore[arg-type]
+        assert result == "hello Alice"
+
+    async def test_script_marshaler_passes_dict_through(self) -> None:
+        """A marshaler still receives and may pass through dict args."""
+        script = InlineSkillScript(
+            name="greet",
+            function=lambda name="world": f"hello {name}",
+            argument_marshaler=self._json_string_marshaler,
+        )
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        result = await script.run(skill, args={"name": "Bob"})
+        assert result == "hello Bob"
+
+    async def test_script_marshaler_is_satisfied_by_callable(self) -> None:
+        """A plain callable satisfies the SkillScriptArgumentMarshaler alias."""
+        marshaler: SkillScriptArgumentMarshaler = self._json_string_marshaler
+        assert callable(marshaler)
+
+    async def test_marshaler_returning_list_still_rejected(self) -> None:
+        """If a marshaler yields a list, the inline list guard still fires."""
+
+        def to_list(args: dict[str, Any] | list[str] | str | None) -> dict[str, Any] | list[str] | None:
+            return ["a", "b"]
+
+        script = InlineSkillScript(name="s1", function=lambda: "ok", argument_marshaler=to_list)
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        with pytest.raises(TypeError, match="requires keyword arguments"):
+            await script.run(skill, args={"ignored": True})
+
+    async def test_inline_skill_propagates_marshaler_to_decorated_scripts(self) -> None:
+        """InlineSkill passes its marshaler to scripts added via @skill.script."""
+        skill = InlineSkill(
+            frontmatter=SkillFrontmatter(name="s", description="d"),
+            instructions="c",
+            argument_marshaler=self._json_string_marshaler,
+        )
+
+        @skill.script
+        def greet(name: str = "world") -> str:
+            return f"hi {name}"
+
+        script = await skill.get_script("greet")
+        assert isinstance(script, InlineSkillScript)
+        assert script.argument_marshaler is self._json_string_marshaler
+        result = await script.run(skill, args='{"name": "Carol"}')  # type: ignore[arg-type]
+        assert result == "hi Carol"
+
+    async def test_inline_skill_no_marshaler_leaves_scripts_unmarshaled(self) -> None:
+        """Without an InlineSkill marshaler, decorated scripts have none."""
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+
+        @skill.script
+        def greet(name: str = "world") -> str:
+            return f"hi {name}"
+
+        script = await skill.get_script("greet")
+        assert isinstance(script, InlineSkillScript)
+        assert script.argument_marshaler is None
+
+    async def test_class_skill_propagates_marshaler_to_discovered_scripts(self) -> None:
+        """ClassSkill passes its marshaler to scripts discovered via @ClassSkill.script."""
+        marshaler = self._json_string_marshaler
+
+        class _MarshalingClassSkill(ClassSkill):
+            def __init__(self) -> None:
+                super().__init__(
+                    frontmatter=SkillFrontmatter(name="cs", description="d"),
+                    argument_marshaler=marshaler,
+                )
+
+            @property
+            def instructions(self) -> str:
+                return "body"
+
+            @ClassSkill.script
+            def convert(self, name: str = "world") -> str:
+                return f"converted {name}"
+
+        skill = _MarshalingClassSkill()
+        script = await skill.get_script("convert")
+        assert isinstance(script, InlineSkillScript)
+        assert script.argument_marshaler is marshaler
+        result = await script.run(skill, args='{"name": "Dan"}')  # type: ignore[arg-type]
+        assert result == "converted Dan"
+
+    async def test_run_skill_script_marshals_string_args_via_provider(self) -> None:
+        """End-to-end: a marshaler lets string args flow through the provider to an inline script."""
+        skill = InlineSkill(
+            frontmatter=SkillFrontmatter(name="my-skill", description="test"),
+            instructions="body",
+            argument_marshaler=self._json_string_marshaler,
+        )
+
+        @skill.script
+        def greet(name: str = "world") -> str:
+            return f"hello {name}"
+
+        provider = SkillsProvider([skill])
+        await _init_provider(provider)
+        run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
+        result = await run_tool.func(skill_name="my-skill", script_name="greet", args='{"name": "Eve"}')
+        assert result == "hello Eve"
