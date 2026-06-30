@@ -556,3 +556,94 @@ class TestApprovalToolResultDisplayChannel:
 
         assert len(events) == 1
         assert events[0].content == "Sunny in Seattle"
+
+
+class TestApprovalResultRecordedInSnapshot:
+    """An approved tool's result must survive into ``MESSAGES_SNAPSHOT``.
+
+    A ``confirm_changes``-gated tool's result is emitted only as a transient
+    ``TOOL_CALL_RESULT`` event; without recording it in ``flow.tool_results`` the
+    end-of-turn snapshot omits the result message, so a client reconciling state
+    from the snapshot reverts the already-completed tool call to "in progress".
+    """
+
+    def test_make_approval_result_events_records_in_flow(self) -> None:
+        from agent_framework_ag_ui._agent_run import _make_approval_tool_result_events
+        from agent_framework_ag_ui._run_common import FlowState
+
+        flow = FlowState()
+        resolved = Content.from_function_result(call_id="call_rec", result="Sunny in Seattle")
+
+        events = _make_approval_tool_result_events([resolved], flow)
+
+        assert len(events) == 1
+        assert len(flow.tool_results) == 1
+        recorded = flow.tool_results[0]
+        assert recorded["toolCallId"] == "call_rec"
+        assert recorded["content"] == "Sunny in Seattle"
+        assert recorded["role"] == "tool"
+        # The recorded message id matches the emitted event so clients reconcile cleanly.
+        assert recorded["id"] == events[0].message_id
+        # The call is marked ended so it is not treated as a still-open declaration.
+        assert "call_rec" in flow.tool_calls_ended
+
+    def test_make_approval_result_events_without_flow_is_unchanged(self) -> None:
+        """Omitting ``flow`` preserves the original event-only behaviour."""
+        from agent_framework_ag_ui._agent_run import _make_approval_tool_result_events
+
+        resolved = Content.from_function_result(call_id="call_noflow", result="Sunny in Seattle")
+
+        events = _make_approval_tool_result_events([resolved])
+
+        assert len(events) == 1
+        assert events[0].tool_call_id == "call_noflow"
+
+    def test_snapshot_includes_recorded_result(self) -> None:
+        from agent_framework_ag_ui._agent_run import _build_messages_snapshot, _make_approval_tool_result_events
+        from agent_framework_ag_ui._run_common import FlowState
+
+        flow = FlowState()
+        resolved = Content.from_function_result(call_id="call_snap", result="Sunny in Seattle")
+        _make_approval_tool_result_events([resolved], flow)
+
+        # Carried history lists the assistant's gated tool call but no result for it.
+        snapshot_messages = [
+            {
+                "id": "assistant-1",
+                "role": "assistant",
+                "tool_calls": [
+                    {"id": "call_snap", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}
+                ],
+            }
+        ]
+        snapshot = _build_messages_snapshot(flow, snapshot_messages)
+        dumped = [m.model_dump(by_alias=True, exclude_none=True) for m in snapshot.messages]
+        tool_msgs = [m for m in dumped if m.get("role") == "tool" and m.get("toolCallId") == "call_snap"]
+        assert len(tool_msgs) == 1
+        assert tool_msgs[0]["content"] == "Sunny in Seattle"
+
+    def test_snapshot_does_not_duplicate_existing_result(self) -> None:
+        """If the carried snapshot already has the result, do not add a duplicate."""
+        from agent_framework_ag_ui._agent_run import _build_messages_snapshot, _make_approval_tool_result_events
+        from agent_framework_ag_ui._run_common import FlowState
+
+        flow = FlowState()
+        resolved = Content.from_function_result(call_id="call_dup", result="Sunny in Seattle")
+        _make_approval_tool_result_events([resolved], flow)
+
+        # Carried history already carries the tool result (e.g. via approval-payload
+        # cleaning in the direct approval_mode flow).
+        snapshot_messages = [
+            {
+                "id": "assistant-1",
+                "role": "assistant",
+                "tool_calls": [
+                    {"id": "call_dup", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}
+                ],
+            },
+            {"id": "tool-1", "role": "tool", "toolCallId": "call_dup", "content": "Sunny in Seattle"},
+        ]
+        snapshot = _build_messages_snapshot(flow, snapshot_messages)
+        dumped = [m.model_dump(by_alias=True, exclude_none=True) for m in snapshot.messages]
+        tool_msgs = [m for m in dumped if m.get("role") == "tool" and m.get("toolCallId") == "call_dup"]
+        assert len(tool_msgs) == 1

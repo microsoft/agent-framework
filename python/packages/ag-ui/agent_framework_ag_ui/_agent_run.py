@@ -387,12 +387,22 @@ def _handle_step_based_approval(messages: list[Any]) -> list[BaseEvent]:
     return events
 
 
-def _make_approval_tool_result_events(resolved_approval_results: list[Content]) -> list[ToolCallResultEvent]:
+def _make_approval_tool_result_events(
+    resolved_approval_results: list[Content],
+    flow: FlowState | None = None,
+) -> list[ToolCallResultEvent]:
     """Build TOOL_CALL_RESULT events for tools executed during approval resolution.
 
     Honors ``TOOL_RESULT_DISPLAY_KEY`` so tools returning
     ``state_update(..., tool_result=...)`` route the display payload to the UI
     event even when gated by HITL approval.
+
+    When ``flow`` is provided, each result is also recorded in
+    ``flow.tool_results`` so the end-of-turn ``MESSAGES_SNAPSHOT`` carries the
+    tool-result message. Without this, an approval-gated tool's result is emitted
+    only as a transient ``TOOL_CALL_RESULT`` event and is absent from the snapshot
+    that clients (e.g. CopilotKit) reconcile their rendered state from — so the
+    already-completed tool call visibly reverts to "in progress".
     """
     events: list[ToolCallResultEvent] = []
     for resolved in resolved_approval_results:
@@ -400,14 +410,27 @@ def _make_approval_tool_result_events(resolved_approval_results: list[Content]) 
             raw = resolved.result if resolved.result is not None else ""
             llm_str = _stringify_tool_result(raw)
             ui_str = _resolve_ui_payload(llm_str, _extract_tool_result_display(resolved))
+            message_id = generate_event_id()
             events.append(
                 ToolCallResultEvent(
-                    message_id=generate_event_id(),
+                    message_id=message_id,
                     tool_call_id=resolved.call_id,
                     content=ui_str,
                     role="tool",
                 )
             )
+            if flow is not None and not any(
+                result.get("toolCallId") == resolved.call_id for result in flow.tool_results
+            ):
+                flow.tool_calls_ended.add(resolved.call_id)
+                flow.tool_results.append(
+                    {
+                        "id": message_id,
+                        "role": "tool",
+                        "toolCallId": resolved.call_id,
+                        "content": llm_str,
+                    }
+                )
     return events
 
 
@@ -725,8 +748,21 @@ def _build_messages_snapshot(
         }
         all_messages.append(tool_call_message)
 
-    # Add tool results
-    all_messages.extend(flow.tool_results)
+    # Add tool results, skipping any whose result already appears in the carried
+    # snapshot history. ``_clean_resolved_approvals_from_snapshot`` may have
+    # already folded an approved tool's result into ``snapshot_messages`` keyed by
+    # its call id; appending the same result again from ``flow.tool_results`` would
+    # emit a duplicate tool message for that call.
+    existing_result_ids = {
+        message.get("toolCallId")
+        for message in all_messages
+        if message.get("role") == "tool" and message.get("toolCallId")
+    }
+    for result in flow.tool_results:
+        if result.get("toolCallId") in existing_result_ids:
+            continue
+        all_messages.append(result)
+        existing_result_ids.add(result.get("toolCallId"))
 
     # Add text-only assistant message if there is accumulated text
     # This is a separate message from the tool calls message to maintain
@@ -1074,7 +1110,7 @@ async def run_agent_stream(
                 yield StateSnapshotEvent(snapshot=flow.current_state)
             run_started_emitted = True
 
-            for event in _make_approval_tool_result_events(resolved_approval_results):
+            for event in _make_approval_tool_result_events(resolved_approval_results, flow):
                 yield event
 
         # Feature #4: Detect tool-only messages (no text content)
@@ -1136,7 +1172,7 @@ async def run_agent_stream(
         if state_schema and flow.current_state:
             yield StateSnapshotEvent(snapshot=flow.current_state)
 
-        for event in _make_approval_tool_result_events(resolved_approval_results):
+        for event in _make_approval_tool_result_events(resolved_approval_results, flow):
             yield event
     if response_format is not None and all_updates:
         from agent_framework import AgentResponse
