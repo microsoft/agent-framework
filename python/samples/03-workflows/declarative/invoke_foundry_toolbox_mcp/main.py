@@ -79,9 +79,6 @@ async def main() -> None:
     chat_client = FoundryChatClient(project_endpoint=project_endpoint, model=model, credential=credential)
     summary_agent = Agent(client=chat_client, name=AGENT_NAME, instructions=AGENT_INSTRUCTIONS)
 
-    # ``headers=`` attaches the Foundry-Features preview flag on every
-    # request, including the MCP ``initialize`` handshake (the YAML's
-    # per-action ``headers`` only takes effect during ``call_tool``).
     # ``timeout=`` matches the MCP-recommended values; httpx's 5s
     # default breaks long-running tool calls.
     http_client = httpx.AsyncClient(
