@@ -35,6 +35,7 @@ Status is grouped into these buckets:
 | `agent-framework-gemini` | `python/packages/gemini` | `alpha` |
 | `agent-framework-github-copilot` | `python/packages/github_copilot` | `rc` |
 | `agent-framework-hosting` | `python/packages/hosting` | `alpha` |
+| `agent-framework-hosting-activity-protocol` | `python/packages/hosting-activity-protocol` | `alpha` |
 | `agent-framework-hosting-responses` | `python/packages/hosting-responses` | `alpha` |
 | `agent-framework-hosting-telegram` | `python/packages/hosting-telegram` | `alpha` |
 | `agent-framework-hyperlight` | `python/packages/hyperlight` | `beta` |
