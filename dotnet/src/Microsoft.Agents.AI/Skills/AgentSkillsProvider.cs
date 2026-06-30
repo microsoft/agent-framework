@@ -65,10 +65,11 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The tools exposed by <see cref="AgentSkillsProvider"/> always require approval. Add this rule to
+    /// This rule only applies when approval is enabled for the matching tools in
+    /// <see cref="AgentSkillsProviderOptions"/>. When the read-only skill tools require approval, add this rule to
     /// <see cref="ToolApprovalAgentOptions.AutoApprovalRules"/> to automatically approve only the tools
     /// that read skill content, while still prompting for script execution
-    /// (<see cref="RunSkillScriptToolName"/>).
+    /// (<see cref="RunSkillScriptToolName"/>) if it also requires approval.
     /// </para>
     /// <para>
     /// The rule matches on the tool name, returning <see langword="true"/> for read-only skill tools
@@ -84,9 +85,10 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The tools exposed by <see cref="AgentSkillsProvider"/> always require approval. Add this rule to
+    /// This rule only applies when approval is enabled for the matching tools in
+    /// <see cref="AgentSkillsProviderOptions"/>. When skill tools require approval, add this rule to
     /// <see cref="ToolApprovalAgentOptions.AutoApprovalRules"/> to automatically approve every skill
-    /// tool without prompting the user.
+    /// tool that requires approval without prompting the user.
     /// </para>
     /// <para>
     /// The rule matches on the tool name, returning <see langword="true"/> for any skill tool
@@ -240,21 +242,29 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     {
         return
         [
-            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(
+            this.WrapWithApprovalIfRequired(AIFunctionFactory.Create(
                 (string skillName, CancellationToken cancellationToken) => this.LoadSkillAsync(skills, skillName, cancellationToken),
                 name: LoadSkillToolName,
-                description: "Loads the full content of a specific skill")),
-            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(
+                description: "Loads the full content of a specific skill"),
+                this._options?.DisableLoadSkillApproval is not true),
+            this.WrapWithApprovalIfRequired(AIFunctionFactory.Create(
                 (string skillName, string resourceName, IServiceProvider? serviceProvider, CancellationToken cancellationToken = default) =>
                     this.ReadSkillResourceAsync(skills, skillName, resourceName, serviceProvider, cancellationToken),
                 name: ReadSkillResourceToolName,
-                description: "Reads a resource associated with a skill, such as references, assets, or dynamic data.")),
-            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(
+                description: "Reads a resource associated with a skill, such as references, assets, or dynamic data."),
+                this._options?.DisableReadSkillResourceApproval is not true),
+            this.WrapWithApprovalIfRequired(AIFunctionFactory.Create(
                 (string skillName, string scriptName, JsonElement? arguments = null, IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default) =>
                     this.RunSkillScriptAsync(skills, skillName, scriptName, arguments, serviceProvider, cancellationToken),
                 name: RunSkillScriptToolName,
-                description: "Runs a script associated with a skill.")),
+                description: "Runs a script associated with a skill."),
+                this._options?.DisableRunSkillScriptApproval is not true),
         ];
+    }
+
+    private AIFunction WrapWithApprovalIfRequired(AIFunction function, bool requireApproval)
+    {
+        return requireApproval ? new ApprovalRequiredAIFunction(function) : function;
     }
 
     private string? BuildSkillsInstructions(IList<AgentSkill> skills)

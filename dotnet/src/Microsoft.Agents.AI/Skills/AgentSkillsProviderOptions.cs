@@ -35,4 +35,37 @@ public sealed class AgentSkillsProviderOptions
     /// Only enable this when the skills and their scripts come from a trusted source.
     /// </remarks>
     public bool IncludeDetailedErrors { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether approval is disabled for the <see cref="AgentSkillsProvider.LoadSkillToolName"/> tool.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="false"/> (the default), the tool requires approval before invocation.
+    /// When <see langword="true"/>, the tool can be invoked without approval.
+    /// When approval is required, auto-approval rules (e.g. <see cref="AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule"/>
+    /// or <see cref="AgentSkillsProvider.AllToolsAutoApprovalRule"/>) can be used to automatically approve calls.
+    /// </remarks>
+    public bool DisableLoadSkillApproval { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether approval is disabled for the <see cref="AgentSkillsProvider.ReadSkillResourceToolName"/> tool.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="false"/> (the default), the tool requires approval before invocation.
+    /// When <see langword="true"/>, the tool can be invoked without approval.
+    /// When approval is required, auto-approval rules (e.g. <see cref="AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule"/>
+    /// or <see cref="AgentSkillsProvider.AllToolsAutoApprovalRule"/>) can be used to automatically approve calls.
+    /// </remarks>
+    public bool DisableReadSkillResourceApproval { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether approval is disabled for the <see cref="AgentSkillsProvider.RunSkillScriptToolName"/> tool.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="false"/> (the default), the tool requires approval before invocation.
+    /// When <see langword="true"/>, the tool can be invoked without approval.
+    /// When approval is required, auto-approval rules (e.g. <see cref="AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule"/>
+    /// or <see cref="AgentSkillsProvider.AllToolsAutoApprovalRule"/>) can be used to automatically approve calls.
+    /// </remarks>
+    public bool DisableRunSkillScriptApproval { get; set; }
 }

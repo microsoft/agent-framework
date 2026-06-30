@@ -1044,6 +1044,148 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task InvokingCoreAsync_DisableLoadSkillApproval_LoadSkillToolNotWrappedAsync()
+    {
+        // Arrange
+        string skillDir = Path.Combine(this._testRoot, "disable-load-approval");
+        Directory.CreateDirectory(Path.Combine(skillDir, "scripts"));
+        File.WriteAllText(
+            Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: test-skill\ndescription: Test\n---\nBody.");
+        File.WriteAllText(
+            Path.Combine(skillDir, "scripts", "run.py"),
+            "print('hello')");
+
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+        var options = new AgentSkillsProviderOptions { DisableLoadSkillApproval = true };
+        var provider = new AgentSkillsProvider(source, options);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — load_skill should NOT be wrapped, others should still be wrapped
+        Assert.NotNull(result.Tools);
+        var loadTool = result.Tools!.FirstOrDefault(t => t.Name == "load_skill");
+        Assert.NotNull(loadTool);
+        Assert.IsNotType<ApprovalRequiredAIFunction>(loadTool);
+
+        var readTool = result.Tools!.FirstOrDefault(t => t.Name == "read_skill_resource");
+        Assert.NotNull(readTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(readTool);
+
+        var scriptTool = result.Tools!.FirstOrDefault(t => t.Name == "run_skill_script");
+        Assert.NotNull(scriptTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(scriptTool);
+    }
+
+    [Fact]
+    public async Task InvokingCoreAsync_DisableReadSkillResourceApproval_ReadToolNotWrappedAsync()
+    {
+        // Arrange
+        string skillDir = Path.Combine(this._testRoot, "disable-read-approval");
+        Directory.CreateDirectory(Path.Combine(skillDir, "scripts"));
+        File.WriteAllText(
+            Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: test-skill\ndescription: Test\n---\nBody.");
+        File.WriteAllText(
+            Path.Combine(skillDir, "scripts", "run.py"),
+            "print('hello')");
+
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+        var options = new AgentSkillsProviderOptions { DisableReadSkillResourceApproval = true };
+        var provider = new AgentSkillsProvider(source, options);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — read_skill_resource should NOT be wrapped, others should still be wrapped
+        Assert.NotNull(result.Tools);
+        var readTool = result.Tools!.FirstOrDefault(t => t.Name == "read_skill_resource");
+        Assert.NotNull(readTool);
+        Assert.IsNotType<ApprovalRequiredAIFunction>(readTool);
+
+        var loadTool = result.Tools!.FirstOrDefault(t => t.Name == "load_skill");
+        Assert.NotNull(loadTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(loadTool);
+
+        var scriptTool = result.Tools!.FirstOrDefault(t => t.Name == "run_skill_script");
+        Assert.NotNull(scriptTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(scriptTool);
+    }
+
+    [Fact]
+    public async Task InvokingCoreAsync_DisableRunSkillScriptApproval_ScriptToolNotWrappedAsync()
+    {
+        // Arrange
+        string skillDir = Path.Combine(this._testRoot, "disable-script-approval");
+        Directory.CreateDirectory(Path.Combine(skillDir, "scripts"));
+        File.WriteAllText(
+            Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: test-skill\ndescription: Test\n---\nBody.");
+        File.WriteAllText(
+            Path.Combine(skillDir, "scripts", "run.py"),
+            "print('hello')");
+
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+        var options = new AgentSkillsProviderOptions { DisableRunSkillScriptApproval = true };
+        var provider = new AgentSkillsProvider(source, options);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — run_skill_script should NOT be wrapped, others should still be wrapped
+        Assert.NotNull(result.Tools);
+        var scriptTool = result.Tools!.FirstOrDefault(t => t.Name == "run_skill_script");
+        Assert.NotNull(scriptTool);
+        Assert.IsNotType<ApprovalRequiredAIFunction>(scriptTool);
+
+        var loadTool = result.Tools!.FirstOrDefault(t => t.Name == "load_skill");
+        Assert.NotNull(loadTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(loadTool);
+
+        var readTool = result.Tools!.FirstOrDefault(t => t.Name == "read_skill_resource");
+        Assert.NotNull(readTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(readTool);
+    }
+
+    [Fact]
+    public async Task InvokingCoreAsync_DisableAllApprovals_NoToolsWrappedAsync()
+    {
+        // Arrange
+        string skillDir = Path.Combine(this._testRoot, "disable-all-approval");
+        Directory.CreateDirectory(Path.Combine(skillDir, "scripts"));
+        File.WriteAllText(
+            Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: test-skill\ndescription: Test\n---\nBody.");
+        File.WriteAllText(
+            Path.Combine(skillDir, "scripts", "run.py"),
+            "print('hello')");
+
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+        var options = new AgentSkillsProviderOptions
+        {
+            DisableLoadSkillApproval = true,
+            DisableReadSkillResourceApproval = true,
+            DisableRunSkillScriptApproval = true,
+        };
+        var provider = new AgentSkillsProvider(source, options);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — no tools should be wrapped
+        Assert.NotNull(result.Tools);
+        foreach (var tool in result.Tools!)
+        {
+            Assert.IsNotType<ApprovalRequiredAIFunction>(tool);
+        }
+    }
+
+    [Fact]
     public async Task ReadOnlyToolsAutoApprovalRule_ApprovesReadOnlyToolsAsync()
     {
         // Arrange
