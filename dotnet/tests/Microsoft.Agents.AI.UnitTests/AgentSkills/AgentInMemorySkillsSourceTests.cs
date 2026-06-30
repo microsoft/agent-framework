@@ -50,4 +50,3 @@ public sealed class AgentInMemorySkillsSourceTests
         Assert.Throws<ArgumentNullException>(() => new AgentInMemorySkillsSource(null!));
     }
 }
-

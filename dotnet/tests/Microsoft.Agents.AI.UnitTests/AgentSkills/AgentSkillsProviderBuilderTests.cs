@@ -219,7 +219,7 @@ public sealed class AgentSkillsProviderBuilderTests
 
         public int CallCount => this._callCount;
 
-        public override Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+        public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref this._callCount);
             return Task.FromResult<IList<AgentSkill>>(this._skills);

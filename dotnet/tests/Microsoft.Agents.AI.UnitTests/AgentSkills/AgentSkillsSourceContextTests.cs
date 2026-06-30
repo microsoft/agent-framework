@@ -95,6 +95,47 @@ public sealed class AgentSkillsSourceContextTests
     }
 
     [Fact]
+    public async Task AgentSkillsProvider_SameAgent_CachesSkillsAsync()
+    {
+        // Arrange
+        var agent = new TestAIAgent();
+        var countingSource = new CallCountingSkillsSource(
+            new AgentInlineSkill("cached-skill", "Cached.", "Instructions."));
+        var provider = new AgentSkillsProvider(countingSource);
+
+        var invokingContext = new AIContextProvider.InvokingContext(agent, session: null, new AIContext());
+
+        // Act — two invocations with the same agent
+        await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — cached after first call, so source called only once
+        Assert.Equal(1, countingSource.CallCount);
+    }
+
+    [Fact]
+    public async Task AgentSkillsProvider_DifferentAgents_CallsSourceForEachAsync()
+    {
+        // Arrange
+        var agentA = new TestAIAgent();
+        var agentB = new TestAIAgent();
+        var countingSource = new CallCountingSkillsSource(
+            new AgentInlineSkill("per-agent-skill", "Per-agent.", "Instructions."));
+        var provider = new AgentSkillsProvider(countingSource);
+
+        var contextA = new AIContextProvider.InvokingContext(agentA, session: null, new AIContext());
+        var contextB = new AIContextProvider.InvokingContext(agentB, session: null, new AIContext());
+
+        // Act — two invocations for agent A (cached), one for agent B (new cache entry)
+        await provider.InvokingAsync(contextA, CancellationToken.None);
+        await provider.InvokingAsync(contextA, CancellationToken.None);
+        await provider.InvokingAsync(contextB, CancellationToken.None);
+
+        // Assert — source called once per distinct agent
+        Assert.Equal(2, countingSource.CallCount);
+    }
+
+    [Fact]
     public async Task DelegatingSource_PropagatesContextToInnerSourceAsync()
     {
         // Arrange
@@ -179,6 +220,28 @@ public sealed class AgentSkillsSourceContextTests
 
         // Assert
         Assert.Same(context, source.LastContext);
+    }
+
+    /// <summary>
+    /// A skill source that counts how many times <see cref="GetSkillsAsync"/> is called.
+    /// </summary>
+    private sealed class CallCountingSkillsSource : AgentSkillsSource
+    {
+        private readonly List<AgentSkill> _skills;
+        private int _callCount;
+
+        public CallCountingSkillsSource(params AgentSkill[] skills)
+        {
+            this._skills = [.. skills];
+        }
+
+        public int CallCount => this._callCount;
+
+        public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref this._callCount);
+            return Task.FromResult<IList<AgentSkill>>(this._skills);
+        }
     }
 
     /// <summary>

@@ -1224,4 +1224,3 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Equal("parent-skill", skills[0].Frontmatter.Name);
     }
 }
-

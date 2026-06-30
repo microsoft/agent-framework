@@ -288,4 +288,3 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         File.WriteAllText(fullPath, content);
     }
 }
-

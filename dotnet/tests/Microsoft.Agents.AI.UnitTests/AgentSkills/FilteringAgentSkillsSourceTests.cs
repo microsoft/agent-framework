@@ -127,4 +127,3 @@ public sealed class FilteringAgentSkillsSourceTests
         Assert.Equal("gamma", result[1].Frontmatter.Name);
     }
 }
-

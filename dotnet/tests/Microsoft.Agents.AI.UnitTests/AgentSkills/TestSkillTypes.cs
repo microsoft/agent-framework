@@ -118,4 +118,3 @@ internal sealed class SkillConfig
 internal sealed partial class SkillTestJsonContext : JsonSerializerContext
 {
 }
-

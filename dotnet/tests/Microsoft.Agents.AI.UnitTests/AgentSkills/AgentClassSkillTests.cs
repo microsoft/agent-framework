@@ -1138,4 +1138,3 @@ public sealed class AgentClassSkillTests
 
     #endregion
 }
-

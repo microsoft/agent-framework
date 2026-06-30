@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -122,7 +123,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     private readonly AgentSkillsSource _source;
     private readonly AgentSkillsProviderOptions? _options;
     private readonly ILogger<AgentSkillsProvider> _logger;
-    private Task<AIContext>? _contextTask;
+    private readonly ConcurrentDictionary<string, Task<AIContext>> _contextTasksByAgentId = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentSkillsProvider"/> class
@@ -248,11 +249,14 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
 
     private async Task<AIContext> GetOrCreateContextAsync(InvokingContext context, CancellationToken cancellationToken)
     {
+        string agentId = context.Agent.Id;
         var tcs = new TaskCompletionSource<AIContext>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var winner = this._contextTasksByAgentId.GetOrAdd(agentId, tcs.Task);
 
-        if (Interlocked.CompareExchange(ref this._contextTask, tcs.Task, null) is { } existing)
+        if (!ReferenceEquals(winner, tcs.Task))
         {
-            return await existing.ConfigureAwait(false);
+            // Another task for this agent is already in flight or cached — await it.
+            return await winner.ConfigureAwait(false);
         }
 
         try
@@ -263,7 +267,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         }
         catch (Exception ex)
         {
-            this._contextTask = null;
+            this._contextTasksByAgentId.TryRemove(agentId, out _);
             tcs.TrySetException(ex);
             throw;
         }

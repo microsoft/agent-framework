@@ -92,6 +92,10 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         {
             // Wait for the in-flight refresh but let this caller cancel its own wait independently
             // without aborting the shared refresh work.
+            // Note: refresh coordination is global — concurrent callers with a different context
+            // will observe the refresh owner's context. This is acceptable because AgentMcpSkillsSource
+            // does not currently use the context to filter or differentiate skills; all callers receive
+            // the same MCP-server-wide skill list.
             return await existing.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 

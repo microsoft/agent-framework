@@ -274,8 +274,32 @@ public sealed class AgentSkillsProviderTests : IDisposable
             .ToArray();
         await Task.WhenAll(tasks);
 
-        // Assert — GetSkillsAsync should have been called exactly once (provider-level caching)
+        // Assert — GetSkillsAsync should have been called exactly once (provider-level caching per agent)
         Assert.Equal(1, source.GetSkillsCallCount);
+    }
+
+    [Fact]
+    public async Task ProvideAIContextAsync_DifferentAgents_LoadsSkillsForEachAgentAsync()
+    {
+        // Arrange
+        var source = new CountingAgentSkillsSource(
+        [
+            new AgentInlineSkill("per-agent-skill", "Per-agent test", "Body.")
+        ]);
+        var provider = new AgentSkillsProvider(source);
+        var agentA = new TestAIAgent();
+        var agentB = new TestAIAgent();
+
+        var contextA = new AIContextProvider.InvokingContext(agentA, session: null, new AIContext());
+        var contextB = new AIContextProvider.InvokingContext(agentB, session: null, new AIContext());
+
+        // Act — invoke twice for the same agent, then once for a different agent
+        await provider.InvokingAsync(contextA, CancellationToken.None);
+        await provider.InvokingAsync(contextA, CancellationToken.None);
+        await provider.InvokingAsync(contextB, CancellationToken.None);
+
+        // Assert — agent A should be cached (1 load), agent B also loads once → total 2 loads
+        Assert.Equal(2, source.GetSkillsCallCount);
     }
 
     [Fact]
@@ -1360,4 +1384,3 @@ public sealed class AgentSkillsProviderTests : IDisposable
         protected override string Instructions => this._instructions;
     }
 }
-
