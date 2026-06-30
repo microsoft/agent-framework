@@ -28,7 +28,7 @@ from agent_framework import (
     SkillFrontmatter,
     SkillResource,
     SkillScript,
-    SkillScriptArgumentMarshaler,
+    SkillScriptArgumentParser,
     SkillScriptRunner,
     SkillsProvider,
 )
@@ -5879,8 +5879,8 @@ class TestArrayStyleScriptArgs:
         assert '<resource name="ref-data"/>' in content
 
 
-class TestSkillScriptArgumentMarshaler:
-    """Tests for custom argument marshaling on inline skill scripts.
+class TestSkillScriptArgumentParser:
+    """Tests for custom argument parsing on inline skill scripts.
 
     Mirrors the .NET PR #6498 that lets callers plug in their own argument
     conversion logic (e.g. for vLLM backends that send tool-call arguments as
@@ -5888,8 +5888,8 @@ class TestSkillScriptArgumentMarshaler:
     """
 
     @staticmethod
-    def _json_string_marshaler(args: dict[str, Any] | list[str] | str | None) -> dict[str, Any] | None:
-        """Marshaler that decodes a JSON-string ``args`` into a dict."""
+    def _json_string_parser(args: dict[str, Any] | list[str] | str | None) -> dict[str, Any] | None:
+        """Parser that decodes a JSON-string ``args`` into a dict."""
         import json as _json
 
         if isinstance(args, str):
@@ -5898,61 +5898,61 @@ class TestSkillScriptArgumentMarshaler:
             return args
         return None
 
-    async def test_default_no_marshaler_passes_dict_unchanged(self) -> None:
-        """Without a marshaler, dict args reach the callable unchanged."""
+    async def test_default_no_parser_passes_dict_unchanged(self) -> None:
+        """Without a parser, dict args reach the callable unchanged."""
         script = InlineSkillScript(name="greet", function=lambda name="world": f"hello {name}")
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
         result = await script.run(skill, args={"name": "Alice"})
         assert result == "hello Alice"
 
-    async def test_script_marshaler_converts_json_string_to_dict(self) -> None:
-        """A marshaler converts a JSON-string args payload into named arguments."""
+    async def test_script_parser_converts_json_string_to_dict(self) -> None:
+        """A parser converts a JSON-string args payload into named arguments."""
         script = InlineSkillScript(
             name="greet",
             function=lambda name="world": f"hello {name}",
-            argument_marshaler=self._json_string_marshaler,
+            argument_parser=self._json_string_parser,
         )
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
         result = await script.run(skill, args='{"name": "Alice"}')
         assert result == "hello Alice"
 
-    async def test_script_marshaler_passes_dict_through(self) -> None:
-        """A marshaler still receives and may pass through dict args."""
+    async def test_script_parser_passes_dict_through(self) -> None:
+        """A parser still receives and may pass through dict args."""
         script = InlineSkillScript(
             name="greet",
             function=lambda name="world": f"hello {name}",
-            argument_marshaler=self._json_string_marshaler,
+            argument_parser=self._json_string_parser,
         )
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
         result = await script.run(skill, args={"name": "Bob"})
         assert result == "hello Bob"
 
-    async def test_script_marshaler_is_satisfied_by_callable(self) -> None:
-        """A plain callable satisfies the SkillScriptArgumentMarshaler alias."""
-        marshaler: SkillScriptArgumentMarshaler = self._json_string_marshaler
-        assert callable(marshaler)
+    async def test_script_parser_is_satisfied_by_callable(self) -> None:
+        """A plain callable satisfies the SkillScriptArgumentParser alias."""
+        parser: SkillScriptArgumentParser = self._json_string_parser
+        assert callable(parser)
 
-    async def test_marshaler_returning_list_still_rejected(self) -> None:
-        """Defense-in-depth: even if a marshaler yields a list, the inline guard fires.
+    async def test_parser_returning_list_still_rejected(self) -> None:
+        """Defense-in-depth: even if a parser yields a list, the inline guard fires.
 
-        The marshaler output type forbids lists, so this scenario requires a
-        loosely-typed marshaler; the runtime guard still protects against it.
+        The parser output type forbids lists, so this scenario requires a
+        loosely-typed parser; the runtime guard still protects against it.
         """
 
         def to_list(args: dict[str, Any] | list[str] | str | None) -> Any:
             return ["a", "b"]
 
-        script = InlineSkillScript(name="s1", function=lambda: "ok", argument_marshaler=to_list)
+        script = InlineSkillScript(name="s1", function=lambda: "ok", argument_parser=to_list)
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
         with pytest.raises(TypeError, match="requires keyword arguments"):
             await script.run(skill, args={"ignored": True})
 
-    async def test_inline_skill_propagates_marshaler_to_decorated_scripts(self) -> None:
-        """InlineSkill passes its marshaler to scripts added via @skill.script."""
+    async def test_inline_skill_propagates_parser_to_decorated_scripts(self) -> None:
+        """InlineSkill passes its parser to scripts added via @skill.script."""
         skill = InlineSkill(
             frontmatter=SkillFrontmatter(name="s", description="d"),
             instructions="c",
-            argument_marshaler=self._json_string_marshaler,
+            argument_parser=self._json_string_parser,
         )
 
         @skill.script
@@ -5961,12 +5961,12 @@ class TestSkillScriptArgumentMarshaler:
 
         script = await skill.get_script("greet")
         assert isinstance(script, InlineSkillScript)
-        assert script.argument_marshaler is self._json_string_marshaler
+        assert script.argument_parser is self._json_string_parser
         result = await script.run(skill, args='{"name": "Carol"}')
         assert result == "hi Carol"
 
-    async def test_inline_skill_no_marshaler_leaves_scripts_unmarshaled(self) -> None:
-        """Without an InlineSkill marshaler, decorated scripts have none."""
+    async def test_inline_skill_no_parser_leaves_scripts_unparsed(self) -> None:
+        """Without an InlineSkill parser, decorated scripts have none."""
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
 
         @skill.script
@@ -5975,17 +5975,17 @@ class TestSkillScriptArgumentMarshaler:
 
         script = await skill.get_script("greet")
         assert isinstance(script, InlineSkillScript)
-        assert script.argument_marshaler is None
+        assert script.argument_parser is None
 
-    async def test_class_skill_propagates_marshaler_to_discovered_scripts(self) -> None:
-        """ClassSkill passes its marshaler to scripts discovered via @ClassSkill.script."""
-        marshaler = self._json_string_marshaler
+    async def test_class_skill_propagates_parser_to_discovered_scripts(self) -> None:
+        """ClassSkill passes its parser to scripts discovered via @ClassSkill.script."""
+        parser = self._json_string_parser
 
-        class _MarshalingClassSkill(ClassSkill):
+        class _ParsingClassSkill(ClassSkill):
             def __init__(self) -> None:
                 super().__init__(
                     frontmatter=SkillFrontmatter(name="cs", description="d"),
-                    argument_marshaler=marshaler,
+                    argument_parser=parser,
                 )
 
             @property
@@ -5996,15 +5996,15 @@ class TestSkillScriptArgumentMarshaler:
             def convert(self, name: str = "world") -> str:
                 return f"converted {name}"
 
-        skill = _MarshalingClassSkill()
+        skill = _ParsingClassSkill()
         script = await skill.get_script("convert")
         assert isinstance(script, InlineSkillScript)
-        assert script.argument_marshaler is marshaler
+        assert script.argument_parser is parser
         result = await script.run(skill, args='{"name": "Dan"}')
         assert result == "converted Dan"
 
-    async def test_run_skill_script_marshals_args_via_provider(self) -> None:
-        """End-to-end: a marshaler remaps args as they flow through the provider to an inline script."""
+    async def test_run_skill_script_parses_args_via_provider(self) -> None:
+        """End-to-end: a parser remaps args as they flow through the provider to an inline script."""
 
         def remap(args: dict[str, Any] | list[str] | str | None) -> dict[str, Any] | None:
             if isinstance(args, dict) and "q" in args:
@@ -6014,7 +6014,7 @@ class TestSkillScriptArgumentMarshaler:
         skill = InlineSkill(
             frontmatter=SkillFrontmatter(name="my-skill", description="test"),
             instructions="body",
-            argument_marshaler=remap,
+            argument_parser=remap,
         )
 
         @skill.script
@@ -6027,9 +6027,9 @@ class TestSkillScriptArgumentMarshaler:
         result = await run_tool.func(skill_name="my-skill", script_name="greet", args={"q": "Eve"})
         assert result == "hello Eve"
 
-    async def test_inline_string_args_without_marshaler_raises(self) -> None:
-        """A raw string reaching an inline script with no marshaler raises a clear TypeError."""
+    async def test_inline_string_args_without_parser_raises(self) -> None:
+        """A raw string reaching an inline script with no parser raises a clear TypeError."""
         script = InlineSkillScript(name="greet", function=lambda name="world": f"hello {name}")
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
-        with pytest.raises(TypeError, match="argument_marshaler"):
+        with pytest.raises(TypeError, match="argument_parser"):
             await script.run(skill, args='{"name": "Alice"}')
