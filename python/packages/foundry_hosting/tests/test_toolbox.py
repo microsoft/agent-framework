@@ -81,15 +81,6 @@ def test_toolbox_name_from_endpoint(endpoint: str, expected: str) -> None:
     assert _toolbox_name_from_endpoint(endpoint) == expected
 
 
-def test_init_rejects_http_client() -> None:
-    with pytest.raises(TypeError, match="http_client"):
-        FoundryToolbox(
-            _FakeCredential(),  # type: ignore
-            url="https://h/toolboxes/tb/mcp",
-            http_client=httpx.AsyncClient(),
-        )
-
-
 def test_init_derives_name_and_defaults() -> None:
     toolbox = FoundryToolbox(
         _FakeCredential(),  # type: ignore

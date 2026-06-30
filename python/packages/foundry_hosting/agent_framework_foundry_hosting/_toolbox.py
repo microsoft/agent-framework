@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import httpx
@@ -134,8 +134,8 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         name: str | None = None,
         token_scope: str = DEFAULT_TOOLBOX_SCOPE,
         load_prompts: bool = False,
+        load_tools: bool = True,
         timeout: float = _DEFAULT_TIMEOUT,
-        **kwargs: Any,
     ) -> None:
         """Initialize a Foundry toolbox tool.
 
@@ -154,14 +154,9 @@ class FoundryToolbox(MCPStreamableHTTPTool):
                 scope.
             load_prompts: Whether to load prompts from the toolbox. Defaults to ``False``
                 because toolboxes expose tools.
+            load_tools: Whether to load tools from the toolbox. Defaults to ``True``.
             timeout: Request timeout in seconds for the underlying HTTP client.
-            kwargs: Additional keyword arguments forwarded to
-                :class:`~agent_framework.MCPStreamableHTTPTool`. Do not pass
-                ``http_client``; this class manages its own.
         """
-        if "http_client" in kwargs:
-            raise TypeError("FoundryToolbox manages its own http_client; pass 'credential' instead.")
-
         endpoint = url or _resolve_toolbox_endpoint()
         tool_name = name or os.environ.get("TOOLBOX_NAME") or _toolbox_name_from_endpoint(endpoint)
 
@@ -175,9 +170,8 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             url=endpoint,
             http_client=http_client,
             load_prompts=load_prompts,
-            **kwargs,
+            load_tools=load_tools,
         )
-        self._owns_http_client = True
 
     async def close(self) -> None:
         """Close the MCP session and the toolbox-owned HTTP client."""
@@ -185,8 +179,8 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             await super().close()
         finally:
             client = self._httpx_client
-            if self._owns_http_client and client is not None:
-                self._owns_http_client = False
+            if client is not None:
+                self._httpx_client = None
                 await client.aclose()
 
     def as_skills_provider(

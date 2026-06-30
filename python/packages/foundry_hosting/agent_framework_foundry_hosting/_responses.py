@@ -527,6 +527,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response."""
+        # Fail fast if the service is on protocol v1.0.0
+        if self.config.is_hosted and context.platform_context.call_id is None:
+            raise RuntimeError(
+                "The hosted environment is running on protocol 1.0.0, but the agent requires protocol 2.0.0. "
+                "Please upgrade your agent protocol to 2.0.0 in `agent.manifest.yaml` or `agent.yaml`, or use "
+                "an downgrade the `agent-framework-foundry-hosting` package to `1.0.0a260625` or before to use 1.0.0."
+            )
+
         if self._is_workflow_agent:
             # Workflow agents are handled differently because they require checkpoint restoration
             return self._handle_inner_workflow(request, context)
