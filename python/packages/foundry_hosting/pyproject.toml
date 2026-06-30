@@ -27,7 +27,7 @@ dependencies = [
     "azure-ai-agentserver-core>=2.0.0b7,<3",
     "azure-ai-agentserver-responses>=1.0.0b8,<2",
     "azure-ai-agentserver-invocations>=1.0.0b6,<2",
-    "httpx",
+    "httpx>=0.28,<1",
     "mcp>=1.24.0,<2",
 ]
 
