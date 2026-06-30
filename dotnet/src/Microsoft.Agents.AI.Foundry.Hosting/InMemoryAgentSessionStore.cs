@@ -33,16 +33,16 @@ public sealed class InMemoryAgentSessionStore : AgentSessionStore
     private readonly ConcurrentDictionary<string, JsonElement> _sessions = new();
 
     /// <inheritdoc/>
-    public override async ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, CancellationToken cancellationToken = default)
+    public override async ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, string? userId, CancellationToken cancellationToken = default)
     {
-        var key = GetKey(conversationId, agent.Id);
+        var key = GetKey(conversationId, agent.Id, userId);
         this._sessions[key] = await agent.SerializeSessionAsync(session, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
-    public override async ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
+    public override async ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string conversationId, string? userId, CancellationToken cancellationToken = default)
     {
-        var key = GetKey(conversationId, agent.Id);
+        var key = GetKey(conversationId, agent.Id, userId);
         JsonElement? sessionContent = this._sessions.TryGetValue(key, out var existingSession) ? existingSession : null;
 
         return sessionContent switch
@@ -52,5 +52,10 @@ public sealed class InMemoryAgentSessionStore : AgentSessionStore
         };
     }
 
-    private static string GetKey(string conversationId, string agentId) => $"{agentId}:{conversationId}";
+    // Keyed with the same a-/u-/c- prefix scheme as FileSystemAgentSessionStore so the in-memory store
+    // partitions per agent and per user identically. The user segment is omitted when no user id is supplied.
+    private static string GetKey(string conversationId, string agentId, string? userId)
+        => string.IsNullOrWhiteSpace(userId)
+            ? $"a-{agentId}:c-{conversationId}"
+            : $"a-{agentId}:u-{userId}:c-{conversationId}";
 }

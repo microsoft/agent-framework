@@ -12,7 +12,7 @@ namespace Hosted_Shared_Contributor_Setup;
 /// When the Foundry platform's <c>x-agent-user-id</c> header is absent (i.e., when the container is
 /// running outside the Foundry platform), the hosting layer rejects every request with a 500 because
 /// the default <see cref="HostedSessionIsolationKeyProvider"/> returns null. This provider supplies a
-/// fallback value from the <c>HOSTED_USER_ISOLATION_KEY</c> environment variable, defaulting to the
+/// fallback value from the <c>HOSTED_USER_ID</c> environment variable, defaulting to the
 /// constant below when it is not set.
 ///
 /// This should NOT be used in production. The Foundry platform sets the user id for every inbound
@@ -20,18 +20,18 @@ namespace Hosted_Shared_Contributor_Setup;
 /// solely so a contributor can <c>docker run</c> the sample on their laptop and drive a few requests
 /// end to end.
 /// </summary>
-public sealed class DevTemporaryLocalSessionIsolationKeyProvider : HostedSessionIsolationKeyProvider
+public sealed class DevTemporaryLocalUserIdProvider : HostedSessionIsolationKeyProvider
 {
     /// <summary>
-    /// Environment variable that supplies the user isolation key when the platform header is absent.
+    /// Environment variable that supplies the user id when the platform header is absent.
     /// </summary>
-    public const string UserIsolationKeyEnvironmentVariable = "HOSTED_USER_ISOLATION_KEY";
+    public const string UserIdEnvironmentVariable = "HOSTED_USER_ID";
 
     /// <summary>
-    /// Default user isolation key used when neither the platform header nor the environment variable
+    /// Default user id used when neither the platform header nor the environment variable
     /// supplies a value. All local requests collapse onto this single bucket unless overridden.
     /// </summary>
-    public const string DefaultLocalUserIsolationKey = "local-dev-user";
+    public const string DefaultLocalUserId = "local-dev-user";
 
     /// <inheritdoc />
     public override ValueTask<HostedSessionContext?> GetKeysAsync(
@@ -39,14 +39,14 @@ public sealed class DevTemporaryLocalSessionIsolationKeyProvider : HostedSession
         CreateResponse request,
         CancellationToken cancellationToken)
     {
-        var userKey = !string.IsNullOrWhiteSpace(context?.PlatformContext?.UserIdKey)
+        var userId = !string.IsNullOrWhiteSpace(context?.PlatformContext?.UserIdKey)
             ? context!.PlatformContext!.UserIdKey
-            : Environment.GetEnvironmentVariable(UserIsolationKeyEnvironmentVariable);
-        if (string.IsNullOrWhiteSpace(userKey))
+            : Environment.GetEnvironmentVariable(UserIdEnvironmentVariable);
+        if (string.IsNullOrWhiteSpace(userId))
         {
-            userKey = DefaultLocalUserIsolationKey;
+            userId = DefaultLocalUserId;
         }
 
-        return new ValueTask<HostedSessionContext?>(new HostedSessionContext(userKey!));
+        return new ValueTask<HostedSessionContext?>(new HostedSessionContext(userId!));
     }
 }

@@ -63,25 +63,9 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var agent = this.ResolveAgent(request);
         var sessionStore = this.ResolveSessionStore(request);
 
-        // 2. Load or create a new session from the interaction.
-        // Map the request to a stable MAF AgentSession key: conversation_id when present, else the
-        // partition embedded in previous_response_id (chains converge), else the minted response id
-        // (cold start). Container session id is intentionally not used — it spans many conversations.
-        var conversationId = request.GetConversationId();
-        var sessionConversationId = HostedConversationKey.Resolve(
-            conversationId, request.PreviousResponseId, context.ResponseId);
-
-        var chatClientAgent = agent.GetService<ChatClientAgent>();
-
-        AgentSession? session = !string.IsNullOrWhiteSpace(sessionConversationId)
-            ? await sessionStore.GetSessionAsync(agent, sessionConversationId, cancellationToken).ConfigureAwait(false)
-                : chatClientAgent is not null
-                ? await chatClientAgent.CreateSessionAsync(cancellationToken).ConfigureAwait(false)
-                : await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
-
-        // 2.5. Resolve and apply the per-request hosted session identity context.
-        // Fresh sessions are tagged once. Resumed sessions are validated against the live request
-        // to detect cross-user session leaks and in-process tampering of the persisted identity.
+        // 2. Resolve the per-request hosted session identity context FIRST, so the session can be
+        // loaded from a per-user partition. Fresh sessions are tagged once; resumed sessions are
+        // validated against the live request to detect cross-user session leaks and in-process tampering.
         var isolationKeyProvider = this._serviceProvider.GetService<HostedSessionIsolationKeyProvider>()
             ?? s_defaultIsolationKeyProvider;
         var resolvedHostedContext = await isolationKeyProvider.GetKeysAsync(context, request, cancellationToken).ConfigureAwait(false);
@@ -92,6 +76,24 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 "Ensure the Foundry platform is providing the x-agent-user-id header, " +
                 "or register a custom provider that supplies fallback values for local development.");
         }
+
+        // 3. Load or create a new session from the interaction.
+        // Map the request to a stable MAF AgentSession key: conversation_id when present, else the
+        // partition embedded in previous_response_id (chains converge), else the minted response id
+        // (cold start). Container session id is intentionally not used — it spans many conversations.
+        // The session store partitions persisted state per user via resolvedHostedContext.UserId so one
+        // user can never observe another user's session, even with a forged conversation id.
+        var conversationId = request.GetConversationId();
+        var sessionConversationId = HostedConversationKey.Resolve(
+            conversationId, request.PreviousResponseId, context.ResponseId);
+
+        var chatClientAgent = agent.GetService<ChatClientAgent>();
+
+        AgentSession? session = !string.IsNullOrWhiteSpace(sessionConversationId)
+            ? await sessionStore.GetSessionAsync(agent, sessionConversationId, resolvedHostedContext.UserId, cancellationToken).ConfigureAwait(false)
+                : chatClientAgent is not null
+                ? await chatClientAgent.CreateSessionAsync(cancellationToken).ConfigureAwait(false)
+                : await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
         // Capture the platform per-request call id (x-agent-foundry-call-id, protocol 2.0.0 only).
         // It is re-applied to the ambient HostedCallContext immediately before each outbound egress
@@ -411,10 +413,11 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         {
             await enumerator.DisposeAsync().ConfigureAwait(false);
 
-            // Persist session after streaming completes (successful or not)
+            // Persist session after streaming completes (successful or not). The user id partitions the
+            // persisted session per end user, mirroring the load above so multi-turn continuity is preserved.
             if (session is not null && !string.IsNullOrWhiteSpace(sessionConversationId))
             {
-                await sessionStore.SaveSessionAsync(agent, sessionConversationId, session, cancellationToken).ConfigureAwait(false);
+                await sessionStore.SaveSessionAsync(agent, sessionConversationId, session, resolvedHostedContext.UserId, cancellationToken).ConfigureAwait(false);
             }
         }
     }
