@@ -362,8 +362,6 @@ class InlineSkillScript(SkillScript):
             name: Identifier for this script (e.g. ``"analyze"``).
             description: Optional human-readable summary.
             function: Callable (sync or async) that implements the script.
-
-        Keyword Args:
             argument_parser: Optional callable that converts the raw
                 ``args`` value into the named arguments passed to
                 ``function`` before the script runs.  When ``None`` (the
@@ -857,8 +855,6 @@ class InlineSkill(Skill):
             instructions: The skill instructions text.
             resources: Pre-built resources to attach to this skill.
             scripts: Pre-built scripts to attach to this skill.
-
-        Keyword Args:
             argument_parser: Optional default :data:`SkillScriptArgumentParser`
                 applied to scripts registered via the :meth:`script` decorator.
                 Pre-built ``scripts`` keep their own parser. When ``None``
@@ -1216,8 +1212,6 @@ class ClassSkill(Skill, ABC):
             frontmatter: Skill specification metadata (name, description,
                 and optional spec fields). Construct a :class:`SkillFrontmatter`
                 with the desired fields.
-
-        Keyword Args:
             argument_parser: Optional default :data:`SkillScriptArgumentParser`
                 applied to scripts discovered from :meth:`ClassSkill.script`-decorated
                 methods. When ``None`` (the default), discovered scripts use the
