@@ -71,18 +71,12 @@ internal sealed class MessageMerger
 
         UsageDetails? usage = null;
         AdditionalPropertiesDictionary? additionalProperties = null;
-        HashSet<DateTimeOffset> createdTimes = [];
 
         foreach (AgentResponse response in responses.Values)
         {
             if (response.AgentId is not null)
             {
                 agentIds.Add(response.AgentId);
-            }
-
-            if (response.CreatedAt.HasValue)
-            {
-                createdTimes.Add(response.CreatedAt.Value);
             }
 
             if (response.FinishReason.HasValue)
@@ -121,7 +115,7 @@ internal sealed class MessageMerger
                    ?? primaryAgentName
                    ?? (agentIds.Count == 1 ? agentIds.First() : null),
             FinishReason = finishReasons.Count == 1 ? finishReasons.First() : null,
-            CreatedAt = createdTimes.Count == 1 ? createdTimes.First() : null,
+            CreatedAt = DateTimeOffset.UtcNow,
             Usage = usage,
             AdditionalProperties = additionalProperties
         };
