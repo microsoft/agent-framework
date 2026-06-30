@@ -121,7 +121,7 @@ internal sealed class MessageMerger
                    ?? primaryAgentName
                    ?? (agentIds.Count == 1 ? agentIds.First() : null),
             FinishReason = finishReasons.Count == 1 ? finishReasons.First() : null,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = createdTimes.Count == 1 ? createdTimes.First() : null,
             Usage = usage,
             AdditionalProperties = additionalProperties
         };
