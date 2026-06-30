@@ -30,6 +30,7 @@ from agent_framework import (
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
+    ServiceSessionId,
     SessionContext,
     SlidingWindowStrategy,
     SupportsAgentRun,
@@ -1132,7 +1133,7 @@ class MockContextProvider(ContextProvider):
         self.before_run_called = False
         self.after_run_called = False
         self.new_messages: list[Message] = []
-        self.last_service_session_id: str | None = None
+        self.last_service_session_id: str | ServiceSessionId | None = None
 
     async def before_run(self, *, agent: Any, session: Any, context: Any, state: Any) -> None:
         self.before_run_called = True
@@ -2314,6 +2315,35 @@ async def test_agent_get_session_with_service_session_id(
 
     assert session is not None
     assert session.service_session_id == "test-thread-123"
+
+
+@pytest.mark.asyncio
+async def test_agent_get_session_with_structured_service_session_id(
+    chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool
+):
+    """Test that get_session accepts structured service_session_id."""
+    agent = Agent(client=chat_client_base, tools=[tool_tool])
+    structured_service_session_id = {"context_id": "ctx-123", "task_id": "task-456", "task_state": "working"}
+
+    session = agent.get_session(service_session_id=structured_service_session_id)
+
+    assert session is not None
+    assert session.service_session_id == structured_service_session_id
+
+
+@pytest.mark.asyncio
+async def test_agent_run_rejects_structured_service_session_id_for_generic_chat_clients(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Structured service_session_id must fail before generic chat client calls."""
+    agent = Agent(client=chat_client_base)
+    session = agent.get_session(service_session_id={"context_id": "ctx-123"})
+
+    with pytest.raises(
+        AgentInvalidRequestException,
+        match="expects a string service_session_id",
+    ):
+        await agent.run("Hello", session=session)
 
 
 def test_agent_session_from_dict(chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool):

@@ -20,6 +20,7 @@ from agent_framework import (
     Executor,
     Message,
     ResponseStream,
+    ServiceSessionId,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowRunState,
@@ -368,7 +369,7 @@ async def test_agent_executor_full_conversation_round_trip_does_not_duplicate_hi
 class _SessionIdCapturingAgent(BaseAgent):
     """Records service_session_id of the session at run() time."""
 
-    _captured_service_session_id: str | None = PrivateAttr(default="NOT_CAPTURED")
+    _captured_service_session_id: str | ServiceSessionId | None = PrivateAttr(default="NOT_CAPTURED")
 
     @overload
     def run(

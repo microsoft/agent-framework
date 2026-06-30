@@ -3,7 +3,14 @@
 from collections.abc import Awaitable
 from typing import Any, Literal, overload
 
-from agent_framework import AgentResponse, AgentResponseUpdate, AgentRunInputs, AgentSession, ResponseStream
+from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
+    AgentRunInputs,
+    AgentSession,
+    ResponseStream,
+    ServiceSessionId,
+)
 from agent_framework._workflows._agent_utils import resolve_agent_id
 
 
@@ -46,7 +53,7 @@ class MockAgent:
         """Creates a new conversation session for the agent."""
         ...
 
-    def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+    def get_session(self, *, service_session_id: str | ServiceSessionId, **kwargs: Any) -> AgentSession:
         return AgentSession()
 
 
