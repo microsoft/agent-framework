@@ -173,6 +173,68 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
         });
     }
 
+    [RetryFact(2, 5000)]
+    public async Task SwitchRoutingWorkflowSampleValidationAsync()
+    {
+        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
+        string samplePath = Path.Combine(s_samplesPath, "09_SwitchRouting");
+
+        await this.RunSampleTestAsync(samplePath, async (process, logs) =>
+        {
+            bool autoApproveSent = false;
+            bool managerApprovalSent = false;
+            bool directorApprovalSent = false;
+            bool autoApproveCompleted = false;
+            bool managerApprovalCompleted = false;
+            bool directorApprovalCompleted = false;
+
+            string? line;
+            while ((line = this.ReadLogLine(logs, testTimeoutCts.Token)) != null)
+            {
+                // Amount < 100 routes to the first switch case (AutoApprove).
+                if (!autoApproveSent && line.Contains("Enter an expense amount", StringComparison.OrdinalIgnoreCase))
+                {
+                    await this.WriteInputAsync(process, "50", testTimeoutCts.Token);
+                    autoApproveSent = true;
+                }
+
+                if (autoApproveSent && !autoApproveCompleted &&
+                    line.Contains("was auto-approved", StringComparison.OrdinalIgnoreCase))
+                {
+                    autoApproveCompleted = true;
+
+                    // Amount < 1000 routes to the second switch case (ManagerApproval).
+                    await this.WriteInputAsync(process, "450", testTimeoutCts.Token);
+                    managerApprovalSent = true;
+                }
+
+                if (managerApprovalSent && !managerApprovalCompleted &&
+                    line.Contains("routed to a manager", StringComparison.OrdinalIgnoreCase))
+                {
+                    managerApprovalCompleted = true;
+
+                    // Everything else routes to the default branch (DirectorApproval).
+                    await this.WriteInputAsync(process, "5000", testTimeoutCts.Token);
+                    directorApprovalSent = true;
+                }
+
+                if (directorApprovalSent && line.Contains("routed to a director", StringComparison.OrdinalIgnoreCase))
+                {
+                    directorApprovalCompleted = true;
+                    break;
+                }
+
+                this.AssertNoError(line);
+            }
+
+            Assert.True(autoApproveCompleted, "Expense < 100 did not route to AutoApprove.");
+            Assert.True(managerApprovalCompleted, "Expense < 1000 did not route to ManagerApproval.");
+            Assert.True(directorApprovalCompleted, "Expense >= 1000 did not route to the default DirectorApproval branch.");
+
+            await this.WriteInputAsync(process, "exit", testTimeoutCts.Token);
+        });
+    }
+
     private void AssertNoError(string line)
     {
         if (line.Contains("Failed:", StringComparison.OrdinalIgnoreCase) ||

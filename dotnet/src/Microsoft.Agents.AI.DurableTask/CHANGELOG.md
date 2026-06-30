@@ -5,6 +5,7 @@
 - Fix issue with resuming checkpoint after package version upgrade ([#6670](https://github.com/microsoft/agent-framework/pull/6670))
 - Bind MCP threadId to the current agent and guard cross-agent session dispatch ([#6531](https://github.com/microsoft/agent-framework/pull/6531))
 - Added support for durable workflows ([#4436](https://github.com/microsoft/agent-framework/pull/4436))
+- Added support for `AddSwitch` and target-selecting fan-out edges in the durable workflow runner ([#6749](https://github.com/microsoft/agent-framework/pull/6749))
 
 ## v1.0.0-preview.260219.1
 

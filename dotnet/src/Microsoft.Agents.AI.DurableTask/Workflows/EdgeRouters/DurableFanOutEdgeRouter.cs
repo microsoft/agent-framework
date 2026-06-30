@@ -36,16 +36,33 @@ internal sealed class DurableFanOutEdgeRouter : IDurableEdgeRouter
 {
     private readonly string _sourceId;
     private readonly List<IDurableEdgeRouter> _targetRouters;
+    private readonly Func<object?, int, IEnumerable<int>>? _edgeAssigner;
+    private readonly Type? _sourceOutputType;
 
     /// <summary>
     /// Initializes a new instance of <see cref="DurableFanOutEdgeRouter"/>.
     /// </summary>
     /// <param name="sourceId">The source executor ID.</param>
     /// <param name="targetRouters">The routers for each target executor.</param>
-    internal DurableFanOutEdgeRouter(string sourceId, List<IDurableEdgeRouter> targetRouters)
+    /// <param name="edgeAssigner">
+    /// Optional target selector. When provided (e.g., for a switch built via <c>AddSwitch</c>), it maps the
+    /// incoming message to the indices of <paramref name="targetRouters"/> that should receive it, so only the
+    /// selected targets run. When <c>null</c>, the message is forwarded to all targets.
+    /// </param>
+    /// <param name="sourceOutputType">
+    /// The output type of the source executor, used to deserialize the JSON message before evaluating the
+    /// <paramref name="edgeAssigner"/>. Ignored when <paramref name="edgeAssigner"/> is <c>null</c>.
+    /// </param>
+    internal DurableFanOutEdgeRouter(
+        string sourceId,
+        List<IDurableEdgeRouter> targetRouters,
+        Func<object?, int, IEnumerable<int>>? edgeAssigner = null,
+        Type? sourceOutputType = null)
     {
         this._sourceId = sourceId;
         this._targetRouters = targetRouters;
+        this._edgeAssigner = edgeAssigner;
+        this._sourceOutputType = sourceOutputType;
     }
 
     /// <inheritdoc />
@@ -54,14 +71,47 @@ internal sealed class DurableFanOutEdgeRouter : IDurableEdgeRouter
         Dictionary<string, Queue<DurableMessageEnvelope>> messageQueues,
         ILogger logger)
     {
-        if (logger.IsEnabled(LogLevel.Debug))
+        // No assigner: plain fan-out, forward the message to every target.
+        if (this._edgeAssigner is null)
         {
-            logger.LogDebug("Fan-Out from {Source}: routing to {Count} targets", this._sourceId, this._targetRouters.Count);
+            logger.LogFanOutRouting(this._sourceId, this._targetRouters.Count);
+
+            foreach (IDurableEdgeRouter targetRouter in this._targetRouters)
+            {
+                targetRouter.RouteMessage(envelope, messageQueues, logger);
+            }
+
+            return;
         }
 
-        foreach (IDurableEdgeRouter targetRouter in this._targetRouters)
+        // Assigner present (e.g., a switch): select only the matching targets, mirroring the in-process
+        // FanOutEdgeRunner. The assigner returns indices into the ordered target list, with no de-duplication,
+        // so duplicate indices deliver the message more than once.
+        List<int> selectedIndices;
+        try
         {
-            targetRouter.RouteMessage(envelope, messageQueues, logger);
+            object? messageObj = DurableSerialization.DeserializeMessage(envelope.Message, this._sourceOutputType);
+            selectedIndices = this._edgeAssigner(messageObj, this._targetRouters.Count).ToList();
+        }
+        catch (Exception ex)
+        {
+            logger.LogFanOutSelectorEvaluationFailed(ex, this._sourceId);
+            return;
+        }
+
+        logger.LogFanOutSelectorMatched(this._sourceId, selectedIndices.Count, this._targetRouters.Count);
+
+        foreach (int index in selectedIndices)
+        {
+            // Range-check each index individually so an out-of-range value is surfaced (logged) and skipped on
+            // its own, without dropping deliveries to the other valid targets selected for this message.
+            if (index < 0 || index >= this._targetRouters.Count)
+            {
+                logger.LogFanOutSelectorIndexOutOfRange(this._sourceId, index, this._targetRouters.Count);
+                continue;
+            }
+
+            this._targetRouters[index].RouteMessage(envelope, messageQueues, logger);
         }
     }
 }

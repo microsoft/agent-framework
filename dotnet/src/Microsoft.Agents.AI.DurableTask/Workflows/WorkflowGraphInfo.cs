@@ -95,4 +95,22 @@ internal sealed class WorkflowGraphInfo
     /// Maps executor IDs to their output types (for proper deserialization during condition evaluation).
     /// </summary>
     public Dictionary<string, Type?> ExecutorOutputTypes { get; } = [];
+
+    /// <summary>
+    /// Maps a source executor ID to the selective fan-outs originating from it. A source can have more than one
+    /// (for example, multiple switches), so the value is a list rather than a single entry.
+    /// </summary>
+    public Dictionary<string, List<SelectiveFanOut>> SelectiveFanOuts { get; } = [];
 }
+
+/// <summary>
+/// Represents a fan-out that delivers to a selected subset of its targets, produced by a switch
+/// (<c>AddSwitch</c>) or a target-selecting fan-out edge. Only the targets chosen by <see cref="Assigner"/>
+/// receive the message, mirroring the in-process <c>FanOutEdgeData.EdgeAssigner</c>.
+/// </summary>
+/// <param name="SinkIds">The ordered target executor IDs of the fan-out edge.</param>
+/// <param name="Assigner">
+/// Maps an incoming message and the target count to the indices of <paramref name="SinkIds"/> that should
+/// receive it.
+/// </param>
+internal sealed record SelectiveFanOut(List<string> SinkIds, Func<object?, int, IEnumerable<int>> Assigner);

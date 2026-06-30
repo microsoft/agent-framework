@@ -101,6 +101,54 @@ internal sealed class DurableEdgeMap
 
             graphInfo.ExecutorOutputTypes.TryGetValue(sourceId, out Type? sourceOutputType);
 
+            // A switch (AddSwitch) or target-selecting fan-out edge is represented as a single fan-out edge
+            // with an assigner. A source can also declare such selector edges alongside ordinary direct or
+            // plain fan-out edges. Because the graph flattens every edge's targets into a single successor
+            // list, we build one selector-aware fan-out router per selector routing (so only the chosen
+            // targets receive the message) and ordinary direct routers for the remaining sibling edges, so
+            // none of them are dropped. This mirrors the in-process runner, which creates one runner per edge.
+            if (graphInfo.SelectiveFanOuts.TryGetValue(sourceId, out List<SelectiveFanOut>? selectiveFanOuts)
+                && selectiveFanOuts.Count > 0)
+            {
+                List<IDurableEdgeRouter> sourceRouters = [];
+
+                // Count how many times each target is claimed by a selector. The flattened successor list can
+                // contain the same target more than once (a selector case and a sibling edge can point at the
+                // same executor), so we consume one occurrence per selector claim rather than skipping the
+                // target entirely, ensuring sibling edges to a selector's target are still wired.
+                Dictionary<string, int> selectorSinkCounts = [];
+                foreach (SelectiveFanOut selectiveFanOut in selectiveFanOuts)
+                {
+                    List<IDurableEdgeRouter> orderedRouters = [];
+                    foreach (string sinkId in selectiveFanOut.SinkIds)
+                    {
+                        orderedRouters.Add(new DurableDirectEdgeRouter(sourceId, sinkId, condition: null, sourceOutputType));
+                        selectorSinkCounts[sinkId] = selectorSinkCounts.GetValueOrDefault(sinkId) + 1;
+                    }
+
+                    sourceRouters.Add(new DurableFanOutEdgeRouter(sourceId, orderedRouters, selectiveFanOut.Assigner, sourceOutputType));
+                }
+
+                // Sibling edges from the same source (direct or plain fan-out, possibly conditional) that are
+                // not part of any selector still need to deliver.
+                foreach (string sinkId in successorIds)
+                {
+                    // Consume one selector occurrence of this target; any remaining occurrence is a sibling edge.
+                    if (selectorSinkCounts.TryGetValue(sinkId, out int remaining) && remaining > 0)
+                    {
+                        selectorSinkCounts[sinkId] = remaining - 1;
+                        continue;
+                    }
+
+                    graphInfo.EdgeConditions.TryGetValue((sourceId, sinkId), out Func<object?, bool>? siblingCondition);
+                    sourceRouters.Add(new DurableDirectEdgeRouter(sourceId, sinkId, siblingCondition, sourceOutputType));
+                }
+
+                this._routersBySource[sourceId] = sourceRouters;
+
+                continue;
+            }
+
             List<IDurableEdgeRouter> routers = [];
             foreach (string sinkId in successorIds)
             {
@@ -120,10 +168,14 @@ internal sealed class DurableEdgeMap
             }
         }
 
-        // Store predecessor counts for fan-in detection
+        // Store predecessor counts for fan-in detection. Count distinct source executors: a single source can
+        // reach the same target through more than one edge (for example a switch case plus a sibling direct
+        // edge to the same executor), and those repeated deliveries must not be mistaken for a fan-in. True
+        // fan-in aggregates deliveries from multiple distinct sources, mirroring the in-process FanInEdgeData
+        // contract, so a target fed twice by the same source still runs once per delivery.
         foreach (KeyValuePair<string, List<string>> entry in graphInfo.Predecessors)
         {
-            this._predecessorCounts[entry.Key] = entry.Value.Count;
+            this._predecessorCounts[entry.Key] = entry.Value.Distinct().Count();
         }
     }
 
