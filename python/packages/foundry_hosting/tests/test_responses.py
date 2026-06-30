@@ -3134,7 +3134,7 @@ class TestCheckpointContextPathValidation:
     def test_non_string_context_id_is_rejected(self, tmp_path: Any) -> None:
         helper = self._helper()
         with pytest.raises(RuntimeError):
-            helper(str(tmp_path), None)  # type: ignore[arg-type] # ty: ignore[invalid-argument-type]
+            helper(str(tmp_path), None)
 
     def test_url_encoded_traversal_is_treated_as_literal_segment(self, tmp_path: Any) -> None:
         """URL-encoded traversal should not decode to traversal at the filesystem layer.

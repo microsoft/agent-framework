@@ -13,7 +13,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Se
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 from agent_framework import (
     ChatOptions,
@@ -113,7 +113,7 @@ from azure.ai.agentserver.responses.streaming._builders import (
     TextContentBuilder,
 )
 from mcp import McpError
-from typing_extensions import Any, Literal
+from typing_extensions import Any
 
 logger = logging.getLogger(__name__)
 
