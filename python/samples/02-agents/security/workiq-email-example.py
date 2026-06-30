@@ -10,7 +10,15 @@ from contextlib import AsyncExitStack, suppress
 from pathlib import Path
 from typing import Any
 
-from agent_framework import Agent, MCPStreamableHTTPTool
+from agent_framework import (
+    Agent,
+    AgentResponse,
+    AgentSession,
+    Content,
+    MCPStreamableHTTPTool,
+    Message,
+    ToolApprovalMiddleware,
+)
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.security import SecureAgentConfig, SecureMCPToolProxy
 from azure.identity import AzureCliCredential
@@ -125,6 +133,35 @@ _AGENT_INSTRUCTIONS = (
 )
 
 
+def _approval_response_for_policy(request: Content) -> Content:
+    """Approve a FIDES policy-violation request for this high-autonomy sample.
+
+    The agent is configured for autonomous operation, so detected policy
+    violations are auto-approved here while still being surfaced and audited.
+    A real host could prompt a human or apply finer-grained rules instead.
+    """
+    function_call = request.function_call
+    tool_name = function_call.name if function_call is not None else "<unknown>"
+    print(f"  [approval] policy violation on '{tool_name}' -> approving")
+    return request.to_function_approval_response(approved=True)
+
+
+async def _resolve_approval_requests(
+    agent: Agent, response: AgentResponse, session: AgentSession
+) -> AgentResponse:
+    """Resolve queued approval prompts until the agent returns a regular answer.
+
+    ``ToolApprovalMiddleware`` surfaces policy-violation approvals one batch at a
+    time (queuing parallel requests in session state), so this loop keeps
+    responding until no approval requests remain.
+    """
+    result = response
+    while result.user_input_requests:
+        approval_responses = [_approval_response_for_policy(req) for req in result.user_input_requests]
+        result = await agent.run(Message(role="user", contents=approval_responses), session=session)
+    return result
+
+
 async def run_cli_async(*, debug: bool = False, gateway_port: int = 9090) -> None:
     """Run the sample in CLI mode with two MCP proxies (WorkIQ email + teams)."""
     endpoint = _load_env_and_validate()
@@ -185,13 +222,20 @@ async def run_cli_async(*, debug: bool = False, gateway_port: int = 9090) -> Non
                 instructions=_AGENT_INSTRUCTIONS,
                 tools=all_tools,
                 context_providers=[config],
+                middleware=[ToolApprovalMiddleware()],
             )
         )
+
+        # ToolApprovalMiddleware requires an AgentSession so it can coordinate
+        # (and queue) approval prompts across runs when parallel tool calls
+        # each trigger a policy-violation approval.
+        session = agent.create_session()
 
         # query = "Read my latest emails and summarize them."
         query = "Handle my recent unread emails."
         print("\nUser:", query)
-        result = await agent.run(query)
+        result = await agent.run(query, session=session)
+        result = await _resolve_approval_requests(agent, result, session)
         print("\nAgent:", result.text)
 
         _print_context_label(config, debug=debug)
@@ -256,6 +300,7 @@ async def run_devui_async(*, debug: bool = False, gateway_port: int = 9090) -> N
                 instructions=_AGENT_INSTRUCTIONS,
                 tools=secure_mcp.tools,
                 context_providers=[config],
+                middleware=[ToolApprovalMiddleware()],
             )
         )
 

@@ -3644,7 +3644,7 @@ class SecureMCPToolProxy:
 
         # The validation above guarantees a tool is set (passed directly or built
         # from ``url``); declare the attribute as non-optional ``MCPTool``.
-        self._mcp_tool: MCPTool = cast(MCPTool, mcp_tool)
+        self._mcp_tool: MCPTool = cast("MCPTool", mcp_tool)
         self._default_integrity = default_integrity
         self._annotation_overrides = annotation_overrides
         self._mark_write_tools_as_sinks = mark_write_tools_as_sinks
