@@ -2,6 +2,8 @@
 
 """Unit tests for data models (RunRequest)."""
 
+import json
+
 import pytest
 from pydantic import BaseModel
 
@@ -203,6 +205,47 @@ class TestRunRequest:
         assert restored.options is not None
         assert restored.options["custom"] == "value"
         assert restored.options["response_format"] is ModuleStructuredResponse
+
+    def test_to_dict_with_options_response_format_is_json_serializable(self) -> None:
+        """Ensure options response_format can cross the durable JSON boundary."""
+        request = RunRequest(
+            message="Test",
+            correlation_id="corr-opts-json",
+            options={"response_format": ModuleStructuredResponse},
+        )
+
+        data = request.to_dict()
+        encoded = json.dumps(data)
+        decoded = json.loads(encoded)
+        restored = RunRequest.from_dict(decoded)
+
+        assert data["options"]["response_format"]["__response_schema_type__"] == "pydantic_model"
+        assert restored.options["response_format"] is ModuleStructuredResponse
+
+    def test_from_dict_drops_unresolved_options_response_format_marker(self) -> None:
+        """Ensure unresolved durable markers do not block top-level response_format fallback."""
+        request = RunRequest.from_dict(
+            {
+                "message": "Test",
+                "correlationId": "corr-opts-missing",
+                "response_format": {
+                    "__response_schema_type__": "pydantic_model",
+                    "module": ModuleStructuredResponse.__module__,
+                    "qualname": ModuleStructuredResponse.__qualname__,
+                },
+                "options": {
+                    "response_format": {
+                        "__response_schema_type__": "pydantic_model",
+                        "module": "missing_module",
+                        "qualname": "MissingModel",
+                    },
+                    "custom": "value",
+                },
+            }
+        )
+
+        assert request.response_format is ModuleStructuredResponse
+        assert request.options == {"custom": "value"}
 
     def test_init_with_correlationId(self) -> None:
         """Test RunRequest initialization with correlationId."""
