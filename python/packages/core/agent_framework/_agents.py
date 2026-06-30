@@ -23,12 +23,8 @@ from typing import (
 )
 from uuid import uuid4
 
-from pydantic import BaseModel
-
-from . import _tools as _tool_utils  # pyright: ignore[reportPrivateUsage]
 from ._clients import BaseChatClient, SupportsChatGetResponse
 from ._docstrings import apply_layered_docstring
-from ._mcp import LOG_LEVEL_MAPPING, MCPTool
 from ._middleware import AgentMiddlewareLayer, FunctionInvocationContext, MiddlewareTypes, categorize_middleware
 from ._serialization import SerializationMixin
 from ._sessions import (
@@ -40,7 +36,6 @@ from ._sessions import (
     SessionContext,
     is_local_history_conversation_id,
 )
-from ._tools import FunctionInvocationLayer, FunctionTool, ToolTypes, normalize_tools
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -59,10 +54,6 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
-if sys.version_info >= (3, 12):
-    pass
-else:
-    pass  # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import Self, TypedDict  # pragma: no cover
 else:
@@ -71,22 +62,48 @@ else:
 if TYPE_CHECKING:
     from mcp import types
     from mcp.server.lowlevel import Server
+    from pydantic import BaseModel
 
     from ._compaction import CompactionStrategy, TokenizerProtocol
+    from ._mcp import MCPTool
+    from ._tools import FunctionTool, ToolTypes
     from ._types import ChatOptions
 
 logger = logging.getLogger("agent_framework")
 
-_append_unique_tools = _tool_utils._append_unique_tools  # pyright: ignore[reportPrivateUsage]
-_get_tool_name = _tool_utils._get_tool_name  # pyright: ignore[reportPrivateUsage]
-
-ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+if TYPE_CHECKING:
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+else:
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=Any)
 OptionsCoT = TypeVar(
     "OptionsCoT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="ChatOptions[None]",
     covariant=True,
 )
+
+
+def _append_unique_tools(
+    existing_tools: list[ToolTypes],
+    new_tools: Sequence[ToolTypes],
+    *,
+    duplicate_error_message: str | None = None,
+) -> list[ToolTypes]:
+    from ._tools import _append_unique_tools as append_unique_tools  # pyright: ignore[reportPrivateUsage]
+
+    return append_unique_tools(
+        existing_tools,
+        new_tools,
+        duplicate_error_message=duplicate_error_message,
+    )
+
+
+def _normalize_tools(
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+) -> list[ToolTypes]:
+    from ._tools import normalize_tools
+
+    return normalize_tools(tools)
 
 
 def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -109,8 +126,8 @@ def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
         if value is None:
             continue
         if key == "tools" and (result.get("tools") or value):
-            base_tools = normalize_tools(result.get("tools"))
-            override_tools = normalize_tools(value)
+            base_tools = _normalize_tools(result.get("tools"))
+            override_tools = _normalize_tools(value)
             result["tools"] = _append_unique_tools(
                 list(base_tools),
                 override_tools,
@@ -570,6 +587,8 @@ class BaseAgent(SerializationMixin):
             # TODO(Copilot): update once #4331 merges
             return final_response.text
 
+        from ._tools import FunctionTool
+
         return FunctionTool(
             name=tool_name,
             description=tool_description,
@@ -719,6 +738,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         """
         opts = dict(default_options) if default_options else {}
 
+        from ._mcp import MCPTool
+        from ._tools import FunctionInvocationLayer
+
         if not isinstance(client, FunctionInvocationLayer) and isinstance(client, BaseChatClient):
             logger.warning(
                 "The provided chat client does not support function invoking, this might limit agent capabilities."
@@ -745,7 +767,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         # We ignore the MCP Servers here and store them separately,
         # we add their functions to the tools list at runtime
-        normalized_tools = normalize_tools(tools_)
+        normalized_tools = _normalize_tools(tools_)
         self.mcp_tools: list[MCPTool] = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
 
@@ -1251,11 +1273,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             }
 
         agent_name = self._get_agent_name()
-        base_tools = normalize_tools(chat_options.pop("tools", None))
+        from ._mcp import MCPTool
+
+        base_tools = _normalize_tools(chat_options.pop("tools", None))
         mcp_duplicate_message = "Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool."
 
         # Normalize tools
-        normalized_tools = normalize_tools(tools_)
+        normalized_tools = _normalize_tools(tools_)
 
         # Resolve final tool list (configured tools + runtime provided tools + local MCP server tools)
         final_tools = list(base_tools)
@@ -1532,6 +1556,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             raise ModuleNotFoundError(
                 "`mcp` is required to use `Agent.as_mcp_server()`. Please install `mcp`."
             ) from exc
+        from ._mcp import LOG_LEVEL_MAPPING
 
         server_args: dict[str, Any] = {
             "name": server_name,

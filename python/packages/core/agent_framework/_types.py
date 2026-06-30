@@ -25,12 +25,9 @@ from datetime import datetime
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
-from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from ._serialization import SerializationMixin
-from ._tools import ToolTypes
-from ._tools import normalize_tools as _normalize_tools
 from .exceptions import AdditionItemMismatch, ContentError
 
 if sys.version_info >= (3, 13):
@@ -39,6 +36,11 @@ else:
     from typing_extensions import TypeVar  # pragma: no cover
 
 logger = logging.getLogger("agent_framework")
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from ._tools import ToolTypes
 
 
 # region Content Parsing Utilities
@@ -298,9 +300,14 @@ EmbeddingInputT = TypeVar("EmbeddingInputT", default="str")
 ChatResponseT = TypeVar("ChatResponseT", bound="ChatResponse")
 ToolModeT = TypeVar("ToolModeT", bound="ToolMode")
 AgentResponseT = TypeVar("AgentResponseT", bound="AgentResponse")
-ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None, covariant=True)
-ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
-StructuredResponseFormat = type[BaseModel] | Mapping[str, Any] | None
+if TYPE_CHECKING:
+    ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None, covariant=True)
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+    StructuredResponseFormat = type[BaseModel] | Mapping[str, Any] | None
+else:
+    ResponseModelT = TypeVar("ResponseModelT", bound=Any, default=None, covariant=True)
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=Any)
+    StructuredResponseFormat = type[Any] | Mapping[str, Any] | None
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
 
@@ -2110,8 +2117,11 @@ def _parse_structured_response_value(text: str, response_format: Any | None) -> 
         return None
     if not text:
         return None
-    if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-        return response_format.model_validate_json(text)
+    if isinstance(response_format, type):
+        from pydantic import BaseModel
+
+        if issubclass(response_format, BaseModel):
+            return response_format.model_validate_json(text)
     if isinstance(response_format, Mapping):
         try:
             return json.loads(text)
@@ -3544,6 +3554,8 @@ def normalize_tools(
             # List of tools
             tools = normalize_tools([my_tool, another_tool])
     """
+    from ._tools import normalize_tools as _normalize_tools
+
     return _normalize_tools(tools)
 
 

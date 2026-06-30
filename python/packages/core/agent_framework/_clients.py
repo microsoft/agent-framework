@@ -25,11 +25,8 @@ from typing import (
     runtime_checkable,
 )
 
-from pydantic import BaseModel
-
 from ._docstrings import apply_layered_docstring
 from ._serialization import SerializationMixin
-from ._tools import ToolTypes
 from ._types import (
     ChatResponse,
     ChatResponseUpdate,
@@ -49,11 +46,14 @@ else:
 
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from ._agents import Agent
     from ._compaction import CompactionStrategy, TokenizerProtocol
     from ._middleware import (
         MiddlewareTypes,
     )
+    from ._tools import ToolTypes
     from ._types import ChatOptions
 
 
@@ -75,7 +75,10 @@ OptionsContraT = TypeVar(
 )
 
 # Used for the overloads that capture the response model type from options
-ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+if TYPE_CHECKING:
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+else:
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=Any)
 
 
 @runtime_checkable
