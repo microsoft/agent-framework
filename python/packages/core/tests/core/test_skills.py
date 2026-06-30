@@ -15,6 +15,7 @@ import pytest
 
 from agent_framework import (
     AggregatingSkillsSource,
+    CachingSkillsSource,
     ClassSkill,
     Content,
     DeduplicatingSkillsSource,
@@ -30,6 +31,7 @@ from agent_framework import (
     SkillScript,
     SkillScriptRunner,
     SkillsProvider,
+    SkillsSource,
 )
 from agent_framework._skills import (
     DEFAULT_RESOURCE_EXTENSIONS,
@@ -53,31 +55,45 @@ async def _noop_script_runner(skill: Any, script: Any, args: Any = None) -> None
     return
 
 
-async def _init_provider(provider: SkillsProvider) -> SkillsProvider:
-    """Initialize a provider's lazy state for testing.
+class _CountingSkillsSource(SkillsSource):
+    """Test source that records how many times ``get_skills`` is called."""
 
-    Calls the internal ``_get_or_create_context()`` method so that tests can
-    immediately inspect the cached context via ``_cached_context``.
+    def __init__(self, skills: Sequence[Skill]) -> None:
+        self._skills = list(skills)
+        self.call_count = 0
+
+    async def get_skills(self) -> list[Skill]:
+        self.call_count += 1
+        return list(self._skills)
+
+
+async def _init_provider(provider: SkillsProvider) -> SkillsProvider:
+    """Initialize a provider's context for testing.
+
+    Calls the internal ``_create_context()`` method and stashes the result on
+    the provider so tests can immediately inspect it via :func:`_ctx`.  The
+    skills list itself is cached by the source pipeline (see
+    ``CachingSkillsSource``); this helper just captures one built context.
     """
-    await provider._get_or_create_context()  # pyright: ignore[reportPrivateUsage]
+    provider._test_context = await provider._create_context()  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
     return provider
 
 
 def _ctx(provider: SkillsProvider) -> tuple[dict[str, Skill], str | None, list[Any]]:
-    """Return the cached context, asserting it was initialized.
+    """Return the captured context, asserting it was initialized.
 
     Converts the skills sequence to a dict keyed by name for convenient
     test assertions.
     """
-    ctx = provider._cached_context  # pyright: ignore[reportPrivateUsage]
+    ctx = getattr(provider, "_test_context", None)
     assert ctx is not None, "_init_provider() must be called before accessing context"
     skills, instructions, tools = ctx
     return {s.frontmatter.name: s for s in skills}, instructions, tools
 
 
 def _raw_skills(provider: SkillsProvider) -> Sequence[Skill]:
-    """Return the raw skills sequence from the cached context."""
-    ctx = provider._cached_context  # pyright: ignore[reportPrivateUsage]
+    """Return the raw skills sequence from the captured context."""
+    ctx = getattr(provider, "_test_context", None)
     assert ctx is not None, "_init_provider() must be called before accessing context"
     return ctx[0]
 
@@ -5289,6 +5305,91 @@ class TestSkillsSource:
         assert len(skills) == 1
         assert skills[0].frontmatter.name == "test-skill"
 
+    async def test_caching_source_caches_inner_results(self) -> None:
+        """CachingSkillsSource queries the inner source only once."""
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="test"), instructions="body")
+        inner = _CountingSkillsSource([skill])
+
+        cached = CachingSkillsSource(inner)
+        first = await cached.get_skills()
+        second = await cached.get_skills()
+
+        assert inner.call_count == 1
+        assert first is second
+        assert [s.frontmatter.name for s in first] == ["test-skill"]
+
+    async def test_caching_source_is_delegating(self) -> None:
+        """CachingSkillsSource exposes its inner source like other decorators."""
+        from agent_framework import DelegatingSkillsSource
+
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="test"), instructions="body")
+        inner = InMemorySkillsSource([skill])
+        cached = CachingSkillsSource(inner)
+        assert isinstance(cached, DelegatingSkillsSource)
+        assert cached.inner_source is inner
+
+    async def test_caching_source_retries_after_failure(self) -> None:
+        """A failing first fetch is not cached; the next call retries."""
+
+        class FlakySource(SkillsSource):
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def get_skills(self) -> list[Skill]:
+                self.call_count += 1
+                if self.call_count == 1:
+                    raise RuntimeError("transient failure")
+                return [
+                    InlineSkill(
+                        frontmatter=SkillFrontmatter(name="test-skill", description="test"),
+                        instructions="body",
+                    )
+                ]
+
+        inner = FlakySource()
+        cached = CachingSkillsSource(inner)
+
+        with pytest.raises(RuntimeError, match="transient failure"):
+            await cached.get_skills()
+
+        skills = await cached.get_skills()
+        assert inner.call_count == 2
+        assert [s.frontmatter.name for s in skills] == ["test-skill"]
+
+    async def test_caching_source_shares_single_inflight_fetch(self) -> None:
+        """Concurrent callers share one in-flight fetch of the inner source."""
+        import asyncio
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class SlowSource(SkillsSource):
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def get_skills(self) -> list[Skill]:
+                self.call_count += 1
+                started.set()
+                await release.wait()
+                return [
+                    InlineSkill(
+                        frontmatter=SkillFrontmatter(name="test-skill", description="test"),
+                        instructions="body",
+                    )
+                ]
+
+        inner = SlowSource()
+        cached = CachingSkillsSource(inner)
+
+        first = asyncio.ensure_future(cached.get_skills())
+        await started.wait()
+        second = asyncio.ensure_future(cached.get_skills())
+        release.set()
+
+        results = await asyncio.gather(first, second)
+        assert inner.call_count == 1
+        assert results[0] is results[1]
+
     async def test_provider_with_source_parameter(self, tmp_path: Path) -> None:
         """SkillsProvider works with the new source= parameter."""
         skill_dir = tmp_path / "my-skill"
@@ -5599,31 +5700,43 @@ class TestSkillsProviderFactoryMethods:
 
 
 class TestDisableCaching:
-    """Tests for the disable_caching option."""
+    """Tests for the disable_caching option (now backed by CachingSkillsSource)."""
 
-    async def test_default_caching_enabled(self) -> None:
-        """By default, _get_or_create_context only builds once."""
+    async def test_default_wraps_source_in_caching(self) -> None:
+        """By default, the resolved source is wrapped in a CachingSkillsSource."""
+        from agent_framework import CachingSkillsSource
+
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
         provider = SkillsProvider([skill])
-        await _init_provider(provider)
-        first_ctx = provider._cached_context  # pyright: ignore[reportPrivateUsage]
-        assert first_ctx is not None
+        assert isinstance(provider._source, CachingSkillsSource)  # pyright: ignore[reportPrivateUsage]
 
-        # Calling _get_or_create_context again should return cached result
-        skills, _, _ = await provider._get_or_create_context()
-        assert skills is first_ctx[0]  # Same object reference
+    async def test_default_caching_queries_source_once(self) -> None:
+        """By default, the inner source is queried only once across calls."""
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
+        inner = _CountingSkillsSource([skill])
+        provider = SkillsProvider(inner)
 
-    async def test_disable_caching_rebuilds_on_every_call(self) -> None:
-        """With disable_caching=True, _create_context rebuilds every time."""
+        await provider._create_context()  # pyright: ignore[reportPrivateUsage]
+        await provider._create_context()  # pyright: ignore[reportPrivateUsage]
+        assert inner.call_count == 1
+
+    async def test_disable_caching_does_not_wrap_source(self) -> None:
+        """With disable_caching=True, the source is not wrapped in CachingSkillsSource."""
+        from agent_framework import CachingSkillsSource
+
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
         provider = SkillsProvider([skill], disable_caching=True)
-        await _init_provider(provider)
-        first_ctx = provider._cached_context  # pyright: ignore[reportPrivateUsage]
-        assert first_ctx is not None
+        assert not isinstance(provider._source, CachingSkillsSource)  # pyright: ignore[reportPrivateUsage]
 
-        # Calling _create_context again should rebuild
-        skills, _, _ = await provider._create_context()
-        assert skills is not first_ctx[0]  # Different object
+    async def test_disable_caching_rebuilds_on_every_call(self) -> None:
+        """With disable_caching=True, the inner source is queried on every call."""
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
+        inner = _CountingSkillsSource([skill])
+        provider = SkillsProvider(inner, disable_caching=True)
+
+        await provider._create_context()  # pyright: ignore[reportPrivateUsage]
+        await provider._create_context()  # pyright: ignore[reportPrivateUsage]
+        assert inner.call_count == 2
 
     async def test_disable_caching_via_constructor(self) -> None:
         """disable_caching works via the primary constructor."""
