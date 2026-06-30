@@ -171,8 +171,8 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         // Represent action with default executor
         DefaultActionExecutor action = new(item, this._workflowState);
         this.ContinueWith(action);
-        // Transition to target action
-        this._workflowModel.AddLink(action.Id, item.ActionId.Value);
+        // Transition to target action, injecting completion events for non-discrete parents
+        this.InjectParentCompletionEvents(action.Id, item.ActionId.Value);
         // Define a clean-start to ensure "goto" is not a source for any edge
         this.RestartAfter(action.Id, action.ParentId);
     }
@@ -219,8 +219,9 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
             // Represent action with default executor
             DefaultActionExecutor action = new(item, this._workflowState);
             this.ContinueWith(action);
-            // Transition to post action
-            this._workflowModel.AddLink(action.Id, Steps.Post(loopAction.Id));
+            // Transition to post action, injecting completion events for non-discrete parents
+            // Stop before the Foreach's own Post step since that handles Foreach completion
+            this.InjectParentCompletionEvents(action.Id, Steps.Post(loopAction.Id), stopBeforeParentId: loopAction.Id);
             // Define a clean-start to ensure "break" is not a source for any edge
             this.RestartAfter(action.Id, action.ParentId);
         }
@@ -238,8 +239,9 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
             // Represent action with default executor
             DefaultActionExecutor action = new(item, this._workflowState);
             this.ContinueWith(action);
-            // Transition to select the next item
-            this._workflowModel.AddLink(action.Id, ForeachExecutor.Steps.Next(loopAction.Id));
+            // Transition to select the next item, injecting completion events for non-discrete parents
+            // Stop before the Foreach's own Next step since that handles Foreach iteration
+            this.InjectParentCompletionEvents(action.Id, ForeachExecutor.Steps.Next(loopAction.Id), stopBeforeParentId: loopAction.Id);
             // Define a clean-start to ensure "continue" is not a source for any edge
             this.RestartAfter(action.Id, action.ParentId);
         }
@@ -302,8 +304,28 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         // Represent action with default executor
         DefaultActionExecutor action = new(item, this._workflowState);
         this.ContinueWith(action);
+
+        var nonDiscreteAncestors = this._workflowModel
+            .LocateNonDiscreteAncestors<DeclarativeActionExecutor>(action.Id)
+            .ToList();
+
+        string currentId = action.Id;
+        foreach (var ancestor in nonDiscreteAncestors)
+        {
+            string completionId = $"{action.Id}_Complete_{ancestor.Id}";
+            var completionStep = new DelegateActionExecutor(
+                completionId,
+                this._workflowState,
+                async (context, _, ct) => await context.RaiseCompletionEventAsync(ancestor.Model, ct).ConfigureAwait(false),
+                emitResult: false);
+
+            this._workflowModel.AddNode(completionStep, ancestor.ParentId);
+            this._workflowModel.AddLink(currentId, completionId);
+            currentId = completionId;
+        }
+
         // Define a clean-start to ensure "end" is not a source for any edge
-        this.RestartAfter(item.Id.Value, action.ParentId);
+        this.RestartAfter(currentId, action.ParentId);
     }
 
     protected override void Visit(EndConversation item)
@@ -313,8 +335,28 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         // Represent action with default executor
         DefaultActionExecutor action = new(item, this._workflowState);
         this.ContinueWith(action);
+
+        var nonDiscreteAncestors = this._workflowModel
+            .LocateNonDiscreteAncestors<DeclarativeActionExecutor>(action.Id)
+            .ToList();
+
+        string currentId = action.Id;
+        foreach (var ancestor in nonDiscreteAncestors)
+        {
+            string completionId = $"{action.Id}_Complete_{ancestor.Id}";
+            var completionStep = new DelegateActionExecutor(
+                completionId,
+                this._workflowState,
+                async (context, _, ct) => await context.RaiseCompletionEventAsync(ancestor.Model, ct).ConfigureAwait(false),
+                emitResult: false);
+
+            this._workflowModel.AddNode(completionStep, ancestor.ParentId);
+            this._workflowModel.AddLink(currentId, completionId);
+            currentId = completionId;
+        }
+
         // Define a clean-start to ensure "end" is not a source for any edge
-        this.RestartAfter(action.Id, action.ParentId);
+        this.RestartAfter(currentId, action.ParentId);
     }
 
     protected override void Visit(CancelAllDialogs item)
@@ -324,8 +366,28 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         // Represent action with default executor
         DefaultActionExecutor action = new(item, this._workflowState);
         this.ContinueWith(action);
+
+        var nonDiscreteAncestors = this._workflowModel
+            .LocateNonDiscreteAncestors<DeclarativeActionExecutor>(action.Id)
+            .ToList();
+
+        string currentId = action.Id;
+        foreach (var ancestor in nonDiscreteAncestors)
+        {
+            string completionId = $"{action.Id}_Complete_{ancestor.Id}";
+            var completionStep = new DelegateActionExecutor(
+                completionId,
+                this._workflowState,
+                async (context, _, ct) => await context.RaiseCompletionEventAsync(ancestor.Model, ct).ConfigureAwait(false),
+                emitResult: false);
+
+            this._workflowModel.AddNode(completionStep, ancestor.ParentId);
+            this._workflowModel.AddLink(currentId, completionId);
+            currentId = completionId;
+        }
+
         // Define a clean-start to ensure "end" is not a source for any edge
-        this.RestartAfter(item.Id.Value, action.ParentId);
+        this.RestartAfter(currentId, action.ParentId);
     }
 
     protected override void Visit(CancelDialog item)
@@ -335,8 +397,27 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         // Represent action with default executor
         DefaultActionExecutor action = new(item, this._workflowState);
         this.ContinueWith(action);
-        // Define a clean-start to ensure "end" is not a source for any edge
-        this.RestartAfter(action.Id, action.ParentId);
+
+        var nonDiscreteAncestors = this._workflowModel
+            .LocateNonDiscreteAncestors<DeclarativeActionExecutor>(action.Id)
+            .ToList();
+
+        string currentId = action.Id;
+        foreach (var ancestor in nonDiscreteAncestors)
+        {
+            string completionId = $"{action.Id}_Complete_{ancestor.Id}";
+            var completionStep = new DelegateActionExecutor(
+                completionId,
+                this._workflowState,
+                async (context, _, ct) => await context.RaiseCompletionEventAsync(ancestor.Model, ct).ConfigureAwait(false),
+                emitResult: false);
+
+            this._workflowModel.AddNode(completionStep, ancestor.ParentId);
+            this._workflowModel.AddLink(currentId, completionId);
+            currentId = completionId;
+        }
+
+        this.RestartAfter(currentId, action.ParentId);
     }
 
     protected override void Visit(CreateConversation item)
@@ -539,6 +620,49 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         }
 
         this.ContinueWith(new HttpRequestExecutor(item, this._workflowOptions.HttpRequestHandler, this._workflowOptions.AgentProvider, this._workflowState));
+    }
+
+    /// <summary>
+    /// Injects completion event steps for all non-discrete parent actions when
+    /// a terminal action (goto, end, break, etc.) bypasses the normal Post step flow.
+    /// This ensures DeclarativeActionCompletedEvent is raised for every action.
+    /// </summary>
+    private void InjectParentCompletionEvents(string terminalActionId, string targetId, string? stopBeforeParentId = null)
+    {
+        var nonDiscreteAncestors = this._workflowModel
+            .LocateNonDiscreteAncestors<DeclarativeActionExecutor>(terminalActionId)
+            .ToList();
+
+        if (nonDiscreteAncestors.Count == 0)
+        {
+            this._workflowModel.AddLink(terminalActionId, targetId);
+            return;
+        }
+
+        string currentId = terminalActionId;
+
+        foreach (var ancestor in nonDiscreteAncestors)
+        {
+            if (stopBeforeParentId is not null &&
+                string.Equals(ancestor.Id, stopBeforeParentId, StringComparison.Ordinal))
+            {
+                break;
+            }
+
+            string completionId = $"{terminalActionId}_Complete_{ancestor.Id}";
+            var completionStep = new DelegateActionExecutor(
+                completionId,
+                this._workflowState,
+                async (context, _, ct) => await context.RaiseCompletionEventAsync(ancestor.Model, ct).ConfigureAwait(false),
+                emitResult: false);
+
+            this._workflowModel.AddNode(completionStep, ancestor.ParentId);
+            this._workflowModel.AddLink(currentId, completionId);
+
+            currentId = completionId;
+        }
+
+        this._workflowModel.AddLink(currentId, targetId);
     }
 
     #region Not supported
