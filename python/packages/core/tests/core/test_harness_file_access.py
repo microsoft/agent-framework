@@ -18,6 +18,7 @@ from agent_framework import (
     FileAccessProvider,
     FileSearchMatch,
     FileSearchResult,
+    FileStoreEntry,
     FileSystemAgentFileStore,
     FunctionTool,
     InMemoryAgentFileStore,
@@ -32,6 +33,16 @@ from agent_framework._harness._file_access import (
     _normalize_relative_path,
     _run_search_with_timeout,
 )
+
+
+async def _list_files(store: AgentFileStore, directory: str = "") -> list[str]:
+    """Return only the file names from a combined ``store.list_children`` call."""
+    return [entry.name for entry in await store.list_children(directory) if entry.type == FileStoreEntry.FILE]
+
+
+async def _list_dirs(store: AgentFileStore, directory: str = "") -> list[str]:
+    """Return only the subdirectory names from a combined ``store.list_children`` call."""
+    return [entry.name for entry in await store.list_children(directory) if entry.type == FileStoreEntry.DIRECTORY]
 
 
 def _tool_by_name(tools: list[object], name: str) -> FunctionTool:
@@ -131,54 +142,54 @@ async def test_in_memory_store_round_trips_files() -> None:
     """The in-memory store should support write/read/exists/delete/list operations."""
     store = InMemoryAgentFileStore()
 
-    await store.write_file("a.txt", "alpha")
-    await store.write_file("sub/b.txt", "beta")
+    await store.write("a.txt", "alpha")
+    await store.write("sub/b.txt", "beta")
 
     assert await store.file_exists("a.txt")
     assert not await store.file_exists("missing.txt")
-    assert await store.read_file("a.txt") == "alpha"
-    assert await store.read_file("missing.txt") is None
+    assert await store.read("a.txt") == "alpha"
+    assert await store.read("missing.txt") is None
 
-    assert sorted(await store.list_files()) == ["a.txt"]  # subdirs are not direct children
-    assert sorted(await store.list_files("sub")) == ["b.txt"]
+    assert sorted(await _list_files(store)) == ["a.txt"]  # subdirs are not direct children
+    assert sorted(await _list_files(store, "sub")) == ["b.txt"]
 
-    assert await store.delete_file("a.txt") is True
-    assert await store.delete_file("a.txt") is False
-    assert sorted(await store.list_files()) == []
+    assert await store.delete("a.txt") is True
+    assert await store.delete("a.txt") is False
+    assert sorted(await _list_files(store)) == []
 
 
 async def test_in_memory_store_search_returns_matches_with_snippets() -> None:
     """The in-memory store should search file content case-insensitively and respect glob filters."""
     store = InMemoryAgentFileStore()
-    await store.write_file("a.md", "line one\nThis line has ERROR inside\nline three\r")
-    await store.write_file("b.md", "no match here")
-    await store.write_file("notes.txt", "ERROR but wrong extension")
+    await store.write("a.md", "line one\nThis line has ERROR inside\nline three\r")
+    await store.write("b.md", "no match here")
+    await store.write("notes.txt", "ERROR but wrong extension")
 
-    results = await store.search_files("", "error", "*.md")
+    results = await store.search("", "error", "*.md")
     assert [result.file_name for result in results] == ["a.md"]
     matching_lines = results[0].matching_lines
     assert matching_lines == [FileSearchMatch(line_number=2, line="This line has ERROR inside")]
     assert "ERROR" in results[0].snippet
 
     # No glob -> searches every file.
-    results_all = await store.search_files("", "error")
+    results_all = await store.search("", "error")
     assert {result.file_name for result in results_all} == {"a.md", "notes.txt"}
 
 
 async def test_in_memory_store_search_is_recursive_with_root_relative_names() -> None:
     """Recursive search should find files at any depth and return root-relative names."""
     store = InMemoryAgentFileStore()
-    await store.write_file("top.md", "ERROR at top")
-    await store.write_file("reports/q1.md", "ERROR in q1")
-    await store.write_file("reports/2024/q2.md", "ERROR in q2")
-    await store.write_file("reports/2024/data.txt", "ERROR wrong extension")
+    await store.write("top.md", "ERROR at top")
+    await store.write("reports/q1.md", "ERROR in q1")
+    await store.write("reports/2024/q2.md", "ERROR in q2")
+    await store.write("reports/2024/data.txt", "ERROR wrong extension")
 
     # Non-recursive (default) only sees the direct child.
-    direct = await store.search_files("", "error")
+    direct = await store.search("", "error")
     assert {result.file_name for result in direct} == {"top.md"}
 
     # Recursive sees every descendant, with store-root-relative file names.
-    recursive = await store.search_files("", "error", recursive=True)
+    recursive = await store.search("", "error", recursive=True)
     assert {result.file_name for result in recursive} == {
         "top.md",
         "reports/q1.md",
@@ -187,7 +198,7 @@ async def test_in_memory_store_search_is_recursive_with_root_relative_names() ->
     }
 
     # Subtree scoping via the glob (``*`` crosses ``/`` with fnmatch).
-    scoped = await store.search_files("", "error", "reports/*", recursive=True)
+    scoped = await store.search("", "error", "reports/*", recursive=True)
     assert {result.file_name for result in scoped} == {
         "reports/q1.md",
         "reports/2024/q2.md",
@@ -195,7 +206,7 @@ async def test_in_memory_store_search_is_recursive_with_root_relative_names() ->
     }
 
     # Extension glob matches markdown at any depth but not other extensions.
-    markdown = await store.search_files("", "error", "*.md", recursive=True)
+    markdown = await store.search("", "error", "*.md", recursive=True)
     assert {result.file_name for result in markdown} == {
         "top.md",
         "reports/q1.md",
@@ -206,38 +217,38 @@ async def test_in_memory_store_search_is_recursive_with_root_relative_names() ->
 async def test_in_memory_store_list_directories() -> None:
     """``list_directories`` should return direct child subdirectories only, preserving casing."""
     store = InMemoryAgentFileStore()
-    await store.write_file("top.md", "x")
-    await store.write_file("Reports/q1.md", "x")
-    await store.write_file("Reports/2024/q2.md", "x")
-    await store.write_file("data/raw.csv", "x")
+    await store.write("top.md", "x")
+    await store.write("Reports/q1.md", "x")
+    await store.write("Reports/2024/q2.md", "x")
+    await store.write("data/raw.csv", "x")
 
-    assert sorted(await store.list_directories()) == ["Reports", "data"]
-    assert sorted(await store.list_directories("Reports")) == ["2024"]
+    assert sorted(await _list_dirs(store)) == ["Reports", "data"]
+    assert sorted(await _list_dirs(store, "Reports")) == ["2024"]
     # A directory with no subdirectories returns an empty list.
-    assert await store.list_directories("data") == []
+    assert await _list_dirs(store, "data") == []
     # A missing directory returns an empty list.
-    assert await store.list_directories("missing") == []
+    assert await _list_dirs(store, "missing") == []
 
 
 async def test_in_memory_store_list_directories_rejects_traversal() -> None:
     """``list_directories`` must reject traversal inputs the way ``list_files`` does."""
     store = InMemoryAgentFileStore()
-    await store.write_file("reports/q1.md", "x")
+    await store.write("reports/q1.md", "x")
     for bad in ("../escape", "/abs/path", ".."):
         with pytest.raises(ValueError):
-            await store.list_directories(bad)
+            await _list_dirs(store, bad)
 
 
 async def test_in_memory_store_search_rejects_invalid_and_oversize_regex() -> None:
-    """``search_files`` should surface clean errors for bad regex input."""
+    """``search`` should surface clean errors for bad regex input."""
     store = InMemoryAgentFileStore()
-    await store.write_file("a.md", "hello")
+    await store.write("a.md", "hello")
 
     with pytest.raises(re.error):
-        await store.search_files("", "[unclosed")
+        await store.search("", "[unclosed")
 
     with pytest.raises(ValueError, match="too long"):
-        await store.search_files("", "a" * 257)
+        await store.search("", "a" * 257)
 
 
 async def test_in_memory_store_normalizes_paths() -> None:
@@ -245,25 +256,25 @@ async def test_in_memory_store_normalizes_paths() -> None:
     store = InMemoryAgentFileStore()
     for bad in ("../escape.txt", "/abs/path.txt", "."):
         with pytest.raises(ValueError):
-            await store.write_file(bad, "boom")
+            await store.write(bad, "boom")
 
 
 async def test_filesystem_store_round_trips_files(tmp_path: Path) -> None:
     """The filesystem store should round-trip files on disk and create parents on write."""
     store = FileSystemAgentFileStore(tmp_path)
 
-    await store.write_file("nested/a.txt", "alpha")
+    await store.write("nested/a.txt", "alpha")
     assert (tmp_path / "nested" / "a.txt").read_text(encoding="utf-8") == "alpha"
 
-    assert await store.read_file("nested/a.txt") == "alpha"
-    assert await store.read_file("missing.txt") is None
+    assert await store.read("nested/a.txt") == "alpha"
+    assert await store.read("missing.txt") is None
     assert await store.file_exists("nested/a.txt")
     assert not await store.file_exists("missing.txt")
-    assert sorted(await store.list_files("nested")) == ["a.txt"]
-    assert sorted(await store.list_files()) == []  # root only contains the directory
+    assert sorted(await _list_files(store, "nested")) == ["a.txt"]
+    assert sorted(await _list_files(store)) == []  # root only contains the directory
 
-    assert await store.delete_file("nested/a.txt") is True
-    assert await store.delete_file("nested/a.txt") is False
+    assert await store.delete("nested/a.txt") is True
+    assert await store.delete("nested/a.txt") is False
 
 
 async def test_filesystem_store_rejects_traversal_and_rooted_paths(tmp_path: Path) -> None:
@@ -272,7 +283,7 @@ async def test_filesystem_store_rejects_traversal_and_rooted_paths(tmp_path: Pat
 
     for bad in ("../escape.txt", "/etc/passwd", "C:/Windows/System32/notepad.exe", ".", ".."):
         with pytest.raises(ValueError):
-            await store.write_file(bad, "boom")
+            await store.write(bad, "boom")
 
 
 async def test_filesystem_store_rejects_symlinks_into_root(tmp_path: Path) -> None:
@@ -289,12 +300,12 @@ async def test_filesystem_store_rejects_symlinks_into_root(tmp_path: Path) -> No
 
     store = FileSystemAgentFileStore(root)
     with pytest.raises(ValueError, match="symbolic link"):
-        await store.read_file("link.txt")
+        await store.read("link.txt")
     with pytest.raises(ValueError, match="symbolic link"):
-        await store.write_file("link.txt", "stomp")
+        await store.write("link.txt", "stomp")
 
     # List operations should silently skip the symlink entry rather than raise.
-    assert await store.list_files() == []
+    assert await _list_files(store) == []
 
 
 async def test_filesystem_store_rejects_in_root_symlinks(tmp_path: Path) -> None:
@@ -316,45 +327,45 @@ async def test_filesystem_store_rejects_in_root_symlinks(tmp_path: Path) -> None
 
     store = FileSystemAgentFileStore(root)
     with pytest.raises(ValueError, match="symbolic link"):
-        await store.read_file("alias.txt")
+        await store.read("alias.txt")
     # The non-symlinked sibling must still be readable.
-    assert await store.read_file("real.txt") == "payload"
+    assert await store.read("real.txt") == "payload"
 
 
 async def test_filesystem_store_search_matches_lines_and_filters_globs(tmp_path: Path) -> None:
     """The filesystem store should search files on disk and apply glob filters by file name."""
     store = FileSystemAgentFileStore(tmp_path)
-    await store.write_file("a.md", "hello\nERROR happens\nbye\r")
-    await store.write_file("b.txt", "ERROR happens too")
-    await store.write_file("c.md", "nothing here")
+    await store.write("a.md", "hello\nERROR happens\nbye\r")
+    await store.write("b.txt", "ERROR happens too")
+    await store.write("c.md", "nothing here")
 
-    results = await store.search_files("", "error", "*.md")
+    results = await store.search("", "error", "*.md")
     assert [result.file_name for result in results] == ["a.md"]
     assert results[0].matching_lines == [FileSearchMatch(line_number=2, line="ERROR happens")]
     assert "ERROR" in results[0].snippet
 
-    results_all = await store.search_files("", "error")
+    results_all = await store.search("", "error")
     assert {result.file_name for result in results_all} == {"a.md", "b.txt"}
 
 
 async def test_filesystem_store_search_is_recursive_with_root_relative_names(tmp_path: Path) -> None:
     """Recursive filesystem search should walk the subtree and return root-relative names."""
     store = FileSystemAgentFileStore(tmp_path)
-    await store.write_file("top.md", "ERROR at top")
-    await store.write_file("reports/q1.md", "ERROR in q1")
-    await store.write_file("reports/2024/q2.md", "ERROR in q2")
+    await store.write("top.md", "ERROR at top")
+    await store.write("reports/q1.md", "ERROR in q1")
+    await store.write("reports/2024/q2.md", "ERROR in q2")
 
-    direct = await store.search_files("", "error")
+    direct = await store.search("", "error")
     assert {result.file_name for result in direct} == {"top.md"}
 
-    recursive = await store.search_files("", "error", recursive=True)
+    recursive = await store.search("", "error", recursive=True)
     assert {result.file_name for result in recursive} == {
         "top.md",
         "reports/q1.md",
         "reports/2024/q2.md",
     }
 
-    scoped = await store.search_files("", "error", "reports/*", recursive=True)
+    scoped = await store.search("", "error", "reports/*", recursive=True)
     assert {result.file_name for result in scoped} == {
         "reports/q1.md",
         "reports/2024/q2.md",
@@ -364,24 +375,24 @@ async def test_filesystem_store_search_is_recursive_with_root_relative_names(tmp
 async def test_filesystem_store_list_directories(tmp_path: Path) -> None:
     """``list_directories`` should list direct child subdirectories only."""
     store = FileSystemAgentFileStore(tmp_path)
-    await store.write_file("top.md", "x")
-    await store.write_file("reports/q1.md", "x")
-    await store.write_file("reports/2024/q2.md", "x")
-    await store.write_file("data/raw.csv", "x")
+    await store.write("top.md", "x")
+    await store.write("reports/q1.md", "x")
+    await store.write("reports/2024/q2.md", "x")
+    await store.write("data/raw.csv", "x")
 
-    assert sorted(await store.list_directories()) == ["data", "reports"]
-    assert sorted(await store.list_directories("reports")) == ["2024"]
-    assert await store.list_directories("data") == []
-    assert await store.list_directories("missing") == []
+    assert sorted(await _list_dirs(store)) == ["data", "reports"]
+    assert sorted(await _list_dirs(store, "reports")) == ["2024"]
+    assert await _list_dirs(store, "data") == []
+    assert await _list_dirs(store, "missing") == []
 
 
 async def test_filesystem_store_list_directories_rejects_traversal(tmp_path: Path) -> None:
     """``list_directories`` is security-critical and must reject paths that escape the root."""
     store = FileSystemAgentFileStore(tmp_path)
-    await store.write_file("reports/q1.md", "x")
+    await store.write("reports/q1.md", "x")
     for bad in ("../escape", "/etc", "C:/Windows", ".."):
         with pytest.raises(ValueError):
-            await store.list_directories(bad)
+            await _list_dirs(store, bad)
 
 
 async def test_filesystem_store_search_and_list_skip_symlinked_directories(tmp_path: Path) -> None:
@@ -402,20 +413,20 @@ async def test_filesystem_store_search_and_list_skip_symlinked_directories(tmp_p
     store = FileSystemAgentFileStore(root)
 
     # ``list_directories`` excludes the symlinked directory.
-    assert await store.list_directories() == []
+    assert await _list_dirs(store) == []
 
     # Recursive search does not follow the symlink out of the root.
-    results = await store.search_files("", "error", recursive=True)
+    results = await store.search("", "error", recursive=True)
     assert {result.file_name for result in results} == {"inside.md"}
 
 
 async def test_filesystem_store_search_skips_non_utf8_files(tmp_path: Path) -> None:
     """The filesystem store should silently skip non-UTF-8 files instead of aborting the search."""
     store = FileSystemAgentFileStore(tmp_path)
-    await store.write_file("notes.md", "ERROR happens here")
+    await store.write("notes.md", "ERROR happens here")
     (tmp_path / "blob.bin").write_bytes(b"\x80\x81\x82\x83")
 
-    results = await store.search_files("", "error")
+    results = await store.search("", "error")
     assert [result.file_name for result in results] == ["notes.md"]
 
 
@@ -429,9 +440,9 @@ async def test_filesystem_store_create_directory(tmp_path: Path) -> None:
 async def test_filesystem_store_list_files_accepts_blank_directory(tmp_path: Path) -> None:
     """Whitespace-only directory inputs should resolve to the root, matching the in-memory store."""
     store = FileSystemAgentFileStore(tmp_path)
-    await store.write_file("a.txt", "alpha")
-    assert sorted(await store.list_files("")) == ["a.txt"]
-    assert sorted(await store.list_files("   ")) == ["a.txt"]
+    await store.write("a.txt", "alpha")
+    assert sorted(await _list_files(store, "")) == ["a.txt"]
+    assert sorted(await _list_files(store, "   ")) == ["a.txt"]
 
 
 def test_filesystem_store_requires_non_empty_root() -> None:
@@ -451,23 +462,23 @@ async def test_filesystem_store_does_not_create_root_until_write(tmp_path: Path)
     assert not root.exists()
 
     # Read-only operations tolerate the missing root without creating it.
-    assert await store.read_file("a.txt") is None
+    assert await store.read("a.txt") is None
     assert await store.file_exists("a.txt") is False
-    assert await store.list_files() == []
-    assert await store.list_directories() == []
-    assert await store.search_files("", ".") == []
+    assert await _list_files(store) == []
+    assert await _list_dirs(store) == []
+    assert await store.search("", ".") == []
     assert not root.exists()
 
     # The first write creates the root directory lazily.
-    await store.write_file("a.txt", "alpha")
+    await store.write("a.txt", "alpha")
     assert root.is_dir()
-    assert await store.read_file("a.txt") == "alpha"
+    assert await store.read("a.txt") == "alpha"
 
 
 async def test_file_access_provider_registers_tools_and_instructions(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    """``FileAccessProvider.before_run`` should add the canonical instructions and six tools."""
+    """``FileAccessProvider.before_run`` should add the canonical instructions and all tools."""
     session = AgentSession(session_id="session-1")
     store = InMemoryAgentFileStore()
     provider = FileAccessProvider(store=store)
@@ -481,12 +492,13 @@ async def test_file_access_provider_registers_tools_and_instructions(
     tools = options["tools"]
     assert isinstance(tools, list)
     expected_names = {
-        "file_access_save_file",
-        "file_access_read_file",
-        "file_access_delete_file",
-        "file_access_list_files",
-        "file_access_list_subdirectories",
-        "file_access_search_files",
+        "file_access_write",
+        "file_access_read",
+        "file_access_delete",
+        "file_access_ls",
+        "file_access_grep",
+        "file_access_replace",
+        "file_access_replace_lines",
     }
     assert {getattr(tool, "name", None) for tool in tools} >= expected_names
 
@@ -513,12 +525,13 @@ async def test_file_access_provider_all_tools_require_approval(
     tools = options["tools"]
     assert isinstance(tools, list)
     for name in (
-        FileAccessProvider.SAVE_FILE_TOOL_NAME,
-        FileAccessProvider.READ_FILE_TOOL_NAME,
-        FileAccessProvider.DELETE_FILE_TOOL_NAME,
-        FileAccessProvider.LIST_FILES_TOOL_NAME,
-        FileAccessProvider.LIST_SUBDIRECTORIES_TOOL_NAME,
-        FileAccessProvider.SEARCH_FILES_TOOL_NAME,
+        FileAccessProvider.WRITE_TOOL_NAME,
+        FileAccessProvider.READ_TOOL_NAME,
+        FileAccessProvider.DELETE_TOOL_NAME,
+        FileAccessProvider.LS_TOOL_NAME,
+        FileAccessProvider.GREP_TOOL_NAME,
+        FileAccessProvider.REPLACE_TOOL_NAME,
+        FileAccessProvider.REPLACE_LINES_TOOL_NAME,
     ):
         assert _tool_by_name(tools, name).approval_mode == "always_require"
 
@@ -526,14 +539,15 @@ async def test_file_access_provider_all_tools_require_approval(
 def test_read_only_tools_auto_approval_rule() -> None:
     """The read-only rule approves only the non-mutating tools."""
     approved = {
-        FileAccessProvider.READ_FILE_TOOL_NAME,
-        FileAccessProvider.LIST_FILES_TOOL_NAME,
-        FileAccessProvider.LIST_SUBDIRECTORIES_TOOL_NAME,
-        FileAccessProvider.SEARCH_FILES_TOOL_NAME,
+        FileAccessProvider.READ_TOOL_NAME,
+        FileAccessProvider.LS_TOOL_NAME,
+        FileAccessProvider.GREP_TOOL_NAME,
     }
     rejected = {
-        FileAccessProvider.SAVE_FILE_TOOL_NAME,
-        FileAccessProvider.DELETE_FILE_TOOL_NAME,
+        FileAccessProvider.WRITE_TOOL_NAME,
+        FileAccessProvider.DELETE_TOOL_NAME,
+        FileAccessProvider.REPLACE_TOOL_NAME,
+        FileAccessProvider.REPLACE_LINES_TOOL_NAME,
         "some_other_tool",
     }
     for name in approved:
@@ -557,12 +571,13 @@ def test_read_only_tools_auto_approval_rule() -> None:
 def test_all_tools_auto_approval_rule() -> None:
     """The all-tools rule approves every file-access tool but nothing else."""
     for name in (
-        FileAccessProvider.SAVE_FILE_TOOL_NAME,
-        FileAccessProvider.READ_FILE_TOOL_NAME,
-        FileAccessProvider.DELETE_FILE_TOOL_NAME,
-        FileAccessProvider.LIST_FILES_TOOL_NAME,
-        FileAccessProvider.LIST_SUBDIRECTORIES_TOOL_NAME,
-        FileAccessProvider.SEARCH_FILES_TOOL_NAME,
+        FileAccessProvider.WRITE_TOOL_NAME,
+        FileAccessProvider.READ_TOOL_NAME,
+        FileAccessProvider.DELETE_TOOL_NAME,
+        FileAccessProvider.LS_TOOL_NAME,
+        FileAccessProvider.GREP_TOOL_NAME,
+        FileAccessProvider.REPLACE_TOOL_NAME,
+        FileAccessProvider.REPLACE_LINES_TOOL_NAME,
     ):
         call = Content("function_call", call_id="c1", name=name, arguments="{}")
         assert FileAccessProvider.all_tools_auto_approval_rule(call) is True
@@ -596,15 +611,14 @@ async def test_file_access_provider_tools_round_trip_files(
     tools = options["tools"]
     assert isinstance(tools, list)
 
-    save_file = _tool_by_name(tools, "file_access_save_file")
-    read_file = _tool_by_name(tools, "file_access_read_file")
-    delete_file = _tool_by_name(tools, "file_access_delete_file")
-    list_files = _tool_by_name(tools, "file_access_list_files")
-    list_subdirectories = _tool_by_name(tools, "file_access_list_subdirectories")
-    search_files = _tool_by_name(tools, "file_access_search_files")
+    save_file = _tool_by_name(tools, "file_access_write")
+    read = _tool_by_name(tools, "file_access_read")
+    delete = _tool_by_name(tools, "file_access_delete")
+    ls = _tool_by_name(tools, "file_access_ls")
+    search = _tool_by_name(tools, "file_access_grep")
 
     saved = await save_file.invoke(arguments={"file_name": "plan.md", "content": "step 1\nERROR step 2"})
-    assert "plan.md" in _text(saved[0]) and "saved" in _text(saved[0])
+    assert "plan.md" in _text(saved[0]) and "written" in _text(saved[0])
 
     # Default overwrite=False should refuse the second save.
     refused = await save_file.invoke(arguments={"file_name": "plan.md", "content": "stomp"})
@@ -614,36 +628,34 @@ async def test_file_access_provider_tools_round_trip_files(
     overwritten = await save_file.invoke(
         arguments={"file_name": "plan.md", "content": "stomp\nERROR replaced", "overwrite": True}
     )
-    assert "saved" in _text(overwritten[0])
+    assert "written" in _text(overwritten[0])
 
-    read_back = await read_file.invoke(arguments={"file_name": "plan.md"})
+    read_back = await read.invoke(arguments={"file_name": "plan.md"})
     assert _text(read_back[0]) == "stomp\nERROR replaced"
 
-    listed = await list_files.invoke()
-    assert json.loads(_text(listed[0])) == ["plan.md"]
+    listed = await ls.invoke()
+    assert json.loads(_text(listed[0])) == [{"name": "plan.md", "type": "file"}]
 
-    # The list tool should accept an optional directory argument so agents can
+    # The ls tool should accept an optional directory argument so agents can
     # enumerate nested folders (not only the root).
     await save_file.invoke(arguments={"file_name": "reports/2024.md", "content": "annual"})
-    listed_nested = await list_files.invoke(arguments={"directory": "reports"})
-    assert json.loads(_text(listed_nested[0])) == ["2024.md"]
-    # Blank / whitespace directory should fall back to the root listing.
-    listed_blank = await list_files.invoke(arguments={"directory": "   "})
-    assert sorted(json.loads(_text(listed_blank[0]))) == ["plan.md"]
+    listed_nested = await ls.invoke(arguments={"directory": "reports"})
+    assert json.loads(_text(listed_nested[0])) == [{"name": "2024.md", "type": "file"}]
+    # Blank / whitespace directory should fall back to the root listing, showing the
+    # "reports" directory and the "plan.md" file (directories listed first).
+    listed_blank = await ls.invoke(arguments={"directory": "   "})
+    assert json.loads(_text(listed_blank[0])) == [
+        {"name": "reports", "type": "directory"},
+        {"name": "plan.md", "type": "file"},
+    ]
+    # A glob pattern filters the listing to files only.
+    listed_pattern = await ls.invoke(arguments={"glob_pattern": "*.md"})
+    assert json.loads(_text(listed_pattern[0])) == [{"name": "plan.md", "type": "file"}]
 
-    # The subdirectory-discovery tool surfaces child directories (not files).
-    listed_dirs = await list_subdirectories.invoke()
-    assert json.loads(_text(listed_dirs[0])) == ["reports"]
-    listed_dirs_blank = await list_subdirectories.invoke(arguments={"directory": "   "})
-    assert json.loads(_text(listed_dirs_blank[0])) == ["reports"]
-    # A leaf directory with no child directories returns an empty list.
-    listed_dirs_nested = await list_subdirectories.invoke(arguments={"directory": "reports"})
-    assert json.loads(_text(listed_dirs_nested[0])) == []
-
-    missing = await read_file.invoke(arguments={"file_name": "missing.md"})
+    missing = await read.invoke(arguments={"file_name": "missing.md"})
     assert "not found" in _text(missing[0])
 
-    search_payload = await search_files.invoke(arguments={"regex_pattern": "error", "file_pattern": "*.md"})
+    search_payload = await search.invoke(arguments={"regex_pattern": "error", "glob_pattern": "*.md"})
     parsed = json.loads(_text(search_payload[0]))
     assert parsed[0]["file_name"] == "plan.md"
     assert parsed[0]["matching_lines"][0]["line"] == "ERROR replaced"
@@ -651,14 +663,22 @@ async def test_file_access_provider_tools_round_trip_files(
     # The search tool is recursive from the store root; scope to a subtree using
     # the glob (``*`` crosses ``/`` with fnmatch). Results use root-relative names.
     await save_file.invoke(arguments={"file_name": "reports/issues.md", "content": "ERROR nested"})
-    scoped = await search_files.invoke(arguments={"regex_pattern": "error", "file_pattern": "reports/*"})
+    scoped = await search.invoke(arguments={"regex_pattern": "error", "glob_pattern": "reports/*"})
     scoped_parsed = json.loads(_text(scoped[0]))
     assert [entry["file_name"] for entry in scoped_parsed] == ["reports/issues.md"]
+    # The directory param restricts the search base, but returned names stay relative to the
+    # store root so they compose directly with file_access_read/replace/delete.
+    scoped_dir = await search.invoke(arguments={"regex_pattern": "error", "directory": "reports"})
+    scoped_dir_parsed = json.loads(_text(scoped_dir[0]))
+    assert [entry["file_name"] for entry in scoped_dir_parsed] == ["reports/issues.md"]
+    # The grep result name is usable directly with file_access_read.
+    reread = await read.invoke(arguments={"file_name": scoped_dir_parsed[0]["file_name"]})
+    assert "ERROR nested" in _text(reread[0])
 
-    deleted = await delete_file.invoke(arguments={"file_name": "plan.md"})
+    deleted = await delete.invoke(arguments={"file_name": "plan.md"})
     assert "deleted" in _text(deleted[0])
 
-    missing_delete = await delete_file.invoke(arguments={"file_name": "plan.md"})
+    missing_delete = await delete.invoke(arguments={"file_name": "plan.md"})
     assert "not found" in _text(missing_delete[0])
 
 
@@ -673,30 +693,30 @@ async def test_file_access_provider_accepts_custom_instructions() -> None:
 async def test_in_memory_store_write_file_raises_when_exists_and_no_overwrite() -> None:
     """The atomic exclusive-create path should raise ``FileExistsError`` under the lock."""
     store = InMemoryAgentFileStore()
-    await store.write_file("plan.md", "v1")
+    await store.write("plan.md", "v1")
 
     with pytest.raises(FileExistsError):
-        await store.write_file("plan.md", "v2", overwrite=False)
+        await store.write("plan.md", "v2", overwrite=False)
 
     # The original content is preserved.
-    assert await store.read_file("plan.md") == "v1"
+    assert await store.read("plan.md") == "v1"
 
     # Default ``overwrite=True`` still replaces.
-    await store.write_file("plan.md", "v3")
-    assert await store.read_file("plan.md") == "v3"
+    await store.write("plan.md", "v3")
+    assert await store.read("plan.md") == "v3"
 
 
 async def test_filesystem_store_write_file_raises_when_exists_and_no_overwrite(tmp_path: Path) -> None:
     """The filesystem store should use exclusive-create semantics when ``overwrite=False``."""
     store = FileSystemAgentFileStore(tmp_path)
-    await store.write_file("plan.md", "v1")
+    await store.write("plan.md", "v1")
 
     with pytest.raises(FileExistsError):
-        await store.write_file("plan.md", "v2", overwrite=False)
+        await store.write("plan.md", "v2", overwrite=False)
 
     assert (tmp_path / "plan.md").read_text(encoding="utf-8") == "v1"
 
-    await store.write_file("plan.md", "v3", overwrite=True)
+    await store.write("plan.md", "v3", overwrite=True)
     assert (tmp_path / "plan.md").read_text(encoding="utf-8") == "v3"
 
 
@@ -717,7 +737,7 @@ async def test_filesystem_store_symlink_probe_fails_closed_on_oserror(
 ) -> None:
     """If ``Path.is_symlink`` raises during the probe, the operation must be refused."""
     store = FileSystemAgentFileStore(tmp_path)
-    await store.write_file("ok.txt", "content")
+    await store.write("ok.txt", "content")
 
     def boom(self: Path) -> bool:
         raise PermissionError("access denied")
@@ -725,7 +745,7 @@ async def test_filesystem_store_symlink_probe_fails_closed_on_oserror(
     monkeypatch.setattr(Path, "is_symlink", boom)
 
     with pytest.raises(ValueError, match="symbolic link or reparse point"):
-        await store.read_file("ok.txt")
+        await store.read("ok.txt")
 
 
 def test_file_access_harness_classes_are_marked_experimental() -> None:
@@ -740,29 +760,29 @@ def test_file_access_harness_classes_are_marked_experimental() -> None:
 
 
 async def test_in_memory_store_preserves_original_case_on_list_and_search() -> None:
-    """``list_files`` / ``search_files`` should return original-case names, not lowercased keys.
+    """``list_files`` / ``search`` should return original-case names, not lowercased keys.
 
     Matches :class:`FileSystemAgentFileStore` on case-preserving filesystems so
     tests written against the in-memory backend cannot encode a contract that
     will diverge in production.
     """
     store = InMemoryAgentFileStore()
-    await store.write_file("Plan.MD", "ERROR happens here\n")
-    await store.write_file("Reports/Q1.MD", "alpha")
+    await store.write("Plan.MD", "ERROR happens here\n")
+    await store.write("Reports/Q1.MD", "alpha")
 
     # list_files keeps the original case
-    assert sorted(await store.list_files()) == ["Plan.MD"]
-    assert sorted(await store.list_files("Reports")) == ["Q1.MD"]
+    assert sorted(await _list_files(store)) == ["Plan.MD"]
+    assert sorted(await _list_files(store, "Reports")) == ["Q1.MD"]
 
     # case-insensitive directory lookup still works
-    assert sorted(await store.list_files("reports")) == ["Q1.MD"]
+    assert sorted(await _list_files(store, "reports")) == ["Q1.MD"]
 
-    # search_files emits the original-case file name in FileSearchResult
-    results = await store.search_files("", "error", "*.MD")
+    # search emits the original-case file name in FileSearchResult
+    results = await store.search("", "error", "*.MD")
     assert [r.file_name for r in results] == ["Plan.MD"]
 
-    # read_file remains case-insensitive
-    assert await store.read_file("plan.md") == "ERROR happens here\n"
+    # read remains case-insensitive
+    assert await store.read("plan.md") == "ERROR happens here\n"
 
 
 async def test_filesystem_store_read_file_raises_value_error_on_non_utf8(tmp_path: Path) -> None:
@@ -775,19 +795,19 @@ async def test_filesystem_store_read_file_raises_value_error_on_non_utf8(tmp_pat
     (tmp_path / "blob.bin").write_bytes(b"\x80\x81\x82\x83")
 
     with pytest.raises(ValueError, match="not UTF-8 text"):
-        await store.read_file("blob.bin")
+        await store.read("blob.bin")
 
 
 async def test_filesystem_store_search_logs_skipped_non_utf8_files(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """``search_files`` skips non-UTF-8 files but logs per-file and a summary so operators have signal."""
+    """``search`` skips non-UTF-8 files but logs per-file and a summary so operators have signal."""
     store = FileSystemAgentFileStore(tmp_path)
-    await store.write_file("notes.md", "ERROR happens here")
+    await store.write("notes.md", "ERROR happens here")
     (tmp_path / "blob.bin").write_bytes(b"\x80\x81\x82\x83")
 
     with caplog.at_level("INFO", logger="agent_framework._harness._file_access"):
-        results = await store.search_files("", "error")
+        results = await store.search("", "error")
 
     assert [r.file_name for r in results] == ["notes.md"]
     assert any("Skipping non-UTF-8 file during search" in rec.message for rec in caplog.records)
@@ -815,31 +835,31 @@ async def test_file_access_tool_wrappers_surface_value_error_as_message(
     tools = options["tools"]
     assert isinstance(tools, list)
 
-    save_file = _tool_by_name(tools, "file_access_save_file")
-    read_file = _tool_by_name(tools, "file_access_read_file")
-    delete_file = _tool_by_name(tools, "file_access_delete_file")
-    list_files = _tool_by_name(tools, "file_access_list_files")
-    search_files = _tool_by_name(tools, "file_access_search_files")
+    save_file = _tool_by_name(tools, "file_access_write")
+    read = _tool_by_name(tools, "file_access_read")
+    delete = _tool_by_name(tools, "file_access_delete")
+    list_files = _tool_by_name(tools, "file_access_ls")
+    search = _tool_by_name(tools, "file_access_grep")
 
     # Path-traversal attempts on each tool should return a clean string, not raise.
     saved = await save_file.invoke(arguments={"file_name": "../escape.txt", "content": "x"})
-    assert "Could not save" in _text(saved[0]) and "escape" in _text(saved[0]).lower()
-    read = await read_file.invoke(arguments={"file_name": "../escape.txt"})
-    assert "Could not read" in _text(read[0])
-    deleted = await delete_file.invoke(arguments={"file_name": "../escape.txt"})
+    assert "Could not write" in _text(saved[0]) and "escape" in _text(saved[0]).lower()
+    read_result = await read.invoke(arguments={"file_name": "../escape.txt"})
+    assert "Could not read" in _text(read_result[0])
+    deleted = await delete.invoke(arguments={"file_name": "../escape.txt"})
     assert "Could not delete" in _text(deleted[0])
     listed = await list_files.invoke(arguments={"directory": "../escape"})
     assert "Could not list" in _text(listed[0])
 
     # Regex length cap should also be returned to the model as text.
     too_long = "a" * 1024
-    searched = await search_files.invoke(arguments={"regex_pattern": too_long})
+    searched = await search.invoke(arguments={"regex_pattern": too_long})
     assert "Could not search files" in _text(searched[0])
 
     # An invalid regex is surfaced to the caller (the model) as a raised error
     # so it can correct the pattern and retry.
     with pytest.raises(re.error):
-        await search_files.invoke(arguments={"regex_pattern": "[unclosed"})
+        await search.invoke(arguments={"regex_pattern": "[unclosed"})
 
 
 async def test_file_access_tool_read_file_wrapper_surfaces_non_utf8(
@@ -859,8 +879,8 @@ async def test_file_access_tool_read_file_wrapper_surfaces_non_utf8(
     )
     tools = options["tools"]
     assert isinstance(tools, list)
-    read_file = _tool_by_name(tools, "file_access_read_file")
-    response = await read_file.invoke(arguments={"file_name": "blob.bin"})
+    read = _tool_by_name(tools, "file_access_read")
+    response = await read.invoke(arguments={"file_name": "blob.bin"})
     assert "Could not read" in _text(response[0]) and "UTF-8" in _text(response[0])
 
 
@@ -882,10 +902,10 @@ async def test_filesystem_store_rejects_symlink_on_delete_search_and_list(tmp_pa
     store = FileSystemAgentFileStore(root)
 
     with pytest.raises(ValueError, match="symbolic link"):
-        await store.delete_file("link.txt")
+        await store.delete("link.txt")
 
-    # search_files of the root never touches the symlink leaf directly, but
-    # search_files of a symlinked *directory* path must be rejected by the
+    # search of the root never touches the symlink leaf directly, but
+    # search of a symlinked *directory* path must be rejected by the
     # safe-directory resolver.
     dir_link = root / "alias_dir"
     other_dir = tmp_path / "outside_dir"
@@ -896,9 +916,9 @@ async def test_filesystem_store_rejects_symlink_on_delete_search_and_list(tmp_pa
         pytest.skip(f"{_NEEDS_SYMLINK}: {exc!r}")
 
     with pytest.raises(ValueError, match="symbolic link"):
-        await store.search_files("alias_dir", "anything")
+        await store.search("alias_dir", "anything")
     with pytest.raises(ValueError, match="symbolic link"):
-        await store.list_files("alias_dir")
+        await _list_files(store, "alias_dir")
 
 
 async def test_filesystem_store_rejects_symlinked_intermediate_directory(tmp_path: Path) -> None:
@@ -925,8 +945,103 @@ async def test_filesystem_store_rejects_symlinked_intermediate_directory(tmp_pat
     for op in ("read", "write", "delete"):
         with pytest.raises(ValueError, match="symbolic link"):
             if op == "read":
-                await store.read_file("aliased_dir/secret.txt")
+                await store.read("aliased_dir/secret.txt")
             elif op == "write":
-                await store.write_file("aliased_dir/secret.txt", "stomp")
+                await store.write("aliased_dir/secret.txt", "stomp")
             else:
-                await store.delete_file("aliased_dir/secret.txt")
+                await store.delete("aliased_dir/secret.txt")
+
+
+async def _prepare_access_tools(
+    chat_client_base: SupportsChatGetResponse, *, disable_write_tools: bool = False
+) -> list[object]:
+    """Prepare a FileAccessProvider and return its registered tools."""
+    session = AgentSession(session_id="session-1")
+    provider = FileAccessProvider(store=InMemoryAgentFileStore(), disable_write_tools=disable_write_tools)
+    agent = Agent(client=chat_client_base, context_providers=[provider])
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["work with files"])],
+    )
+    tools = options["tools"]
+    assert isinstance(tools, list)
+    return tools
+
+
+async def test_file_access_replace(chat_client_base: SupportsChatGetResponse) -> None:
+    """``file_access_replace`` should substitute text and enforce match-count rules."""
+    tools = await _prepare_access_tools(chat_client_base)
+    save = _tool_by_name(tools, "file_access_write")
+    read = _tool_by_name(tools, "file_access_read")
+    replace = _tool_by_name(tools, "file_access_replace")
+
+    await save.invoke(arguments={"file_name": "a.txt", "content": "foo bar foo"})
+
+    # Not found -> failure.
+    missing = await replace.invoke(arguments={"file_name": "a.txt", "old_string": "zzz", "new_string": "q"})
+    assert "not found" in _text(missing[0]).lower()
+
+    # Multiple occurrences without replace_all -> failure.
+    multi = await replace.invoke(arguments={"file_name": "a.txt", "old_string": "foo", "new_string": "baz"})
+    assert "2 times" in _text(multi[0])
+
+    # replace_all replaces every occurrence and reports the count.
+    done = await replace.invoke(
+        arguments={"file_name": "a.txt", "old_string": "foo", "new_string": "baz", "replace_all": True}
+    )
+    assert "2 occurrence" in _text(done[0])
+    assert _text((await read.invoke(arguments={"file_name": "a.txt"}))[0]) == "baz bar baz"
+
+    # Unique single occurrence with the default replace_all=False -> replaces exactly one.
+    await save.invoke(arguments={"file_name": "u.txt", "content": "alpha beta gamma", "overwrite": True})
+    single = await replace.invoke(arguments={"file_name": "u.txt", "old_string": "beta", "new_string": "BETA"})
+    assert "1 occurrence" in _text(single[0])
+    assert _text((await read.invoke(arguments={"file_name": "u.txt"}))[0]) == "alpha BETA gamma"
+
+    # Missing file -> not found.
+    none = await replace.invoke(arguments={"file_name": "none.txt", "old_string": "x", "new_string": "y"})
+    assert "not found" in _text(none[0])
+
+
+async def test_file_access_replace_lines(chat_client_base: SupportsChatGetResponse) -> None:
+    """``file_access_replace_lines`` should replace whole 1-based lines and reject bad input."""
+    tools = await _prepare_access_tools(chat_client_base)
+    save = _tool_by_name(tools, "file_access_write")
+    read = _tool_by_name(tools, "file_access_read")
+    replace_lines = _tool_by_name(tools, "file_access_replace_lines")
+
+    await save.invoke(arguments={"file_name": "a.txt", "content": "one\ntwo\nthree"})
+
+    done = await replace_lines.invoke(
+        arguments={"file_name": "a.txt", "edits": [{"line_number": 2, "new_line": "TWO"}]}
+    )
+    assert "1 line" in _text(done[0])
+    assert _text((await read.invoke(arguments={"file_name": "a.txt"}))[0]) == "one\nTWO\nthree"
+
+    # Out-of-range line -> failure.
+    oor = await replace_lines.invoke(arguments={"file_name": "a.txt", "edits": [{"line_number": 9, "new_line": "x"}]})
+    assert "out of range" in _text(oor[0])
+
+    # Duplicate line numbers -> failure.
+    dup = await replace_lines.invoke(
+        arguments={
+            "file_name": "a.txt",
+            "edits": [{"line_number": 1, "new_line": "x"}, {"line_number": 1, "new_line": "y"}],
+        }
+    )
+    assert "Duplicate" in _text(dup[0])
+
+
+async def test_file_access_disable_write_tools_hides_write_tools(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """When ``disable_write_tools`` is set only the read-only tools are advertised."""
+    tools = await _prepare_access_tools(chat_client_base, disable_write_tools=True)
+    names = {getattr(tool, "name", None) for tool in tools}
+    assert "file_access_read" in names
+    assert "file_access_ls" in names
+    assert "file_access_grep" in names
+    assert "file_access_write" not in names
+    assert "file_access_delete" not in names
+    assert "file_access_replace" not in names
+    assert "file_access_replace_lines" not in names

@@ -22,10 +22,11 @@ public sealed class CachingAgentSkillsSourceTests
             new AgentInlineSkill("skill-a", "A", "Instructions A."),
         ]);
         var source = new CachingAgentSkillsSource(inner);
+        var context = TestAgentSkillsSourceContextFactory.Create();
 
         // Act
-        var result1 = await source.GetSkillsAsync(CancellationToken.None);
-        var result2 = await source.GetSkillsAsync(CancellationToken.None);
+        var result1 = await source.GetSkillsAsync(context, CancellationToken.None);
+        var result2 = await source.GetSkillsAsync(context, CancellationToken.None);
 
         // Assert
         Assert.Same(result1, result2);
@@ -41,10 +42,11 @@ public sealed class CachingAgentSkillsSourceTests
             new AgentInlineSkill("skill-b", "B", "Instructions B."),
         ]);
         var source = new CachingAgentSkillsSource(inner);
+        var context = TestAgentSkillsSourceContextFactory.Create();
 
         // Act
         var tasks = Enumerable.Range(0, 10)
-            .Select(_ => source.GetSkillsAsync(CancellationToken.None))
+            .Select(_ => source.GetSkillsAsync(context, CancellationToken.None))
             .ToArray();
         var results = await Task.WhenAll(tasks);
 
@@ -62,12 +64,13 @@ public sealed class CachingAgentSkillsSourceTests
         // Arrange
         var inner = new FailingSkillsSource(failOnFirstCall: true);
         var source = new CachingAgentSkillsSource(inner);
+        var context = TestAgentSkillsSourceContextFactory.Create();
 
         // Act — first call fails
-        await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(context, CancellationToken.None));
 
         // Act — second call succeeds (cache was cleared)
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(context, CancellationToken.None);
 
         // Assert
         Assert.Single(result);
@@ -85,14 +88,111 @@ public sealed class CachingAgentSkillsSourceTests
         };
         var inner = new CountingSkillsSource(skills);
         var source = new CachingAgentSkillsSource(inner);
+        var context = TestAgentSkillsSourceContextFactory.Create();
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(context, CancellationToken.None);
 
         // Assert
         Assert.Equal(2, result.Count);
         Assert.Equal("skill-x", result[0].Frontmatter.Name);
         Assert.Equal("skill-y", result[1].Frontmatter.Name);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_SameIsolationKey_CallsInnerSourceOnceAsync()
+    {
+        // Arrange
+        var inner = new CountingSkillsSource(
+        [
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+        ]);
+        var source = new CachingAgentSkillsSource(
+            inner,
+            new CachingAgentSkillsSourceOptions { CacheIsolationKeySelector = _ => "same-key" });
+        var context1 = TestAgentSkillsSourceContextFactory.Create();
+        var context2 = TestAgentSkillsSourceContextFactory.Create();
+
+        // Act
+        var result1 = await source.GetSkillsAsync(context1, CancellationToken.None);
+        var result2 = await source.GetSkillsAsync(context2, CancellationToken.None);
+
+        // Assert
+        Assert.Same(result1, result2);
+        Assert.Equal(1, inner.CallCount);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_DifferentIsolationKeys_CachesSeparatelyAsync()
+    {
+        // Arrange
+        var agent1 = new TestAIAgent();
+        var agent2 = new TestAIAgent();
+        var inner = new CountingSkillsSource(
+        [
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+        ]);
+        var source = new CachingAgentSkillsSource(
+            inner,
+            new CachingAgentSkillsSourceOptions
+            {
+                CacheIsolationKeySelector = context => ReferenceEquals(context.Agent, agent1) ? "agent-1" : "agent-2",
+            });
+        var context1 = TestAgentSkillsSourceContextFactory.Create(agent1);
+        var context2 = TestAgentSkillsSourceContextFactory.Create(agent2);
+
+        // Act
+        await source.GetSkillsAsync(context1, CancellationToken.None);
+        await source.GetSkillsAsync(context2, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(2, inner.CallCount);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_NullIsolationKey_UsesSharedCacheAsync()
+    {
+        // Arrange
+        var inner = new CountingSkillsSource(
+        [
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+        ]);
+        var source = new CachingAgentSkillsSource(
+            inner,
+            new CachingAgentSkillsSourceOptions { CacheIsolationKeySelector = _ => null });
+        var context1 = TestAgentSkillsSourceContextFactory.Create();
+        var context2 = TestAgentSkillsSourceContextFactory.Create();
+
+        // Act
+        var result1 = await source.GetSkillsAsync(context1, CancellationToken.None);
+        var result2 = await source.GetSkillsAsync(context2, CancellationToken.None);
+
+        // Assert
+        Assert.Same(result1, result2);
+        Assert.Equal(1, inner.CallCount);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_EmptyStringIsolationKey_IsolatedFromSharedCacheAsync()
+    {
+        // Arrange
+        string? isolationKey = null;
+        var inner = new CountingSkillsSource(
+        [
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+        ]);
+        var source = new CachingAgentSkillsSource(
+            inner,
+            new CachingAgentSkillsSourceOptions { CacheIsolationKeySelector = _ => isolationKey });
+        var context = TestAgentSkillsSourceContextFactory.Create();
+
+        // Act
+        await source.GetSkillsAsync(context, CancellationToken.None); // shared bucket
+        isolationKey = string.Empty;
+        await source.GetSkillsAsync(context, CancellationToken.None); // distinct empty-string bucket
+
+        // Assert
+        Assert.Equal(2, inner.CallCount);
     }
 
     private sealed class CountingSkillsSource : AgentSkillsSource
@@ -107,7 +207,7 @@ public sealed class CachingAgentSkillsSourceTests
 
         public int CallCount => this._callCount;
 
-        public override Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+        public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref this._callCount);
             return Task.FromResult(this._skills);
@@ -126,7 +226,7 @@ public sealed class CachingAgentSkillsSourceTests
 
         public int CallCount => this._callCount;
 
-        public override Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+        public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
         {
             var count = Interlocked.Increment(ref this._callCount);
             if (this._failOnFirstCall && count == 1)

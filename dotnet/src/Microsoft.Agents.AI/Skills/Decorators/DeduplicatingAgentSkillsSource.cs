@@ -28,9 +28,9 @@ internal sealed partial class DeduplicatingAgentSkillsSource : DelegatingAgentSk
     }
 
     /// <inheritdoc/>
-    public override async Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+    public override async Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
-        var allSkills = await this.InnerSource.GetSkillsAsync(cancellationToken).ConfigureAwait(false);
+        var allSkills = await this.InnerSource.GetSkillsAsync(context, cancellationToken).ConfigureAwait(false);
 
         var deduplicated = new List<AgentSkill>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

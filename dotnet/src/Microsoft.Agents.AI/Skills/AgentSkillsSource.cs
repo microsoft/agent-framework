@@ -18,7 +18,8 @@ public abstract class AgentSkillsSource
     /// <summary>
     /// Gets the skills provided by this source.
     /// </summary>
+    /// <param name="context">Contextual information about the agent and session requesting skills.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A collection of skills from this source.</returns>
-    public abstract Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default);
+    public abstract Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default);
 }

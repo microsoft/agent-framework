@@ -223,7 +223,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
-        var skills = await this._source.GetSkillsAsync(cancellationToken).ConfigureAwait(false);
+        var skills = await this._source.GetSkillsAsync(new AgentSkillsSourceContext(context.Agent, context.Session), cancellationToken).ConfigureAwait(false);
         if (skills is not { Count: > 0 })
         {
             return await base.ProvideAIContextAsync(context, cancellationToken).ConfigureAwait(false);
