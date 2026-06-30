@@ -30,7 +30,6 @@ from agent_framework.foundry import FoundryChatClient
 from azure.core.credentials import TokenCredential
 from azure.identity import AzureCliCredential, get_bearer_token_provider
 from toolbox_provisioning import (  # ty: ignore[unresolved-import]  # pyrefly: ignore[missing-import]
-    FOUNDRY_FEATURES_HEADERS,
     create_sample_toolbox,
 )
 
@@ -87,7 +86,6 @@ async def main() -> None:
     # default breaks long-running tool calls.
     http_client = httpx.AsyncClient(
         auth=_BearerAuth(credential),
-        headers=FOUNDRY_FEATURES_HEADERS,
         timeout=httpx.Timeout(30.0, read=300.0),
         follow_redirects=True,
     )

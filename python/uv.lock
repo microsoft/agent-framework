@@ -561,7 +561,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-foundry-hosting"
-version = "1.0.0a260629"
+version = "1.0.0a260630"
 source = { editable = "packages/foundry_hosting" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -578,7 +578,7 @@ requires-dist = [
     { name = "azure-ai-agentserver-core", specifier = ">=2.0.0b7,<3" },
     { name = "azure-ai-agentserver-invocations", specifier = ">=1.0.0b6,<2" },
     { name = "azure-ai-agentserver-responses", specifier = ">=1.0.0b8,<2" },
-    { name = "httpx" },
+    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "mcp", specifier = ">=1.24.0,<2" },
 ]
 
