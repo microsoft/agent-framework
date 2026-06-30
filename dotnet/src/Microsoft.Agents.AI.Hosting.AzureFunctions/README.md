@@ -61,6 +61,18 @@ app.Run();
 
 By default, each agent can be invoked via a built-in HTTP trigger function at the route `http[s]://[host]/api/agents/{agentName}/run`.
 
+> [!NOTE]
+> In .NET isolated Azure Functions apps, the worker SDK discovers Durable Functions triggers from the app assembly. If your app only hosts agents through `ConfigureDurableAgents(...)` and does not define any Durable orchestrator functions, add a small `[OrchestrationTrigger]` function in your app assembly so the Durable extension is indexed.
+
+```csharp
+public static class DurableTriggerDiscovery
+{
+    [Function(nameof(DurableTriggerDiscovery))]
+    public static Task RunAsync([OrchestrationTrigger] TaskOrchestrationContext context)
+        => Task.CompletedTask;
+}
+```
+
 ### Orchestrating hosted agents
 
 This package also provides a set of extension methods such as `GetAgent` on the [`TaskOrchestrationContext`](https://learn.microsoft.com/dotnet/api/microsoft.durabletask.taskorchestrationcontext) class for interacting with hosted agents within orchestrations.
