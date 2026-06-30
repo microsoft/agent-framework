@@ -453,6 +453,21 @@ internal static class ChatResponseUpdateAGUIExtensions
         string? currentReasoningBaseId = null;
         string? currentReasoningId = null;
         string? currentReasoningMessageId = null;
+#if ASPNETCORE
+        // Progressive tool-call argument streaming. MEAI chat clients yield one update
+        // per provider chunk but attach the typed FunctionCallContent only once a call's
+        // arguments are complete, so the AGUI wire would otherwise carry a single atomic
+        // TOOL_CALL_ARGS event per call — starving streaming consumers (e.g. generative-UI
+        // middlewares that paint arguments incrementally). For OpenAI-family providers the
+        // argument fragments are still observable on the update's RawRepresentation:
+        // surface them as incremental TOOL_CALL_ARGS events and suppress the duplicate
+        // atomic emission when the coalesced FunctionCallContent arrives.
+        // Two views of the same open raw-streamed calls: by fragment index (for matching
+        // later fragments and the deterministic end-of-stream sweep) and by call id (for an
+        // O(1) close when the coalesced FunctionCallContent arrives).
+        Dictionary<int, string> rawToolCallIdsByIndex = [];
+        Dictionary<string, int> rawToolCallIndexById = new(StringComparer.Ordinal);
+#endif
         await foreach (var chatResponse in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             // The text-event surface (TextMessageStart/Content/End) requires a non-empty
@@ -528,6 +543,71 @@ internal static class ChatResponseUpdateAGUIExtensions
                 };
             }
 
+#if ASPNETCORE
+            // Surface OpenAI streamed tool-call argument fragments incrementally.
+            object? rawUpdate = chatResponse.RawRepresentation;
+            if (rawUpdate is ChatResponseUpdate innerUpdate)
+            {
+                // Agent pipelines (e.g. ChatClientAgent) wrap the provider update once.
+                rawUpdate = innerUpdate.RawRepresentation;
+            }
+
+            if (rawUpdate is OpenAI.Chat.StreamingChatCompletionUpdate streamingChatUpdate)
+            {
+                foreach (OpenAI.Chat.StreamingChatToolCallUpdate toolCallUpdate in streamingChatUpdate.ToolCallUpdates ?? [])
+                {
+                    if (!rawToolCallIdsByIndex.TryGetValue(toolCallUpdate.Index, out string? rawToolCallId))
+                    {
+                        // The first fragment of a call carries its id and function name;
+                        // later fragments only carry the index plus an arguments delta.
+                        if (string.IsNullOrEmpty(toolCallUpdate.ToolCallId) || string.IsNullOrEmpty(toolCallUpdate.FunctionName))
+                        {
+                            continue;
+                        }
+
+                        rawToolCallId = toolCallUpdate.ToolCallId;
+                        rawToolCallIdsByIndex[toolCallUpdate.Index] = rawToolCallId;
+                        rawToolCallIndexById[rawToolCallId] = toolCallUpdate.Index;
+
+                        // Close any open reasoning block before emitting tool events.
+                        if (currentReasoningMessageId is not null)
+                        {
+                            yield return new ReasoningMessageEndEvent
+                            {
+                                MessageId = currentReasoningMessageId
+                            };
+                            yield return new ReasoningEndEvent
+                            {
+                                MessageId = currentReasoningId!
+                            };
+                            currentReasoningBaseId = null;
+                            currentReasoningId = null;
+                            currentReasoningMessageId = null;
+                        }
+
+                        yield return new ToolCallStartEvent
+                        {
+                            ToolCallId = rawToolCallId,
+                            ToolCallName = toolCallUpdate.FunctionName,
+                            // Fragment updates typically carry no MessageId, so this is
+                            // often null — schema-legal, and the inbound builder ignores it.
+                            ParentMessageId = chatResponse.MessageId
+                        };
+                    }
+
+                    string argumentsDelta = toolCallUpdate.FunctionArgumentsUpdate?.ToString() ?? string.Empty;
+                    if (argumentsDelta.Length > 0)
+                    {
+                        yield return new ToolCallArgsEvent
+                        {
+                            ToolCallId = rawToolCallId,
+                            Delta = argumentsDelta
+                        };
+                    }
+                }
+            }
+#endif
+
             // Emit tool call events and tool result events
             if (chatResponse is { Contents.Count: > 0 })
             {
@@ -535,6 +615,40 @@ internal static class ChatResponseUpdateAGUIExtensions
                 {
                     if (content is FunctionCallContent functionCallContent)
                     {
+#if ASPNETCORE
+                        // This call's arguments already streamed incrementally from the raw
+                        // provider fragments above — only the closing event remains. The
+                        // per-call state is then released: OpenAI restarts tool-call indexes
+                        // at 0 for each assistant turn, so a stale index entry would silently
+                        // absorb a later round's fragments into this finished call.
+                        if (rawToolCallIndexById.Remove(functionCallContent.CallId, out int closedIndex))
+                        {
+                            rawToolCallIdsByIndex.Remove(closedIndex);
+
+                            // Close any open reasoning block before emitting tool events.
+                            if (currentReasoningMessageId is not null)
+                            {
+                                yield return new ReasoningMessageEndEvent
+                                {
+                                    MessageId = currentReasoningMessageId
+                                };
+                                yield return new ReasoningEndEvent
+                                {
+                                    MessageId = currentReasoningId!
+                                };
+                                currentReasoningBaseId = null;
+                                currentReasoningId = null;
+                                currentReasoningMessageId = null;
+                            }
+
+                            yield return new ToolCallEndEvent
+                            {
+                                ToolCallId = functionCallContent.CallId
+                            };
+                            continue;
+                        }
+#endif
+
                         // Close any open reasoning block before emitting tool events.
                         if (currentReasoningMessageId is not null)
                         {
@@ -726,6 +840,26 @@ internal static class ChatResponseUpdateAGUIExtensions
                 MessageId = currentMessageId
             };
         }
+
+#if ASPNETCORE
+        // Close any raw-streamed tool call whose coalesced FunctionCallContent never
+        // arrived (stream cut short, or a pipeline that does not re-emit the typed
+        // content). Without this sweep the wire carries Start/Args with no End and
+        // streaming consumers stay in a perpetual "in progress" state. Sweep in
+        // tool-call index order so the close events are deterministic.
+        List<int> openToolCallIndexes = new(rawToolCallIdsByIndex.Keys);
+        openToolCallIndexes.Sort();
+        foreach (int openToolCallIndex in openToolCallIndexes)
+        {
+            yield return new ToolCallEndEvent
+            {
+                ToolCallId = rawToolCallIdsByIndex[openToolCallIndex]
+            };
+        }
+
+        rawToolCallIdsByIndex.Clear();
+        rawToolCallIndexById.Clear();
+#endif
 
         yield return new RunFinishedEvent
         {

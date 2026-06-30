@@ -8,6 +8,8 @@ using AGUIDojoServer.SharedState;
 
 namespace AGUIDojoServer;
 
+[JsonSerializable(typeof(System.Text.Json.Nodes.JsonArray))]
+[JsonSerializable(typeof(System.Text.Json.Nodes.JsonObject))]
 [JsonSerializable(typeof(WeatherInfo))]
 [JsonSerializable(typeof(Recipe))]
 [JsonSerializable(typeof(Ingredient))]
