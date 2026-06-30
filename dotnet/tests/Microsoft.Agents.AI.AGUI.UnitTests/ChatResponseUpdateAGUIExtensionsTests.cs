@@ -371,6 +371,65 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithRawToolCallResultContent_PreservesStringAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ToolCallResultEvent
+            {
+                MessageId = "result-call_1",
+                ToolCallId = "call_1",
+                Content = "Success: Function completed.",
+                Role = AGUIRoles.Tool
+            }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        ChatResponseUpdate observedUpdate = Assert.Single(updates);
+        Assert.Equal(ChatRole.Tool, observedUpdate.Role);
+        Assert.Equal("result-call_1", observedUpdate.MessageId);
+        FunctionResultContent result = Assert.IsType<FunctionResultContent>(observedUpdate.Contents[0]);
+        Assert.Equal("call_1", result.CallId);
+        Assert.Equal("Success: Function completed.", Assert.IsType<string>(result.Result));
+    }
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithJsonToolCallResultContent_KeepsJsonElementAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ToolCallResultEvent
+            {
+                MessageId = "result-call_1",
+                ToolCallId = "call_1",
+                Content = "{\"approved\":false}",
+                Role = AGUIRoles.Tool
+            }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        FunctionResultContent result = Assert.IsType<FunctionResultContent>(Assert.Single(updates).Contents[0]);
+        JsonElement json = Assert.IsType<JsonElement>(result.Result);
+        Assert.False(json.GetProperty("approved").GetBoolean());
+    }
+
+    [Fact]
     public async Task AsChatResponseUpdatesAsync_ConvertsStateSnapshotEvent_ToDataContentWithJsonAsync()
     {
         // Arrange
@@ -1015,6 +1074,41 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
         int reasoningEndIndex = outputEvents.FindIndex(e => e is ReasoningEndEvent);
         int toolCallResultIndex = outputEvents.FindIndex(e => e is ToolCallResultEvent);
         Assert.True(reasoningEndIndex < toolCallResultIndex);
+    }
+
+    [Fact]
+    public async Task ToolResultContent_RoundTrip_OutboundThenInbound_PreservesStringResultAsync()
+    {
+        // Arrange
+        List<ChatResponseUpdate> outboundUpdates =
+        [
+            new(ChatRole.Tool, [new FunctionResultContent("call-1", "Success: Function completed.")]) { MessageId = "result-call-1" }
+        ];
+
+        // Act - outbound: ChatResponseUpdate → AGUI events
+        List<BaseEvent> aguiEvents = [];
+        await foreach (BaseEvent evt in outboundUpdates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync("thread1", "run1", AGUIJsonSerializerContext.Default.Options))
+        {
+            aguiEvents.Add(evt);
+        }
+
+        // Act - inbound: AGUI events → ChatResponseUpdate
+        List<ChatResponseUpdate> inboundUpdates = [];
+        await foreach (ChatResponseUpdate update in aguiEvents.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            inboundUpdates.Add(update);
+        }
+
+        // Assert
+        ToolCallResultEvent resultEvent = aguiEvents.OfType<ToolCallResultEvent>().Single();
+        Assert.Equal("\"Success: Function completed.\"", resultEvent.Content);
+
+        FunctionResultContent result = inboundUpdates
+            .SelectMany(u => u.Contents)
+            .OfType<FunctionResultContent>()
+            .Single();
+        Assert.Equal("call-1", result.CallId);
+        Assert.Equal("Success: Function completed.", Assert.IsType<string>(result.Result));
     }
 
     [Fact]
