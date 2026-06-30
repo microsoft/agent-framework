@@ -478,7 +478,7 @@ public sealed partial class ChatClientAgent : AIAgent
         ChatOptions? chatOptions,
         CancellationToken cancellationToken)
     {
-        ChatHistoryProvider? chatHistoryProvider = this.ResolveChatHistoryProvider(chatOptions);
+        ChatHistoryProvider? chatHistoryProvider = this.ResolveChatHistoryProvider(session, chatOptions);
 
         if (chatHistoryProvider is not null)
         {
@@ -510,7 +510,7 @@ public sealed partial class ChatClientAgent : AIAgent
         ChatOptions? chatOptions,
         CancellationToken cancellationToken)
     {
-        ChatHistoryProvider? chatHistoryProvider = this.ResolveChatHistoryProvider(chatOptions);
+        ChatHistoryProvider? chatHistoryProvider = this.ResolveChatHistoryProvider(session, chatOptions);
 
         if (chatHistoryProvider is not null)
         {
@@ -980,19 +980,19 @@ public sealed partial class ChatClientAgent : AIAgent
         }
     }
 
-    private ChatHistoryProvider? ResolveChatHistoryProvider(ChatOptions? chatOptions)
+    private ChatHistoryProvider? ResolveChatHistoryProvider(ChatClientAgentSession session, ChatOptions? chatOptions)
     {
-        ChatHistoryProvider? provider =
-            chatOptions?.ConversationId is null || IsAGUIProviderName(this._agentMetadata.ProviderName)
-            ? this.ChatHistoryProvider
-            : null;
+        bool aguiProvider = IsAGUIProviderName(this._agentMetadata.ProviderName);
+        bool serviceStoresHistory = !this.RequiresPerServiceCallChatHistoryPersistence
+            && !aguiProvider
+            && (!string.IsNullOrWhiteSpace(session.ConversationId)
+                || !string.IsNullOrWhiteSpace(chatOptions?.ConversationId));
+        ChatHistoryProvider? provider = serviceStoresHistory ? null : this.ChatHistoryProvider;
 
         // If someone provided an override ChatHistoryProvider via AdditionalProperties, we should use that instead.
         if (chatOptions?.AdditionalProperties?.TryGetValue(out ChatHistoryProvider? overrideProvider) is true)
         {
-            if (!IsAGUIProviderName(this._agentMetadata.ProviderName) &&
-                this._agentOptions?.ThrowOnChatHistoryProviderConflict is true &&
-                string.IsNullOrWhiteSpace(chatOptions?.ConversationId) is false)
+            if (this._agentOptions?.ThrowOnChatHistoryProviderConflict is true && serviceStoresHistory)
             {
                 throw new InvalidOperationException(
                     $"Only {nameof(ChatClientAgentSession.ConversationId)} or {nameof(this.ChatHistoryProvider)} may be used, but not both. The current {nameof(ChatClientAgentSession)} has a {nameof(ChatClientAgentSession.ConversationId)} indicating server-side chat history management, but an override {nameof(this.ChatHistoryProvider)} was provided via {nameof(AgentRunOptions.AdditionalProperties)}.");
@@ -1030,7 +1030,7 @@ public sealed partial class ChatClientAgent : AIAgent
         ChatOptions? chatOptions,
         CancellationToken cancellationToken)
     {
-        var chatHistoryProvider = this.ResolveChatHistoryProvider(chatOptions);
+        var chatHistoryProvider = this.ResolveChatHistoryProvider(session, chatOptions);
         if (chatHistoryProvider is null)
         {
             return messages;
