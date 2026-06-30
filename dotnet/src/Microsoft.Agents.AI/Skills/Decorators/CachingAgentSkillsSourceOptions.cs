@@ -27,4 +27,16 @@ public sealed class CachingAgentSkillsSourceOptions
     /// </para>
     /// </remarks>
     public Func<AgentSkillsSourceContext, string?>? CacheIsolationKeySelector { get; set; }
+
+    /// <summary>
+    /// Gets or sets the interval after which a cached skill list is considered stale and is refreshed
+    /// from the inner source on the next request.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="null"/> (the default), cached results never expire and the inner source is
+    /// invoked only once per cache key. Set to a positive <see cref="TimeSpan"/> to re-invoke the inner
+    /// source once the cached result is older than the interval. Values of <see cref="TimeSpan.Zero"/> or
+    /// negative durations effectively disable caching because the cached result is always considered stale.
+    /// </remarks>
+    public TimeSpan? RefreshInterval { get; set; }
 }

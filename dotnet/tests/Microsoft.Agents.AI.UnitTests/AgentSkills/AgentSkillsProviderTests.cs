@@ -1314,6 +1314,65 @@ public sealed class AgentSkillsProviderTests : IDisposable
         Assert.Null(capturingSource.LastContext.Session);
     }
 
+    [Fact]
+    public void Dispose_DefaultOwnership_DoesNotDisposeProvidedSource()
+    {
+        // Arrange
+        var source = new DisposeTrackingAgentSkillsSource();
+        var provider = new AgentSkillsProvider(source);
+
+        // Act
+        provider.Dispose();
+
+        // Assert — the caller retains ownership of the source by default.
+        Assert.Equal(0, source.DisposeCount);
+    }
+
+    [Fact]
+    public void Dispose_WhenOwningProvidedSource_DisposesSource()
+    {
+        // Arrange
+        var source = new DisposeTrackingAgentSkillsSource();
+        var provider = new AgentSkillsProvider(source, ownsSource: true);
+
+        // Act
+        provider.Dispose();
+
+        // Assert
+        Assert.Equal(1, source.DisposeCount);
+    }
+
+    [Fact]
+    public void Dispose_WhenOwningProvidedSource_IsIdempotent()
+    {
+        // Arrange
+        var source = new DisposeTrackingAgentSkillsSource();
+        var provider = new AgentSkillsProvider(source, ownsSource: true);
+
+        // Act
+        provider.Dispose();
+        provider.Dispose();
+
+        // Assert — the source is disposed exactly once.
+        Assert.Equal(1, source.DisposeCount);
+    }
+
+    [Fact]
+    public void Dispose_BuilderBuiltProvider_DisposesSourcePipeline()
+    {
+        // Arrange — the builder wraps the source in caching/dedup decorators and transfers ownership.
+        var source = new DisposeTrackingAgentSkillsSource();
+        var provider = new AgentSkillsProviderBuilder()
+            .UseSource(source)
+            .Build();
+
+        // Act
+        provider.Dispose();
+
+        // Assert — disposal cascades through the decorator pipeline to the leaf source.
+        Assert.Equal(1, source.DisposeCount);
+    }
+
     private sealed class TestAgentSession : AgentSession;
 
     /// <summary>
@@ -1372,5 +1431,26 @@ public sealed class AgentSkillsProviderTests : IDisposable
         public override AgentSkillFrontmatter Frontmatter { get; }
 
         protected override string Instructions => this._instructions;
+    }
+
+    /// <summary>
+    /// A test skill source that records how many times it has been disposed.
+    /// </summary>
+    private sealed class DisposeTrackingAgentSkillsSource : AgentSkillsSource
+    {
+        public int DisposeCount { get; private set; }
+
+        public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
+            => Task.FromResult<IList<AgentSkill>>([]);
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                this.DisposeCount++;
+            }
+
+            base.Dispose(disposing);
+        }
     }
 }

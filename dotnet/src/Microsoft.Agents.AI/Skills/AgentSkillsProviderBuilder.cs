@@ -236,6 +236,10 @@ public sealed class AgentSkillsProviderBuilder
     /// <summary>
     /// Builds the <see cref="AgentSkillsProvider"/>.
     /// </summary>
+    /// <remarks>
+    /// The returned provider owns the source pipeline constructed by this builder, so disposing the
+    /// provider disposes the pipeline (including any sources added to this builder).
+    /// </remarks>
     /// <returns>A configured <see cref="AgentSkillsProvider"/>.</returns>
     public AgentSkillsProvider Build()
     {
@@ -268,7 +272,7 @@ public sealed class AgentSkillsProviderBuilder
 
         source = new DeduplicatingAgentSkillsSource(source, this._loggerFactory);
 
-        return new AgentSkillsProvider(source, this._options, this._loggerFactory);
+        return new AgentSkillsProvider(source, this._options, this._loggerFactory, ownsSource: true);
     }
 
     private AgentSkillsProviderOptions GetOrCreateOptions()

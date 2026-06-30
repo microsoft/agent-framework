@@ -195,6 +195,270 @@ public sealed class CachingAgentSkillsSourceTests
         Assert.Equal(2, inner.CallCount);
     }
 
+    [Fact]
+    public async Task GetSkillsAsync_FirstCallerCancels_OtherCallerStillGetsResultAsync()
+    {
+        // Arrange
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var inner = new DelayedSkillsSource(gate.Task,
+        [
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+        ]);
+        var source = new CachingAgentSkillsSource(inner);
+        var context = TestAgentSkillsSourceContextFactory.Create();
+
+        using var cts1 = new CancellationTokenSource();
+        using var cts2 = new CancellationTokenSource();
+
+        // Act — the first caller holds the gate and fetches; the second caller queues behind it.
+        var task1 = source.GetSkillsAsync(context, cts1.Token);
+        var task2 = source.GetSkillsAsync(context, cts2.Token);
+
+        // Wait until the first caller's fetch has started.
+        await inner.Started;
+
+        // Cancel the first caller; its fetch is cancelled and the gate is released.
+        cts1.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => task1);
+
+        // The second caller acquires the gate and starts a fresh fetch; release the inner source.
+        gate.SetResult(true);
+        var result = await task2;
+
+        // Assert — the second caller performs its own fetch (restart semantics).
+        Assert.Single(result);
+        Assert.Equal("skill-a", result[0].Frontmatter.Name);
+        Assert.Equal(2, inner.CallCount);
+        Assert.False(inner.LastCancellationToken.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_AllCallersCancel_InnerSourceIsCancelledAsync()
+    {
+        // Arrange
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var inner = new DelayedSkillsSource(gate.Task,
+        [
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+        ]);
+        var source = new CachingAgentSkillsSource(inner);
+        var context = TestAgentSkillsSourceContextFactory.Create();
+
+        using var cts1 = new CancellationTokenSource();
+        using var cts2 = new CancellationTokenSource();
+
+        // Act
+        var task1 = source.GetSkillsAsync(context, cts1.Token);
+        var task2 = source.GetSkillsAsync(context, cts2.Token);
+
+        // Wait until the first caller's fetch has started; the second caller is queued on the gate.
+        await inner.Started;
+
+        // Cancel both callers
+        cts1.Cancel();
+        cts2.Cancel();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => task1);
+        await Assert.ThrowsAsync<OperationCanceledException>(() => task2);
+
+        // Assert — the inner source's cancellation token should have been triggered
+        Assert.True(inner.LastCancellationToken.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_SingleCallerCancels_InnerSourceIsCancelledAsync()
+    {
+        // Arrange
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var inner = new DelayedSkillsSource(gate.Task,
+        [
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+        ]);
+        var source = new CachingAgentSkillsSource(inner);
+        var context = TestAgentSkillsSourceContextFactory.Create();
+
+        using var cts = new CancellationTokenSource();
+
+        // Act
+        var task = source.GetSkillsAsync(context, cts.Token);
+
+        // Give task time to start
+        await inner.Started;
+
+        // Cancel the only caller
+        cts.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => task);
+
+        // Assert — the inner source's cancellation token should have been triggered
+        Assert.True(inner.LastCancellationToken.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_CancelledCaller_DoesNotPoisonSubsequentCallAsync()
+    {
+        // Arrange
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var inner = new DelayedSkillsSource(gate.Task,
+        [
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+        ]);
+        var source = new CachingAgentSkillsSource(inner);
+        var context = TestAgentSkillsSourceContextFactory.Create();
+
+        using var cts = new CancellationTokenSource();
+
+        // Act — first caller cancels while alone, cancelling the inner fetch.
+        var task = source.GetSkillsAsync(context, cts.Token);
+        await inner.Started;
+        cts.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => task);
+
+        // A fresh caller should trigger a new fetch and succeed.
+        gate.SetResult(true);
+        var result = await source.GetSkillsAsync(context, CancellationToken.None);
+
+        // Assert
+        Assert.Single(result);
+        Assert.Equal(2, inner.CallCount);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_WithinRefreshInterval_ReturnsCachedResultAsync()
+    {
+        // Arrange
+        var inner = new CountingSkillsSource(
+        [
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+        ]);
+        var source = new CachingAgentSkillsSource(
+            inner,
+            new CachingAgentSkillsSourceOptions { RefreshInterval = TimeSpan.FromHours(1) });
+        var context = TestAgentSkillsSourceContextFactory.Create();
+
+        // Act — both calls fall well within the refresh interval.
+        var result1 = await source.GetSkillsAsync(context, CancellationToken.None);
+        var result2 = await source.GetSkillsAsync(context, CancellationToken.None);
+
+        // Assert — the cached result is reused while fresh.
+        Assert.Same(result1, result2);
+        Assert.Equal(1, inner.CallCount);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ZeroRefreshInterval_AlwaysRefetchesAsync()
+    {
+        // Arrange
+        var inner = new CountingSkillsSource(
+        [
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+        ]);
+        var source = new CachingAgentSkillsSource(
+            inner,
+            new CachingAgentSkillsSourceOptions { RefreshInterval = TimeSpan.Zero });
+        var context = TestAgentSkillsSourceContextFactory.Create();
+
+        // Act
+        await source.GetSkillsAsync(context, CancellationToken.None);
+        await source.GetSkillsAsync(context, CancellationToken.None);
+
+        // Assert — a zero interval treats the cached result as always stale.
+        Assert.Equal(2, inner.CallCount);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_NegativeRefreshInterval_AlwaysRefetchesAsync()
+    {
+        // Arrange
+        var inner = new CountingSkillsSource(
+        [
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+        ]);
+        var source = new CachingAgentSkillsSource(
+            inner,
+            new CachingAgentSkillsSourceOptions { RefreshInterval = TimeSpan.FromMinutes(-1) });
+        var context = TestAgentSkillsSourceContextFactory.Create();
+
+        // Act
+        await source.GetSkillsAsync(context, CancellationToken.None);
+        await source.GetSkillsAsync(context, CancellationToken.None);
+
+        // Assert — a negative interval treats the cached result as always stale.
+        Assert.Equal(2, inner.CallCount);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_NullRefreshInterval_ReturnsCachedResultAsync()
+    {
+        // Arrange
+        var inner = new CountingSkillsSource(
+        [
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+        ]);
+        var source = new CachingAgentSkillsSource(
+            inner,
+            new CachingAgentSkillsSourceOptions { RefreshInterval = null });
+        var context = TestAgentSkillsSourceContextFactory.Create();
+
+        // Act
+        var result1 = await source.GetSkillsAsync(context, CancellationToken.None);
+        var result2 = await source.GetSkillsAsync(context, CancellationToken.None);
+
+        // Assert — with no interval the cached result never expires.
+        Assert.Same(result1, result2);
+        Assert.Equal(1, inner.CallCount);
+    }
+
+    [Fact]
+    public void Dispose_DisposesInnerSource()
+    {
+        // Arrange
+        var inner = new DisposeTrackingSkillsSource();
+        var source = new CachingAgentSkillsSource(inner);
+
+        // Act
+        source.Dispose();
+
+        // Assert — disposal cascades to the wrapped source.
+        Assert.Equal(1, inner.DisposeCount);
+    }
+
+    [Fact]
+    public async Task Dispose_IsIdempotentAsync()
+    {
+        // Arrange
+        var inner = new DisposeTrackingSkillsSource();
+        var source = new CachingAgentSkillsSource(inner);
+        var context = TestAgentSkillsSourceContextFactory.Create();
+
+        // Populate a cache entry so a semaphore exists to dispose.
+        await source.GetSkillsAsync(context, CancellationToken.None);
+
+        // Act
+        source.Dispose();
+        source.Dispose();
+
+        // Assert — the inner source is disposed exactly once.
+        Assert.Equal(1, inner.DisposeCount);
+    }
+
+    private sealed class DisposeTrackingSkillsSource : AgentSkillsSource
+    {
+        public int DisposeCount { get; private set; }
+
+        public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
+            => Task.FromResult<IList<AgentSkill>>([]);
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                this.DisposeCount++;
+            }
+
+            base.Dispose(disposing);
+        }
+    }
+
     private sealed class CountingSkillsSource : AgentSkillsSource
     {
         private readonly IList<AgentSkill> _skills;
@@ -238,6 +502,48 @@ public sealed class CachingAgentSkillsSourceTests
             {
                 new AgentInlineSkill("recovered-skill", "Recovered", "Body."),
             });
+        }
+    }
+
+    private sealed class DelayedSkillsSource : AgentSkillsSource
+    {
+        private readonly Task _gate;
+        private readonly IList<AgentSkill> _skills;
+        private readonly TaskCompletionSource<bool> _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _callCount;
+        private CancellationToken _lastCancellationToken;
+
+        public DelayedSkillsSource(Task gate, IList<AgentSkill> skills)
+        {
+            this._gate = gate;
+            this._skills = skills;
+        }
+
+        public int CallCount => this._callCount;
+
+        public CancellationToken LastCancellationToken => this._lastCancellationToken;
+
+        /// <summary>Completes once the inner source has started executing at least once.</summary>
+        public Task Started => this._started.Task;
+
+        public override async Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref this._callCount);
+            this._lastCancellationToken = cancellationToken;
+            this._started.TrySetResult(true);
+
+            // Wait for the gate to open or for cancellation, whichever comes first.
+            var cancellationTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using (cancellationToken.Register(static state => ((TaskCompletionSource<bool>)state!).TrySetResult(true), cancellationTcs))
+            {
+                if (this._gate == await Task.WhenAny(this._gate, cancellationTcs.Task).ConfigureAwait(false))
+                {
+                    return this._skills;
+                }
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            return this._skills; // Unreachable
         }
     }
 }

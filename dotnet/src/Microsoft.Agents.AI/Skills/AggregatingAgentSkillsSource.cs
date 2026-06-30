@@ -42,4 +42,18 @@ internal sealed class AggregatingAgentSkillsSource : AgentSkillsSource
 
         return allSkills;
     }
+
+    /// <inheritdoc/>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            foreach (var source in this._sources)
+            {
+                source.Dispose();
+            }
+        }
+
+        base.Dispose(disposing);
+    }
 }

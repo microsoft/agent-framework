@@ -35,4 +35,15 @@ internal abstract class DelegatingAgentSkillsSource : AgentSkillsSource
     /// <inheritdoc/>
     public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
         => this.InnerSource.GetSkillsAsync(context, cancellationToken);
+
+    /// <inheritdoc/>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            this.InnerSource.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
 }

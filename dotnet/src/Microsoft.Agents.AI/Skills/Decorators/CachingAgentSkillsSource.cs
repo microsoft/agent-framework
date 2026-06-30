@@ -13,16 +13,29 @@ namespace Microsoft.Agents.AI;
 /// call, returning the cached list on subsequent invocations.
 /// </summary>
 /// <remarks>
-/// The cache uses a lock-free, thread-safe pattern so that concurrent callers share
-/// a single in-flight fetch and all receive the same cached result.
-/// If the initial fetch fails, the cache is not populated and subsequent calls will retry.
+/// <para>
+/// Concurrent callers are serialized per cache key so that only one underlying fetch runs at a time.
+/// Once a fetch succeeds, the result is cached and shared by all subsequent callers.
+/// </para>
+/// <para>
+/// When <see cref="CachingAgentSkillsSourceOptions.RefreshInterval"/> is set, a cached result is
+/// returned only while it is younger than the interval; once it expires, the next caller re-invokes
+/// the inner source and replaces the cached result. When the interval is <see langword="null"/>, the
+/// cached result never expires.
+/// </para>
+/// <para>
+/// The fetch observes the initiating caller's cancellation token. If that caller cancels, the fetch is
+/// cancelled and the result is not cached; the next waiting caller starts a fresh fetch. Likewise, a fetch
+/// that fails is not cached and subsequent calls will retry.
+/// </para>
 /// </remarks>
 internal sealed class CachingAgentSkillsSource : DelegatingAgentSkillsSource
 {
     private const string SharedCacheKey = "CachingAgentSkillsSource-SharedCacheKey";
 
-    private readonly ConcurrentDictionary<string, Task<IList<AgentSkill>>> _cachedTasks = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, CacheEntry> _cachedEntries = new(StringComparer.Ordinal);
     private readonly CachingAgentSkillsSourceOptions? _options;
+    private bool _disposed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CachingAgentSkillsSource"/> class.
@@ -40,33 +53,85 @@ internal sealed class CachingAgentSkillsSource : DelegatingAgentSkillsSource
     {
         var cacheKey = this._options?.CacheIsolationKeySelector?.Invoke(context) ?? SharedCacheKey;
 
-        var tcs = new TaskCompletionSource<IList<AgentSkill>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entry = this._cachedEntries.GetOrAdd(cacheKey, _ => new CacheEntry());
 
-        while (!this._cachedTasks.TryAdd(cacheKey, tcs.Task))
+        // Fast path: a fresh result has already been fetched and cached.
+        if (this.TryGetFreshResult(entry) is { } cached)
         {
-            if (this._cachedTasks.TryGetValue(cacheKey, out var existing))
-            {
-                return await existing.ConfigureAwait(false);
-            }
+            return cached;
         }
+
+        // Only one caller fetches at a time for a given cache key; the rest queue here.
+        await entry.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
 
         try
         {
+            // Another caller may have populated (or refreshed) the cache while we waited on the gate.
+            if (this.TryGetFreshResult(entry) is { } existing)
+            {
+                return existing;
+            }
+
+            // The fetch uses the caller's token. If the caller cancels (or the fetch fails),
+            // the result is not cached and the next waiting caller starts a fresh fetch.
             var result = await this.InnerSource.GetSkillsAsync(context, cancellationToken).ConfigureAwait(false);
-            tcs.SetResult(result);
+            entry.Result = result;
+            entry.LastRefreshedUtc = DateTime.UtcNow;
             return result;
         }
-        catch (OperationCanceledException)
+        finally
         {
-            this._cachedTasks.TryRemove(cacheKey, out _);
-            tcs.TrySetCanceled(cancellationToken);
-            throw;
+            entry.Gate.Release();
         }
-        catch (Exception ex)
+    }
+
+    /// <summary>
+    /// Returns the cached result for the entry when it exists and is still fresh; otherwise <see langword="null"/>.
+    /// </summary>
+    private IList<AgentSkill>? TryGetFreshResult(CacheEntry entry)
+    {
+        if (entry.Result is not { } result)
         {
-            this._cachedTasks.TryRemove(cacheKey, out _);
-            tcs.TrySetException(ex);
-            throw;
+            return null;
         }
+
+        if (this._options?.RefreshInterval is { } interval &&
+            DateTime.UtcNow - entry.LastRefreshedUtc >= interval)
+        {
+            return null;
+        }
+
+        return result;
+    }
+
+    /// <inheritdoc/>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && !this._disposed)
+        {
+            this._disposed = true;
+
+            foreach (var entry in this._cachedEntries.Values)
+            {
+                entry.Gate.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+    }
+
+    /// <summary>
+    /// A single cache slot: a gate that serializes fetches for one cache key, plus the cached result.
+    /// </summary>
+    private sealed class CacheEntry
+    {
+        /// <summary>Gets the gate that ensures only one fetch runs at a time for this cache key.</summary>
+        public SemaphoreSlim Gate { get; } = new(1, 1);
+
+        /// <summary>Gets or sets the cached result, or <see langword="null"/> if it has not been fetched yet.</summary>
+        public IList<AgentSkill>? Result { get; set; }
+
+        /// <summary>Gets or sets the UTC time at which <see cref="Result"/> was last refreshed.</summary>
+        public DateTime LastRefreshedUtc { get; set; }
     }
 }

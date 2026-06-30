@@ -539,6 +539,35 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         Assert.Empty(skills);
     }
 
+    [Fact]
+    public async Task GetSkillsAsync_ConcurrentCalls_ReconcilesArchiveDirectorySafelyAsync()
+    {
+        // Arrange - a fixed extraction directory means every concurrent call reconciles the same
+        // on-disk location. The per-instance lock must serialize that reconcile/extract/read work so
+        // that no call observes a half-extracted or mid-prune directory.
+        await using var server = new InMemoryMcpServer(builder => builder.WithResources<TwoSkillServer>());
+        await using var client = await server.CreateClientAsync();
+        var options = new AgentMcpSkillsSourceOptions { ArchiveSkillsDirectory = this._extractionRoot };
+        var source = new AgentMcpSkillsSource(client, options);
+        var context = TestAgentSkillsSourceContextFactory.Create();
+
+        // Act - hammer the source from many threads at once.
+        var tasks = Enumerable.Range(0, 20)
+            .Select(_ => Task.Run(() => source.GetSkillsAsync(context)))
+            .ToArray();
+        var results = await Task.WhenAll(tasks);
+
+        // Assert - every call returns both skills with intact content.
+        foreach (var skills in results)
+        {
+            Assert.Equal(2, skills.Count);
+
+            var byName = skills.ToDictionary(s => s.Frontmatter.Name);
+            Assert.Contains("Content A.", await byName["skill-a"].GetContentAsync());
+            Assert.Contains("Content B.", await byName["skill-b"].GetContentAsync());
+        }
+    }
+
     public void Dispose()
     {
         try
