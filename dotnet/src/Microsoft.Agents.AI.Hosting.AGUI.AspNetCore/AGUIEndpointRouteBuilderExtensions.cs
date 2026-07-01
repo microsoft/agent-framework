@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -121,52 +121,130 @@ public static class AGUIEndpointRouteBuilderExtensions
                 return Results.BadRequest();
             }
 
-            var jsonOptions = context.RequestServices.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
-            var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
-
-            var messages = input.Messages.AsChatMessages(jsonSerializerOptions);
-            var clientTools = input.Tools?.AsAITools().ToList();
-
-            // Create run options with AG-UI context in AdditionalProperties
-            var runOptions = new ChatClientAgentRunOptions
-            {
-                ChatOptions = new ChatOptions
-                {
-                    Tools = clientTools,
-                    AdditionalProperties = new AdditionalPropertiesDictionary
-                    {
-                        ["ag_ui_state"] = input.State,
-                        ["ag_ui_context"] = input.Context?.Select(c => new KeyValuePair<string, string>(c.Description, c.Value)).ToArray(),
-                        ["ag_ui_forwarded_properties"] = input.ForwardedProperties,
-                        ["ag_ui_thread_id"] = input.ThreadId,
-                        ["ag_ui_run_id"] = input.RunId
-                    }
-                }
-            };
-
-            var threadId = string.IsNullOrWhiteSpace(input.ThreadId) ? Guid.NewGuid().ToString("N") : input.ThreadId;
-            var session = await hostAgent.GetOrCreateSessionAsync(threadId, cancellationToken).ConfigureAwait(false);
-
-            // Run the agent and convert to AG-UI events
-            var events = hostAgent.RunStreamingAsync(
-                messages,
-                session: session,
-                options: runOptions,
-                cancellationToken: cancellationToken)
-                .AsChatResponseUpdatesAsync()
-                .FilterServerToolsFromMixedToolInvocationsAsync(clientTools, cancellationToken)
-                .AsAGUIEventStreamAsync(
-                    threadId,
-                    input.RunId,
-                    jsonSerializerOptions,
-                    cancellationToken);
-
-            // Wrap the event stream to save the session after streaming completes
-            var eventsWithSessionSave = SaveSessionAfterStreamingAsync(events, hostAgent, threadId, session, cancellationToken);
-
-            var sseLogger = context.RequestServices.GetRequiredService<ILogger<AGUIServerSentEventsResult>>();
-            return new AGUIServerSentEventsResult(eventsWithSessionSave, sseLogger);
+            return await ExecuteAgentRequestAsync(hostAgent, input, context, cancellationToken).ConfigureAwait(false);
         });
+    }
+
+    /// <summary>
+    /// Maps an AG-UI agent endpoint using a factory delegate for per-request agent resolution.
+    /// This enables dynamic, multi-tenant agent hosting where the agent is selected based on
+    /// route parameters, request headers, claims, or other per-request information.
+    /// </summary>
+    /// <param name="endpoints">The endpoint route builder.</param>
+    /// <param name="pattern">The URL pattern for the endpoint (e.g., "/agents/{agentId}").</param>
+    /// <param name="agentFactory">
+    /// A factory delegate that resolves an <see cref="AIAgent"/> for each request.
+    /// The delegate receives the current <see cref="HttpContext"/> and a <see cref="CancellationToken"/>.
+    /// Return <c>null</c> to produce a 404 Not Found response.
+    /// </param>
+    /// <returns>An <see cref="IEndpointConventionBuilder"/> for the mapped endpoint.</returns>
+    /// <remarks>
+    /// <para>
+    /// Unlike the static <see cref="MapAGUI(IEndpointRouteBuilder, string, AIAgent)"/> overload,
+    /// this method does not capture the agent at startup. Instead, the agent and its
+    /// <see cref="AgentSessionStore"/> are resolved per-request from the factory delegate and
+    /// <see cref="HttpContext.RequestServices"/> respectively. This fixes the singleton-capture
+    /// issue where scoped or transient session stores were inadvertently captured at startup.
+    /// </para>
+    /// <para>
+    /// <strong>Trust model.</strong> See remarks on
+    /// <see cref="MapAGUI(IEndpointRouteBuilder, string, AIAgent)"/> for session isolation guidance.
+    /// </para>
+    /// </remarks>
+    public static IEndpointConventionBuilder MapAGUI(
+        this IEndpointRouteBuilder endpoints,
+        [StringSyntax("route")] string pattern,
+        Func<HttpContext, CancellationToken, ValueTask<AIAgent?>> agentFactory)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentNullException.ThrowIfNull(agentFactory);
+
+        return endpoints.MapPost(pattern, async ([FromBody] RunAgentInput? input, HttpContext context, CancellationToken cancellationToken) =>
+        {
+            if (input is null)
+            {
+                return Results.BadRequest();
+            }
+
+            // Resolve agent per-request via factory delegate
+            var aiAgent = await agentFactory(context, cancellationToken).ConfigureAwait(false);
+            if (aiAgent is null)
+            {
+                return Results.NotFound();
+            }
+
+            // Resolve session store per-request from the request's DI scope (not app-level)
+            var agentSessionStore = context.RequestServices.GetKeyedService<AgentSessionStore>(aiAgent.Name);
+
+            // Ensure that we have an IsolationKeyScopedAgentSessionStore registered.
+            var isolationKeyProvider = context.RequestServices.GetService<SessionIsolationKeyProvider>();
+            if (agentSessionStore?.GetService<IsolationKeyScopedAgentSessionStore>() is null)
+            {
+                agentSessionStore ??= new NoopAgentSessionStore();
+                agentSessionStore = new IsolationKeyScopedAgentSessionStore(agentSessionStore, isolationKeyProvider, new() { Strict = isolationKeyProvider != null });
+            }
+
+            var hostAgent = new AIHostAgent(aiAgent, agentSessionStore);
+
+            return await ExecuteAgentRequestAsync(hostAgent, input, context, cancellationToken).ConfigureAwait(false);
+        });
+    }
+
+    /// <summary>
+    /// Shared execution pipeline for AG-UI agent requests. Converts the input to chat messages,
+    /// runs the agent, and returns an SSE result with session persistence.
+    /// </summary>
+    private static async Task<IResult> ExecuteAgentRequestAsync(
+        AIHostAgent hostAgent,
+        RunAgentInput input,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        var jsonOptions = context.RequestServices.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
+        var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
+
+        var messages = input.Messages.AsChatMessages(jsonSerializerOptions);
+        var clientTools = input.Tools?.AsAITools().ToList();
+
+        // Create run options with AG-UI context in AdditionalProperties
+        var runOptions = new ChatClientAgentRunOptions
+        {
+            ChatOptions = new ChatOptions
+            {
+                Tools = clientTools,
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    ["ag_ui_state"] = input.State,
+                    ["ag_ui_context"] = input.Context?.Select(c => new KeyValuePair<string, string>(c.Description, c.Value)).ToArray(),
+                    ["ag_ui_forwarded_properties"] = input.ForwardedProperties,
+                    ["ag_ui_thread_id"] = input.ThreadId,
+                    ["ag_ui_run_id"] = input.RunId
+                }
+            }
+        };
+
+        var threadId = string.IsNullOrWhiteSpace(input.ThreadId) ? Guid.NewGuid().ToString("N") : input.ThreadId;
+        var session = await hostAgent.GetOrCreateSessionAsync(threadId, cancellationToken).ConfigureAwait(false);
+
+        // Run the agent and convert to AG-UI events
+        var events = hostAgent.RunStreamingAsync(
+            messages,
+            session: session,
+            options: runOptions,
+            cancellationToken: cancellationToken)
+            .AsChatResponseUpdatesAsync()
+            .FilterServerToolsFromMixedToolInvocationsAsync(clientTools, cancellationToken)
+            .AsAGUIEventStreamAsync(
+                threadId,
+                input.RunId,
+                jsonSerializerOptions,
+                cancellationToken);
+
+        // Wrap the event stream to save the session after streaming completes
+        var eventsWithSessionSave = SaveSessionAfterStreamingAsync(events, hostAgent, threadId, session, cancellationToken);
+
+        var sseLogger = context.RequestServices.GetRequiredService<ILogger<AGUIServerSentEventsResult>>();
+        return new AGUIServerSentEventsResult(eventsWithSessionSave, sseLogger);
     }
 
     private static async IAsyncEnumerable<BaseEvent> SaveSessionAfterStreamingAsync(
