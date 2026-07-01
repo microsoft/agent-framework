@@ -8,7 +8,7 @@ import os
 import sys
 from contextlib import _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -21,6 +21,7 @@ from agent_framework import (
     Content,
     FunctionInvocationContext,
     FunctionMiddleware,
+    FunctionTool,
     MCPStdioTool,
     MCPStreamableHTTPTool,
     MCPWebsocketTool,
@@ -1707,6 +1708,378 @@ async def test_mcp_tool_allowed_tools(allowed_tools, expected_count, expected_na
         assert sorted(actual_names) == sorted(expected_names)
 
 
+def test_mcp_transport_subclasses_accept_progressive_disclosure_options() -> None:
+    stdio = MCPStdioTool(
+        name="stdio",
+        command="python",
+        use_progressive_disclosure=True,
+        always_load=["search"],
+    )
+    http = MCPStreamableHTTPTool(
+        name="http",
+        url="https://example.com/mcp",
+        use_progressive_disclosure=True,
+        always_load=["search"],
+    )
+    websocket = MCPWebsocketTool(
+        name="ws",
+        url="wss://example.com/mcp",
+        use_progressive_disclosure=True,
+        always_load=["search"],
+    )
+
+    assert stdio.use_progressive_disclosure is True
+    assert http.use_progressive_disclosure is True
+    assert websocket.use_progressive_disclosure is True
+    assert stdio.always_load == ["search"]
+    assert http.always_load == ["search"]
+    assert websocket.always_load == ["search"]
+
+
+def test_mcp_progressive_disclosure_requires_loading_tools() -> None:
+    with pytest.raises(ValueError, match="requires load_tools=True"):
+        MCPTool(  # type: ignore[abstract]
+            name="test_server",
+            load_tools=False,
+            use_progressive_disclosure=True,
+        )
+
+
+def _progressive_tool_list_page(*, tools: list[types.Tool] | None = None) -> types.ListToolsResult:
+    if tools is not None:
+        return types.ListToolsResult(tools=tools)
+    return types.ListToolsResult(
+        tools=[
+            types.Tool(
+                name="tool_one",
+                description="First tool",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"param": {"type": "string"}},
+                    "required": ["param"],
+                },
+            ),
+            types.Tool(
+                name="tool_two",
+                description="Second tool",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"value": {"type": "integer"}},
+                    "required": ["value"],
+                },
+            ),
+            types.Tool(
+                name="secret_tool",
+                description="Secret tool",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"secret": {"type": "string"}},
+                },
+            ),
+        ]
+    )
+
+
+async def _load_progressive_test_server(
+    *,
+    allowed_tools: list[str] | None = None,
+    always_load: list[str] | None = None,
+    tool_name_prefix: str | None = None,
+    approval_mode: Any = None,
+    tools: list[types.Tool] | None = None,
+) -> MCPTool:
+    server = MCPTool(  # type: ignore[abstract]
+        name="test_server",
+        allowed_tools=allowed_tools,
+        always_load=always_load,
+        tool_name_prefix=tool_name_prefix,
+        approval_mode=approval_mode,
+        use_progressive_disclosure=True,
+    )
+    server.session = AsyncMock()
+    server.session.list_tools = AsyncMock(return_value=_progressive_tool_list_page(tools=tools))
+    server.session.call_tool = AsyncMock(
+        return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
+    )
+    await server.load_tools()
+    return server
+
+
+async def test_mcp_progressive_disclosure_exposes_loaders_and_always_loaded_tools() -> None:
+    server = await _load_progressive_test_server(always_load=["tool_one", "missing_tool"])
+
+    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "tool_one"]
+
+
+async def test_mcp_progressive_disclosure_filters_always_loaded_loader_name_collisions() -> None:
+    server = await _load_progressive_test_server(
+        always_load=["list_mcp_tools", "tool_one"],
+        tools=[
+            types.Tool(
+                name="list_mcp_tools",
+                description="Remote tool whose local name collides with the list loader.",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+            types.Tool(
+                name="tool_one",
+                description="First tool",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+        ],
+    )
+
+    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "tool_one"]
+
+
+async def test_mcp_progressive_disclosure_loader_names_honor_tool_name_prefix() -> None:
+    server = await _load_progressive_test_server(tool_name_prefix="github", always_load=["tool_one"])
+
+    assert [func.name for func in server.functions] == [
+        "github_list_mcp_tools",
+        "github_load_tool",
+        "github_tool_one",
+    ]
+
+
+async def test_mcp_progressive_list_mcp_tools_only_reports_allowed_tools() -> None:
+    server = await _load_progressive_test_server(allowed_tools=["tool_one"], always_load=[])
+    list_tool = server.functions[0]
+    context = FunctionInvocationContext(function=list_tool, arguments={}, tools=list(server.functions))
+
+    result = await list_tool.invoke(arguments={}, context=context, skip_parsing=True)
+
+    assert [item["name"] for item in result] == ["tool_one"]
+    assert result[0]["remote_name"] == "tool_one"
+    assert result[0]["description"] == "First tool"
+    assert result[0]["parameters"]["properties"] == {"param": {"type": "string"}}
+    assert result[0]["loaded"] is False
+    assert result[0]["always_loaded"] is False
+
+
+async def test_mcp_progressive_list_mcp_tools_skips_loader_name_collisions() -> None:
+    server = await _load_progressive_test_server(
+        tools=[
+            types.Tool(
+                name="list_mcp_tools",
+                description="Remote tool whose local name collides with the list loader.",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+            types.Tool(
+                name="tool_one",
+                description="First tool",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+        ],
+    )
+    list_tool = server.functions[0]
+    context = FunctionInvocationContext(function=list_tool, arguments={}, tools=list(server.functions))
+
+    result = await list_tool.invoke(arguments={}, context=context, skip_parsing=True)
+
+    assert [item["name"] for item in result] == ["tool_one"]
+
+
+async def test_mcp_progressive_list_mcp_tools_treats_empty_allowed_tools_as_no_tools() -> None:
+    server = await _load_progressive_test_server(allowed_tools=[], always_load=["tool_one"])
+    list_tool = server.functions[0]
+    context = FunctionInvocationContext(function=list_tool, arguments={}, tools=list(server.functions))
+
+    result = await list_tool.invoke(arguments={}, context=context, skip_parsing=True)
+
+    assert result == []
+    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool"]
+
+
+async def test_mcp_progressive_load_tool_adds_hidden_tool_to_live_tools() -> None:
+    server = await _load_progressive_test_server()
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "tool_two"},
+        tools=list(server.functions),
+    )
+
+    result = await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+
+    assert result[0].text == "Loaded MCP tool 'tool_two'. It is available on the next model iteration."
+    assert context.tools is not None
+    assert [tool.name for tool in context.tools] == [  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        "list_mcp_tools",
+        "load_tool",
+        "tool_two",
+    ]
+
+    list_tool = server.functions[0]
+    list_result = await list_tool.invoke(arguments={}, context=context, skip_parsing=True)
+
+    assert next(item for item in list_result if item["name"] == "tool_two")["loaded"] is True
+
+    result = await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+
+    assert result[0].text == "MCP tool 'tool_two' is already available."
+    assert [tool.name for tool in context.tools] == [  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        "list_mcp_tools",
+        "load_tool",
+        "tool_two",
+    ]
+
+
+async def test_mcp_progressive_load_tool_rejects_filtered_tool() -> None:
+    server = await _load_progressive_test_server(allowed_tools=["tool_one"])
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "tool_two"},
+        tools=list(server.functions),
+    )
+
+    with pytest.raises(ToolExecutionException, match="not available"):
+        await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+
+
+async def test_mcp_progressive_load_tool_rejects_missing_live_tool_list() -> None:
+    server = await _load_progressive_test_server()
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "tool_two"},
+    )
+
+    with pytest.raises(ToolExecutionException, match="inside an agent function-calling run"):
+        await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+
+
+async def test_mcp_progressive_load_tool_rejects_loader_name_collision() -> None:
+    server = await _load_progressive_test_server(
+        tools=[
+            types.Tool(
+                name="load_tool",
+                description="Remote tool whose local name collides with the load loader.",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+        ],
+    )
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "load_tool"},
+        tools=list(server.functions),
+    )
+
+    with pytest.raises(ToolExecutionException, match="Set tool_name_prefix"):
+        await load_tool.invoke(arguments={"tool": "load_tool"}, context=context)
+
+
+async def test_mcp_progressive_resolve_rejects_ambiguous_tool_name() -> None:
+    def _tool() -> None:
+        return None
+
+    server = MCPTool(name="test_server", use_progressive_disclosure=True)  # type: ignore[abstract]
+    server._functions = [
+        FunctionTool(
+            func=_tool,
+            name="remote_one",
+            additional_properties={"_mcp_remote_name": "shared", "_mcp_normalized_name": "remote_one"},
+        ),
+        FunctionTool(
+            func=_tool,
+            name="remote_two",
+            additional_properties={"_mcp_remote_name": "shared", "_mcp_normalized_name": "remote_two"},
+        ),
+    ]
+
+    with pytest.raises(ToolExecutionException, match="ambiguous"):
+        server._resolve_progressive_function("shared")
+
+
+async def test_mcp_progressive_loaded_tool_preserves_remote_approval_mode() -> None:
+    server = await _load_progressive_test_server(approval_mode={"always_require_approval": ["tool_two"]})
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "tool_two"},
+        tools=list(server.functions),
+    )
+
+    await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+
+    assert context.tools is not None
+    loaded_tool = cast(
+        FunctionTool,
+        next(
+            tool
+            for tool in context.tools
+            if tool.name == "tool_two"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        ),
+    )
+    assert loaded_tool.approval_mode == "always_require"
+
+
+async def test_mcp_progressive_loaded_http_tool_preserves_runtime_kwargs_for_headers() -> None:
+    provider_received: list[dict[str, Any]] = []
+
+    def provider(kwargs: dict[str, Any]) -> dict[str, str]:
+        provider_received.append(dict(kwargs))
+        return {"X-Some-Token": kwargs.get("some_token", "")}
+
+    server = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=provider,
+        use_progressive_disclosure=True,
+    )
+    server.session = AsyncMock()
+    server.session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="greet",
+                    description="Says hello",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                        "required": ["name"],
+                    },
+                )
+            ]
+        )
+    )
+    server.session.call_tool = AsyncMock(
+        return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
+    )
+    await server.load_tools()
+    load_tool = server.functions[1]
+    load_context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "greet"},
+        tools=list(server.functions),
+    )
+
+    await load_tool.invoke(arguments={"tool": "greet"}, context=load_context)
+
+    assert load_context.tools is not None
+    loaded_tool = cast(
+        FunctionTool,
+        next(
+            tool
+            for tool in load_context.tools
+            if tool.name == "greet"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        ),
+    )
+    invoke_context = FunctionInvocationContext(
+        function=loaded_tool,
+        arguments={"name": "Alice"},
+        kwargs={"some_token": "my-secret"},
+    )
+    result = await loaded_tool.invoke(arguments={"name": "Alice"}, context=invoke_context)
+
+    assert result[0].text == "Hello!"
+    assert provider_received[0]["some_token"] == "my-secret"
+    call_args = server.session.call_tool.call_args  # type: ignore[union-attr]
+    assert call_args.kwargs.get("arguments", {}).get("name") == "Alice"
+    assert "some_token" not in call_args.kwargs.get("arguments", {})
+
+
 # Server implementation tests
 def test_local_mcp_stdio_tool_init():
     """Test MCPStdioTool initialization."""
@@ -2356,7 +2729,7 @@ async def test_mcp_tool_sampling_callback_forwards_system_prompt():
 
 async def test_mcp_tool_sampling_callback_forwards_tools():
     """Test sampling callback converts MCP tools to FunctionTools and passes them in options."""
-    from agent_framework import FunctionTool, Message
+    from agent_framework import Message
 
     tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=_approve)
 
