@@ -59,7 +59,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, Typ
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import ContextProvider
-from ._tools import FunctionTool
+from ._tools import ApprovalMode, FunctionTool
 
 if TYPE_CHECKING:
     from mcp.client.session import ClientSession
@@ -1850,7 +1850,7 @@ class SkillsProvider(ContextProvider):
     and file-based resource reads are guarded against path traversal and
     symlink escape.  Only use skills from trusted sources.
 
-    **Tool approval:** every tool exposed by this provider
+    **Tool approval:** by default every tool exposed by this provider
     (``load_skill``, ``read_skill_resource``, and ``run_skill_script``) is
     registered with ``approval_mode="always_require"``, so each skill operation
     needs approval.  To run unattended, pass one of the static
@@ -1859,7 +1859,12 @@ class SkillsProvider(ContextProvider):
     :meth:`read_only_tools_auto_approval_rule` approves only the read-only tools
     (``load_skill`` and ``read_skill_resource``) while still prompting for
     ``run_skill_script``, and :meth:`all_tools_auto_approval_rule` approves every
-    skill tool including script execution.
+    skill tool including script execution.  Alternatively, for trusted skills,
+    set ``disable_load_skill_approval``, ``disable_read_skill_resource_approval``,
+    and/or ``disable_run_skill_script_approval`` to opt individual tools out of
+    approval entirely (those tools are registered with
+    ``approval_mode="never_require"`` and are not surfaced as approval requests;
+    the auto-approval rules only apply to tools that still require approval).
 
     Examples:
         File-based factory (recommended for single-source file skills):
@@ -1949,7 +1954,10 @@ class SkillsProvider(ContextProvider):
     def read_only_tools_auto_approval_rule(function_call: Content) -> bool:
         """Auto-approval rule that approves only the read-only skill tools.
 
-        The tools exposed by :class:`SkillsProvider` always require approval.
+        By default the tools exposed by :class:`SkillsProvider` require
+        approval. This rule only applies to tools that still require approval;
+        tools opted out via the ``disable_*_approval`` constructor arguments run
+        without approval regardless.
         Pass this rule to :class:`~agent_framework.ToolApprovalMiddleware` (via
         ``auto_approval_rules``) to automatically approve the tools that read
         skill content (``load_skill`` and ``read_skill_resource``), while still
@@ -1975,7 +1983,10 @@ class SkillsProvider(ContextProvider):
     def all_tools_auto_approval_rule(function_call: Content) -> bool:
         """Auto-approval rule that approves every skill tool.
 
-        The tools exposed by :class:`SkillsProvider` always require approval.
+        By default the tools exposed by :class:`SkillsProvider` require
+        approval. This rule only applies to tools that still require approval;
+        tools opted out via the ``disable_*_approval`` constructor arguments run
+        without approval regardless.
         Pass this rule to :class:`~agent_framework.ToolApprovalMiddleware` (via
         ``auto_approval_rules``) to automatically approve every skill tool,
         including the script execution tool (``run_skill_script``).
@@ -2001,6 +2012,9 @@ class SkillsProvider(ContextProvider):
         *,
         instruction_template: str | None = None,
         disable_caching: bool = False,
+        disable_load_skill_approval: bool = False,
+        disable_read_skill_resource_approval: bool = False,
+        disable_run_skill_script_approval: bool = False,
         source_id: str | None = None,
     ) -> None:
         """Initialize a SkillsProvider.
@@ -2029,14 +2043,33 @@ class SkillsProvider(ContextProvider):
             disable_caching: When ``True``, rebuilds tools and instructions
                 from the source on every invocation instead of caching
                 after the first build.  Defaults to ``False``.
+            disable_load_skill_approval: When ``True``, the ``load_skill`` tool
+                is registered with ``approval_mode="never_require"`` so it runs
+                without approval.  Defaults to ``False`` (approval required).
+                Only enable this for skills from a trusted source.
+            disable_read_skill_resource_approval: When ``True``, the
+                ``read_skill_resource`` tool is registered with
+                ``approval_mode="never_require"`` so it runs without approval.
+                Defaults to ``False`` (approval required).  Only enable this for
+                skills from a trusted source.
+            disable_run_skill_script_approval: When ``True``, the
+                ``run_skill_script`` tool is registered with
+                ``approval_mode="never_require"`` so it runs without approval.
+                Defaults to ``False`` (approval required).  Only enable this for
+                skills and scripts from a trusted source.
             source_id: Unique identifier for this provider instance.
 
         .. note::
 
-            All skill tools require approval. To approve them
+            By default every skill tool requires approval. To approve them
             automatically, pass :meth:`read_only_tools_auto_approval_rule` or
             :meth:`all_tools_auto_approval_rule` to
-            :class:`~agent_framework.ToolApprovalMiddleware`. See
+            :class:`~agent_framework.ToolApprovalMiddleware`. Alternatively, for
+            trusted skills, set one or more of
+            ``disable_load_skill_approval``, ``disable_read_skill_resource_approval``,
+            and ``disable_run_skill_script_approval`` to opt individual tools out
+            of approval entirely (the auto-approval rules only apply to tools
+            that still require approval). See
             ``samples/02-agents/skills/skills_auto_approval/skills_auto_approval.py``
             for the auto-approval pattern and
             ``samples/02-agents/skills/script_approval/script_approval.py`` for
@@ -2067,6 +2100,9 @@ class SkillsProvider(ContextProvider):
         self._source = source
         self._instruction_template = instruction_template
         self._disable_caching = disable_caching
+        self._disable_load_skill_approval = disable_load_skill_approval
+        self._disable_read_skill_resource_approval = disable_read_skill_resource_approval
+        self._disable_run_skill_script_approval = disable_run_skill_script_approval
 
     @classmethod
     def from_paths(
@@ -2081,6 +2117,9 @@ class SkillsProvider(ContextProvider):
         resource_filter: Callable[[str, str], bool] | None = None,
         instruction_template: str | None = None,
         disable_caching: bool = False,
+        disable_load_skill_approval: bool = False,
+        disable_read_skill_resource_approval: bool = False,
+        disable_run_skill_script_approval: bool = False,
         source_id: str | None = None,
     ) -> _TSkillsProvider:
         """Create a provider from one or more file-based skill directories.
@@ -2118,6 +2157,16 @@ class SkillsProvider(ContextProvider):
             disable_caching: When ``True``, rebuilds tools and instructions
                 from the source on every invocation instead of caching
                 after the first build.
+            disable_load_skill_approval: When ``True``, the ``load_skill`` tool
+                runs without approval.  Defaults to ``False``.  Only enable this
+                for skills from a trusted source.
+            disable_read_skill_resource_approval: When ``True``, the
+                ``read_skill_resource`` tool runs without approval.  Defaults to
+                ``False``.  Only enable this for skills from a trusted source.
+            disable_run_skill_script_approval: When ``True``, the
+                ``run_skill_script`` tool runs without approval.  Defaults to
+                ``False``.  Only enable this for skills and scripts from a
+                trusted source.
             source_id: Unique identifier for this provider instance.
 
         Returns:
@@ -2125,10 +2174,14 @@ class SkillsProvider(ContextProvider):
 
         .. note::
 
-            All skill tools require approval. To approve them
+            By default every skill tool requires approval. To approve them
             automatically, pass :meth:`read_only_tools_auto_approval_rule` or
             :meth:`all_tools_auto_approval_rule` to
-            :class:`~agent_framework.ToolApprovalMiddleware`.
+            :class:`~agent_framework.ToolApprovalMiddleware`. Alternatively, for
+            trusted skills, set one or more of ``disable_load_skill_approval``,
+            ``disable_read_skill_resource_approval``, and
+            ``disable_run_skill_script_approval`` to opt individual tools out of
+            approval entirely.
         """
         source = DeduplicatingSkillsSource(
             FileSkillsSource(
@@ -2145,6 +2198,9 @@ class SkillsProvider(ContextProvider):
             source,
             instruction_template=instruction_template,
             disable_caching=disable_caching,
+            disable_load_skill_approval=disable_load_skill_approval,
+            disable_read_skill_resource_approval=disable_read_skill_resource_approval,
+            disable_run_skill_script_approval=disable_run_skill_script_approval,
             source_id=source_id,
         )
 
@@ -2278,6 +2334,19 @@ class SkillsProvider(ContextProvider):
         context.extend_instructions(self.source_id, instructions)  # type: ignore[arg-type]
         context.extend_tools(self.source_id, tools)
 
+    @staticmethod
+    def _approval_mode(approval_disabled: bool) -> ApprovalMode:
+        """Return the ``approval_mode`` for a tool given its disable flag.
+
+        Args:
+            approval_disabled: When ``True``, the tool runs without approval.
+
+        Returns:
+            ``"never_require"`` when approval is disabled, otherwise
+            ``"always_require"``.
+        """
+        return "never_require" if approval_disabled else "always_require"
+
     def _create_tools(
         self,
         skills: Sequence[Skill],
@@ -2285,12 +2354,17 @@ class SkillsProvider(ContextProvider):
         """Create the tool definitions for skill interaction.
 
         Always includes ``load_skill``, ``read_skill_resource``, and
-        ``run_skill_script``.  Every tool is registered with
+        ``run_skill_script``.  By default every tool is registered with
         ``approval_mode="always_require"`` so each skill operation needs
         approval; use :meth:`read_only_tools_auto_approval_rule` or
         :meth:`all_tools_auto_approval_rule` with
         :class:`~agent_framework.ToolApprovalMiddleware` to approve them
-        automatically.
+        automatically.  For trusted skills, individual tools can be opted out of
+        approval entirely via the ``disable_load_skill_approval``,
+        ``disable_read_skill_resource_approval``, and
+        ``disable_run_skill_script_approval`` constructor arguments, in which
+        case the corresponding tool is registered with
+        ``approval_mode="never_require"``.
 
         Args:
             skills: The skills to bind to tool handlers.
@@ -2315,7 +2389,7 @@ class SkillsProvider(ContextProvider):
                 name=self.LOAD_SKILL_TOOL_NAME,
                 description="Loads the full instructions for a specific skill.",
                 func=_load,
-                approval_mode="always_require",
+                approval_mode=self._approval_mode(self._disable_load_skill_approval),
                 input_model={
                     "type": "object",
                     "properties": {
@@ -2328,7 +2402,7 @@ class SkillsProvider(ContextProvider):
                 name=self.READ_SKILL_RESOURCE_TOOL_NAME,
                 description=("Reads a resource associated with a skill, such as references, assets, or dynamic data."),
                 func=_read_resource,
-                approval_mode="always_require",
+                approval_mode=self._approval_mode(self._disable_read_skill_resource_approval),
                 input_model={
                     "type": "object",
                     "properties": {
@@ -2345,7 +2419,7 @@ class SkillsProvider(ContextProvider):
                 name=self.RUN_SKILL_SCRIPT_TOOL_NAME,
                 description="Runs a script associated with a skill.",
                 func=_run_script,
-                approval_mode="always_require",
+                approval_mode=self._approval_mode(self._disable_run_skill_script_approval),
                 input_model={
                     "type": "object",
                     "properties": {
