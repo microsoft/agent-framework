@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <VersionSuffix>preview</VersionSuffix>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- IsExternalInit polyfill so 'init' accessors compile against net472 too. -->
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <!-- Samples live under samples/ (mirroring the Python azure-contentunderstanding package
+       layout) but are standalone executable projects: never compile or pack them with the library. -->
+  <ItemGroup>
+    <Compile Remove="samples\**\*.cs" />
+    <None Remove="samples\**" />
+    <EmbeddedResource Remove="samples\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.AI.ContentUnderstanding" />
+    <PackageReference Include="Azure.AI.Projects" />
+    <PackageReference Include="Microsoft.Extensions.AI" />
+    <PackageReference Include="OpenAI" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework Azure AI Content Understanding</Title>
+    <Description>Provides Microsoft Agent Framework support for grounding agents with Azure AI Content Understanding analyses of files, audio, and video.</Description>
+  </PropertyGroup>
+
+</Project>
