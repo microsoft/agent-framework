@@ -75,7 +75,7 @@ async def _init_provider(provider: SkillsProvider) -> SkillsProvider:
     skills list itself is cached by the source pipeline (see
     ``CachingSkillsSource``); this helper just captures one built context.
     """
-    provider._test_context = await provider._create_context()  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+    provider._test_context = await provider._create_context()  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]  # ty: ignore[unresolved-attribute]
     return provider
 
 
