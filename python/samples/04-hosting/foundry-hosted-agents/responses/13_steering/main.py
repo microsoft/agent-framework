@@ -22,13 +22,15 @@ def main():
     agent = Agent(
         client=client,
         instructions="You are a friendly assistant. Keep your answers brief.",
-        # History will be managed by the hosting infrastructure, thus there
-        # is no need to store history by the service. Learn more at:
-        # https://developers.openai.com/api/reference/resources/responses/methods/create
         default_options={"store": False},
     )
 
-    server = ResponsesHostServer(agent)
+    # steerable_conversations=True allows a client to send a new turn while
+    # the current one is still in progress. The new turn is queued and the
+    # running handler is cooperatively cancelled (via cancellation_signal)
+    # rather than the client receiving HTTP 409 conversation_locked.
+    # Once the current turn reaches a terminal event the queued turn runs.
+    server = ResponsesHostServer(agent, steerable_conversations=True)
     server.run()
 
 

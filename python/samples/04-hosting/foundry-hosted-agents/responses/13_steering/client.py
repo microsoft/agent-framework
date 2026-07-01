@@ -85,6 +85,9 @@ async def demo(base: str) -> None:
                     "input": "Count from 1 to 50, one number per line.",
                     "stream": True,
                     "store": True,
+                    # "conversation" is the b8 field for a shared conversation ID.
+                    # Both turns must carry the same value to share the same
+                    # multi-turn steerable task.
                     "conversation": conv_id,
                 },
             ) as resp:
@@ -140,7 +143,7 @@ async def demo(base: str) -> None:
                 f"\nUnexpected status {r2_status!r} — expected 'queued'.\n"
                 "  If 'conflict': the server may not have steerable_conversations=True.\n"
                 "  If 'in_progress': turn 1 completed before turn 2 arrived; "
-                "increase the sleep in send_turn2."
+                "the model may be responding too quickly for this prompt."
             )
 
         # Wait for turn 1 to drain
@@ -148,7 +151,7 @@ async def demo(base: str) -> None:
         print(f"\n    Turn 1 terminated  : response.{turn1_terminal}")
         print(f"    Turn 1 text so far : {len(''.join(turn1_text))} chars")
 
-        # Poll turn 2 until it completes, then stream its stored response
+        # Poll turn 2 until it completes, then print the agent's reply
         print("\n>>> Waiting for turn 2 to complete...")
         for _ in range(120):
             await asyncio.sleep(0.5)
@@ -157,7 +160,6 @@ async def demo(base: str) -> None:
             print(f"    status: {s2}")
             if s2 in ("completed", "failed", "cancelled"):
                 if s2 == "completed":
-                    # Extract and print the agent's reply
                     output_text = ""
                     for item in s2_resp.get("output", []):
                         for part in item.get("content", []):
