@@ -214,6 +214,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
                 RunId = runId,
                 Messages = messagesList.AsAGUIMessages(this._jsonSerializerOptions),
                 State = state,
+                ForwardedProperties = ExtractForwardedPropertiesFromOptions(options),
             };
 
             // Add tools if provided
@@ -286,6 +287,18 @@ public sealed class AGUIChatClient : DelegatingChatClient
                 return null;
             }
             return threadId;
+        }
+
+        private static JsonElement ExtractForwardedPropertiesFromOptions(ChatOptions? options)
+        {
+            if (options?.AdditionalProperties is null ||
+              !options.AdditionalProperties.TryGetValue("ag_ui_forwarded_properties", out object? forwardedProperties) ||
+              forwardedProperties is not JsonElement jsonElement)
+            {
+                return default;
+            }
+
+            return jsonElement;
         }
 
         // Extract the session id from the second last message's function call content additional properties

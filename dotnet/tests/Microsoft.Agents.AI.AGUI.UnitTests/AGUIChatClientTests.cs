@@ -1396,6 +1396,44 @@ public sealed class AGUIAgentTests
     }
 
     [Fact]
+    public async Task GetStreamingResponseAsync_ForwardsAdditionalPropertiesInRunInputAsync()
+    {
+        // Arrange
+        var forwardedProperties = new { tenant = "contoso", conversation = "abc123" };
+
+        var captureHandler = new StateCapturingTestDelegatingHandler();
+        captureHandler.AddResponse(
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ]);
+        using HttpClient httpClient = new(captureHandler);
+
+        var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
+        var options = new ChatOptions
+        {
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                ["ag_ui_forwarded_properties"] = JsonSerializer.SerializeToElement(forwardedProperties)
+            }
+        };
+        List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
+
+        // Act
+        await foreach (var _ in chatClient.GetStreamingResponseAsync(messages, options))
+        {
+            // Just consume the stream
+        }
+
+        // Assert
+        Assert.True(captureHandler.RequestWasMade);
+        Assert.NotNull(captureHandler.CapturedForwardedProperties);
+        Assert.Equal(JsonValueKind.Object, captureHandler.CapturedForwardedProperties.Value.ValueKind);
+        Assert.Equal("contoso", captureHandler.CapturedForwardedProperties.Value.GetProperty("tenant").GetString());
+        Assert.Equal("abc123", captureHandler.CapturedForwardedProperties.Value.GetProperty("conversation").GetString());
+    }
+
+    [Fact]
     public async Task GetStreamingResponseAsync_WithMalformedStateJson_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
@@ -1730,6 +1768,7 @@ internal sealed class StateCapturingTestDelegatingHandler : DelegatingHandler
 
     public bool RequestWasMade { get; private set; }
     public JsonElement? CapturedState { get; private set; }
+    public JsonElement? CapturedForwardedProperties { get; private set; }
     public int CapturedMessageCount { get; private set; }
     public IReadOnlyList<int> CapturedMessageCounts => this._capturedMessageCounts;
 
@@ -1754,6 +1793,10 @@ internal sealed class StateCapturingTestDelegatingHandler : DelegatingHandler
             if (input.State.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null)
             {
                 this.CapturedState = input.State;
+            }
+            if (input.ForwardedProperties.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null)
+            {
+                this.CapturedForwardedProperties = input.ForwardedProperties;
             }
             this.CapturedMessageCount = input.Messages.Count();
             this._capturedMessageCounts.Add(this.CapturedMessageCount);
