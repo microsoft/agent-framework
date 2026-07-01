@@ -380,5 +380,16 @@ public sealed class HarnessAgentOptions
     /// This property is ignored when <see cref="ShellExecutor"/> is <see langword="null"/>.
     /// </remarks>
     public ShellEnvironmentProviderOptions? ShellEnvironmentProviderOptions { get; set; }
+
+    /// <summary>
+    /// Gets or sets the name of the shell execution tool exposed to the model.
+    /// </summary>
+    /// <remarks>
+    /// When set, this value is passed to <see cref="ShellExecutor.AsAIFunction"/> as the function name
+    /// the model sees when invoking the shell tool. When <see langword="null"/> (the default), the
+    /// executor's own default name (<c>run_shell</c>) is used.
+    /// This property is ignored when <see cref="ShellExecutor"/> is <see langword="null"/>.
+    /// </remarks>
+    public string? ShellToolName { get; set; }
 #endif
 }

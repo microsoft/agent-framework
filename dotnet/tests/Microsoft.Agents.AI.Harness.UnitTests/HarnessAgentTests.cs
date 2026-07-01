@@ -1575,6 +1575,41 @@ public class HarnessAgentTests
     }
 
     /// <summary>
+    /// Verify that a custom <see cref="HarnessAgentOptions.ShellToolName"/> flows through to
+    /// <see cref="ShellExecutor.AsAIFunction"/> so the shell tool is exposed under that name.
+    /// </summary>
+    [Fact]
+    public async Task ShellExecutor_CustomToolNameIsUsedAsync()
+    {
+        // Arrange
+        ChatOptions? capturedOptions = null;
+        var chatClientMock = new Mock<IChatClient>();
+        chatClientMock
+            .Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((_, opts, _) => capturedOptions = opts)
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "done")));
+
+        var executorMock = new Mock<ShellExecutor>();
+        executorMock.Setup(e => e.AsAIFunction(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>()))
+            .Returns<string, string?, bool>((name, _, _) => AIFunctionFactory.Create(() => "shell output", name));
+
+        var options = CreateAllDisabledOptions();
+        options.DisableWebSearch = true;
+        options.ShellExecutor = executorMock.Object;
+        options.ShellToolName = "execute_command";
+
+        // Act
+        var agent = new HarnessAgent(chatClientMock.Object, options);
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert — the shell tool should be exposed under the custom name, not the default
+        Assert.NotNull(capturedOptions?.Tools);
+        Assert.Contains(capturedOptions!.Tools!, t => t is AIFunction f && f.Name == "execute_command");
+        Assert.DoesNotContain(capturedOptions.Tools!, t => t is AIFunction f && f.Name == "run_shell");
+    }
+
+    /// <summary>
     /// Verify that ShellEnvironmentProvider is present when ShellEnvironmentProviderOptions is also specified.
     /// </summary>
     [Fact]
