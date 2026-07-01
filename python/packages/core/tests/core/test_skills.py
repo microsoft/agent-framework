@@ -15,6 +15,7 @@ import pytest
 
 from agent_framework import (
     AggregatingSkillsSource,
+    CachingSkillsSource,
     ClassSkill,
     Content,
     DeduplicatingSkillsSource,
@@ -28,8 +29,10 @@ from agent_framework import (
     SkillFrontmatter,
     SkillResource,
     SkillScript,
+    SkillScriptArgumentParser,
     SkillScriptRunner,
     SkillsProvider,
+    SkillsSource,
 )
 from agent_framework._skills import (
     DEFAULT_RESOURCE_EXTENSIONS,
@@ -53,31 +56,45 @@ async def _noop_script_runner(skill: Any, script: Any, args: Any = None) -> None
     return
 
 
-async def _init_provider(provider: SkillsProvider) -> SkillsProvider:
-    """Initialize a provider's lazy state for testing.
+class _CountingSkillsSource(SkillsSource):
+    """Test source that records how many times ``get_skills`` is called."""
 
-    Calls the internal ``_get_or_create_context()`` method so that tests can
-    immediately inspect the cached context via ``_cached_context``.
+    def __init__(self, skills: Sequence[Skill]) -> None:
+        self._skills = list(skills)
+        self.call_count = 0
+
+    async def get_skills(self) -> list[Skill]:
+        self.call_count += 1
+        return list(self._skills)
+
+
+async def _init_provider(provider: SkillsProvider) -> SkillsProvider:
+    """Initialize a provider's context for testing.
+
+    Calls the internal ``_create_context()`` method and stashes the result on
+    the provider so tests can immediately inspect it via :func:`_ctx`.  The
+    skills list itself is cached by the source pipeline (see
+    ``CachingSkillsSource``); this helper just captures one built context.
     """
-    await provider._get_or_create_context()  # pyright: ignore[reportPrivateUsage]
+    provider._test_context = await provider._create_context()  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]  # ty: ignore[unresolved-attribute]
     return provider
 
 
 def _ctx(provider: SkillsProvider) -> tuple[dict[str, Skill], str | None, list[Any]]:
-    """Return the cached context, asserting it was initialized.
+    """Return the captured context, asserting it was initialized.
 
     Converts the skills sequence to a dict keyed by name for convenient
     test assertions.
     """
-    ctx = provider._cached_context  # pyright: ignore[reportPrivateUsage]
+    ctx = getattr(provider, "_test_context", None)
     assert ctx is not None, "_init_provider() must be called before accessing context"
     skills, instructions, tools = ctx
     return {s.frontmatter.name: s for s in skills}, instructions, tools
 
 
 def _raw_skills(provider: SkillsProvider) -> Sequence[Skill]:
-    """Return the raw skills sequence from the cached context."""
-    ctx = provider._cached_context  # pyright: ignore[reportPrivateUsage]
+    """Return the raw skills sequence from the captured context."""
+    ctx = getattr(provider, "_test_context", None)
     assert ctx is not None, "_init_provider() must be called before accessing context"
     return ctx[0]
 
@@ -1806,8 +1823,8 @@ class TestFileSkillsSourceSearchDepthAndFilters:
         assert "keep.md" in resource_names
         assert "drop.md" not in resource_names
 
-    async def test_nested_skill_directory_not_crossed(self, tmp_path: Path) -> None:
-        """Files in a nested skill directory are NOT attached to the parent skill."""
+    async def test_nested_skill_directory_absorbed_into_parent(self, tmp_path: Path) -> None:
+        """A nested SKILL.md is not an independent skill; its contents belong to the parent."""
         parent_dir = tmp_path / "parent-skill"
         child_dir = parent_dir / "child-skill"
         child_dir.mkdir(parents=True)
@@ -1827,22 +1844,19 @@ class TestFileSkillsSourceSearchDepthAndFilters:
         skills = await source.get_skills()
         skills_dict = {s.frontmatter.name: s for s in skills}
 
-        # Both skills are discovered
+        # Only the parent skill is discovered; the nested SKILL.md is not its own skill.
         assert "parent-skill" in skills_dict
-        assert "child-skill" in skills_dict
+        assert "child-skill" not in skills_dict
 
-        # Parent does NOT pick up child's files
+        # The parent absorbs the nested directory's resources and scripts.
         parent_resources = [r.name for r in skills_dict["parent-skill"]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         parent_scripts = [s.name for s in skills_dict["parent-skill"]._scripts]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "parent-resource.md" in parent_resources
-        assert "child-skill/child-resource.md" not in parent_resources
-        assert "child-skill/child-script.py" not in parent_scripts
+        assert "child-skill/child-resource.md" in parent_resources
+        assert "child-skill/child-script.py" in parent_scripts
 
-        # Child has its own files
-        child_resources = [r.name for r in skills_dict["child-skill"]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-        child_scripts = [s.name for s in skills_dict["child-skill"]._scripts]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-        assert "child-resource.md" in child_resources
-        assert "child-script.py" in child_scripts
+        # The nested SKILL.md file itself is never surfaced as a resource.
+        assert "child-skill/SKILL.md" not in parent_resources
 
 
 # ---------------------------------------------------------------------------
@@ -1994,6 +2008,17 @@ class TestDiscoverSkillDirectories:
         dirs = FileSkillsSource._discover_skill_directories([str(tmp_path)])
         assert len(dirs) == 1
         assert str(sub.absolute()) in dirs[0]
+
+    def test_stops_searching_below_skill_boundary(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / "parent-skill"
+        nested_skill_dir = skill_dir / "nested-skill"
+        nested_skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("---\nname: parent-skill\ndescription: d\n---\n", encoding="utf-8")
+        (nested_skill_dir / "SKILL.md").write_text("---\nname: nested-skill\ndescription: d\n---\n", encoding="utf-8")
+
+        dirs = FileSkillsSource._discover_skill_directories([str(tmp_path)])
+
+        assert dirs == [str(skill_dir.absolute())]
 
     def test_skips_empty_path_string(self) -> None:
         dirs = FileSkillsSource._discover_skill_directories(["", "   "])
@@ -5289,6 +5314,91 @@ class TestSkillsSource:
         assert len(skills) == 1
         assert skills[0].frontmatter.name == "test-skill"
 
+    async def test_caching_source_caches_inner_results(self) -> None:
+        """CachingSkillsSource queries the inner source only once."""
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="test"), instructions="body")
+        inner = _CountingSkillsSource([skill])
+
+        cached = CachingSkillsSource(inner)
+        first = await cached.get_skills()
+        second = await cached.get_skills()
+
+        assert inner.call_count == 1
+        assert first is second
+        assert [s.frontmatter.name for s in first] == ["test-skill"]
+
+    async def test_caching_source_is_delegating(self) -> None:
+        """CachingSkillsSource exposes its inner source like other decorators."""
+        from agent_framework import DelegatingSkillsSource
+
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="test"), instructions="body")
+        inner = InMemorySkillsSource([skill])
+        cached = CachingSkillsSource(inner)
+        assert isinstance(cached, DelegatingSkillsSource)
+        assert cached.inner_source is inner
+
+    async def test_caching_source_retries_after_failure(self) -> None:
+        """A failing first fetch is not cached; the next call retries."""
+
+        class FlakySource(SkillsSource):
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def get_skills(self) -> list[Skill]:
+                self.call_count += 1
+                if self.call_count == 1:
+                    raise RuntimeError("transient failure")
+                return [
+                    InlineSkill(
+                        frontmatter=SkillFrontmatter(name="test-skill", description="test"),
+                        instructions="body",
+                    )
+                ]
+
+        inner = FlakySource()
+        cached = CachingSkillsSource(inner)
+
+        with pytest.raises(RuntimeError, match="transient failure"):
+            await cached.get_skills()
+
+        skills = await cached.get_skills()
+        assert inner.call_count == 2
+        assert [s.frontmatter.name for s in skills] == ["test-skill"]
+
+    async def test_caching_source_shares_single_inflight_fetch(self) -> None:
+        """Concurrent callers share one in-flight fetch of the inner source."""
+        import asyncio
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class SlowSource(SkillsSource):
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def get_skills(self) -> list[Skill]:
+                self.call_count += 1
+                started.set()
+                await release.wait()
+                return [
+                    InlineSkill(
+                        frontmatter=SkillFrontmatter(name="test-skill", description="test"),
+                        instructions="body",
+                    )
+                ]
+
+        inner = SlowSource()
+        cached = CachingSkillsSource(inner)
+
+        first = asyncio.ensure_future(cached.get_skills())
+        await started.wait()
+        second = asyncio.ensure_future(cached.get_skills())
+        release.set()
+
+        results = await asyncio.gather(first, second)
+        assert inner.call_count == 1
+        assert results[0] is results[1]
+
     async def test_provider_with_source_parameter(self, tmp_path: Path) -> None:
         """SkillsProvider works with the new source= parameter."""
         skill_dir = tmp_path / "my-skill"
@@ -5599,31 +5709,43 @@ class TestSkillsProviderFactoryMethods:
 
 
 class TestDisableCaching:
-    """Tests for the disable_caching option."""
+    """Tests for the disable_caching option (now backed by CachingSkillsSource)."""
 
-    async def test_default_caching_enabled(self) -> None:
-        """By default, _get_or_create_context only builds once."""
+    async def test_default_wraps_source_in_caching(self) -> None:
+        """By default, the resolved source is wrapped in a CachingSkillsSource."""
+        from agent_framework import CachingSkillsSource
+
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
         provider = SkillsProvider([skill])
-        await _init_provider(provider)
-        first_ctx = provider._cached_context  # pyright: ignore[reportPrivateUsage]
-        assert first_ctx is not None
+        assert isinstance(provider._source, CachingSkillsSource)  # pyright: ignore[reportPrivateUsage]
 
-        # Calling _get_or_create_context again should return cached result
-        skills, _, _ = await provider._get_or_create_context()
-        assert skills is first_ctx[0]  # Same object reference
+    async def test_default_caching_queries_source_once(self) -> None:
+        """By default, the inner source is queried only once across calls."""
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
+        inner = _CountingSkillsSource([skill])
+        provider = SkillsProvider(inner)
 
-    async def test_disable_caching_rebuilds_on_every_call(self) -> None:
-        """With disable_caching=True, _create_context rebuilds every time."""
+        await provider._create_context()  # pyright: ignore[reportPrivateUsage]
+        await provider._create_context()  # pyright: ignore[reportPrivateUsage]
+        assert inner.call_count == 1
+
+    async def test_disable_caching_does_not_wrap_source(self) -> None:
+        """With disable_caching=True, the source is not wrapped in CachingSkillsSource."""
+        from agent_framework import CachingSkillsSource
+
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
         provider = SkillsProvider([skill], disable_caching=True)
-        await _init_provider(provider)
-        first_ctx = provider._cached_context  # pyright: ignore[reportPrivateUsage]
-        assert first_ctx is not None
+        assert not isinstance(provider._source, CachingSkillsSource)  # pyright: ignore[reportPrivateUsage]
 
-        # Calling _create_context again should rebuild
-        skills, _, _ = await provider._create_context()
-        assert skills is not first_ctx[0]  # Different object
+    async def test_disable_caching_rebuilds_on_every_call(self) -> None:
+        """With disable_caching=True, the inner source is queried on every call."""
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
+        inner = _CountingSkillsSource([skill])
+        provider = SkillsProvider(inner, disable_caching=True)
+
+        await provider._create_context()  # pyright: ignore[reportPrivateUsage]
+        await provider._create_context()  # pyright: ignore[reportPrivateUsage]
+        assert inner.call_count == 2
 
     async def test_disable_caching_via_constructor(self) -> None:
         """disable_caching works via the primary constructor."""
@@ -5876,3 +5998,159 @@ class TestArrayStyleScriptArgs:
         content = await skill.get_content()
         assert "<available_resources>" in content
         assert '<resource name="ref-data"/>' in content
+
+
+class TestSkillScriptArgumentParser:
+    """Tests for custom argument parsing on inline skill scripts.
+
+    Mirrors the .NET PR #6498 that lets callers plug in their own argument
+    conversion logic (e.g. for vLLM backends that send tool-call arguments as
+    a JSON string instead of a JSON object).
+    """
+
+    @staticmethod
+    def _json_string_parser(args: dict[str, Any] | list[str] | str | None) -> dict[str, Any] | None:
+        """Parser that decodes a JSON-string ``args`` into a dict."""
+        import json as _json
+
+        if isinstance(args, str):
+            return _json.loads(args)
+        if isinstance(args, dict):
+            return args
+        return None
+
+    async def test_default_no_parser_passes_dict_unchanged(self) -> None:
+        """Without a parser, dict args reach the callable unchanged."""
+        script = InlineSkillScript(name="greet", function=lambda name="world": f"hello {name}")
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        result = await script.run(skill, args={"name": "Alice"})
+        assert result == "hello Alice"
+
+    async def test_script_parser_converts_json_string_to_dict(self) -> None:
+        """A parser converts a JSON-string args payload into named arguments."""
+        script = InlineSkillScript(
+            name="greet",
+            function=lambda name="world": f"hello {name}",
+            argument_parser=self._json_string_parser,
+        )
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        result = await script.run(skill, args='{"name": "Alice"}')
+        assert result == "hello Alice"
+
+    async def test_script_parser_passes_dict_through(self) -> None:
+        """A parser still receives and may pass through dict args."""
+        script = InlineSkillScript(
+            name="greet",
+            function=lambda name="world": f"hello {name}",
+            argument_parser=self._json_string_parser,
+        )
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        result = await script.run(skill, args={"name": "Bob"})
+        assert result == "hello Bob"
+
+    async def test_script_parser_is_satisfied_by_callable(self) -> None:
+        """A plain callable satisfies the SkillScriptArgumentParser alias."""
+        parser: SkillScriptArgumentParser = self._json_string_parser
+        assert callable(parser)
+
+    async def test_parser_returning_list_still_rejected(self) -> None:
+        """Defense-in-depth: even if a parser yields a list, the inline guard fires.
+
+        The parser output type forbids lists, so this scenario requires a
+        loosely-typed parser; the runtime guard still protects against it.
+        """
+
+        def to_list(args: dict[str, Any] | list[str] | str | None) -> Any:
+            return ["a", "b"]
+
+        script = InlineSkillScript(name="s1", function=lambda: "ok", argument_parser=to_list)
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        with pytest.raises(TypeError, match="requires keyword arguments"):
+            await script.run(skill, args={"ignored": True})
+
+    async def test_inline_skill_propagates_parser_to_decorated_scripts(self) -> None:
+        """InlineSkill passes its parser to scripts added via @skill.script."""
+        skill = InlineSkill(
+            frontmatter=SkillFrontmatter(name="s", description="d"),
+            instructions="c",
+            argument_parser=self._json_string_parser,
+        )
+
+        @skill.script
+        def greet(name: str = "world") -> str:
+            return f"hi {name}"
+
+        script = await skill.get_script("greet")
+        assert isinstance(script, InlineSkillScript)
+        assert script.argument_parser is self._json_string_parser
+        result = await script.run(skill, args='{"name": "Carol"}')
+        assert result == "hi Carol"
+
+    async def test_inline_skill_no_parser_leaves_scripts_unparsed(self) -> None:
+        """Without an InlineSkill parser, decorated scripts have none."""
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+
+        @skill.script
+        def greet(name: str = "world") -> str:
+            return f"hi {name}"
+
+        script = await skill.get_script("greet")
+        assert isinstance(script, InlineSkillScript)
+        assert script.argument_parser is None
+
+    async def test_class_skill_propagates_parser_to_discovered_scripts(self) -> None:
+        """ClassSkill passes its parser to scripts discovered via @ClassSkill.script."""
+        parser = self._json_string_parser
+
+        class _ParsingClassSkill(ClassSkill):
+            def __init__(self) -> None:
+                super().__init__(
+                    frontmatter=SkillFrontmatter(name="cs", description="d"),
+                    argument_parser=parser,
+                )
+
+            @property
+            def instructions(self) -> str:
+                return "body"
+
+            @ClassSkill.script
+            def convert(self, name: str = "world") -> str:
+                return f"converted {name}"
+
+        skill = _ParsingClassSkill()
+        script = await skill.get_script("convert")
+        assert isinstance(script, InlineSkillScript)
+        assert script.argument_parser is parser
+        result = await script.run(skill, args='{"name": "Dan"}')
+        assert result == "converted Dan"
+
+    async def test_run_skill_script_parses_args_via_provider(self) -> None:
+        """End-to-end: a parser remaps args as they flow through the provider to an inline script."""
+
+        def remap(args: dict[str, Any] | list[str] | str | None) -> dict[str, Any] | None:
+            if isinstance(args, dict) and "q" in args:
+                return {"name": args["q"]}
+            return args if isinstance(args, dict) else None
+
+        skill = InlineSkill(
+            frontmatter=SkillFrontmatter(name="my-skill", description="test"),
+            instructions="body",
+            argument_parser=remap,
+        )
+
+        @skill.script
+        def greet(name: str = "world") -> str:
+            return f"hello {name}"
+
+        provider = SkillsProvider([skill])
+        await _init_provider(provider)
+        run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
+        result = await run_tool.func(skill_name="my-skill", script_name="greet", args={"q": "Eve"})
+        assert result == "hello Eve"
+
+    async def test_inline_string_args_without_parser_raises(self) -> None:
+        """A raw string reaching an inline script with no parser raises a clear TypeError."""
+        script = InlineSkillScript(name="greet", function=lambda name="world": f"hello {name}")
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        with pytest.raises(TypeError, match="argument_parser"):
+            await script.run(skill, args='{"name": "Alice"}')

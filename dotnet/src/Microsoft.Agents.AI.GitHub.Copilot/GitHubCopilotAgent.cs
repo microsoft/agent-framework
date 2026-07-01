@@ -577,9 +577,12 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         // Warn so the developer knows the ApprovalRequiredAIFunction marker(s) will not be automatically gated.
         if (sessionConfig.Hooks?.OnPreToolUse is not null)
         {
-            logger.LogApprovalGatingSkippedDueToCustomHook(
-                approvalRequiredToolNames.Count,
-                string.Join(", ", approvalRequiredToolNames));
+            if (logger.IsEnabled(LogLevel.Warning))
+            {
+                logger.LogApprovalGatingSkippedDueToCustomHook(
+                    approvalRequiredToolNames.Count,
+                    string.Join(", ", approvalRequiredToolNames));
+            }
             return sessionConfig;
         }
 

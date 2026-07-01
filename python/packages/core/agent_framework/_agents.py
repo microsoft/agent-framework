@@ -1197,11 +1197,16 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # Resolve conversation_id from the same combined view so an agent-level default is honored
         # when the runtime omits it (a live session id still takes precedence below).
         effective_conversation_id = effective_options.get("conversation_id")
-        # Auto-inject InMemoryHistoryProvider when session is provided, no context providers
-        # registered, and no service-side storage indicators
+        # Auto-inject InMemoryHistoryProvider when a session is provided and no
+        # loading history provider exists yet. Gating on history providers (not
+        # any context provider) keeps local history when non-history providers
+        # like SkillsProvider are present, so multi-turn flows on stateless
+        # clients don't lose prior messages.
         if (
             session is not None
-            and not self.context_providers
+            and not any(
+                provider.load_messages for provider in self.context_providers if isinstance(provider, HistoryProvider)
+            )
             and not session.service_session_id
             and not effective_conversation_id
             and not service_stores_history

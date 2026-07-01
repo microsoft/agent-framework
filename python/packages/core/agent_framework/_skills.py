@@ -34,7 +34,8 @@ Skills can come from different sources:
   skills from arbitrary origins (REST APIs, databases, etc.).
 
 Multiple sources can be composed using :class:`AggregatingSkillsSource`,
-:class:`FilteringSkillsSource`, and :class:`DeduplicatingSkillsSource`.
+:class:`FilteringSkillsSource`, :class:`DeduplicatingSkillsSource`, and
+:class:`CachingSkillsSource`.
 
 **Security:** file-based skill metadata is XML-escaped before prompt injection, and
 file-based resource reads are guarded against path traversal and symlink escape.
@@ -54,7 +55,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeVar, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import ContextProvider
@@ -72,6 +73,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # region Models
+
+
+SkillScriptArgumentParser: TypeAlias = Callable[[dict[str, Any] | list[str] | str | None], dict[str, Any] | None]
+"""Callable that converts raw script arguments before an inline script runs.
+
+The parser receives the raw ``args`` value supplied by the agent/LLM (a
+``dict`` of named arguments, a ``list[str]`` of positional arguments, a
+``str`` for backends that send arguments as an unparsed JSON string, or
+``None``) and returns the named keyword arguments to pass to the inline
+script callable: a ``dict`` (or ``None`` for no arguments).  Inline scripts
+bind arguments by keyword name, so the parser must normalize whatever shape
+it receives into a ``dict`` or ``None``.
+
+When no parser is configured, inline scripts use the raw value unchanged.
+This hook lets callers plug in their own argument conversion logic to support
+backends (for example, vLLM and some OpenAI-compatible servers) that encode
+tool-call arguments as a JSON string instead of a JSON object.
+"""
 
 
 @experimental(feature_id=ExperimentalFeature.SKILLS)
@@ -336,6 +355,7 @@ class InlineSkillScript(SkillScript):
         name: str,
         description: str | None = None,
         function: Callable[..., Any],
+        argument_parser: SkillScriptArgumentParser | None = None,
     ) -> None:
         """Initialize an InlineSkillScript.
 
@@ -343,10 +363,18 @@ class InlineSkillScript(SkillScript):
             name: Identifier for this script (e.g. ``"analyze"``).
             description: Optional human-readable summary.
             function: Callable (sync or async) that implements the script.
+            argument_parser: Optional callable that converts the raw
+                ``args`` value into the named arguments passed to
+                ``function`` before the script runs.  When ``None`` (the
+                default), the raw value is used unchanged, which expects a
+                ``dict`` (or ``None``).  Supply a parser to support
+                backends that send arguments in a non-conforming shape (for
+                example, vLLM-style JSON strings).
         """
         super().__init__(name=name, description=description)
 
         self.function = function
+        self.argument_parser = argument_parser
         self._parameters_schema: dict[str, Any] | None = None
         self._parameters_schema_resolved: bool = False
 
@@ -369,15 +397,22 @@ class InlineSkillScript(SkillScript):
             self._parameters_schema_resolved = True
         return self._parameters_schema
 
-    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | None = None, **kwargs: Any) -> Any:
+    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | str | None = None, **kwargs: Any) -> Any:
         """Run the script by invoking the callable in-process.
+
+        When an ``argument_parser`` is configured, it is applied to
+        ``args`` first to convert it into the named arguments for the
+        callable.  Otherwise ``args`` is used unchanged.
 
         Args:
             skill: The skill that owns this script.
             args: Optional keyword arguments for the script, provided by the
-                agent/LLM.  Must be a ``dict`` or ``None``; passing a
-                ``list`` raises :class:`TypeError` because inline scripts
-                bind arguments by keyword name.
+                agent/LLM.  May be a raw ``str`` when an
+                ``argument_parser`` is configured to convert it.  After
+                any configured ``argument_parser`` runs, the result must
+                be a ``dict`` or ``None``; a ``list`` raises
+                :class:`TypeError` because inline scripts bind arguments by
+                keyword name.
             **kwargs: Runtime keyword arguments forwarded only to script
                 functions that accept ``**kwargs``.
 
@@ -385,9 +420,19 @@ class InlineSkillScript(SkillScript):
             The script execution result.
 
         Raises:
-            TypeError: If ``args`` is a ``list`` (array-style arguments
-                are only supported for file-based scripts).
+            TypeError: If ``args`` (after parsing) is a ``str`` or a
+                ``list``.  A leftover ``str`` means no ``argument_parser``
+                converted it; a ``list`` is array-style and only supported
+                for file-based scripts.
         """
+        if self.argument_parser is not None:
+            args = self.argument_parser(args)
+        if isinstance(args, str):
+            raise TypeError(
+                f"Inline script '{self.name}' received string arguments that were not "
+                f"converted to a dict. Configure an 'argument_parser' to convert "
+                f"string-encoded arguments into named keyword arguments."
+            )
         if isinstance(args, list):
             raise TypeError(
                 f"Inline script '{self.name}' requires keyword arguments (dict), "
@@ -800,6 +845,7 @@ class InlineSkill(Skill):
         instructions: str,
         resources: Sequence[SkillResource] | None = None,
         scripts: Sequence[SkillScript] | None = None,
+        argument_parser: SkillScriptArgumentParser | None = None,
     ) -> None:
         """Initialize an InlineSkill.
 
@@ -810,10 +856,15 @@ class InlineSkill(Skill):
             instructions: The skill instructions text.
             resources: Pre-built resources to attach to this skill.
             scripts: Pre-built scripts to attach to this skill.
+            argument_parser: Optional default :data:`SkillScriptArgumentParser`
+                applied to scripts registered via the :meth:`script` decorator.
+                Pre-built ``scripts`` keep their own parser. When ``None``
+                (the default), scripts use the raw argument value unchanged.
         """
         self._frontmatter = frontmatter
 
         self.instructions = instructions
+        self._argument_parser = argument_parser
         self._resources: list[SkillResource] = list(resources) if resources is not None else []
         self._scripts: list[SkillScript] = list(scripts) if scripts is not None else []
         self._cached_content: str | None = None
@@ -987,6 +1038,7 @@ class InlineSkill(Skill):
                     name=script_name,
                     description=script_description,
                     function=f,
+                    argument_parser=self._argument_parser,
                 )
             )
             return f
@@ -1153,6 +1205,7 @@ class ClassSkill(Skill, ABC):
         self,
         *,
         frontmatter: SkillFrontmatter,
+        argument_parser: SkillScriptArgumentParser | None = None,
     ) -> None:
         """Initialize a ClassSkill.
 
@@ -1160,8 +1213,13 @@ class ClassSkill(Skill, ABC):
             frontmatter: Skill specification metadata (name, description,
                 and optional spec fields). Construct a :class:`SkillFrontmatter`
                 with the desired fields.
+            argument_parser: Optional default :data:`SkillScriptArgumentParser`
+                applied to scripts discovered from :meth:`ClassSkill.script`-decorated
+                methods. When ``None`` (the default), discovered scripts use the
+                raw argument value unchanged.
         """
         self._frontmatter = frontmatter
+        self._argument_parser = argument_parser
         self._cached_content: str | None = None
         self._cached_resources: list[SkillResource] | None = None
         self._cached_scripts: list[SkillScript] | None = None
@@ -1390,6 +1448,7 @@ class ClassSkill(Skill, ABC):
                     name=script_name,
                     function=bound_method,
                     description=script_description,
+                    argument_parser=self._argument_parser,
                 )
             )
 
@@ -1998,12 +2057,16 @@ class SkillsProvider(ContextProvider):
         else:
             source = DeduplicatingSkillsSource(InMemorySkillsSource(list(source)))
 
+        # Caching is a composable pipeline layer: wrap the resolved source in a
+        # CachingSkillsSource so the (potentially expensive) skills discovery
+        # runs once and is reused on subsequent runs. Pass disable_caching=True
+        # to re-query the source on every invocation instead.
+        if not disable_caching:
+            source = CachingSkillsSource(source)
+
         self._source = source
         self._instruction_template = instruction_template
         self._disable_caching = disable_caching
-
-        # Lazy-initialized via _get_or_create_context / _create_context
-        self._cached_context: tuple[Sequence[Skill], str | None, list[FunctionTool]] | None = None
 
     @classmethod
     def from_paths(
@@ -2156,8 +2219,11 @@ class SkillsProvider(ContextProvider):
     async def _create_context(self) -> tuple[Sequence[Skill], str | None, list[FunctionTool]]:
         """Build skills, instructions, and tools from the source.
 
-        Always performs a fresh build by querying the source and
-        constructing the instruction prompt and tool definitions.
+        Queries the source for skills and constructs the instruction prompt
+        and tool definitions.  Caching of the skills list is handled by the
+        source pipeline (see :class:`CachingSkillsSource`), so this method
+        rebuilds instructions and tools from the (possibly cached) skills on
+        every call.
 
         Returns:
             A tuple of ``(skills, instructions, tools)``.
@@ -2176,28 +2242,6 @@ class SkillsProvider(ContextProvider):
 
         return skills, instructions, tools
 
-    async def _get_or_create_context(self) -> tuple[Sequence[Skill], str | None, list[FunctionTool]]:
-        """Return the cached context, building it on first call.
-
-        On the first call, delegates to :meth:`_create_context` and caches
-        the result.  Subsequent calls return the cached result immediately.
-        If the first build fails, the cache is reset so the next call
-        retries.
-
-        Returns:
-            A tuple of ``(skills, instructions, tools)``.
-        """
-        if self._cached_context is not None:
-            return self._cached_context
-
-        try:
-            result = await self._create_context()
-            self._cached_context = result
-            return result
-        except Exception:
-            self._cached_context = None
-            raise
-
     async def before_run(
         self,
         *,
@@ -2208,11 +2252,12 @@ class SkillsProvider(ContextProvider):
     ) -> None:
         """Inject skill instructions and tools into the session context.
 
-        Called by the framework before the agent runs.  On the first call,
-        loads skills from the configured source asynchronously and builds
-        the instruction prompt and tool definitions.  When at least one
-        skill is registered, appends the skill-list system prompt and the
-        ``load_skill`` / ``read_skill_resource`` tools to *context*.
+        Called by the framework before the agent runs.  Loads skills from the
+        configured source (the skills list is cached by the source pipeline
+        unless ``disable_caching=True``) and builds the instruction prompt and
+        tool definitions.  When at least one skill is registered, appends the
+        skill-list system prompt and the ``load_skill`` /
+        ``read_skill_resource`` tools to *context*.
 
         When any registered skill defines one or more scripts (file-based or
         code-based), the system prompt also includes script-runner
@@ -2225,10 +2270,7 @@ class SkillsProvider(ContextProvider):
             context: Session context to extend with instructions and tools.
             state: Mutable per-run state dictionary (unused by this provider).
         """
-        if self._disable_caching:
-            skills, instructions, tools = await self._create_context()
-        else:
-            skills, instructions, tools = await self._get_or_create_context()
+        skills, instructions, tools = await self._create_context()
 
         if not skills:
             return
@@ -2895,13 +2937,12 @@ class FileSkillsSource(SkillsSource):
 
             resources.append(rel_path)
 
-        # Recurse into subdirectories if within depth limit
+        # Recurse into subdirectories if within depth limit.
+        # Subdirectories that contain their own SKILL.md are NOT skipped: a nested
+        # SKILL.md is not an independent skill (see _discover_skill_directories), so
+        # its contents belong to this skill.
         if current_depth < self._search_depth:
             for subdir in subdirectories:
-                # Skip subdirectories that contain their own SKILL.md — they are
-                # separate skills and their files should not be attached to this one.
-                if (subdir / SKILL_FILE_NAME).is_file():
-                    continue
                 self._scan_directory_for_resources(
                     target_dir=subdir,
                     skill_dir=skill_dir,
@@ -3046,13 +3087,12 @@ class FileSkillsSource(SkillsSource):
 
             scripts.append(rel_path)
 
-        # Recurse into subdirectories if within depth limit
+        # Recurse into subdirectories if within depth limit.
+        # Subdirectories that contain their own SKILL.md are NOT skipped: a nested
+        # SKILL.md is not an independent skill (see _discover_skill_directories), so
+        # its contents belong to this skill.
         if current_depth < self._search_depth:
             for subdir in subdirectories:
-                # Skip subdirectories that contain their own SKILL.md — they are
-                # separate skills and their files should not be attached to this one.
-                if (subdir / SKILL_FILE_NAME).is_file():
-                    continue
                 self._scan_directory_for_scripts(
                     target_dir=subdir,
                     skill_dir=skill_dir,
@@ -3269,7 +3309,10 @@ class FileSkillsSource(SkillsSource):
     def _discover_skill_directories(skill_paths: Sequence[str]) -> list[str]:
         """Return absolute paths of all directories that contain a ``SKILL.md`` file.
 
-        Recursively searches each root path up to :data:`MAX_SEARCH_DEPTH`.
+        Recursively searches each root path up to :data:`MAX_SEARCH_DEPTH`. Once a
+        ``SKILL.md`` is found in a directory, that directory is the skill root and the
+        search does not descend into its subdirectories: everything beneath a skill
+        boundary is part of that skill, not an independent skill root.
 
         Args:
             skill_paths: Root directory paths to search.
@@ -3282,7 +3325,10 @@ class FileSkillsSource(SkillsSource):
         def _search(directory: str, current_depth: int) -> None:
             dir_path = Path(directory)
             if (dir_path / SKILL_FILE_NAME).is_file():
+                # This directory is a skill root. Subdirectories are part of this
+                # skill and must not be treated as independent skill roots.
                 discovered.append(str(dir_path.absolute()))
+                return
 
             if current_depth >= MAX_SEARCH_DEPTH:
                 return
@@ -3465,6 +3511,67 @@ class FilteringSkillsSource(DelegatingSkillsSource):
         """
         skills = await self._inner_source.get_skills()
         return [s for s in skills if self._predicate(s)]
+
+
+@experimental(feature_id=ExperimentalFeature.SKILLS)
+class CachingSkillsSource(DelegatingSkillsSource):
+    """Decorator that caches the skills list returned by an inner source.
+
+    The first call to :meth:`get_skills` queries the inner source and caches
+    the resulting list; subsequent calls return the cached list without
+    re-querying the inner source.  This makes caching a composable layer in
+    the skills-source pipeline rather than logic baked into a provider.
+
+    Caching is useful when the inner source is expensive to query — for
+    example, a :class:`FileSkillsSource` that walks the filesystem on every
+    call, or an :class:`MCPSkillsSource` that makes network requests.  Skills
+    are typically static discovery metadata, so querying once and reusing the
+    result is a pure performance win.
+
+    Concurrency: concurrent callers share a single in-flight fetch, so the
+    inner source is queried at most once even under concurrent access.  If the
+    fetch fails (or is cancelled), the cache is left empty so the next call
+    retries.
+
+    Examples:
+        .. code-block:: python
+
+            cached = CachingSkillsSource(expensive_source)
+            skills = await cached.get_skills()  # queries the inner source
+            skills = await cached.get_skills()  # returns the cached list
+    """
+
+    def __init__(self, inner_source: SkillsSource) -> None:
+        """Initialize a CachingSkillsSource.
+
+        Args:
+            inner_source: The source whose results will be cached.
+        """
+        super().__init__(inner_source)
+        self._lock = asyncio.Lock()
+        self._cached_skills: list[Skill] | None = None
+
+    async def get_skills(self) -> list[Skill]:
+        """Return the inner source's skills, caching them on first call.
+
+        Returns:
+            The cached list of :class:`Skill` instances.  On the first call
+            the inner source is queried; subsequent calls return the cached
+            list.  If the first query fails, the cache is not populated and
+            the next call retries.
+        """
+        if self._cached_skills is not None:
+            return self._cached_skills
+
+        async with self._lock:
+            # Another coroutine may have populated the cache while we awaited
+            # the lock; re-check before querying the inner source.
+            if self._cached_skills is not None:
+                return self._cached_skills
+
+            skills = await self._inner_source.get_skills()
+            self._cached_skills = skills
+            return skills
 
 
 class AggregatingSkillsSource(SkillsSource):
