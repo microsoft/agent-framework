@@ -65,16 +65,28 @@ To have a multi-turn conversation with the agent, include the previous response 
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "How are you?", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID"}'
 ```
 
-### Background requests
+### Demonstrating steerable conversations
 
-To send a background request that benefits from crash recovery, include `"background": true` in the request body:
+`main.py` enables `steerable_conversations=True`, which means a new turn can be sent to the agent while it is still responding to the previous one.  Rather than returning HTTP 409, the server queues the new turn, cooperatively cancels the running handler, and then runs the queued turn.
 
+Open two terminals:
+
+**Terminal 1 — start the server:**
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
-  -d '{"input": "Summarize the latest news", "background": true}'
+uv run python main.py
 ```
 
-The server responds immediately with a response ID. You can poll the response status or stream the result separately.
+**Terminal 2 — run the demo client:**
+```bash
+uv run python client.py
+```
+
+The client sends turn 1 (asking the agent to count to 50) then, 2 seconds later while turn 1 is still streaming, sends turn 2 (a different question).  Turn 2 is accepted with `status=queued` and the server logs show the steering signal and cancellation.  Once turn 1 finishes, turn 2 runs and its answer is printed.
+
+You can also point `client.py` at a deployed instance:
+```bash
+uv run python client.py https://your-deployed-agent-url
+```
 
 ## Deploying the Agent to Foundry
 

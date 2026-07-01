@@ -28,35 +28,11 @@ def main():
         default_options={"store": False},
     )
 
-    # To enable crash recovery for background requests, pass resilient_background=True.
-    # This means:
-    # - If the server crashes mid-response, the handler is automatically re-invoked
-    #   on the next process start without the client needing to retry.
-    # - Persisted SSE events replay to clients that reconnect after a crash.
-    #
-    # Crash recovery requires a persistent response store (e.g. the Foundry-backed
-    # store that is automatically configured in hosted environments). It cannot be
-    # used with an in-memory store.
-    #
-    #   from azure.ai.agentserver.responses import ResponsesServerOptions
-    #
-    #   server = ResponsesHostServer(
-    #       agent,
-    #       options=ResponsesServerOptions(resilient_background=True),
-    #   )
-    #
-    # To also enable steerable conversations, pass steerable_conversations=True.
-    # With steering enabled, when a client sends a new turn while the current one is
-    # still in progress, the platform queues the new input and cooperatively cancels
-    # the current handler (via the cancellation_signal) instead of rejecting with
-    # HTTP 409 conversation_locked. The cancelled turn emits response.completed with
-    # partial output; the queued turn then runs with is_steered_turn=True.
-    #
-    #   server = ResponsesHostServer(
-    #       agent,
-    #       steerable_conversations=True,
-    #   )
-    server = ResponsesHostServer(agent)
+    # steerable_conversations=True allows clients to send a new turn while the
+    # previous one is still in progress. The platform queues the new turn and
+    # cooperatively cancels the running handler instead of returning HTTP 409.
+    # Run client.py in a second terminal to see this in action.
+    server = ResponsesHostServer(agent, steerable_conversations=True)
     server.run()
 
 
