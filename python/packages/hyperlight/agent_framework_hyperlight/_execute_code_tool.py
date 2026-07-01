@@ -8,7 +8,6 @@ import mimetypes
 import os
 import shutil
 import stat
-import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -673,7 +672,7 @@ def _copy_path(source: Path, destination: Path, *, source_root: Path) -> None:
 def _populate_input_dir(*, config: _RunConfig, input_root: Path) -> None:
     if config.workspace_root is not None:
         workspace_root = _resolve_existing_path(config.workspace_root)
-        for child in sorted(config.workspace_root.iterdir(), key=lambda value: value.name):
+        for child in sorted(workspace_root.iterdir(), key=lambda value: value.name):
             _copy_path(child, input_root / child.name, source_root=workspace_root)
 
     for mount in config.file_mounts:
@@ -949,16 +948,14 @@ def _clear_directory(output_dir: TemporaryDirectory[str] | None) -> None:
     for child in root.iterdir():
         try:
             child_stat = child.lstat()
-            if stat.S_ISLNK(child_stat.st_mode):
-                if sys.platform == "win32" and child.is_dir():
+            if _is_link_or_reparse_point(child, child_stat):
+                if stat.S_ISDIR(child_stat.st_mode):
                     child.rmdir()
-                else:
+                    continue
+                try:
                     child.unlink()
-            elif _is_link_or_reparse_point(child, child_stat):
-                if child.is_dir():
+                except OSError:
                     child.rmdir()
-                else:
-                    child.unlink()
             elif stat.S_ISREG(child_stat.st_mode):
                 child.unlink()
             elif stat.S_ISDIR(child_stat.st_mode):
