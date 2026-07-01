@@ -113,6 +113,49 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
+    public async Task AsAGUIEventStreamAsync_ClosesAssistantTextBeforeToolEventsAsync()
+    {
+        // Arrange
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        FunctionCallContent functionCall = new("call_1", "Tool1", new Dictionary<string, object?>());
+        FunctionResultContent functionResult = new("call_1", "ok");
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, "First") { MessageId = "completion-1" },
+            new ChatResponseUpdate(ChatRole.Assistant, [functionCall]) { MessageId = "tool-call-msg" },
+            new ChatResponseUpdate(ChatRole.Tool, [functionResult]) { MessageId = "tool-result-msg" },
+            new ChatResponseUpdate(ChatRole.Assistant, "Second") { MessageId = "completion-2" }
+        ];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        List<TextMessageStartEvent> startEvents = events.OfType<TextMessageStartEvent>().ToList();
+        List<TextMessageEndEvent> endEvents = events.OfType<TextMessageEndEvent>().ToList();
+        List<TextMessageContentEvent> contentEvents = events.OfType<TextMessageContentEvent>().ToList();
+        int firstTextEndIndex = events.FindIndex(e => e is TextMessageEndEvent { MessageId: "completion-1" });
+        int toolStartIndex = events.FindIndex(e => e is ToolCallStartEvent);
+        int toolResultIndex = events.FindIndex(e => e is ToolCallResultEvent);
+        int secondTextStartIndex = events.FindIndex(e => e is TextMessageStartEvent { MessageId: "completion-2" });
+
+        Assert.Equal(["completion-1", "completion-2"], startEvents.Select(e => e.MessageId));
+        Assert.Equal(["completion-1", "completion-2"], endEvents.Select(e => e.MessageId));
+        Assert.Equal(2, contentEvents.Count);
+        Assert.Equal(["completion-1", "completion-2"], contentEvents.Select(e => e.MessageId));
+        Assert.Equal(["First", "Second"], contentEvents.Select(e => e.Delta));
+        Assert.True(firstTextEndIndex >= 0);
+        Assert.True(toolStartIndex > firstTextEndIndex);
+        Assert.True(toolResultIndex > toolStartIndex);
+        Assert.True(secondTextStartIndex > toolResultIndex);
+    }
+
+    [Fact]
     public async Task AsAGUIEventStreamAsync_WithRoleChanges_EmitsProperTextMessageStartEventsAsync()
     {
         // Arrange
@@ -139,7 +182,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsAGUIEventStreamAsync_EmitsTextMessageEndEvent_WhenMessageIdChangesAsync()
+    public async Task AsAGUIEventStreamAsync_EmitsTextMessageEndEvent_WhenRoleChangesAsync()
     {
         // Arrange
         const string ThreadId = "thread1";
@@ -147,7 +190,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
         List<ChatResponseUpdate> updates =
         [
             new ChatResponseUpdate(ChatRole.Assistant, "First") { MessageId = "msg1" },
-            new ChatResponseUpdate(ChatRole.Assistant, "Second") { MessageId = "msg2" }
+            new ChatResponseUpdate(ChatRole.User, "Second") { MessageId = "msg2" }
         ];
 
         // Act
