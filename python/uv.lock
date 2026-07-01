@@ -33,6 +33,7 @@ members = [
     "agent-framework-azure-ai-search",
     "agent-framework-azure-contentunderstanding",
     "agent-framework-azure-cosmos",
+    "agent-framework-azure-cosmos-memory",
     "agent-framework-azurefunctions",
     "agent-framework-bedrock",
     "agent-framework-chatkit",
@@ -282,6 +283,45 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "azure-cosmos", specifier = ">=4.3.0,<5" },
+]
+
+[[package]]
+name = "agent-framework-azure-cosmos-memory"
+version = "1.0.0b260618"
+source = { editable = "packages/azure-cosmos-memory" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-cosmos-agent-memory", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
+    { name = "prompty", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pytest-asyncio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pytest-cov", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+samples = [
+    { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "python-dotenv", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "azure-cosmos-agent-memory", marker = "python_full_version >= '3.11'", specifier = ">=0.2.0b1" },
+    { name = "prompty", marker = "python_full_version >= '3.11'", specifier = ">=2.0.0a9" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", specifier = ">=0.23.0" },
+    { name = "pytest-cov", specifier = ">=4.0.0" },
+]
+samples = [
+    { name = "agent-framework-foundry", editable = "packages/foundry" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
 ]
 
 [[package]]
@@ -992,6 +1032,15 @@ wheels = [
 ]
 
 [[package]]
+name = "aiofiles"
+version = "25.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/41/c3/534eac40372d8ee36ef40df62ec129bee4fdb5ad9706e58a29be53b2c970/aiofiles-25.1.0.tar.gz", hash = "sha256:a8d728f0a29de45dc521f18f07297428d56992a742f0cd2701ba86e44d23d5b2", size = 46354, upload-time = "2025-10-09T20:51:04.358Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bc/8a/340a1555ae33d7354dbca4faa54948d76d89a27ceef032c8c3bc661d003e/aiofiles-25.1.0-py3-none-any.whl", hash = "sha256:abe311e527c862958650f9438e859c1fa7568a141b22abcd015e120e86a85695", size = 14668, upload-time = "2025-10-09T20:51:03.174Z" },
+]
+
+[[package]]
 name = "aiohappyeyeballs"
 version = "2.6.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1405,6 +1454,25 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/fe/2a/0f2bba256e56626ba2cec97ab81dd002ff47ead1329767760b619afd927a/azure_cosmos-4.16.1.tar.gz", hash = "sha256:fa15d13702b470265a67e2dd9c0794021e6b776856dac6c223dcacc4d8e1d8d1", size = 2377651, upload-time = "2026-06-02T01:08:07.656Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7f/b4/9c984ad33ca9e5c378ea472fc9aa38e719c245a4fa58a99d6dabbe0f9a17/azure_cosmos-4.16.1-py3-none-any.whl", hash = "sha256:43717215ec1433c1ea0f0e3d465f9182fb5afff3ae2331e595367122297872f1", size = 499044, upload-time = "2026-06-02T01:08:10.111Z" },
+]
+
+[[package]]
+name = "azure-cosmos-agent-memory"
+version = "0.2.0b1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
+    { name = "azure-cosmos", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
+    { name = "azure-identity", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
+    { name = "jinja2", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
+    { name = "openai", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
+    { name = "prompty", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
+    { name = "pydantic", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
+    { name = "typing-extensions", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/64/14/3c23d4cb810a3974fcf8636bf1ec3b19bff1399b507fcde704b193e1ca63/azure_cosmos_agent_memory-0.2.0b1.tar.gz", hash = "sha256:6cee56b54732ec5853210c4e6d297f784ff681a097abb09c7e52be2af9f860f7", size = 156646, upload-time = "2026-06-30T17:44:04.145Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/79/0e/09212dc8275962f116a560bb0fbe695b2ce8ef505704c2a15d4e4b7a9f9e/azure_cosmos_agent_memory-0.2.0b1-py3-none-any.whl", hash = "sha256:7c000c890b66f5a9217e5bf6d2af7f2d2cc05afbebd3ce734e8d1719354068ee", size = 174570, upload-time = "2026-06-30T17:44:02.872Z" },
 ]
 
 [[package]]
@@ -5868,6 +5936,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f5/3c/eb7c35f4dcede96fca1842dac5f4f5d15511aa4b52f3a961219e68ae9204/priority-2.0.0.tar.gz", hash = "sha256:c965d54f1b8d0d0b19479db3924c7c36cf672dbf2aec92d43fbdaf4492ba18c0", size = 24792, upload-time = "2021-06-27T10:15:05.487Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5e/5f/82c8074f7e84978129347c2c6ec8b6c59f3584ff1a20bc3c940a3e061790/priority-2.0.0-py3-none-any.whl", hash = "sha256:6f8eefce5f3ad59baf2c080a664037bb4725cd0a790d53d59ab4059288faf6aa", size = 8946, upload-time = "2021-06-27T10:15:03.856Z" },
+]
+
+[[package]]
+name = "prompty"
+version = "2.0.0b3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiofiles", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
+    { name = "pyyaml", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b7/8a/9a846231871a217259c5716ed359a85718821c73f7c017072192d285ab35/prompty-2.0.0b3.tar.gz", hash = "sha256:572167004a66607fdb2c9d509fbc17aca36e8fd8db10502156fb2dbb0d686fae", size = 12298730, upload-time = "2026-06-30T21:57:12.223Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/97/b436f0c4c61ac5d9abf97545978761a3f91027084fb632e466b51236c082/prompty-2.0.0b3-py3-none-any.whl", hash = "sha256:8df7f40d50bc3e725b80bcb0817bf29bfe79d6fd91b4d93166e57a5e403258f8", size = 249599, upload-time = "2026-06-30T21:57:10.018Z" },
 ]
 
 [[package]]

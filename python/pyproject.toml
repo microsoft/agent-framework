@@ -69,11 +69,6 @@ environments = [
 
 [tool.uv.workspace]
 members = [ "packages/*" ]
-# azure-cosmos-memory is excluded from the shared workspace resolution because its
-# dependency (azure-cosmos-agent-memory) requires Python >=3.11 and a prompty
-# pre-release (>=2.0.0a9), which is unsatisfiable against the workspace's >=3.10
-# floor and pre-release policy. It is published and tested as a standalone package.
-exclude = [ "packages/azure-cosmos-memory" ]
 
 [tool.uv.sources]
 agent-framework = { workspace = true }
@@ -313,7 +308,7 @@ cmd = "python scripts/workspace_poe_tasks.py check"
 
 [tool.poe.tasks.markdown-code-lint]
 help = "Lint Python code blocks embedded in README and sample markdown files."
-cmd = "uv run python scripts/check_md_code_blocks.py 'README.md' './packages/**/README.md' './samples/**/*.md' --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend' --exclude context_providers/azure_ai_search --exclude packages/azure-cosmos-memory"
+cmd = "uv run python scripts/check_md_code_blocks.py 'README.md' './packages/**/README.md' './samples/**/*.md' --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend' --exclude context_providers/azure_ai_search"
 
 # Testing
 [tool.poe.tasks.test]
