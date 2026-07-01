@@ -2534,6 +2534,63 @@ async def test_stores_by_default_with_store_false_in_default_options_injects_inm
     assert any(isinstance(p, InMemoryHistoryProvider) for p in agent.context_providers)
 
 
+async def test_non_history_context_provider_still_injects_inmemory(
+    client: SupportsChatGetResponse,
+) -> None:
+    """A non-history context provider must not suppress local history injection.
+
+    Regression for the case where registering a context provider that is not a
+    HistoryProvider (e.g. SkillsProvider, FileAccessProvider, or a RAG memory
+    provider) prevented the auto-injected InMemoryHistoryProvider. Without local
+    history, multi-turn flows on stateless clients (such as the tool-approval
+    resume turn) drop the prior assistant function_call.
+    """
+    from agent_framework._sessions import InMemoryHistoryProvider
+
+    agent = Agent(client=client, context_providers=[MockContextProvider()])
+    session = agent.create_session()
+
+    await agent.run("Hello", session=session)
+
+    # The non-history provider should not block local-history injection.
+    assert any(isinstance(p, InMemoryHistoryProvider) for p in agent.context_providers)
+
+
+async def test_existing_loading_history_provider_skips_inmemory_injection(
+    client: SupportsChatGetResponse,
+) -> None:
+    """An existing loading HistoryProvider suppresses injection even with other providers."""
+    from agent_framework._sessions import InMemoryHistoryProvider
+
+    existing = InMemoryHistoryProvider("custom", load_messages=True)
+    agent = Agent(client=client, context_providers=[existing, MockContextProvider()])
+    session = agent.create_session()
+
+    await agent.run("Hello", session=session)
+
+    history_providers = [p for p in agent.context_providers if isinstance(p, InMemoryHistoryProvider)]
+    assert history_providers == [existing]
+
+
+async def test_persist_only_history_provider_still_injects_inmemory(
+    client: SupportsChatGetResponse,
+) -> None:
+    """A persist-only (load_messages=False) HistoryProvider does not satisfy the loading need."""
+    from agent_framework._sessions import InMemoryHistoryProvider
+
+    audit = InMemoryHistoryProvider("audit", load_messages=False)
+    agent = Agent(client=client, context_providers=[audit])
+    session = agent.create_session()
+
+    await agent.run("Hello", session=session)
+
+    loading_providers = [
+        p for p in agent.context_providers if isinstance(p, InMemoryHistoryProvider) and p.load_messages
+    ]
+    assert len(loading_providers) == 1
+    assert loading_providers[0] is not audit
+
+
 async def test_shared_local_storage_cross_provider_responses_history_does_not_leak_fc_id() -> None:
     """Responses-specific replay metadata should stay local to Responses when session storage is shared."""
     from openai.types.chat.chat_completion import ChatCompletion, Choice

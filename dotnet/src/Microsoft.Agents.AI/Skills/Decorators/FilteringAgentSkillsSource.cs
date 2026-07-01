@@ -2,10 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -17,7 +19,8 @@ namespace Microsoft.Agents.AI;
 /// Skills for which the predicate returns <see langword="true"/> are included in the result;
 /// skills for which it returns <see langword="false"/> are excluded and logged at debug level.
 /// </remarks>
-internal sealed partial class FilteringAgentSkillsSource : DelegatingAgentSkillsSource
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+public sealed partial class FilteringAgentSkillsSource : DelegatingAgentSkillsSource
 {
     private readonly Func<AgentSkill, AgentSkillsSourceContext, bool> _predicate;
     private readonly ILogger<FilteringAgentSkillsSource> _logger;

@@ -42,7 +42,7 @@ ASPNETCORE_ENVIRONMENT=Development
 For local container runs only (the platform supplies these in production):
 
 ```env
-HOSTED_USER_ISOLATION_KEY=alice
+HOSTED_USER_ID=alice
 ```
 
 > `.env` is gitignored. The `.env.example` template is checked in as a reference.
@@ -57,11 +57,11 @@ HOSTED_USER_ISOLATION_KEY=alice
 | Memory provider | The sample's `stateInitializer` reads `session.GetHostedContext().UserId` and uses it as the `FoundryMemoryProviderScope`. Memories are partitioned per user. |
 
 When running outside the Foundry platform the header is absent. The sample registers
-`DevTemporaryLocalSessionIsolationKeyProvider` (via `AddDevTemporaryLocalContributorSetup`) which
-falls back to the `HOSTED_USER_ISOLATION_KEY` environment variable,
+`DevTemporaryLocalUserIdProvider` (via `AddDevTemporaryLocalContributorSetup`) which
+falls back to the `HOSTED_USER_ID` environment variable,
 defaulting to a single `local-dev-*` bucket when it is not set.
 
-> **Production warning.** Never register `DevTemporaryLocalSessionIsolationKeyProvider` in
+> **Production warning.** Never register `DevTemporaryLocalUserIdProvider` in
 > production. The Foundry platform sets the user-identity key for every inbound request, and
 > client-supplied environment variables can be forged.
 
@@ -118,7 +118,7 @@ export AZURE_BEARER_TOKEN=$(az account get-access-token --resource https://ai.az
 docker run --rm -p 8088:8088 \
   -e AGENT_NAME=hosted-memory-agent \
   -e AZURE_BEARER_TOKEN=$AZURE_BEARER_TOKEN \
-  -e HOSTED_USER_ISOLATION_KEY=alice \
+  -e HOSTED_USER_ID=alice \
   --env-file .env \
   hosted-memory-agent
 ```
@@ -133,7 +133,7 @@ pwsh ./scripts/smoke.ps1
 ```
 
 The script publishes the project, builds the image, runs the container with two distinct
-`HOSTED_USER_ISOLATION_KEY` values, drives a multi-turn conversation per user, asserts that each
+`HOSTED_USER_ID` values, drives a multi-turn conversation per user, asserts that each
 user only sees their own memories, and exits non-zero on failure.
 
 ## Deploying to Foundry (azd spec)
@@ -177,4 +177,4 @@ standard `Dockerfile` instead of `Dockerfile.contributor`. See the commented sec
 | **Agent definition** | Inline (`AsAIAgent(model, instructions)`) | Inline, plus `AIContextProviders = [memoryProvider]` |
 | **State** | None beyond the conversation history | Per-user memories persisted in Foundry Memory |
 | **Identity** | Not used | Required: `HostedSessionContext.UserId` flows into the memory scope |
-| **Local dev** | `AddDevTemporaryLocalContributorSetup()` keeps requests succeeding when isolation headers are absent | Same; additionally honours `HOSTED_USER_ISOLATION_KEY` to simulate distinct users |
+| **Local dev** | `AddDevTemporaryLocalContributorSetup()` keeps requests succeeding when the user-identity header is absent | Same; additionally honours `HOSTED_USER_ID` to simulate distinct users |
