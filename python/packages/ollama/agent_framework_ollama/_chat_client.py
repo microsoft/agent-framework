@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import sys
@@ -524,7 +525,14 @@ class OllamaChatClient(
                     tool_text = "\n".join(text_parts) if text_parts else ""
                 else:
                     tool_text = str(item.result) if item.result is not None else ""
-                messages.append(OllamaMessage(role="tool", content=tool_text, tool_name=item.call_id))
+
+                # CHANGED: Strip the unique suffix (index:hash) to restore the bare
+                # function name that Ollama's API expects to correlate the tool result.
+                tool_name = item.call_id.split(":", 1)[0] if item.call_id else ""
+
+                messages.append(
+                    OllamaMessage(role="tool", content=tool_text, tool_name=tool_name)
+                )  # <-- CHANGED: Was item.call_id
         return messages
 
     def _parse_contents_from_ollama(self, response: OllamaChatResponse) -> list[Content]:
@@ -568,11 +576,19 @@ class OllamaChatClient(
 
     def _parse_tool_calls_from_ollama(self, tool_calls: Sequence[OllamaMessage.ToolCall]) -> list[Content]:
         resp: list[Content] = []
-        for tool in tool_calls:
+        for index, tool in enumerate(tool_calls):
+            name = tool.function.name
+            args = tool.function.arguments if isinstance(tool.function.arguments, dict) else {}
+
+            args_json = json.dumps(args, sort_keys=True)
+            args_hash = hashlib.blake2s(args_json.encode()).hexdigest()[:8]
+
+            unique_call_id = f"{name}:{index}:{args_hash}"
+
             fcc = Content.from_function_call(
-                call_id=tool.function.name,  # Use name of function as call ID since Ollama doesn't provide a call ID
-                name=tool.function.name,
-                arguments=tool.function.arguments if isinstance(tool.function.arguments, dict) else "",
+                call_id=unique_call_id,
+                name=name,
+                arguments=args,
                 raw_representation=tool.function,
             )
             resp.append(fcc)

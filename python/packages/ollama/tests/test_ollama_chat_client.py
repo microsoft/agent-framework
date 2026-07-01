@@ -612,3 +612,54 @@ async def test_cmc_streaming_integration_with_chat_completion(
         full_text += chunk.text
 
     assert "hello" in full_text.lower() and "world" in full_text.lower()
+
+
+class TestParallelToolCallUniqueness:
+    """Verify that repeated tool calls in one turn get unique call_ids."""
+
+    def test_parse_duplicate_tool_names_get_unique_call_ids(self) -> None:
+        """Two calls to the same tool should have different call_ids."""
+        mock_func_1 = MagicMock()
+        mock_func_1.name = "search"
+        mock_func_1.arguments = {"query": "Azure"}
+
+        mock_func_2 = MagicMock()
+        mock_func_2.name = "search"
+        mock_func_2.arguments = {"query": "AWS"}
+
+        mock_tool_1 = MagicMock()
+        mock_tool_1.function = mock_func_1
+
+        mock_tool_2 = MagicMock()
+        mock_tool_2.function = mock_func_2
+
+        client = OllamaChatClient(host="http://localhost:12345", model="test-model")
+        results = client._parse_tool_calls_from_ollama([mock_tool_1, mock_tool_2])
+
+        assert len(results) == 2
+        id1 = results[0].call_id
+        id2 = results[1].call_id
+
+        assert id1 != id2, f"Parallel tool calls collided on call_id: {id1}"
+
+        assert id1.startswith("search:")
+        assert id2.startswith("search:")
+
+    def test_format_tool_message_strips_unique_suffix(self) -> None:
+        """_format_tool_message must send only the bare tool name to Ollama."""
+        client = OllamaChatClient(host="http://localhost:12345", model="test-model")
+
+        # Fake a function_result content item
+        mock_item = MagicMock()
+        mock_item.type = "function_result"
+        mock_item.call_id = "search:0:a1b2c3d4"
+        mock_item.result = "found it"
+        mock_item.items = None
+
+        mock_message = MagicMock()
+        mock_message.contents = [mock_item]
+
+        formatted = client._format_tool_message(mock_message)
+
+        assert len(formatted) == 1
+        assert formatted[0].tool_name == "search", f"Expected bare name 'search', got '{formatted[0].tool_name}'"
