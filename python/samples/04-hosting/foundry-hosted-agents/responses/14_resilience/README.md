@@ -20,56 +20,49 @@ SSE events are also replayed to clients that reconnect with `starting_after=`.
 5. The response transitions from `in_progress` back to running and eventually
    reaches `completed`.
 
-See [main.py](main.py) for the server implementation.
+See [main.py](main.py) for the server implementation and [demo.py](demo.py) for
+the automated crash-recovery demonstration.
 
-## Testing Crash Recovery Locally
+## Demonstrating Crash Recovery
 
-The agentserver uses a file-backed response store under `~/.agentserver/` by
-default when not connected to Foundry, which satisfies the persistence
-requirement for `resilient_background=True`.
-
-**Step 1 — start the server:**
+`demo.py` orchestrates the full recovery cycle automatically — no manual
+timing needed:
 
 ```bash
-uv run python main.py
+uv run python demo.py
 ```
 
-**Step 2 — send a long background request and note the response ID:**
+It will:
 
-```bash
-curl -X POST http://localhost:8088/responses \
-  -H "Content-Type: application/json" \
-  -d '{"input": "Count from 1 to 1000, one number per line.", "background": true, "store": true, "stream": true}'
+1. Start the server (`main.py`) as a background process
+2. Send a background request and note the response ID (`status=in_progress`)
+3. Kill the server after 2 seconds (simulates a crash)
+4. Restart the server (the recovery scanner runs on startup)
+5. Poll the response and print it once it reaches `completed`
+
+Expected output:
 ```
+Step 1/5  Starting server...
+          Server ready (pid=12345)
 
-Note the `id` field in the response JSON.
+Step 2/5  Sending background request...
+          Response ID : caresp_...
+          Status      : in_progress  (handler is running)
 
-**Step 3 — kill the server mid-response:**
+Step 3/5  Simulating crash (terminating server)...
+          Server killed (exit code: -15)
 
-Press `Ctrl+C` in the server terminal while the agent is still counting.
+Step 4/5  Restarting server (recovery scanner will fire)...
+          Server restarted (pid=12346)
 
-**Step 4 — restart the server:**
+Step 5/5  Polling response (watching recovery)...
+          status: in_progress
+          status: in_progress
+          status: completed
 
-```bash
-uv run python main.py
+Recovered response (1234 chars):
+The internet works by ...
 ```
-
-The recovery scanner runs on startup and automatically re-invokes the handler.
-
-**Step 5 — poll the response:**
-
-```bash
-curl http://localhost:8088/responses/REPLACE_WITH_RESPONSE_ID
-```
-
-You will see `status` transition through `in_progress` (recovering) and
-eventually reach `completed`.
-
-## Testing on Foundry
-
-Deploy the agent and send a long background request.  The platform manages
-container lifecycle; a container rotation mid-request exercises the same
-recovery path automatically.
 
 ## Environment Variables
 
@@ -80,10 +73,12 @@ FOUNDRY_PROJECT_ENDPOINT=https://...
 AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
 ```
 
-Run `az login` before starting the server.
+Run `az login` before running the demo.
 
 ## Deploying the Agent to Foundry
 
 To host the agent on Foundry, follow the instructions in the
 [Deploying the Agent to Foundry](../../README.md#deploying-the-agent-to-foundry)
-section of the README in the parent directory.
+section of the README in the parent directory.  On Foundry, container rotations
+exercise the same recovery path automatically.
+
