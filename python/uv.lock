@@ -301,10 +301,6 @@ dev = [
     { name = "pytest-asyncio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pytest-cov", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-samples = [
-    { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "python-dotenv", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-]
 
 [package.metadata]
 requires-dist = [
@@ -318,10 +314,6 @@ dev = [
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
     { name = "pytest-cov", specifier = ">=4.0.0" },
-]
-samples = [
-    { name = "agent-framework-foundry", editable = "packages/foundry" },
-    { name = "python-dotenv", specifier = ">=1.0.0" },
 ]
 
 [[package]]
