@@ -30,6 +30,7 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowException,
     WorkflowMessage,
+    WorkflowRunResult,
     WorkflowRunState,
     handler,
     response_handler,
@@ -1077,6 +1078,117 @@ async def test_workflow_partial_stream_does_not_clobber_successor_runtime_storag
         del aiter_b
         gc.collect()
         await asyncio.sleep(0)
+
+
+async def test_workflow_serializes_concurrent_delivery_to_same_executor():
+    """Messages delivered to one executor within a superstep must be processed serially.
+
+    A start executor fans out to two intermediate executors that both send to a single
+    target in the same superstep. The runner dispatches those two deliveries concurrently
+    (they have different source executors), but the target must process them one at a time
+    rather than interleaving at ``await`` points.
+    """
+
+    class _FanSource(Executor):
+        def __init__(self, id: str, label: str) -> None:
+            super().__init__(id=id)
+            self._label = label
+
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(self._label)
+
+    class _SerialTarget(Executor):
+        def __init__(self, id: str) -> None:
+            super().__init__(id=id)
+            self.active = 0
+            self.max_active = 0
+            self.received: list[str] = []
+
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            # Yield control. If execution were not serialized per executor, a concurrent
+            # delivery would enter here and push ``active`` (and ``max_active``) to 2.
+            await asyncio.sleep(0)
+            self.received.append(message)
+            self.active -= 1
+
+    start = _FanSource(id="start", label="go")
+    source_a = _FanSource(id="a", label="from_a")
+    source_b = _FanSource(id="b", label="from_b")
+    target = _SerialTarget(id="target")
+
+    # superstep 1: start -> {a, b}; superstep 2: a -> target, b -> target (both in the
+    # same superstep); superstep 3: target receives both deliveries and processes them serially.
+    workflow = (
+        WorkflowBuilder(start_executor=start)
+        .add_edge(start, source_a)
+        .add_edge(start, source_b)
+        .add_edge(source_a, target)
+        .add_edge(source_b, target)
+        .build()
+    )
+
+    await workflow.run("go")
+
+    assert target.max_active == 1, "Target processed concurrent deliveries (executions overlapped)"
+    assert sorted(target.received) == ["from_a", "from_b"]
+
+
+def test_executor_serialization_lock_is_loop_scoped():
+    """The per-executor serialization lock must be created under the running loop.
+
+    Executors are often constructed outside an event loop and may be reused across loops
+    (e.g. successive ``asyncio.run`` calls). The lock is created lazily and re-created when
+    the running loop changes, so reuse never raises ``asyncio.Lock`` "bound to a different
+    event loop". Creating it eagerly in ``__init__`` and binding it to the first loop would.
+    """
+
+    class _Noop(Executor):
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None: ...
+
+    executor = _Noop(id="noop")
+
+    async def _grab_lock() -> asyncio.Lock:
+        return executor._get_execution_lock()  # pyright: ignore[reportPrivateUsage]
+
+    # Each ``asyncio.run`` uses a fresh event loop; the lock must be re-created per loop.
+    lock_loop_1 = asyncio.run(_grab_lock())
+    lock_loop_2 = asyncio.run(_grab_lock())
+
+    assert lock_loop_1 is not lock_loop_2
+
+
+def test_workflow_instance_can_be_reused_across_event_loops():
+    """A workflow built once can be re-run across separate event loops.
+
+    Both the per-executor ``asyncio.Lock`` and the runner context's ``asyncio.Queue`` bind to
+    the first event loop they are awaited under. They are re-created lazily under the running
+    loop, so successive ``asyncio.run`` calls on the same workflow instance do not raise
+    "bound to a different event loop".
+    """
+
+    class _Echo(Executor):
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[Any, str]) -> None:
+            await ctx.yield_output(message)
+
+    workflow = WorkflowBuilder(start_executor=_Echo(id="echo")).build()
+
+    async def _run(message: str) -> WorkflowRunResult:
+        return await workflow.run(message)
+
+    # A fresh event loop per run; reuse must not raise "bound to a different event loop".
+    result_1 = asyncio.run(_run("a"))
+    result_2 = asyncio.run(_run("b"))
+
+    assert result_1.get_final_state() == WorkflowRunState.IDLE
+    assert result_2.get_final_state() == WorkflowRunState.IDLE
+    assert result_1.get_outputs() == ["a"]
+    assert result_2.get_outputs() == ["b"]
 
 
 class _StreamingTestAgent(BaseAgent):
