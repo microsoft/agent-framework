@@ -1,0 +1,22 @@
+[project]
+name = "agent-framework-hosting-sample-local-a2a"
+version = "0.0.1"
+description = "A2A channel hosting sample: WeatherAgent served over A2A, consumed by a client using A2AAgent."
+requires-python = ">=3.10"
+dependencies = [
+    "agent-framework-foundry",
+    "agent-framework-hosting",
+    "agent-framework-hosting-a2a",
+    "agent-framework-a2a",
+    "azure-identity",
+    "hypercorn>=0.17",
+    "uvicorn[standard]>=0.34",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+agent-framework-hosting = { git = "https://github.com/microsoft/agent-framework.git", branch = "main", subdirectory = "python/packages/hosting" }
+agent-framework-hosting-a2a = { git = "https://github.com/microsoft/agent-framework.git", branch = "main", subdirectory = "python/packages/hosting-a2a" }
+agent-framework-a2a = { git = "https://github.com/microsoft/agent-framework.git", branch = "main", subdirectory = "python/packages/a2a" }

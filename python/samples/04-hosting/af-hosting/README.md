@@ -14,6 +14,7 @@ its own package. This first sample set includes
 | [`local_responses_workflow/`](./local_responses_workflow) | A 4-step `Workflow` (typed `SloganBrief` intake → writer → legal → formatter) hosted behind the Responses channel via a `run_hook` that parses inbound text/JSON into the workflow's typed input. The host writes per-conversation checkpoints via `checkpoint_location=…`. Demonstrates workflow targets + structured input adaptation + resume-across-turns. Includes a `call_server.rest` file with REST examples. | **Local only.** |
 | [`local_telegram/`](./local_telegram) | Telegram bot with `@tool`, `FileHistoryProvider`, `run_hook`, and slash commands (`/new`, `/whoami`, `/weather`). Pure Telegram — no HTTP endpoint. | **Local only.** Start here to learn the Telegram channel. |
 | [`local_multi_channel/`](./local_multi_channel) | Same agent behind two channels at once: `ResponsesChannel` + `TelegramChannel`. Shared `FileHistoryProvider` enables cross-channel session resumption (resume a Telegram chat from the Responses endpoint by passing the Telegram isolation key as `previous_response_id`). | **Local only.** |
+| [`local_a2a/`](./local_a2a) | A `WeatherAgent` served over the [A2A protocol](https://a2a-protocol.org/latest/) with `A2AChannel`. Includes a `call_client.py` that uses `A2AAgent` to discover the card and call the hosted agent (both non-streaming and streaming). | **Local only.** |
 
 Each sample is fully self-contained — its own `pyproject.toml`, `uv.lock`,
 server `app.py`, calling script(s), and `storage/` directory. Every
