@@ -14,8 +14,7 @@ Env.TraversePath().Load();
 var projectEndpoint = new Uri(Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set."));
 
-var agentName = Environment.GetEnvironmentVariable("AGENT_NAME")
-    ?? throw new InvalidOperationException("AGENT_NAME is not set.");
+var agentName = Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-chat-client-agent";
 
 var deployment = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-4o";
 
@@ -44,7 +43,6 @@ AIAgent agent = new AIProjectClient(projectEndpoint, credential)
 // Host the agent as a Foundry Hosted Agent using the Responses API.
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
-builder.Services.AddDevTemporaryLocalContributorSetup(); // Local Docker debugging only - must not be used in production.
 
 var app = builder.Build();
 app.MapFoundryResponses();
