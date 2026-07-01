@@ -11,7 +11,10 @@ import pytest
 # Add parent package to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agent_framework_devui._utils import extract_response_type_from_executor, generate_input_schema
+from agent_framework_devui._utils import (
+    extract_response_type_from_executor,
+    generate_input_schema,
+)
 
 
 @dataclass
@@ -74,6 +77,23 @@ def test_chat_message_schema_generation():
         schema = generate_input_schema(Message)
         assert schema is not None
         assert isinstance(schema, dict)
+
+    except ImportError:
+        pytest.skip("Message not available - agent_framework not installed")
+
+
+def test_list_message_schema_is_simple_string():
+    """Regression test for #6533: list[Message] renders as a plain text input.
+
+    DevUI should display a text box rather than a structured object form so
+    the user can type their message naturally; parse_input_for_type then
+    wraps the text in a list[Message] before dispatch.
+    """
+    try:
+        from agent_framework import Message
+
+        schema = generate_input_schema(list[Message])
+        assert schema == {"type": "string"}, f"Expected string schema, got {schema}"
 
     except ImportError:
         pytest.skip("Message not available - agent_framework not installed")
@@ -150,7 +170,9 @@ def test_extract_response_type_from_executor():
         class TestDecision(BaseModel):
             """Test decision response."""
 
-            decision: Literal["approve", "reject"] = Field(description="User's decision")
+            decision: Literal["approve", "reject"] = Field(
+                description="User's decision"
+            )
             reason: str = Field(description="Reason for decision", default="")
 
         # Create test executor with @response_handler
@@ -169,18 +191,27 @@ def test_extract_response_type_from_executor():
 
             @response_handler
             async def handle_approval(
-                self, original_request: TestApprovalRequest, response: TestDecision, ctx: WorkflowContext
+                self,
+                original_request: TestApprovalRequest,
+                response: TestDecision,
+                ctx: WorkflowContext,
             ) -> None:
                 """Handle approval response."""
                 pass
 
         # Test extraction
         executor = TestExecutor()
-        extracted_type = extract_response_type_from_executor(executor, TestApprovalRequest)
+        extracted_type = extract_response_type_from_executor(
+            executor, TestApprovalRequest
+        )
 
         # Verify correct type was extracted
-        assert extracted_type is not None, "Should extract response type from @response_handler"
-        assert extracted_type == TestDecision, f"Expected TestDecision, got {extracted_type}"
+        assert (
+            extracted_type is not None
+        ), "Should extract response type from @response_handler"
+        assert (
+            extracted_type == TestDecision
+        ), f"Expected TestDecision, got {extracted_type}"
 
         # Test full schema generation pipeline
         schema = generate_input_schema(extracted_type)
@@ -220,7 +251,9 @@ def test_extract_response_type_no_match():
         executor = MinimalExecutor()
         extracted_type = extract_response_type_from_executor(executor, UnmatchedRequest)
 
-        assert extracted_type is None, "Should return None when no matching handler exists"
+        assert (
+            extracted_type is None
+        ), "Should return None when no matching handler exists"
 
     except ImportError as e:
         pytest.skip(f"Required dependencies not available: {e}")
