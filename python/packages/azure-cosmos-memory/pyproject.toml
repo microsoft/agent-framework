@@ -3,7 +3,7 @@ name = "agent-framework-azure-cosmos-memory"
 description = "Azure Cosmos DB Agent Memory Toolkit integration for Microsoft Agent Framework - semantic memory with fact extraction and user profiles."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 version = "1.0.0b260618"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
@@ -15,6 +15,7 @@ classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -23,7 +24,13 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.6.0,<2",
-    "azure-cosmos-agent-memory>=0.1.0b2",
+    "azure-cosmos-agent-memory>=0.2.0b1; python_version >= '3.11'",
+    # azure-cosmos-agent-memory depends transitively on a prompty pre-release
+    # (prompty>=2.0.0a9, which has no stable 2.x release yet). Declaring it here as a
+    # direct, Python-gated dependency makes the pre-release "explicit" so the workspace's
+    # `prerelease = "if-necessary-or-explicit"` policy permits it (uv only enables
+    # pre-releases for direct dependencies that carry a pre-release specifier).
+    "prompty>=2.0.0a9; python_version >= '3.11'",
 ]
 
 [dependency-groups]

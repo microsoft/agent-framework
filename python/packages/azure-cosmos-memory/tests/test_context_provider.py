@@ -13,6 +13,10 @@ from agent_framework._sessions import AgentSession, SessionContext
 
 from agent_framework_azure_cosmos_memory._context_provider import CosmosMemoryContextProvider
 
+# The Agent Memory Toolkit requires Python 3.11+, so it is not installed on the 3.10 CI
+# leg. Skip this module there (mirrors the github_copilot package's importorskip guard).
+pytest.importorskip("azure.cosmos.agent_memory")
+
 
 @pytest.fixture
 def mock_memory_client() -> AsyncMock:
