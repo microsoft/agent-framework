@@ -14,9 +14,10 @@ import os
 import sys
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict
 
 from agent_framework import AgentSession, ContextProvider, Message, SessionContext
+from agent_framework._settings import load_settings
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -37,17 +38,38 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-AzureCredentialTypes = "TokenCredential | AsyncTokenCredential"
+DEFAULT_SOURCE_ID = "cosmos_memory"
+DEFAULT_DATABASE = "ai_memory"
+DEFAULT_CONTEXT_PROMPT = "## Relevant Memories\nConsider these memories when responding:"
+DEFAULT_EMBEDDING_MODEL = "text-embedding-3-large"
+DEFAULT_CHAT_MODEL = "gpt-4o-mini"
+
+# The memory categories the toolkit's extraction pipeline classifies and can retrieve.
+MemoryType = Literal["fact", "procedural", "episodic"]
 
 
 class CosmosMemorySettings(TypedDict, total=False):
-    """Settings for Cosmos Memory Context Provider with auto-loading from environment."""
+    """Connection settings for the Cosmos memory provider, resolvable from the environment."""
 
     cosmos_endpoint: str | None
     cosmos_database: str | None
-    ai_foundry_endpoint: str | None
-    embedding_deployment_name: str | None
-    chat_deployment_name: str | None
+    foundry_endpoint: str | None
+    embedding_model: str | None
+    chat_model: str | None
+
+
+class ProcessorConfig(TypedDict, total=False):
+    """Agent Memory Toolkit cadence thresholds (number of turns between each pipeline step).
+
+    Each value is the number of turns between runs of that step; ``0`` disables it. See the
+    toolkit's auto-trigger documentation for the full semantics and defaults.
+    """
+
+    FACT_EXTRACTION_EVERY_N: int
+    DEDUP_EVERY_N: int
+    DEDUP_POOL_SIZE: int
+    THREAD_SUMMARY_EVERY_N: int
+    USER_SUMMARY_EVERY_N: int
 
 
 class CosmosMemoryContextProvider(ContextProvider):
@@ -56,10 +78,6 @@ class CosmosMemoryContextProvider(ContextProvider):
     Provides long-term semantic memory with fact extraction, user profiles,
     and cross-thread memory consolidation.
     """
-
-    DEFAULT_SOURCE_ID: ClassVar[str] = "cosmos_memory"
-    DEFAULT_CONTEXT_PROMPT: ClassVar[str] = "## Relevant Memories\nConsider these memories when responding:"
-    DEFAULT_DATABASE: ClassVar[str] = "ai_memory"
 
     # Agent Framework uses the "assistant" role, but the Agent Memory Toolkit's TurnRecord
     # only accepts {user, agent, tool, system}. Map AF roles to toolkit roles when storing.
@@ -71,32 +89,32 @@ class CosmosMemoryContextProvider(ContextProvider):
         *,
         cosmos_endpoint: str | None = None,
         cosmos_database: str | None = None,
-        ai_foundry_endpoint: str | None = None,
-        embedding_deployment_name: str | None = None,
-        chat_deployment_name: str | None = None,
+        foundry_endpoint: str | None = None,
+        embedding_model: str | None = None,
+        chat_model: str | None = None,
         credential: Any = None,
         memory_client: AsyncCosmosMemoryClient | None = None,
         top_k: int = 5,
         min_confidence: float = 0.7,
-        memory_types: Sequence[str] | None = None,
-        context_prompt: str | None = None,
+        memory_types: Sequence[MemoryType] | None = None,
+        context_prompt: str = DEFAULT_CONTEXT_PROMPT,
         auto_extract: bool = True,
-        processor_config: dict[str, Any] | None = None,
+        processor_config: ProcessorConfig | None = None,
     ) -> None:
         """Initialize the Cosmos Memory context provider.
 
         Args:
             source_id: Unique identifier for this provider instance.
             cosmos_endpoint: Cosmos DB account endpoint.
-                Can be set via ``COSMOS_DB_ENDPOINT``.
+                Can be set via ``COSMOS_ENDPOINT``.
             cosmos_database: Cosmos DB database name.
-                Can be set via ``COSMOS_DB_DATABASE``.
-            ai_foundry_endpoint: AI Foundry project endpoint for LLM and embeddings.
-                Can be set via ``AI_FOUNDRY_ENDPOINT``.
-            embedding_deployment_name: Embedding model deployment name.
-                Can be set via ``AI_FOUNDRY_EMBEDDING_DEPLOYMENT_NAME``.
-            chat_deployment_name: Chat model deployment name.
-                Can be set via ``AI_FOUNDRY_CHAT_DEPLOYMENT_NAME``.
+                Can be set via ``COSMOS_DATABASE``.
+            foundry_endpoint: Azure AI Foundry project endpoint for LLM and embeddings.
+                Can be set via ``FOUNDRY_ENDPOINT``.
+            embedding_model: Embedding model deployment name.
+                Can be set via ``EMBEDDING_MODEL``.
+            chat_model: Chat model deployment name.
+                Can be set via ``CHAT_MODEL``.
             credential: Azure credential for authentication. When provided it is used for both
                 Cosmos DB and AI Foundry; when ``None`` the toolkit builds (and owns) a
                 ``DefaultAzureCredential``.
@@ -108,15 +126,14 @@ class CosmosMemoryContextProvider(ContextProvider):
             auto_extract: Enable automatic background memory extraction/summarization after
                 turn writes. When ``False`` the cadence thresholds are zeroed so nothing runs
                 automatically and callers drive processing via ``memory_client.process_now()``.
-            processor_config: Optional processor configuration dict (e.g., extraction frequency).
+            processor_config: Optional processor cadence configuration.
 
         Raises:
             ImportError: If azure-cosmos-agent-memory is not installed.
         """
         if not _memory_toolkit_available:
             raise ImportError(
-                "azure-cosmos-agent-memory is required. "
-                "Install with: pip install agent-framework-azure-cosmos-memory"
+                "azure-cosmos-agent-memory is required. Install with: pip install agent-framework-azure-cosmos-memory"
             )
 
         super().__init__(source_id)
@@ -126,40 +143,43 @@ class CosmosMemoryContextProvider(ContextProvider):
         self._should_close_client = False
         self.top_k = top_k
         self.min_confidence = min_confidence
-        self.memory_types = list(memory_types) if memory_types else ["fact", "procedural"]
-        self.context_prompt = context_prompt or self.DEFAULT_CONTEXT_PROMPT
+        self.memory_types: list[MemoryType] = list(memory_types) if memory_types else ["fact", "procedural"]
+        self.context_prompt = context_prompt
         self.auto_extract = auto_extract
 
-        # Apply processor config to environment BEFORE creating the memory client.
-        # The AsyncCosmosMemoryClient reads these environment variables during initialization
-        # to configure the InProcessProcessor (extraction frequency, deduplication, etc.)
-        if processor_config:
-            for key, value in processor_config.items():
-                os.environ[key] = str(value)
-
-        # When auto_extract is disabled, zero the cadence thresholds so the toolkit's
-        # background auto-trigger never runs extraction/summarization on turn writes.
-        # Callers drive processing explicitly via ``memory_client.process_now(...)``.
+        # Apply the cadence configuration to the environment BEFORE creating the memory client.
+        # The Agent Memory Toolkit reads these thresholds from ``os.environ`` (see the toolkit's
+        # thresholds module), so the environment is currently the only supported way to configure
+        # the InProcessProcessor. ``auto_extract=False`` zeroes the cadence thresholds so the
+        # toolkit's background auto-trigger never runs extraction/summarization on turn writes;
+        # callers then drive processing explicitly via ``memory_client.process_now(...)``.
+        cadence: dict[str, str] = {str(k): str(v) for k, v in (processor_config or {}).items()}
         if not auto_extract:
-            os.environ["FACT_EXTRACTION_EVERY_N"] = "0"
-            os.environ["THREAD_SUMMARY_EVERY_N"] = "0"
-            os.environ["USER_SUMMARY_EVERY_N"] = "0"
+            cadence["FACT_EXTRACTION_EVERY_N"] = "0"
+            cadence["THREAD_SUMMARY_EVERY_N"] = "0"
+            cadence["USER_SUMMARY_EVERY_N"] = "0"
+        for key, value in cadence.items():
+            os.environ[key] = value
 
         # Initialize memory client if not provided
         if memory_client is None:
-            # Load settings from environment if not provided
-            cosmos_endpoint = cosmos_endpoint or os.getenv("COSMOS_DB_ENDPOINT")
-            cosmos_database = cosmos_database or os.getenv("COSMOS_DB_DATABASE", self.DEFAULT_DATABASE)
-            ai_foundry_endpoint = ai_foundry_endpoint or os.getenv("AI_FOUNDRY_ENDPOINT")
-            embedding_deployment_name = embedding_deployment_name or os.getenv(
-                "AI_FOUNDRY_EMBEDDING_DEPLOYMENT_NAME", "text-embedding-3-large"
+            # Resolve connection settings from explicit args, then the environment. ``load_settings``
+            # validates that the required endpoints are present (raising if not), replacing manual
+            # ``os.getenv`` + ``if not ...: raise`` blocks.
+            settings = load_settings(
+                CosmosMemorySettings,
+                cosmos_endpoint=cosmos_endpoint,
+                cosmos_database=cosmos_database,
+                foundry_endpoint=foundry_endpoint,
+                embedding_model=embedding_model,
+                chat_model=chat_model,
+                required_fields=["cosmos_endpoint", "foundry_endpoint"],
             )
-            chat_deployment_name = chat_deployment_name or os.getenv("AI_FOUNDRY_CHAT_DEPLOYMENT_NAME", "gpt-4o-mini")
-
-            if not cosmos_endpoint:
-                raise ValueError("cosmos_endpoint must be provided or set via COSMOS_DB_ENDPOINT")
-            if not ai_foundry_endpoint:
-                raise ValueError("ai_foundry_endpoint must be provided or set via AI_FOUNDRY_ENDPOINT")
+            cosmos_endpoint = settings["cosmos_endpoint"]
+            cosmos_database = settings.get("cosmos_database") or DEFAULT_DATABASE
+            foundry_endpoint = settings["foundry_endpoint"]
+            embedding_model = settings.get("embedding_model") or DEFAULT_EMBEDDING_MODEL
+            chat_model = settings.get("chat_model") or DEFAULT_CHAT_MODEL
 
             # Authentication: if the caller supplies a credential, wire it into both the Cosmos
             # and AI Foundry clients and disable the toolkit's default-credential creation.
@@ -170,9 +190,9 @@ class CosmosMemoryContextProvider(ContextProvider):
                 memory_client = AsyncCosmosMemoryClient(
                     cosmos_endpoint=cosmos_endpoint,
                     cosmos_database=cosmos_database,
-                    ai_foundry_endpoint=ai_foundry_endpoint,
-                    embedding_deployment_name=embedding_deployment_name,
-                    chat_deployment_name=chat_deployment_name,
+                    ai_foundry_endpoint=foundry_endpoint,
+                    embedding_deployment_name=embedding_model,
+                    chat_deployment_name=chat_model,
                     cosmos_credential=credential,
                     ai_foundry_credential=credential,
                     use_default_credential=False,
@@ -181,48 +201,33 @@ class CosmosMemoryContextProvider(ContextProvider):
                 memory_client = AsyncCosmosMemoryClient(
                     cosmos_endpoint=cosmos_endpoint,
                     cosmos_database=cosmos_database,
-                    ai_foundry_endpoint=ai_foundry_endpoint,
-                    embedding_deployment_name=embedding_deployment_name,
-                    chat_deployment_name=chat_deployment_name,
+                    ai_foundry_endpoint=foundry_endpoint,
+                    embedding_deployment_name=embedding_model,
+                    chat_deployment_name=chat_model,
                     use_default_credential=True,
                 )
             self._should_close_client = True
 
         self.memory_client = memory_client
         self._cosmos_endpoint = cosmos_endpoint
-        self._ai_foundry_endpoint = ai_foundry_endpoint
-        # Emit the "no stable user_id" warning at most once per provider instance to avoid
-        # log spam on every run when a caller forgets to set user_id.
-        self._warned_user_fallback = False
+        self._foundry_endpoint = foundry_endpoint
 
     def _resolve_user_id(self, state: dict[str, Any], session: AgentSession) -> str:
-        """Resolve the user id for memory scoping, warning once if none was provided.
+        """Resolve the user id for memory scoping.
 
-        Long-term, cross-session memory requires a *stable* user id. If the caller does
-        not set ``state["user_id"]`` or ``session.state["user_id"]``, memory silently
-        scopes to the ephemeral ``session_id`` (or ``"default"``), so cross-session recall
-        will not work as intended. Log a one-time warning so this misconfiguration is
-        visible instead of failing silently.
+        Long-term, cross-session memory requires a *stable* user id. Callers set it in the
+        provider-scoped ``state`` (``state["user_id"]``). When absent, memory scopes to the
+        session id, which limits recall to the current session. ``state`` is the state for
+        this provider; the session is only consulted for its id as the fallback scope.
 
         Args:
             state: Provider-scoped mutable state.
-            session: The current session.
+            session: The current session (used only for its id as a fallback).
 
         Returns:
             The resolved user id.
         """
-        explicit = state.get("user_id") or session.state.get("user_id")
-        if explicit:
-            return explicit
-        if not self._warned_user_fallback:
-            self._warned_user_fallback = True
-            logger.warning(
-                "No 'user_id' found in state or session; falling back to session id '%s'. "
-                "Long-term cross-session memory requires a stable user_id set via "
-                "state['user_id'] or session.state['user_id'].",
-                session.session_id,
-            )
-        return session.session_id or "default"
+        return state.get("user_id") or session.session_id or "default"
 
     async def flush(self, timeout: float = 30.0) -> None:
         """Wait for any pending background memory-extraction tasks to complete.
@@ -254,17 +259,18 @@ class CosmosMemoryContextProvider(ContextProvider):
             await self.memory_client.create_memory_store()
         return self
 
-    async def __aexit__(
-        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any
-    ) -> None:
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         """Async context manager exit.
 
         Only close the memory client if this provider created it (_should_close_client=True).
         If a pre-created client was provided, the caller is responsible for closing it.
         """
-        if self.memory_client and isinstance(self.memory_client, AbstractAsyncContextManager):
-            if self._should_close_client:
-                await self.memory_client.__aexit__(exc_type, exc_val, exc_tb)  # type: ignore
+        if (
+            self._should_close_client
+            and self.memory_client
+            and isinstance(self.memory_client, AbstractAsyncContextManager)
+        ):
+            await self.memory_client.__aexit__(exc_type, exc_val, exc_tb)  # type: ignore
 
     async def before_run(
         self,
@@ -342,9 +348,9 @@ class CosmosMemoryContextProvider(ContextProvider):
             context: The invocation context with response populated.
             state: Provider-scoped mutable state.
         """
-        # Get user_id and thread_id from state or session (warns once if no stable user_id)
+        # Get user_id and thread_id from provider-scoped state (falling back to the session id)
         user_id = self._resolve_user_id(state, session)
-        thread_id = state.get("thread_id") or session.state.get("thread_id") or session.session_id or "default"
+        thread_id = state.get("thread_id") or session.session_id or "default"
 
         try:
             # Store input messages (skip empty/whitespace-only content to avoid junk turns)

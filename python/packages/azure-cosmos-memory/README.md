@@ -24,19 +24,19 @@ from agent_framework.foundry import FoundryChatClient
 from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider
 
 # A single AI Foundry endpoint powers both memory and the chat agent
-ai_foundry_endpoint = "https://<project>.services.ai.azure.com"
+foundry_endpoint = "https://<project>.services.ai.azure.com"
 
 # Create the memory provider
 memory_provider = CosmosMemoryContextProvider(
     cosmos_endpoint="https://<account>.documents.azure.com:443/",
     cosmos_database="ai_memory",
-    ai_foundry_endpoint=ai_foundry_endpoint,
+    foundry_endpoint=foundry_endpoint,
     credential=DefaultAzureCredential(),
 )
 
 # Create an agent with memory - reuses the same AI Foundry endpoint
 agent = FoundryChatClient(
-    project_endpoint=ai_foundry_endpoint,
+    project_endpoint=foundry_endpoint,
     model="gpt-4o-mini",
     credential=DefaultAzureCredential(),
 ).as_agent(
@@ -56,7 +56,7 @@ The provider supports the same authentication modes as other Azure integrations:
 
 - **Managed identity / RBAC** (recommended): Pass `DefaultAzureCredential()`
 - **Connection string**: Set environment variables
-- **Environment variables**: `COSMOS_DB_ENDPOINT`, `COSMOS_DB_DATABASE`, `AI_FOUNDRY_ENDPOINT`
+- **Environment variables**: `COSMOS_ENDPOINT`, `COSMOS_DATABASE`, `FOUNDRY_ENDPOINT`
 
 ### Development Setup
 
@@ -78,8 +78,9 @@ source .venv/bin/activate
 # Install package in development mode with all dependencies
 pip install -e ".[dev]"
 
-# OPTIONAL: Install sample dependencies (needed for interactive_chat.py)
-pip install -e ".[samples]"
+# OPTIONAL: sample dependencies (needed for the samples). The samples also declare these
+# inline via PEP 723, so you can instead run them with `uv run samples/<name>.py`.
+pip install agent-framework-foundry python-dotenv
 
 # Verify installation
 python -c "from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider; print('✓ Package installed')"
@@ -102,8 +103,9 @@ python -m venv .venv
 # Install package in development mode with all dependencies
 pip install -e ".[dev]"
 
-# OPTIONAL: Install sample dependencies (needed for interactive_chat.py)
-pip install -e ".[samples]"
+# OPTIONAL: sample dependencies (needed for the samples). The samples also declare these
+# inline via PEP 723, so you can instead run them with `uv run samples/<name>.py`.
+pip install agent-framework-foundry python-dotenv
 
 # Verify installation
 python -c "from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider; print('✓ Package installed')"
@@ -145,36 +147,36 @@ Ensure your virtual environment is activated, then:
 
 ```bash
 # Bash/Linux/macOS
-export COSMOS_DB_ENDPOINT="https://<your-account>.documents.azure.com:443/"
-export AI_FOUNDRY_ENDPOINT="https://<your-project>.services.ai.azure.com"
+export COSMOS_ENDPOINT="https://<your-account>.documents.azure.com:443/"
+export FOUNDRY_ENDPOINT="https://<your-project>.services.ai.azure.com"
 python samples/basic_usage.py
 ```
 
 ```powershell
 # PowerShell
-$env:COSMOS_DB_ENDPOINT="https://<your-account>.documents.azure.com:443/"
-$env:AI_FOUNDRY_ENDPOINT="https://<your-project>.services.ai.azure.com"
+$env:COSMOS_ENDPOINT="https://<your-account>.documents.azure.com:443/"
+$env:FOUNDRY_ENDPOINT="https://<your-project>.services.ai.azure.com"
 python samples/basic_usage.py
 ```
 
 #### 2. **Interactive Chat (`samples/interactive_chat.py`)** - Real Agent Integration
 This sample shows **real-world usage** with Agent Framework. It demonstrates:
 - ✅ **Full Agent Framework integration** - actual chatbot you can interact with
-- ✅ **Custom memory extraction rubric** - inject your own extraction logic
 - ✅ **Multi-turn conversations** - see memories persist across sessions
 - ✅ **User/thread scoping** - test memory isolation
 - ✅ **Interactive CLI** - chat with the agent, switch users, start new threads
 
 **Prerequisites:**
 
-1. **Complete [Development Setup](#development-setup)** - Create venv and install package **with sample dependencies**:
-   ```bash
-   pip install -e ".[dev,samples]"
-   ```
-   Or install the extras separately:
+1. **Complete [Development Setup](#development-setup)** - Create a venv and install the package with test dependencies:
    ```bash
    pip install -e ".[dev]"
-   pip install -e ".[samples]"
+   ```
+   The samples declare their own dependencies via [PEP 723](https://peps.python.org/pep-0723/) inline
+   metadata, so you can also just run them with `uv run samples/interactive_chat.py`. To install the
+   sample dependencies manually into your venv:
+   ```bash
+   pip install agent-framework-foundry python-dotenv
    ```
 
 2. **Azure Resources** - You'll need:
@@ -186,7 +188,7 @@ This sample shows **real-world usage** with Agent Framework. It demonstrates:
 
 3. **Configure environment variables** - Set these in your activated virtual environment.
 
-   > **Note:** A **single** `AI_FOUNDRY_ENDPOINT` powers everything:
+   > **Note:** A **single** `FOUNDRY_ENDPOINT` powers everything:
    > - The **memory provider** uses it internally for embeddings + memory extraction.
    > - The **chat agent** you talk to uses it via `FoundryChatClient`.
    >
@@ -195,25 +197,25 @@ This sample shows **real-world usage** with Agent Framework. It demonstrates:
    **Bash/Linux/macOS:**
    ```bash
    # Cosmos DB
-   export COSMOS_DB_ENDPOINT="https://<your-account>.documents.azure.com:443/"
-   export COSMOS_DB_DATABASE="ai_memory"
+   export COSMOS_ENDPOINT="https://<your-account>.documents.azure.com:443/"
+   export COSMOS_DATABASE="ai_memory"
 
    # AI Foundry - used by BOTH the memory provider and the chat agent
-   export AI_FOUNDRY_ENDPOINT="https://<your-project>.services.ai.azure.com"
-   export AI_FOUNDRY_EMBEDDING_DEPLOYMENT_NAME="text-embedding-3-large"
-   export AI_FOUNDRY_CHAT_DEPLOYMENT_NAME="gpt-4o-mini"
+   export FOUNDRY_ENDPOINT="https://<your-project>.services.ai.azure.com"
+   export EMBEDDING_MODEL="text-embedding-3-large"
+   export CHAT_MODEL="gpt-4o-mini"
    ```
 
    **PowerShell:**
    ```powershell
    # Cosmos DB
-   $env:COSMOS_DB_ENDPOINT="https://<your-account>.documents.azure.com:443/"
-   $env:COSMOS_DB_DATABASE="ai_memory"
+   $env:COSMOS_ENDPOINT="https://<your-account>.documents.azure.com:443/"
+   $env:COSMOS_DATABASE="ai_memory"
 
    # AI Foundry - used by BOTH the memory provider and the chat agent
-   $env:AI_FOUNDRY_ENDPOINT="https://<your-project>.services.ai.azure.com"
-   $env:AI_FOUNDRY_EMBEDDING_DEPLOYMENT_NAME="text-embedding-3-large"
-   $env:AI_FOUNDRY_CHAT_DEPLOYMENT_NAME="gpt-4o-mini"
+   $env:FOUNDRY_ENDPOINT="https://<your-project>.services.ai.azure.com"
+   $env:EMBEDDING_MODEL="text-embedding-3-large"
+   $env:CHAT_MODEL="gpt-4o-mini"
    ```
 
 4. **Ensure Azure authentication** - The samples use `DefaultAzureCredential`, which tries:
@@ -259,12 +261,12 @@ Use `processor_config` to control extraction frequency:
 ```python
 memory_provider = CosmosMemoryContextProvider(
     cosmos_endpoint=...,
-    ai_foundry_endpoint=...,
+    foundry_endpoint=...,
     processor_config={
-        "FACT_EXTRACTION_EVERY_N": "1",    # Extract after every turn
-        "DEDUP_EVERY_N": "3",              # Deduplicate every 3 extractions
-        "USER_SUMMARY_EVERY_N": "5",       # Update user profile every 5 turns
-        "THREAD_SUMMARY_EVERY_N": "10",    # Summarize thread every 10 turns
+        "FACT_EXTRACTION_EVERY_N": 1,    # Extract after every turn
+        "DEDUP_EVERY_N": 3,              # Deduplicate every 3 extractions
+        "USER_SUMMARY_EVERY_N": 5,       # Update user profile every 5 turns
+        "THREAD_SUMMARY_EVERY_N": 10,    # Summarize thread every 10 turns
     }
 )
 ```
@@ -294,11 +296,9 @@ memory_client = AsyncCosmosMemoryClient(
 memory_provider = CosmosMemoryContextProvider(memory_client=memory_client)
 ```
 
-See [`samples/interactive_chat.py`](samples/interactive_chat.py) for a complete example with a custom extraction rubric that defines:
-- What to extract (preferences, facts, decisions, patterns)
-- What to ignore (transient requests, small talk, tool chatter)
-- How to classify memories (fact, procedural, episodic)
-- Confidence scoring rules
+See the [Agent Memory Toolkit docs](https://github.com/AzureCosmosDB/AgentMemoryToolkit) for details on
+custom processors and extraction rubrics (what to extract, what to ignore, how to classify memories,
+and confidence scoring).
 
 ### Configuration
 
@@ -307,7 +307,7 @@ memory_provider = CosmosMemoryContextProvider(
     source_id="cosmos_memory",                    # Provider identifier
     cosmos_endpoint="https://...",                # Cosmos DB endpoint
     cosmos_database="ai_memory",                  # Database name
-    ai_foundry_endpoint="https://...",            # AI Foundry endpoint
+    foundry_endpoint="https://...",               # AI Foundry endpoint
     credential=DefaultAzureCredential(),          # Azure credential
 
     # Memory retrieval options
@@ -375,7 +375,7 @@ agent = client.as_agent(
         # Long-term: semantic memory with facts and profiles
         CosmosMemoryContextProvider(
             cosmos_endpoint=cosmos_endpoint,
-            ai_foundry_endpoint=ai_foundry_endpoint,
+            foundry_endpoint=foundry_endpoint,
             credential=credential,
         ),
     ]
@@ -389,9 +389,10 @@ Memories are scoped by `user_id` and `thread_id`:
 ```python
 session = agent.create_session()
 
-# Set user_id and thread_id in session state
-session.state["user_id"] = "user-123"
-session.state["thread_id"] = "thread-456"
+# Set user_id and thread_id in the provider-scoped state (keyed by the provider's source_id)
+scoped = session.state.setdefault("cosmos_memory", {})
+scoped["user_id"] = "user-123"
+scoped["thread_id"] = "thread-456"
 
 await agent.run("Remember that I'm allergic to peanuts.", session=session)
 ```
@@ -429,11 +430,11 @@ All configuration can be provided via environment variables:
 
 **Using a `.env` file** (cross-platform, recommended):
 ```bash
-COSMOS_DB_ENDPOINT=https://<account>.documents.azure.com:443/
-COSMOS_DB_DATABASE=ai_memory
-AI_FOUNDRY_ENDPOINT=https://<project>.services.ai.azure.com
-AI_FOUNDRY_EMBEDDING_DEPLOYMENT_NAME=text-embedding-3-large
-AI_FOUNDRY_CHAT_DEPLOYMENT_NAME=gpt-4o-mini
+COSMOS_ENDPOINT=https://<account>.documents.azure.com:443/
+COSMOS_DATABASE=ai_memory
+FOUNDRY_ENDPOINT=https://<project>.services.ai.azure.com
+EMBEDDING_MODEL=text-embedding-3-large
+CHAT_MODEL=gpt-4o-mini
 
 # Optional: Processing configuration
 FACT_EXTRACTION_EVERY_N=1
@@ -446,16 +447,16 @@ USER_SUMMARY_EVERY_N=20
 
 Bash/Linux/macOS:
 ```bash
-export COSMOS_DB_ENDPOINT=https://<account>.documents.azure.com:443/
-export COSMOS_DB_DATABASE=ai_memory
-export AI_FOUNDRY_ENDPOINT=https://<project>.services.ai.azure.com
+export COSMOS_ENDPOINT=https://<account>.documents.azure.com:443/
+export COSMOS_DATABASE=ai_memory
+export FOUNDRY_ENDPOINT=https://<project>.services.ai.azure.com
 ```
 
 PowerShell:
 ```powershell
-$env:COSMOS_DB_ENDPOINT="https://<account>.documents.azure.com:443/"
-$env:COSMOS_DB_DATABASE="ai_memory"
-$env:AI_FOUNDRY_ENDPOINT="https://<project>.services.ai.azure.com"
+$env:COSMOS_ENDPOINT="https://<account>.documents.azure.com:443/"
+$env:COSMOS_DATABASE="ai_memory"
+$env:FOUNDRY_ENDPOINT="https://<project>.services.ai.azure.com"
 ```
 
 ## See Also

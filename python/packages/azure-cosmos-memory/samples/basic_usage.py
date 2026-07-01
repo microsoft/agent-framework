@@ -1,144 +1,111 @@
 # Copyright (c) Microsoft. All rights reserved.
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "agent-framework-azure-cosmos-memory",
+#     "agent-framework-foundry",
+#     "python-dotenv",
+# ]
+# ///
 
-"""Sample usage of CosmosMemoryContextProvider.
+"""Basic usage of CosmosMemoryContextProvider with an agent.
 
-This example demonstrates:
-1. Creating a provider with Azure credentials
-2. Using it with an OpenAI agent
-3. Multi-turn conversation with memory
-4. Combining with history providers
+Attach the provider to an ``Agent`` and it transparently searches long-term memory
+before each run (injecting relevant memories) and stores the conversation turns
+afterwards for background fact/summary extraction.
 
-Prerequisites:
-    Install the package in development mode first:
-        pip install -e .
+Set these environment variables (or put them in a ``.env`` file) before running:
+    COSMOS_ENDPOINT     Azure Cosmos DB account endpoint
+    FOUNDRY_ENDPOINT    Azure AI Foundry project endpoint (chat + embeddings)
 
-    Then run this sample:
-        python samples/basic_usage.py
+Optional:
+    COSMOS_DATABASE     Database name (default: ai_memory)
+    CHAT_MODEL          Chat deployment (default: gpt-4o-mini)
+    EMBEDDING_MODEL     Embedding deployment (default: text-embedding-3-large)
+
+Run:
+    python samples/basic_usage.py
 """
 
 import asyncio
 import os
 
-from agent_framework import Message
-from agent_framework._sessions import AgentSession, SessionContext
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import DefaultAzureCredential
+from dotenv import load_dotenv
 
 from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider
 
 
-async def basic_example() -> None:
-    """Basic example with environment variables."""
-    # Create provider - reads from environment
-    async with CosmosMemoryContextProvider(
-        cosmos_endpoint=os.environ["COSMOS_DB_ENDPOINT"],
-        ai_foundry_endpoint=os.environ["AI_FOUNDRY_ENDPOINT"],
-        credential=DefaultAzureCredential(),
-    ) as provider:
-        # Use with agent session
-        session = AgentSession(session_id="user-session-123")
-        session.state["user_id"] = "alice"
-        session.state["thread_id"] = "conversation-1"
-
-        # Simulate agent run - before_run searches memories
-        ctx = SessionContext(
-            input_messages=[Message(role="user", contents=["What do you know about my preferences?"])],
-            session_id=session.session_id,
-        )
-
-        await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
-
-        print(f"Retrieved {len(ctx.context_messages.get(provider.source_id, []))} memory messages")
-
-        # After agent responds, store the conversation
-        await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
-
-        print("Conversation stored for future memory extraction")
-
-
-async def custom_config_example() -> None:
-    """Example with custom configuration."""
-    provider = CosmosMemoryContextProvider(
-        source_id="custom_memory",
-        cosmos_endpoint=os.environ["COSMOS_DB_ENDPOINT"],
-        cosmos_database="my_agent_memory",
-        ai_foundry_endpoint=os.environ["AI_FOUNDRY_ENDPOINT"],
-        embedding_deployment_name="text-embedding-3-large",
-        chat_deployment_name="gpt-4o-mini",
-        credential=DefaultAzureCredential(),
-        top_k=10,  # Retrieve more memories
-        min_confidence=0.8,  # Higher confidence threshold
-        memory_types=["fact", "procedural", "episodic"],  # Include episodic memories
-        context_prompt="## What I Remember About You",
-        processor_config={
-            "FACT_EXTRACTION_EVERY_N": "1",  # Extract facts every message
-            "USER_SUMMARY_EVERY_N": "5",  # Update user profile every 5 messages
-        },
+def _build_agent(provider: CosmosMemoryContextProvider, credential: DefaultAzureCredential) -> Agent:
+    """Build an agent that uses the memory provider and the same Foundry endpoint for chat."""
+    return Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_ENDPOINT"],
+            model=os.getenv("CHAT_MODEL", "gpt-4o-mini"),
+            credential=credential,
+        ),
+        name="Memory Assistant",
+        instructions="You are a helpful assistant with long-term memory about the user.",
+        context_providers=[provider],
     )
+
+
+async def user_scoped_memory() -> None:
+    """Memory scoped to a stable user id, so it persists across sessions and threads."""
+    credential = DefaultAzureCredential()
+    provider = CosmosMemoryContextProvider(
+        cosmos_endpoint=os.environ["COSMOS_ENDPOINT"],
+        foundry_endpoint=os.environ["FOUNDRY_ENDPOINT"],
+        credential=credential,
+    )
+    agent = _build_agent(provider, credential)
 
     async with provider:
-        session = AgentSession(session_id="demo-session")
-        session.state["user_id"] = "bob"
+        session = agent.create_session()
+        # Provider state is scoped by source id; set a stable user id there so memory
+        # persists across sessions rather than being limited to this one.
+        session.state.setdefault(provider.source_id, {})["user_id"] = "alice"
+        first = await agent.run("I love hiking and I'm allergic to peanuts.", session=session)
+        print("Assistant:", first.text)
 
-        ctx = SessionContext(
-            input_messages=[Message(role="user", contents=["I'm learning Rust programming"])],
-            session_id=session.session_id,
-        )
+        # A brand-new session for the same user still recalls the earlier facts.
+        new_session = agent.create_session()
+        new_session.state.setdefault(provider.source_id, {})["user_id"] = "alice"
+        recall = await agent.run("What do you remember about me?", session=new_session)
+        print("Assistant:", recall.text)
 
-        await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
-        await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
-
-        print("Custom configured provider executed successfully")
+        # Let background extraction finish and persist before the client closes.
+        await provider.flush()
 
 
-async def multi_provider_example() -> None:
-    """Example combining memory with other providers."""
-    from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider
-
-    # Combine semantic memory with conversation history
-    memory_provider = CosmosMemoryContextProvider(
-        source_id="semantic_memory",
-        cosmos_endpoint=os.environ["COSMOS_DB_ENDPOINT"],
-        ai_foundry_endpoint=os.environ["AI_FOUNDRY_ENDPOINT"],
-        credential=DefaultAzureCredential(),
-        memory_types=["fact", "procedural"],  # Long-term facts
+async def session_scoped_memory() -> None:
+    """Without a user id, memory is scoped to the session id (single-session recall)."""
+    credential = DefaultAzureCredential()
+    provider = CosmosMemoryContextProvider(
+        cosmos_endpoint=os.environ["COSMOS_ENDPOINT"],
+        foundry_endpoint=os.environ["FOUNDRY_ENDPOINT"],
+        credential=credential,
     )
+    agent = _build_agent(provider, credential)
 
-    # Note: In real usage, you'd also add a history provider like:
-    # from agent_framework_azure_cosmos import CosmosHistoryProvider
-    # history_provider = CosmosHistoryProvider(...)
+    async with provider:
+        # No user_id in provider state -> memory is scoped to this session's id.
+        session = agent.create_session()
+        await agent.run("Remember that my project uses FastAPI and PostgreSQL.", session=session)
+        followup = await agent.run("Which web framework am I using?", session=session)
+        print("Assistant:", followup.text)
+        await provider.flush()
 
-    async with memory_provider:
-        session = AgentSession(session_id="multi-provider-session")
-        session.state["user_id"] = "charlie"
-        session.state["thread_id"] = "support-thread-456"
 
-        ctx = SessionContext(
-            input_messages=[Message(role="user", contents=["How do I configure authentication?"])],
-            session_id=session.session_id,
-        )
-
-        # Both providers would be called in agent run
-        await memory_provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(memory_provider.source_id, {})
-        )  # type: ignore
-
-        print("Multi-provider setup ready")
+async def main() -> None:
+    load_dotenv()
+    print("=== User-scoped memory ===")
+    await user_scoped_memory()
+    print("\n=== Session-scoped memory ===")
+    await session_scoped_memory()
 
 
 if __name__ == "__main__":
-    print("=== Basic Example ===")
-    asyncio.run(basic_example())
-
-    print("\n=== Custom Config Example ===")
-    asyncio.run(custom_config_example())
-
-    print("\n=== Multi-Provider Example ===")
-    asyncio.run(multi_provider_example())
+    asyncio.run(main())

@@ -10,8 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
+from agent_framework.exceptions import SettingNotFoundError
 
-from agent_framework_azure_cosmos_memory._context_provider import CosmosMemoryContextProvider
+from agent_framework_azure_cosmos_memory._context_provider import (
+    DEFAULT_CONTEXT_PROMPT,
+    CosmosMemoryContextProvider,
+)
 
 # The Agent Memory Toolkit requires Python 3.11+, so it is not installed on the 3.10 CI
 # leg. Skip this module there (mirrors the github_copilot package's importorskip guard).
@@ -66,7 +70,7 @@ class TestInit:
         assert provider.top_k == 5
         assert provider.min_confidence == 0.7
         assert provider.memory_types == ["fact", "procedural"]
-        assert provider.context_prompt == CosmosMemoryContextProvider.DEFAULT_CONTEXT_PROMPT
+        assert provider.context_prompt == DEFAULT_CONTEXT_PROMPT
         assert provider.auto_extract is True
 
     def test_init_creates_client_when_none(self) -> None:
@@ -79,7 +83,7 @@ class TestInit:
             provider = CosmosMemoryContextProvider(
                 cosmos_endpoint="https://test.documents.azure.com:443/",
                 cosmos_database="test_db",
-                ai_foundry_endpoint="https://test.ai.azure.com",
+                foundry_endpoint="https://test.ai.azure.com",
             )
 
             mock_client_class.assert_called_once()
@@ -99,7 +103,7 @@ class TestInit:
 
             CosmosMemoryContextProvider(
                 cosmos_endpoint="https://test.documents.azure.com:443/",
-                ai_foundry_endpoint="https://test.ai.azure.com",
+                foundry_endpoint="https://test.ai.azure.com",
                 credential=sentinel,
             )
 
@@ -108,14 +112,18 @@ class TestInit:
             assert kwargs["ai_foundry_credential"] is sentinel
             assert kwargs["use_default_credential"] is False
 
-    def test_init_raises_without_endpoints(self) -> None:
-        """Raises ValueError when endpoints not provided."""
-        with pytest.raises(ValueError, match="cosmos_endpoint must be provided"):
+    def test_init_raises_without_endpoints(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Raises SettingNotFoundError when the Cosmos endpoint is not provided."""
+        for var in ("COSMOS_ENDPOINT", "COSMOS_DATABASE", "FOUNDRY_ENDPOINT", "EMBEDDING_MODEL", "CHAT_MODEL"):
+            monkeypatch.delenv(var, raising=False)
+        with pytest.raises(SettingNotFoundError, match="cosmos_endpoint"):
             CosmosMemoryContextProvider()
 
-    def test_init_raises_without_ai_foundry(self) -> None:
-        """Raises ValueError when AI Foundry endpoint not provided."""
-        with pytest.raises(ValueError, match="ai_foundry_endpoint must be provided"):
+    def test_init_raises_without_foundry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Raises SettingNotFoundError when the Foundry endpoint is not provided."""
+        for var in ("COSMOS_ENDPOINT", "COSMOS_DATABASE", "FOUNDRY_ENDPOINT", "EMBEDDING_MODEL", "CHAT_MODEL"):
+            monkeypatch.delenv(var, raising=False)
+        with pytest.raises(SettingNotFoundError, match="foundry_endpoint"):
             CosmosMemoryContextProvider(cosmos_endpoint="https://test.documents.azure.com:443/")
 
     def test_init_processor_config_applied(self, mock_memory_client: AsyncMock) -> None:
@@ -124,7 +132,7 @@ class TestInit:
 
         original_value = os.environ.get("FACT_EXTRACTION_EVERY_N")
         try:
-            provider = CosmosMemoryContextProvider(
+            CosmosMemoryContextProvider(
                 memory_client=mock_memory_client, processor_config={"FACT_EXTRACTION_EVERY_N": "10"}
             )
             assert os.environ.get("FACT_EXTRACTION_EVERY_N") == "10"
@@ -153,9 +161,11 @@ class TestInit:
 
     def test_init_raises_when_memory_toolkit_not_available(self) -> None:
         """Raises ImportError when azure-cosmos-agent-memory not installed."""
-        with patch("agent_framework_azure_cosmos_memory._context_provider._memory_toolkit_available", False):
-            with pytest.raises(ImportError, match="azure-cosmos-agent-memory is required"):
-                CosmosMemoryContextProvider(memory_client=MagicMock())  # type: ignore
+        with (
+            patch("agent_framework_azure_cosmos_memory._context_provider._memory_toolkit_available", False),
+            pytest.raises(ImportError, match="azure-cosmos-agent-memory is required"),
+        ):
+            CosmosMemoryContextProvider(memory_client=MagicMock())  # type: ignore
 
 
 # -- before_run tests ----------------------------------------------------------
@@ -173,7 +183,9 @@ class TestBeforeRun:
 
         provider = CosmosMemoryContextProvider(memory_client=mock_memory_client)
         session = AgentSession(session_id="test-session")
-        ctx = SessionContext(input_messages=[Message(role="user", contents=["What do you know about me?"])], session_id="s1")
+        ctx = SessionContext(
+            input_messages=[Message(role="user", contents=["What do you know about me?"])], session_id="s1"
+        )
 
         await provider.before_run(
             agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
@@ -277,12 +289,12 @@ class TestBeforeRun:
         assert "cosmos_memory" not in ctx.context_messages
 
     async def test_uses_user_id_from_state(self, mock_memory_client: AsyncMock) -> None:
-        """Uses user_id from session state if available."""
+        """Uses user_id from the provider-scoped state if available."""
         mock_memory_client.search_cosmos.return_value = []
 
         provider = CosmosMemoryContextProvider(memory_client=mock_memory_client)
         session = AgentSession(session_id="test-session")
-        session.state["user_id"] = "custom-user-123"
+        session.state.setdefault(provider.source_id, {})["user_id"] = "custom-user-123"
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
         await provider.before_run(
@@ -292,7 +304,9 @@ class TestBeforeRun:
         call_kwargs = mock_memory_client.search_cosmos.call_args.kwargs
         assert call_kwargs["user_id"] == "custom-user-123"
 
-    async def test_search_failure_logs_warning(self, mock_memory_client: AsyncMock, caplog: pytest.LogCaptureFixture) -> None:
+    async def test_search_failure_logs_warning(
+        self, mock_memory_client: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Search failures are logged but don't raise."""
         mock_memory_client.search_cosmos.side_effect = Exception("Cosmos DB connection failed")
 
@@ -314,7 +328,7 @@ class TestBeforeRun:
 
         provider = CosmosMemoryContextProvider(memory_client=mock_memory_client)
         session = AgentSession(session_id="test-session")
-        session.state["user_id"] = "u1"
+        session.state.setdefault(provider.source_id, {})["user_id"] = "u1"
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
         await provider.before_run(
@@ -333,7 +347,7 @@ class TestBeforeRun:
 
         provider = CosmosMemoryContextProvider(memory_client=mock_memory_client)
         session = AgentSession(session_id="test-session")
-        session.state["user_id"] = "u1"
+        session.state.setdefault(provider.source_id, {})["user_id"] = "u1"
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
         await provider.before_run(
@@ -343,24 +357,18 @@ class TestBeforeRun:
         injected = ctx.context_messages[provider.source_id]
         assert any("User likes hiking" in m.text for m in injected)  # type: ignore[arg-type]
 
-    async def test_warns_once_when_no_user_id(
-        self, mock_memory_client: AsyncMock, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Falling back to the session id (no stable user_id) logs a one-time warning."""
+    async def test_falls_back_to_session_id_without_user_id(self, mock_memory_client: AsyncMock) -> None:
+        """With no user_id in provider state, memory scopes to the session id."""
         provider = CosmosMemoryContextProvider(memory_client=mock_memory_client)
         session = AgentSession(session_id="ephemeral-session")
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
-        with caplog.at_level("WARNING"):
-            for _ in range(2):
-                await provider.before_run(
-                    agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-                )  # type: ignore
+        await provider.before_run(
+            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore
 
-        # Search used the session id as the fallback user id...
+        # Search used the session id as the fallback user id.
         assert mock_memory_client.search_cosmos.call_args.kwargs["user_id"] == "ephemeral-session"
-        # ...and the fallback warning was emitted exactly once across both runs.
-        assert caplog.text.count("No 'user_id' found") == 1
 
 
 # -- after_run tests -----------------------------------------------------------
@@ -423,8 +431,9 @@ class TestAfterRun:
         """Uses custom user_id and thread_id from state."""
         provider = CosmosMemoryContextProvider(memory_client=mock_memory_client)
         session = AgentSession(session_id="test-session")
-        session.state["user_id"] = "user-456"
-        session.state["thread_id"] = "thread-789"
+        scoped = session.state.setdefault(provider.source_id, {})
+        scoped["user_id"] = "user-456"
+        scoped["thread_id"] = "thread-789"
         ctx = SessionContext(
             input_messages=[Message(role="user", contents=["test"])],
             session_id="s1",
@@ -481,7 +490,9 @@ class TestAfterRun:
         call_kwargs = mock_memory_client.add_cosmos.await_args_list[0].kwargs
         assert call_kwargs["content"] == "Trimmed message"
 
-    async def test_storage_failure_logs_warning(self, mock_memory_client: AsyncMock, caplog: pytest.LogCaptureFixture) -> None:
+    async def test_storage_failure_logs_warning(
+        self, mock_memory_client: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Storage failures are logged but don't raise."""
         mock_memory_client.add_cosmos.side_effect = Exception("Storage failed")
 
@@ -561,7 +572,7 @@ class TestContextManager:
 
             provider = CosmosMemoryContextProvider(
                 cosmos_endpoint="https://test.documents.azure.com:443/",
-                ai_foundry_endpoint="https://test.ai.azure.com",
+                foundry_endpoint="https://test.ai.azure.com",
             )
 
             async with provider:
@@ -648,7 +659,7 @@ class TestFlush:
 
             provider = CosmosMemoryContextProvider(
                 cosmos_endpoint="https://test.documents.azure.com:443/",
-                ai_foundry_endpoint="https://test.ai.azure.com",
+                foundry_endpoint="https://test.ai.azure.com",
             )
 
             assert provider._should_close_client is True

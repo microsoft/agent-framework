@@ -39,10 +39,6 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.0.0",
 ]
-samples = [
-    "agent-framework-foundry>=1.6.0,<2",
-    "python-dotenv>=1.0.0",
-]
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
@@ -72,6 +68,11 @@ markers = [
 
 [tool.ruff]
 extend = "../../pyproject.toml"
+
+[tool.ruff.lint.extend-per-file-ignores]
+# Samples are illustrative scripts: allow prints and a plain blocking input() loop, and
+# skip docstring/namespace/copyright rules.
+"samples/**" = ["D", "INP", "ERA001", "RUF", "S", "T201", "CPY", "ASYNC250"]
 
 [tool.coverage.run]
 omit = [
