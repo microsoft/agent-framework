@@ -13,7 +13,10 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.AI.OpenAI" />
-    <PackageReference Include="Azure.Core" />
+    <!-- AgentServer 1.0.0-beta.26 (pulled transitively via Foundry.Hosting) requires Azure.Core 1.59.0.
+         This sample disables transitive pinning and references Azure.Core directly, so override just
+         this project to the SDK-required version without moving the solution-wide central pin. -->
+    <PackageReference Include="Azure.Core" VersionOverride="1.59.0" />
     <PackageReference Include="Azure.Identity" />
     <PackageReference Include="DotNetEnv" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />

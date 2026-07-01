@@ -78,16 +78,18 @@ def test_combine_paths_joins_with_forward_slash() -> None:
 
 
 async def test_provider_registers_tools_and_instructions() -> None:
-    """``before_run`` should register the five tools and the default instructions."""
+    """``before_run`` should register all tools and the default instructions."""
     provider = FileMemoryProvider(store=InMemoryAgentFileStore())
     context, tools = await _prepare(provider)
 
     expected = {
-        "file_memory_save_file",
-        "file_memory_read_file",
-        "file_memory_delete_file",
-        "file_memory_list_files",
-        "file_memory_search_files",
+        "file_memory_write",
+        "file_memory_read",
+        "file_memory_delete",
+        "file_memory_ls",
+        "file_memory_grep",
+        "file_memory_replace",
+        "file_memory_replace_lines",
     }
     assert set(tools) >= expected
     assert all(t.approval_mode == "never_require" for t in context.tools)  # type: ignore[attr-defined]
@@ -106,13 +108,13 @@ async def test_save_read_delete_round_trip() -> None:
     provider = FileMemoryProvider(store=store)
     _, tools = await _prepare(provider)
 
-    save = tools["file_memory_save_file"]
-    read = tools["file_memory_read_file"]
-    delete = tools["file_memory_delete_file"]
-    list_files = tools["file_memory_list_files"]
+    save = tools["file_memory_write"]
+    read = tools["file_memory_read"]
+    delete = tools["file_memory_delete"]
+    list_files = tools["file_memory_ls"]
 
     saved = await save.invoke(arguments={"file_name": "plan.md", "content": "step 1"})
-    assert "plan.md" in _text(saved) and "saved" in _text(saved)
+    assert "plan.md" in _text(saved) and "written" in _text(saved)
 
     read_back = await read.invoke(arguments={"file_name": "plan.md"})
     assert _text(read_back) == "step 1"
@@ -122,7 +124,7 @@ async def test_save_read_delete_round_trip() -> None:
     assert _text(await read.invoke(arguments={"file_name": "plan.md"})) == "step 2"
 
     listed = json.loads(_text(await list_files.invoke()))
-    assert listed == [{"file_name": "plan.md", "description": None}]
+    assert listed == [{"name": "plan.md", "type": "file", "description": None}]
 
     deleted = await delete.invoke(arguments={"file_name": "plan.md"})
     assert "deleted" in _text(deleted)
@@ -137,25 +139,25 @@ async def test_description_sidecar_is_written_and_listed() -> None:
     store = InMemoryAgentFileStore()
     provider = FileMemoryProvider(store=store, scope="user-1")
     _, tools = await _prepare(provider)
-    save = tools["file_memory_save_file"]
-    list_files = tools["file_memory_list_files"]
+    save = tools["file_memory_write"]
+    list_files = tools["file_memory_ls"]
 
     result = await save.invoke(
         arguments={"file_name": "arch.md", "content": "big content", "description": "system architecture"}
     )
     assert "with description" in _text(result)
 
-    sidecar = await store.read_file(_combine_paths("user-1", "arch_description.md"))
+    sidecar = await store.read(_combine_paths("user-1", "arch_description.md"))
     assert sidecar == "system architecture"
 
     listed = json.loads(_text(await list_files.invoke()))
-    assert listed == [{"file_name": "arch.md", "description": "system architecture"}]
+    assert listed == [{"name": "arch.md", "type": "file", "description": "system architecture"}]
 
     # Re-saving without a description removes the sidecar.
     await save.invoke(arguments={"file_name": "arch.md", "content": "big content"})
-    assert await store.read_file(_combine_paths("user-1", "arch_description.md")) is None
+    assert await store.read(_combine_paths("user-1", "arch_description.md")) is None
     listed_again = json.loads(_text(await list_files.invoke()))
-    assert listed_again == [{"file_name": "arch.md", "description": None}]
+    assert listed_again == [{"name": "arch.md", "type": "file", "description": None}]
 
 
 async def test_delete_removes_sidecar() -> None:
@@ -164,13 +166,11 @@ async def test_delete_removes_sidecar() -> None:
     provider = FileMemoryProvider(store=store, scope="user-1")
     _, tools = await _prepare(provider)
 
-    await tools["file_memory_save_file"].invoke(
-        arguments={"file_name": "arch.md", "content": "x", "description": "desc"}
-    )
-    assert await store.read_file(_combine_paths("user-1", "arch_description.md")) == "desc"
+    await tools["file_memory_write"].invoke(arguments={"file_name": "arch.md", "content": "x", "description": "desc"})
+    assert await store.read(_combine_paths("user-1", "arch_description.md")) == "desc"
 
-    await tools["file_memory_delete_file"].invoke(arguments={"file_name": "arch.md"})
-    assert await store.read_file(_combine_paths("user-1", "arch_description.md")) is None
+    await tools["file_memory_delete"].invoke(arguments={"file_name": "arch.md"})
+    assert await store.read(_combine_paths("user-1", "arch_description.md")) is None
 
 
 async def test_index_is_rebuilt_and_injected_on_next_run() -> None:
@@ -179,12 +179,12 @@ async def test_index_is_rebuilt_and_injected_on_next_run() -> None:
     provider = FileMemoryProvider(store=store, scope="user-1")
     _, tools = await _prepare(provider)
 
-    await tools["file_memory_save_file"].invoke(
+    await tools["file_memory_write"].invoke(
         arguments={"file_name": "arch.md", "content": "x", "description": "architecture"}
     )
-    await tools["file_memory_save_file"].invoke(arguments={"file_name": "todo.md", "content": "y"})
+    await tools["file_memory_write"].invoke(arguments={"file_name": "todo.md", "content": "y"})
 
-    index = await store.read_file(_combine_paths("user-1", _MEMORY_INDEX_FILE_NAME))
+    index = await store.read(_combine_paths("user-1", _MEMORY_INDEX_FILE_NAME))
     assert index is not None
     assert "# Memory Index" in index
     assert "- **arch.md**: architecture" in index
@@ -206,18 +206,16 @@ async def test_list_and_search_hide_internal_files() -> None:
     provider = FileMemoryProvider(store=store, scope="user-1")
     _, tools = await _prepare(provider)
 
-    await tools["file_memory_save_file"].invoke(
+    await tools["file_memory_write"].invoke(
         arguments={"file_name": "arch.md", "content": "architecture text", "description": "architecture"}
     )
 
-    listed = json.loads(_text(await tools["file_memory_list_files"].invoke()))
-    assert [e["file_name"] for e in listed] == ["arch.md"]
+    listed = json.loads(_text(await tools["file_memory_ls"].invoke()))
+    assert [e["name"] for e in listed] == ["arch.md"]
 
     # The description text lives in an internal sidecar, so a regex matching it
     # must not return the sidecar (only the memory file itself).
-    found = json.loads(
-        _text(await tools["file_memory_search_files"].invoke(arguments={"regex_pattern": "architecture"}))
-    )
+    found = json.loads(_text(await tools["file_memory_grep"].invoke(arguments={"regex_pattern": "architecture"})))
     names = [e["file_name"] for e in found]
     assert "arch.md" in names
     assert all(not _is_internal_file(name) for name in names)
@@ -229,16 +227,16 @@ async def test_scope_isolates_memories_across_sessions() -> None:
     provider = FileMemoryProvider(store=store)
 
     _, tools_a = await _prepare(provider, session_id="session-a")
-    await tools_a["file_memory_save_file"].invoke(arguments={"file_name": "a.md", "content": "from a"})
+    await tools_a["file_memory_write"].invoke(arguments={"file_name": "a.md", "content": "from a"})
 
     _, tools_b = await _prepare(provider, session_id="session-b")
-    listed_b = json.loads(_text(await tools_b["file_memory_list_files"].invoke()))
+    listed_b = json.loads(_text(await tools_b["file_memory_ls"].invoke()))
     assert listed_b == []
 
     # The original session still sees its own memory.
     _, tools_a2 = await _prepare(provider, session_id="session-a")
-    listed_a = json.loads(_text(await tools_a2["file_memory_list_files"].invoke()))
-    assert [e["file_name"] for e in listed_a] == ["a.md"]
+    listed_a = json.loads(_text(await tools_a2["file_memory_ls"].invoke()))
+    assert [e["name"] for e in listed_a] == ["a.md"]
 
 
 async def test_explicit_scope_shares_memories_across_sessions() -> None:
@@ -247,18 +245,18 @@ async def test_explicit_scope_shares_memories_across_sessions() -> None:
     provider = FileMemoryProvider(store=store, scope="shared")
 
     _, tools_a = await _prepare(provider, session_id="session-a")
-    await tools_a["file_memory_save_file"].invoke(arguments={"file_name": "shared.md", "content": "v"})
+    await tools_a["file_memory_write"].invoke(arguments={"file_name": "shared.md", "content": "v"})
 
     _, tools_b = await _prepare(provider, session_id="session-b")
-    listed_b = json.loads(_text(await tools_b["file_memory_list_files"].invoke()))
-    assert [e["file_name"] for e in listed_b] == ["shared.md"]
+    listed_b = json.loads(_text(await tools_b["file_memory_ls"].invoke()))
+    assert [e["name"] for e in listed_b] == ["shared.md"]
 
 
 async def test_save_rejects_reserved_internal_names() -> None:
     """Saving a file whose name collides with an internal file must be rejected."""
     provider = FileMemoryProvider(store=InMemoryAgentFileStore())
     _, tools = await _prepare(provider)
-    save = tools["file_memory_save_file"]
+    save = tools["file_memory_write"]
 
     reserved = await save.invoke(arguments={"file_name": _MEMORY_INDEX_FILE_NAME, "content": "x"})
     assert "reserved" in _text(reserved)
@@ -272,13 +270,13 @@ async def test_tools_surface_path_validation_errors() -> None:
     provider = FileMemoryProvider(store=InMemoryAgentFileStore())
     _, tools = await _prepare(provider)
 
-    bad_save = await tools["file_memory_save_file"].invoke(arguments={"file_name": "../escape.md", "content": "x"})
-    assert "Could not save" in _text(bad_save)
+    bad_save = await tools["file_memory_write"].invoke(arguments={"file_name": "../escape.md", "content": "x"})
+    assert "Could not write" in _text(bad_save)
 
-    bad_read = await tools["file_memory_read_file"].invoke(arguments={"file_name": "/rooted.md"})
+    bad_read = await tools["file_memory_read"].invoke(arguments={"file_name": "/rooted.md"})
     assert "Could not read" in _text(bad_read)
 
-    bad_delete = await tools["file_memory_delete_file"].invoke(arguments={"file_name": "../escape.md"})
+    bad_delete = await tools["file_memory_delete"].invoke(arguments={"file_name": "../escape.md"})
     assert "Could not delete" in _text(bad_delete)
 
 
@@ -301,21 +299,19 @@ async def test_tools_reject_nested_paths() -> None:
     provider = FileMemoryProvider(store=store)
     _, tools = await _prepare(provider)
 
-    saved = await tools["file_memory_save_file"].invoke(arguments={"file_name": "notes/plan.md", "content": "x"})
+    saved = await tools["file_memory_write"].invoke(arguments={"file_name": "notes/plan.md", "content": "x"})
     assert "subdirectory" in _text(saved)
     # Nothing should have been written for the nested name.
-    assert await store.list_files("") == []
+    assert await store.list_children("") == []
 
     # Backslash separators are normalized to "/" and rejected the same way.
-    saved_backslash = await tools["file_memory_save_file"].invoke(
-        arguments={"file_name": "notes\\plan.md", "content": "x"}
-    )
+    saved_backslash = await tools["file_memory_write"].invoke(arguments={"file_name": "notes\\plan.md", "content": "x"})
     assert "subdirectory" in _text(saved_backslash)
 
     # Reading/deleting a nested name reports a clean "not found" message.
-    read_back = await tools["file_memory_read_file"].invoke(arguments={"file_name": "notes/plan.md"})
+    read_back = await tools["file_memory_read"].invoke(arguments={"file_name": "notes/plan.md"})
     assert "not found" in _text(read_back)
-    deleted = await tools["file_memory_delete_file"].invoke(arguments={"file_name": "notes/plan.md"})
+    deleted = await tools["file_memory_delete"].invoke(arguments={"file_name": "notes/plan.md"})
     assert "not found" in _text(deleted)
 
 
@@ -324,13 +320,13 @@ async def test_index_caps_entries_at_max() -> None:
     store = InMemoryAgentFileStore()
     provider = FileMemoryProvider(store=store, scope="user-1")
     _, tools = await _prepare(provider)
-    save = tools["file_memory_save_file"]
+    save = tools["file_memory_write"]
 
     total = _MAX_INDEX_ENTRIES + 5
     for i in range(total):
         await save.invoke(arguments={"file_name": f"memory-{i:03d}.md", "content": "x"})
 
-    index = await store.read_file(_combine_paths("user-1", _MEMORY_INDEX_FILE_NAME))
+    index = await store.read(_combine_paths("user-1", _MEMORY_INDEX_FILE_NAME))
     assert index is not None
     entry_lines = [line for line in index.splitlines() if line.startswith("- ")]
     assert len(entry_lines) == _MAX_INDEX_ENTRIES
@@ -340,25 +336,25 @@ async def test_tools_surface_store_value_errors() -> None:
     """``ValueError`` raised by the store is returned as a tool message, not raised."""
 
     class _ValueErrorStore(InMemoryAgentFileStore):
-        async def write_file(self, path: str, content: str, *, overwrite: bool = True) -> None:
+        async def write(self, path: str, content: str, *, overwrite: bool = True) -> None:
             raise ValueError("boom-write")
 
-        async def read_file(self, path: str) -> str | None:
+        async def read(self, path: str) -> str | None:
             raise ValueError("boom-read")
 
-        async def delete_file(self, path: str) -> bool:
+        async def delete(self, path: str) -> bool:
             raise ValueError("boom-delete")
 
     provider = FileMemoryProvider(store=_ValueErrorStore())
     _, tools = await _prepare(provider)
 
-    saved = await tools["file_memory_save_file"].invoke(arguments={"file_name": "plan.md", "content": "x"})
-    assert "Could not save" in _text(saved) and "boom-write" in _text(saved)
+    saved = await tools["file_memory_write"].invoke(arguments={"file_name": "plan.md", "content": "x"})
+    assert "Could not write" in _text(saved) and "boom-write" in _text(saved)
 
-    read_back = await tools["file_memory_read_file"].invoke(arguments={"file_name": "plan.md"})
+    read_back = await tools["file_memory_read"].invoke(arguments={"file_name": "plan.md"})
     assert "Could not read" in _text(read_back) and "boom-read" in _text(read_back)
 
-    deleted = await tools["file_memory_delete_file"].invoke(arguments={"file_name": "plan.md"})
+    deleted = await tools["file_memory_delete"].invoke(arguments={"file_name": "plan.md"})
     assert "Could not delete" in _text(deleted) and "boom-delete" in _text(deleted)
 
 
@@ -366,14 +362,14 @@ async def test_before_run_skips_injection_when_index_unreadable() -> None:
     """A failing index read must not crash the run; injection is simply skipped."""
 
     class _UnreadableIndexStore(InMemoryAgentFileStore):
-        async def read_file(self, path: str) -> str | None:
+        async def read(self, path: str) -> str | None:
             if path.endswith(_MEMORY_INDEX_FILE_NAME):
                 raise ValueError("corrupt index")
-            return await super().read_file(path)
+            return await super().read(path)
 
     store = _UnreadableIndexStore()
     # Seed an index so before_run attempts to read it.
-    await store.write_file(_combine_paths("user-1", _MEMORY_INDEX_FILE_NAME), "# Memory Index\n")
+    await store.write(_combine_paths("user-1", _MEMORY_INDEX_FILE_NAME), "# Memory Index\n")
     provider = FileMemoryProvider(store=store, scope="user-1")
 
     session = AgentSession(session_id="s-1")
@@ -389,4 +385,64 @@ async def test_search_propagates_invalid_regex() -> None:
     _, tools = await _prepare(provider)
 
     with pytest.raises(re.error):
-        await tools["file_memory_search_files"].invoke(arguments={"regex_pattern": "[unclosed"})
+        await tools["file_memory_grep"].invoke(arguments={"regex_pattern": "[unclosed"})
+
+
+async def test_memory_replace() -> None:
+    """``file_memory_replace`` substitutes text and enforces match-count rules."""
+    provider = FileMemoryProvider(store=InMemoryAgentFileStore())
+    _, tools = await _prepare(provider)
+    await tools["file_memory_write"].invoke(arguments={"file_name": "a.md", "content": "foo bar foo"})
+
+    multi = await tools["file_memory_replace"].invoke(
+        arguments={"file_name": "a.md", "old_string": "foo", "new_string": "baz"}
+    )
+    assert "2 times" in _text(multi)
+
+    done = await tools["file_memory_replace"].invoke(
+        arguments={"file_name": "a.md", "old_string": "foo", "new_string": "baz", "replace_all": True}
+    )
+    assert "2 occurrence" in _text(done)
+    assert _text(await tools["file_memory_read"].invoke(arguments={"file_name": "a.md"})) == "baz bar baz"
+
+    # Unique single occurrence with the default replace_all=False -> replaces exactly one.
+    await tools["file_memory_write"].invoke(arguments={"file_name": "u.md", "content": "alpha beta gamma"})
+    single = await tools["file_memory_replace"].invoke(
+        arguments={"file_name": "u.md", "old_string": "beta", "new_string": "BETA"}
+    )
+    assert "1 occurrence" in _text(single)
+    assert _text(await tools["file_memory_read"].invoke(arguments={"file_name": "u.md"})) == "alpha BETA gamma"
+
+    # Internal files (the memories.md index and *_description.md sidecars) are reserved.
+    reserved = await tools["file_memory_replace"].invoke(
+        arguments={"file_name": "memories.md", "old_string": "x", "new_string": "y"}
+    )
+    assert "reserved for internal use" in _text(reserved)
+    reserved_desc = await tools["file_memory_replace"].invoke(
+        arguments={"file_name": "a_description.md", "old_string": "x", "new_string": "y"}
+    )
+    assert "reserved for internal use" in _text(reserved_desc)
+
+
+async def test_memory_replace_lines() -> None:
+    """``file_memory_replace_lines`` replaces whole 1-based lines and rejects bad input."""
+    provider = FileMemoryProvider(store=InMemoryAgentFileStore())
+    _, tools = await _prepare(provider)
+    await tools["file_memory_write"].invoke(arguments={"file_name": "a.md", "content": "one\ntwo\nthree"})
+
+    done = await tools["file_memory_replace_lines"].invoke(
+        arguments={"file_name": "a.md", "edits": [{"line_number": 2, "new_line": "TWO"}]}
+    )
+    assert "1 line" in _text(done)
+    assert _text(await tools["file_memory_read"].invoke(arguments={"file_name": "a.md"})) == "one\nTWO\nthree"
+
+    oor = await tools["file_memory_replace_lines"].invoke(
+        arguments={"file_name": "a.md", "edits": [{"line_number": 9, "new_line": "x"}]}
+    )
+    assert "out of range" in _text(oor)
+
+    # Internal files (the memories.md index and *_description.md sidecars) are reserved.
+    reserved = await tools["file_memory_replace_lines"].invoke(
+        arguments={"file_name": "memories.md", "edits": [{"line_number": 1, "new_line": "x"}]}
+    )
+    assert "reserved for internal use" in _text(reserved)

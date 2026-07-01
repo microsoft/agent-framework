@@ -24,12 +24,21 @@ public abstract class AgentSessionStore
     /// <param name="agent">The agent that owns this session.</param>
     /// <param name="conversationId">The unique identifier for the conversation/session.</param>
     /// <param name="session">The session to save.</param>
+    /// <param name="userId">
+    /// The platform-injected per-user partition key (<c>x-agent-user-id</c>) that scopes this session to the
+    /// end user who initiated the request. Pass <see langword="null"/> only when there is genuinely no user
+    /// context (for example local development without the platform header, or a non-hosted direct caller).
+    /// The parameter is required (no default) so every caller consciously decides the scope: implementations
+    /// that persist to a shared medium partition by this value so one user can never observe another user's
+    /// sessions, and an accidental unscoped save cannot happen silently.
+    /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A task that represents the asynchronous save operation.</returns>
     public abstract ValueTask SaveSessionAsync(
         AIAgent agent,
         string conversationId,
         AgentSession session,
+        string? userId,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -37,6 +46,13 @@ public abstract class AgentSessionStore
     /// </summary>
     /// <param name="agent">The agent that owns this session.</param>
     /// <param name="conversationId">The unique identifier for the conversation/session to retrieve.</param>
+    /// <param name="userId">
+    /// The platform-injected per-user partition key (<c>x-agent-user-id</c>) that scopes this session to the
+    /// end user who initiated the request. Pass <see langword="null"/> only when there is genuinely no user
+    /// context (for example local development without the platform header, or a non-hosted direct caller).
+    /// The parameter is required (no default); it must match the value used when the session was saved,
+    /// otherwise a different (or new) session is returned.
+    /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>
     /// A task that represents the asynchronous retrieval operation.
@@ -45,5 +61,6 @@ public abstract class AgentSessionStore
     public abstract ValueTask<AgentSession> GetSessionAsync(
         AIAgent agent,
         string conversationId,
+        string? userId,
         CancellationToken cancellationToken = default);
 }

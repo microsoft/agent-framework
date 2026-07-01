@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -16,7 +18,8 @@ namespace Microsoft.Agents.AI;
 /// enabling the creation of source pipelines where each layer can add functionality (caching, deduplication,
 /// filtering, etc.) while delegating core operations to an underlying source.
 /// </remarks>
-internal abstract class DelegatingAgentSkillsSource : AgentSkillsSource
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+public abstract class DelegatingAgentSkillsSource : AgentSkillsSource
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="DelegatingAgentSkillsSource"/> class with the specified inner source.
@@ -33,6 +36,17 @@ internal abstract class DelegatingAgentSkillsSource : AgentSkillsSource
     protected AgentSkillsSource InnerSource { get; }
 
     /// <inheritdoc/>
-    public override Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
-        => this.InnerSource.GetSkillsAsync(cancellationToken);
+    public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
+        => this.InnerSource.GetSkillsAsync(context, cancellationToken);
+
+    /// <inheritdoc/>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            this.InnerSource.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
 }

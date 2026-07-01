@@ -99,6 +99,7 @@ from ._harness._file_access import (
     FileAccessProvider,
     FileSearchMatch,
     FileSearchResult,
+    FileStoreEntry,
     FileSystemAgentFileStore,
     InMemoryAgentFileStore,
 )
@@ -168,7 +169,6 @@ from ._middleware import (
     chat_middleware,
     function_middleware,
 )
-
 from ._sessions import (
     AgentSession,
     ContextProvider,
@@ -199,6 +199,7 @@ from ._skills import (
     SkillFrontmatter,
     SkillResource,
     SkillScript,
+    SkillScriptArgumentParser,
     SkillScriptRunner,
     SkillsProvider,
     SkillsSource,
@@ -448,6 +449,7 @@ __all__ = [
     "FileSkill",
     "FileSkillScript",
     "FileSkillsSource",
+    "FileStoreEntry",
     "FileSystemAgentFileStore",
     "FilteringSkillsSource",
     "FinalT",
@@ -512,6 +514,7 @@ __all__ = [
     "SkillFrontmatter",
     "SkillResource",
     "SkillScript",
+    "SkillScriptArgumentParser",
     "SkillScriptRunner",
     "SkillsProvider",
     "SkillsSource",

@@ -21,16 +21,14 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 public class HostedSessionIdentityContextTests
 {
     private const string TestUserId = "user-isolation-key-1";
-    private const string TestChatId = "chat-isolation-key-1";
 
     [Fact]
     public void HostedSessionContext_RejectsNullOrWhitespaceKeys()
     {
         // Assert
-        Assert.Throws<ArgumentNullException>(() => new HostedSessionContext(null!, TestChatId));
-        Assert.Throws<ArgumentNullException>(() => new HostedSessionContext(TestUserId, null!));
-        Assert.Throws<ArgumentException>(() => new HostedSessionContext(string.Empty, TestChatId));
-        Assert.Throws<ArgumentException>(() => new HostedSessionContext(TestUserId, "   "));
+        Assert.Throws<ArgumentNullException>(() => new HostedSessionContext(null!));
+        Assert.Throws<ArgumentException>(() => new HostedSessionContext(string.Empty));
+        Assert.Throws<ArgumentException>(() => new HostedSessionContext("   "));
     }
 
     [Fact]
@@ -39,7 +37,7 @@ public class HostedSessionIdentityContextTests
         // Arrange
         var provider = new PlatformHostedSessionIsolationKeyProvider();
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
-        mockContext.Setup(x => x.Isolation).Returns(new IsolationContext(TestUserId, TestChatId));
+        mockContext.Setup(x => x.PlatformContext).Returns(new PlatformContext(TestUserId, "call-1"));
         var request = new CreateResponse { Model = "test" };
 
         // Act
@@ -48,7 +46,6 @@ public class HostedSessionIdentityContextTests
         // Assert
         Assert.NotNull(result);
         Assert.Equal(TestUserId, result.UserId);
-        Assert.Equal(TestChatId, result.ChatId);
     }
 
     [Fact]
@@ -57,7 +54,7 @@ public class HostedSessionIdentityContextTests
         // Arrange
         var provider = new PlatformHostedSessionIsolationKeyProvider();
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
-        // CallBase delegates to ResponseContext.Isolation default which is IsolationContext.Empty.
+        // CallBase delegates to ResponseContext.PlatformContext default which is PlatformContext.Empty.
         var request = new CreateResponse { Model = "test" };
 
         // Act
@@ -72,7 +69,7 @@ public class HostedSessionIdentityContextTests
     {
         // Arrange
         var capturingAgent = new HostedContextCapturingAgent();
-        var fakeProvider = new FakeHostedSessionIsolationKeyProvider("alice", "chat-A");
+        var fakeProvider = new FakeHostedSessionIsolationKeyProvider("alice");
         var handler = BuildHandler(capturingAgent, fakeProvider);
 
         var (request, mockContext) = BuildFreshRequest();
@@ -85,7 +82,6 @@ public class HostedSessionIdentityContextTests
         var ctx = capturingAgent.LastSession.GetHostedContext();
         Assert.NotNull(ctx);
         Assert.Equal("alice", ctx.UserId);
-        Assert.Equal("chat-A", ctx.ChatId);
     }
 
     [Fact]
@@ -93,7 +89,7 @@ public class HostedSessionIdentityContextTests
     {
         // Arrange
         var capturingAgent = new HostedContextCapturingAgent();
-        var fakeProvider = new FakeHostedSessionIsolationKeyProvider(userId: null, chatId: null);
+        var fakeProvider = new FakeHostedSessionIsolationKeyProvider(userId: null);
         var handler = BuildHandler(capturingAgent, fakeProvider);
 
         var (request, mockContext) = BuildFreshRequest();
@@ -108,7 +104,7 @@ public class HostedSessionIdentityContextTests
     {
         // Arrange
         var capturingAgent = new HostedContextCapturingAgent();
-        var fakeProvider = new FakeHostedSessionIsolationKeyProvider("alice", "chat-A");
+        var fakeProvider = new FakeHostedSessionIsolationKeyProvider("alice");
         var sessionStore = new InMemoryAgentSessionStore();
         var handler = BuildHandler(capturingAgent, fakeProvider, sessionStore);
 
@@ -119,8 +115,9 @@ public class HostedSessionIdentityContextTests
 
         // Step 2: persist the session under a known conversation id (mimics what the handler does
         // when it has a conversation id; here we plant it directly so we can drive a resume request).
+        // The session is scoped to the same user ("alice") that will resume it.
         const string ConversationId = "resume-chat-id";
-        await sessionStore.SaveSessionAsync(capturingAgent, ConversationId, capturingAgent.LastSession, CancellationToken.None);
+        await sessionStore.SaveSessionAsync(capturingAgent, ConversationId, capturingAgent.LastSession, "alice", CancellationToken.None);
 
         // Step 3: drive a resume request with the same isolation keys.
         var (resumeRequest, resumeContext) = BuildResumeRequest(ConversationId);
@@ -141,17 +138,22 @@ public class HostedSessionIdentityContextTests
     {
         // Arrange
         var capturingAgent = new HostedContextCapturingAgent();
-        var aliceProvider = new FakeHostedSessionIsolationKeyProvider("alice", "chat-A");
+        var aliceProvider = new FakeHostedSessionIsolationKeyProvider("alice");
         var sessionStore = new InMemoryAgentSessionStore();
         var aliceHandler = BuildHandler(capturingAgent, aliceProvider, sessionStore);
 
         var (freshRequest, freshContext) = BuildFreshRequest();
         await DrainAsync(aliceHandler.CreateAsync(freshRequest, freshContext.Object, CancellationToken.None));
         const string ConversationId = "resume-chat-id";
-        await sessionStore.SaveSessionAsync(capturingAgent, ConversationId, capturingAgent.LastSession!, CancellationToken.None);
+
+        // Plant Alice's stamped session UNDER BOB'S partition to simulate a session that reached Bob's
+        // key despite the per-user path partitioning (e.g. a non-partitioning custom store, or in-process
+        // tampering). The 403 identity check is the defense-in-depth layer that must still reject it even
+        // when the physical partition was bypassed.
+        await sessionStore.SaveSessionAsync(capturingAgent, ConversationId, capturingAgent.LastSession!, "bob", CancellationToken.None);
 
         // Bob attempts to resume Alice's conversation.
-        var bobProvider = new FakeHostedSessionIsolationKeyProvider("bob", "chat-A");
+        var bobProvider = new FakeHostedSessionIsolationKeyProvider("bob");
         var bobHandler = BuildHandler(capturingAgent, bobProvider, sessionStore);
         var (resumeRequest, resumeContext) = BuildResumeRequest(ConversationId);
 
@@ -159,29 +161,6 @@ public class HostedSessionIdentityContextTests
         var ex = await Assert.ThrowsAsync<ResponsesApiException>(() => DrainAsync(bobHandler.CreateAsync(resumeRequest, resumeContext.Object, CancellationToken.None)));
         Assert.Equal(403, ex.StatusCode);
         Assert.Equal("Hosted session identity context mismatch", ex.Error.Message);
-    }
-
-    [Fact]
-    public async Task Handler_ResumeSession_MismatchedChatId_Returns403Async()
-    {
-        // Arrange
-        var capturingAgent = new HostedContextCapturingAgent();
-        var chatAProvider = new FakeHostedSessionIsolationKeyProvider("alice", "chat-A");
-        var sessionStore = new InMemoryAgentSessionStore();
-        var chatAHandler = BuildHandler(capturingAgent, chatAProvider, sessionStore);
-
-        var (freshRequest, freshContext) = BuildFreshRequest();
-        await DrainAsync(chatAHandler.CreateAsync(freshRequest, freshContext.Object, CancellationToken.None));
-        const string ConversationId = "resume-chat-id";
-        await sessionStore.SaveSessionAsync(capturingAgent, ConversationId, capturingAgent.LastSession!, CancellationToken.None);
-
-        var chatBProvider = new FakeHostedSessionIsolationKeyProvider("alice", "chat-B");
-        var chatBHandler = BuildHandler(capturingAgent, chatBProvider, sessionStore);
-        var (resumeRequest, resumeContext) = BuildResumeRequest(ConversationId);
-
-        // Act & Assert
-        var ex = await Assert.ThrowsAsync<ResponsesApiException>(() => DrainAsync(chatBHandler.CreateAsync(resumeRequest, resumeContext.Object, CancellationToken.None)));
-        Assert.Equal(403, ex.StatusCode);
     }
 
     [Fact]
@@ -196,9 +175,9 @@ public class HostedSessionIdentityContextTests
         var sessionStore = new InMemoryAgentSessionStore();
         const string ConversationId = "untagged-chat-id";
         var untagged = await capturingAgent.CreateSessionAsync(CancellationToken.None);
-        await sessionStore.SaveSessionAsync(capturingAgent, ConversationId, untagged, CancellationToken.None);
+        await sessionStore.SaveSessionAsync(capturingAgent, ConversationId, untagged, "alice", CancellationToken.None);
 
-        var fakeProvider = new FakeHostedSessionIsolationKeyProvider("alice", "chat-A");
+        var fakeProvider = new FakeHostedSessionIsolationKeyProvider("alice");
         var handler = BuildHandler(capturingAgent, fakeProvider, sessionStore);
         var (resumeRequest, resumeContext) = BuildResumeRequest(ConversationId);
 
@@ -210,7 +189,6 @@ public class HostedSessionIdentityContextTests
         var ctx = capturingAgent.LastSession.GetHostedContext();
         Assert.NotNull(ctx);
         Assert.Equal("alice", ctx.UserId);
-        Assert.Equal("chat-A", ctx.ChatId);
     }
 
     [Fact]
@@ -233,13 +211,12 @@ public class HostedSessionIdentityContextTests
         var session = new HostedContextCapturingSession();
 
         // Act
-        session.SetHostedContext(new HostedSessionContext("alice", "chat-A"));
+        session.SetHostedContext(new HostedSessionContext("alice"));
         var ctx = session.GetHostedContext();
 
         // Assert
         Assert.NotNull(ctx);
         Assert.Equal("alice", ctx.UserId);
-        Assert.Equal("chat-A", ctx.ChatId);
     }
 
     private static AgentFrameworkResponseHandler BuildHandler(
