@@ -93,6 +93,34 @@ def _deserialize_response_format(response_format: Any) -> type[BaseModel] | None
     return None
 
 
+def _serialize_options(options: dict[str, Any]) -> dict[str, Any]:
+    """Serialize known durable options without mutating caller-provided options."""
+    result = dict(options)
+    response_format = result.get("response_format")
+    if (
+        _PydanticBaseModel is not None
+        and inspect.isclass(response_format)
+        and issubclass(response_format, _PydanticBaseModel)
+    ):
+        result["response_format"] = serialize_response_format(response_format)
+    return result
+
+
+def _deserialize_options(options: dict[str, Any]) -> dict[str, Any]:
+    """Deserialize known durable options without mutating caller-provided options."""
+    result = dict(options)
+    if (response_format_value := result.get("response_format")) is not None:
+        response_format = _deserialize_response_format(response_format_value)
+        if response_format is not None:
+            result["response_format"] = response_format
+        elif (
+            isinstance(response_format_value, dict)
+            and response_format_value.get("__response_schema_type__") == "pydantic_model"
+        ):
+            result.pop("response_format")
+    return result
+
+
 @dataclass
 class RunRequest:
     """Represents a request to run an agent with a specific message and configuration.
@@ -165,7 +193,7 @@ class RunRequest:
             "role": self.role,
             "request_response_format": self.request_response_format,
             "correlationId": self.correlation_id,
-            "options": self.options,
+            "options": _serialize_options(self.options),
         }
         if self.response_format:
             result["response_format"] = serialize_response_format(self.response_format)
@@ -200,6 +228,7 @@ class RunRequest:
             raise ValueError("correlationId is required in RunRequest data")
 
         options = data.get("options")
+        options = _deserialize_options(options) if isinstance(options, dict) else {}
 
         return cls(
             message=data.get("message", ""),
@@ -211,7 +240,7 @@ class RunRequest:
             enable_tool_calls=data.get("enable_tool_calls", True),
             created_at=created_at,
             orchestration_id=data.get("orchestrationId"),
-            options=cast(dict[str, Any], options) if isinstance(options, dict) else {},
+            options=options,
         )
 
 
