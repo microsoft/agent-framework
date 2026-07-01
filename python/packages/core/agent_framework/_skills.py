@@ -3341,6 +3341,7 @@ class FileSkillsSource(SkillsSource):
             dir_path = Path(directory)
             if (dir_path / SKILL_FILE_NAME).is_file():
                 discovered.append(str(dir_path.absolute()))
+                return
 
             if current_depth >= MAX_SEARCH_DEPTH:
                 return
