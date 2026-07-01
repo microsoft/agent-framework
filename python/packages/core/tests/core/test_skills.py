@@ -1807,8 +1807,8 @@ class TestFileSkillsSourceSearchDepthAndFilters:
         assert "keep.md" in resource_names
         assert "drop.md" not in resource_names
 
-    async def test_nested_skill_directory_not_crossed(self, tmp_path: Path) -> None:
-        """Files in a nested skill directory are NOT attached to the parent skill."""
+    async def test_nested_skill_directory_absorbed_into_parent(self, tmp_path: Path) -> None:
+        """A nested SKILL.md is not an independent skill; its contents belong to the parent."""
         parent_dir = tmp_path / "parent-skill"
         child_dir = parent_dir / "child-skill"
         child_dir.mkdir(parents=True)
@@ -1828,22 +1828,19 @@ class TestFileSkillsSourceSearchDepthAndFilters:
         skills = await source.get_skills()
         skills_dict = {s.frontmatter.name: s for s in skills}
 
-        # Both skills are discovered
+        # Only the parent skill is discovered; the nested SKILL.md is not its own skill.
         assert "parent-skill" in skills_dict
-        assert "child-skill" in skills_dict
+        assert "child-skill" not in skills_dict
 
-        # Parent does NOT pick up child's files
+        # The parent absorbs the nested directory's resources and scripts.
         parent_resources = [r.name for r in skills_dict["parent-skill"]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         parent_scripts = [s.name for s in skills_dict["parent-skill"]._scripts]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "parent-resource.md" in parent_resources
-        assert "child-skill/child-resource.md" not in parent_resources
-        assert "child-skill/child-script.py" not in parent_scripts
+        assert "child-skill/child-resource.md" in parent_resources
+        assert "child-skill/child-script.py" in parent_scripts
 
-        # Child has its own files
-        child_resources = [r.name for r in skills_dict["child-skill"]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-        child_scripts = [s.name for s in skills_dict["child-skill"]._scripts]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-        assert "child-resource.md" in child_resources
-        assert "child-script.py" in child_scripts
+        # The nested SKILL.md file itself is never surfaced as a resource.
+        assert "child-skill/SKILL.md" not in parent_resources
 
 
 # ---------------------------------------------------------------------------

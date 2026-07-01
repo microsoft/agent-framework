@@ -2953,13 +2953,12 @@ class FileSkillsSource(SkillsSource):
 
             resources.append(rel_path)
 
-        # Recurse into subdirectories if within depth limit
+        # Recurse into subdirectories if within depth limit.
+        # Subdirectories that contain their own SKILL.md are NOT skipped: a nested
+        # SKILL.md is not an independent skill (see _discover_skill_directories), so
+        # its contents belong to this skill.
         if current_depth < self._search_depth:
             for subdir in subdirectories:
-                # Skip subdirectories that contain their own SKILL.md — they are
-                # separate skills and their files should not be attached to this one.
-                if (subdir / SKILL_FILE_NAME).is_file():
-                    continue
                 self._scan_directory_for_resources(
                     target_dir=subdir,
                     skill_dir=skill_dir,
@@ -3104,13 +3103,12 @@ class FileSkillsSource(SkillsSource):
 
             scripts.append(rel_path)
 
-        # Recurse into subdirectories if within depth limit
+        # Recurse into subdirectories if within depth limit.
+        # Subdirectories that contain their own SKILL.md are NOT skipped: a nested
+        # SKILL.md is not an independent skill (see _discover_skill_directories), so
+        # its contents belong to this skill.
         if current_depth < self._search_depth:
             for subdir in subdirectories:
-                # Skip subdirectories that contain their own SKILL.md — they are
-                # separate skills and their files should not be attached to this one.
-                if (subdir / SKILL_FILE_NAME).is_file():
-                    continue
                 self._scan_directory_for_scripts(
                     target_dir=subdir,
                     skill_dir=skill_dir,
@@ -3327,7 +3325,10 @@ class FileSkillsSource(SkillsSource):
     def _discover_skill_directories(skill_paths: Sequence[str]) -> list[str]:
         """Return absolute paths of all directories that contain a ``SKILL.md`` file.
 
-        Recursively searches each root path up to :data:`MAX_SEARCH_DEPTH`.
+        Recursively searches each root path up to :data:`MAX_SEARCH_DEPTH`. Once a
+        ``SKILL.md`` is found in a directory, that directory is the skill root and the
+        search does not descend into its subdirectories: everything beneath a skill
+        boundary is part of that skill, not an independent skill root.
 
         Args:
             skill_paths: Root directory paths to search.
@@ -3340,6 +3341,8 @@ class FileSkillsSource(SkillsSource):
         def _search(directory: str, current_depth: int) -> None:
             dir_path = Path(directory)
             if (dir_path / SKILL_FILE_NAME).is_file():
+                # This directory is a skill root. Subdirectories are part of this
+                # skill and must not be treated as independent skill roots.
                 discovered.append(str(dir_path.absolute()))
                 return
 
