@@ -1,7 +1,7 @@
 ---
 status: proposed
 contact: eavanvalkenburg
-date: 2026-06-12
+date: 2026-07-01
 deciders: eavanvalkenburg
 consulted:
 informed:
@@ -34,7 +34,14 @@ the per-language bit tables are in
 - **Low cost / few moving parts** — reuse telemetry already in the request path;
   near-zero runtime overhead; as little machinery as the job needs.
 - **Privacy** — encode only coarse boolean feature usage; no identifiers,
-  arguments, prompts, or payloads.
+  arguments, prompts, payloads, model/deployment names, endpoints, or
+  customer-defined names.
+- **Use, not presence** — package-level bits must mean a package-owned public API,
+  client, provider, or tool was used, not that the package was installed,
+  imported, or loaded.
+- **Versioning discipline** — v1 is a point-in-time decision. Adding bits later is
+  easier than removing or redefining them, so the initial table should lean toward
+  fewer bits and avoid forcing v2 shortly after launch.
 
 ## Considered Options
 
@@ -76,8 +83,8 @@ re-evaluate it per request.
 - Neutral, for the team's own goal it reaches us only if the user exports to
   Azure Monitor and we query it.
 - **Deferred, not rejected.** The version prefix lets us add it later **if** the
-  privacy review blesses a broadly-emitted mask (or a scoped/redacted variant)
-  and a concrete query needs the per-call precision.
+  User-Agent path cannot answer a concrete query and there is an acceptable
+  scoped/redacted variant.
 
 #### D. Bespoke usage events
 
@@ -93,7 +100,7 @@ re-evaluate it per request.
 
 ### Accumulation scope
 
-#### P. Process-global, monotonic mask (chosen)
+#### S1. Process-global, monotonic mask (chosen)
 
 A single mask per process; bits are OR-ed in as features are first used and never
 cleared. The token reflects "what this process has used so far."
@@ -107,7 +114,7 @@ cleared. The token reflects "what this process has used so far."
 - Neutral, coarser than per-call — early requests carry fewer bits than later
   ones, and the token says "this process used X", not "this call used X".
 
-#### Q. Per-request set, reset between calls (botocore's model — rejected)
+#### S2. Per-request set, reset between calls (botocore's model — rejected)
 
 AWS botocore scopes its `m/` feature codes to a `contextvars` set that is reset
 between requests, giving exact per-call attribution (and it deliberately no-ops
@@ -128,24 +135,145 @@ See [Prior art](#prior-art).
 
 ### Granularity
 
-#### F. Per package, with core broken out per feature/provider (chosen)
+The mechanism can support several granularities. The remaining decision before
+implementation is how detailed v1 should be. The estimates below are intentionally
+rough; 64-bit is a useful simplicity target, not a hard requirement.
 
-- Good, ~50 bits (Python) / ~40 (.NET) fit a **64-bit** mask, which keeps .NET's
-  accumulator lock-free (`Interlocked.Or`) and the registry hand-maintainable.
-- Good, matches the actual questions ("which orchestration / which built-in
-  provider / which package?") — each orchestration pattern and each built-in
-  context/history provider gets its own bit, since they serve different purposes.
-- Neutral, cannot distinguish sub-features *within* a provider package (e.g.
-  openai chat vs embeddings) until a bit is promoted.
+#### F0. Package-level bits
 
-#### G. Per construct (one bit per instantiable type)
+One bit per package, set on first use of a package-owned public API, client,
+provider, or tool. It is **not** set on install, import, or assembly load.
 
-- Good, finest detail.
-- Bad, ~96 bits forces a 128-bit mask, which forfeits .NET's lock-free
-  `Interlocked.Or` (needs a lock / `UInt128`).
-- Bad, ~96 call sites across two SDKs; the sheer count pushes toward code
-  generation and extra tests — machinery to manage machinery.
-- Bad, precision nobody's decision actually needs.
+Examples that get bits:
+
+- `agent-framework-core` when `Agent`, `AgentSession`, `Workflow`, etc. is used.
+- `agent-framework-tools` when `LocalShellTool` or `DockerShellTool` is created
+  or used.
+- `agent-framework-foundry` when `FoundryChatClient`, `FoundryAgent`, etc. is
+  created or called.
+- `agent-framework-openai` when `OpenAIChatClient`,
+  `OpenAIEmbeddingClient`, etc. is created or called.
+- `agent-framework-azure-ai-search` when `AzureAISearchContextProvider` is used.
+- `agent-framework-azure-cosmos` when `CosmosHistoryProvider` is used.
+- `agent-framework-redis` when `RedisContextProvider` or `RedisHistoryProvider`
+  is used.
+
+Examples that do **not** get separate bits: merely installed dependencies;
+imports with no construction/use; `Agent` vs `AgentSession` vs
+`InMemoryHistoryProvider`; `FunctionTool` vs `MCPStdioTool` vs `LocalShellTool`
+vs `DockerShellTool`; `FoundryChatClient` vs `FoundryAgent`; `OpenAIChatClient`
+vs `OpenAIEmbeddingClient`.
+
+Rough estimate: Python ~25-35 bits; .NET ~15-25 bits.
+
+- Good, lowest specificity and simplest registry.
+- Good, clearly measures usage rather than dependency inventory if bits are set
+  only at package-owned public API/client/provider/tool use sites.
+- Bad, does not answer which major capability within a package is used.
+
+#### F1. Package + major capability bits
+
+Package bits plus selected major capabilities that are product-distinct and stable
+across implementations.
+
+Examples that get bits:
+
+- `agent-framework-core` plus `Agent`.
+- `AgentSession` plus `InMemoryHistoryProvider` / `FileHistoryProvider` as one
+  history capability.
+- `Workflow` / `FunctionalWorkflow` as one workflow capability.
+- `FunctionTool`; MCP transports as one MCP capability; shell tools as one shell
+  capability.
+- Foundry chat/agent/embedding capabilities; OpenAI chat/embedding capabilities.
+
+Examples that do **not** get separate bits: `InMemoryHistoryProvider` vs
+`FileHistoryProvider`; `WorkflowBuilder`, `AgentExecutor`, `FunctionExecutor`, or
+`FanOutEdgeGroup`; `MCPStdioTool` vs `MCPStreamableHTTPTool` vs
+`MCPWebsocketTool`; `LocalShellTool` vs `DockerShellTool` vs
+`ShellEnvironmentProvider` vs `ShellPolicy`; `OpenAIChatClient` vs
+`OpenAIChatCompletionClient`.
+
+Rough estimate: Python ~40-55 bits; .NET ~30-45 bits.
+
+- Good, likely answers the first product adoption questions while staying compact.
+- Good, keeps v1 close to the preferred 64-bit simplicity target.
+- Neutral, some provider internals remain collapsed until a later additive bit is
+  justified.
+
+#### F2. Public construct / concrete type bits
+
+One bit per public construct that users intentionally instantiate or configure.
+
+Examples that get bits:
+
+- `Agent`, `AgentSession`, `InMemoryHistoryProvider`, `FileHistoryProvider`.
+- `Workflow`, `WorkflowBuilder`, `FunctionalWorkflow`.
+- `FunctionTool`, `MCPStdioTool`, `MCPStreamableHTTPTool`, `MCPWebsocketTool`.
+- `LocalShellTool`, `DockerShellTool`, `ShellEnvironmentProvider`, `ShellPolicy`.
+- `FoundryChatClient`, `FoundryAgent`, `OpenAIChatClient`,
+  `OpenAIChatCompletionClient`, `OpenAIEmbeddingClient`.
+
+Examples that do **not** get separate bits: `Agent.run` vs
+`Agent.run_streamed`; workflow edge/executor internals such as `AgentExecutor`,
+`FunctionExecutor`, or `FanOutEdgeGroup`; `LocalShellTool` persistent vs
+stateless mode; `ShellPolicy` allowlist vs denylist configuration; `FunctionTool`
+approval mode or result parser choices.
+
+Rough estimate: Python ~70-100 bits; .NET ~55-80 bits.
+
+- Good, concrete and directly tied to public API use.
+- Neutral, likely exceeds the preferred 64-bit target for Python, but that target
+  is not a hard requirement.
+- Bad, adds many call sites and more fingerprint specificity for v1.
+
+#### F3. Construct subtype / configuration bits
+
+Split important constructs by mode, transport, storage, or workflow primitive
+when that distinction matters.
+
+Examples that get bits:
+
+- `InMemoryHistoryProvider` and `FileHistoryProvider` separately.
+- `FunctionalWorkflow`, `WorkflowBuilder`, `AgentExecutor`, `FunctionExecutor`.
+- `FanOutEdgeGroup`, `FanInEdgeGroup`, `SwitchCaseEdgeGroup`.
+- `LocalShellTool` persistent, `LocalShellTool` stateless, `DockerShellTool`.
+- `MCPStdioTool`, `MCPStreamableHTTPTool`, `MCPWebsocketTool`;
+  `OpenAIChatClient` vs `OpenAIChatCompletionClient`.
+
+Examples that do **not** get separate bits: exact session id or persisted history
+file path; exact shell command, workdir, timeout, or output cap; exact MCP server
+command, URL, or tool names from the server; exact workflow graph shape or edge
+count; model/deployment names, prompts, tool arguments, payloads.
+
+Rough estimate: Python ~110-150 bits; .NET ~85-125 bits.
+
+- Good, useful where mode-level distinctions are decision-relevant.
+- Bad, trades simplicity for precision and increases fingerprint specificity.
+
+#### F4. Option / behavior flag bits
+
+The most detailed framework-owned option: bits for specific modes and behavior
+switches, still excluding customer/runtime values.
+
+Examples that get bits:
+
+- Agent streaming used vs non-streaming used.
+- `FunctionTool` `approval_mode="always_require"` vs `"never_require"`.
+- `FunctionTool` `SKIP_PARSING` / result-parser path used.
+- MCP sampling configured; MCP long-running task support used.
+- `LocalShellTool` `clean_env` / `confine_workdir`; `DockerShellTool` container
+  mode.
+
+Examples that do **not** get separate bits: function names wrapped by
+`FunctionTool`; approval rule arguments or approval decisions; MCP remote tool
+names or schemas; shell command text or policy regex patterns; prompt/message
+content, model names, URLs, tenant/user/session identifiers.
+
+Rough estimate: Python 150+ bits; .NET 120+ bits.
+
+- Good, maximum framework-owned detail.
+- Bad, too detailed for a first v1 unless there is already a concrete decision
+  that requires it.
 
 ### Registry sharing model
 
@@ -174,14 +302,16 @@ already present in the UA product token.
 
 #### J. Hand-written enum + parity test (chosen)
 
-- Good, ~40 members that change a few times a year; a 10-line test (the enum vs
-  the per-language table in the registry doc) is enough.
+- Good, the registry is small enough to maintain by hand for the likely v1
+  granularities; a parity test between the enum and the per-language table in the
+  registry doc is enough.
 - Good, no build step, no generator to own.
 
 #### K. Code-generate the enums from the registry
 
 - Bad, a generator + drift test + schema test to maintain a short list of
-  integer constants; justified only by the per-construct bit count we rejected.
+  integer constants; likely justified only if v1 deliberately chooses the most
+  detailed L3/L4 granularities.
 
 ### Representation (how the mask is rendered as text)
 
@@ -219,14 +349,14 @@ the Python v1 list) = decimal `138477573`.
 ## Decision Outcome
 
 Chosen: **a per-request, first-party-only User-Agent `(feat=...)` token (A),
-with a process-global monotonic accumulator (P), per-package granularity (F),
-per-language bit lists (H), hand-written enums kept honest by a parity test (J),
-rendered as lowercase hex (M).**
+with a process-global monotonic accumulator (S1), per-language bit lists (H),
+hand-written enums kept honest by a parity test (J), rendered as lowercase hex
+(M).**
 
-This is the smallest design that answers the question. A 64-bit
+This is the smallest design that answers the question. A preferably 64-bit
 **process-global, monotonic** mask accumulates from universal
 `mark_feature_used()` calls (so it spans construction-time and session-scoped
-features that aren't bound to any request — the per-request set model (Q) can't);
+features that aren't bound to any request — the per-request set model (S2) can't);
 the token is **stamped per request** only on Azure/Foundry clients, so it reflects
 the live mask without freezing at construction (live, no third-party leak); each
 SDK owns an independent bit list selected by the language already in the UA; the
@@ -236,10 +366,18 @@ the mask while keeping the base SDK identity/version User-Agent, and the existin
 `AGENT_FRAMEWORK_USER_AGENT_DISABLED` that drops the whole contribution. OTel (C)
 is deferred — mainly because a broadly-emitted span attribute would leak the
 fingerprint into the user's general telemetry, against the first-party-only
-stance — but left open behind the version prefix. Per-request scoping (Q),
-per-construct granularity (G), a shared registry (I), codegen (K), and the
+stance and would require user-side OTel setup that may still not make the data
+available to us — but left open behind the version prefix. Per-request scoping
+(S2), a shared registry (I), codegen for the initial registry (K), and the
 decimal/binary/base-N representations (L, N, O) are rejected as complexity or
 length the problem does not require.
+
+The remaining choice before implementation is the **v1 granularity level** among
+F0-F4. This is a point-in-time decision: adding new bits later is easier than
+removing or redefining them, because removals/redefinitions require a new
+registry version and historical decode tables. For v1, prefer the least detailed
+level that answers the known product/support questions so we do not force a v2
+shortly after launch.
 
 ### Consequences
 
@@ -249,10 +387,12 @@ length the problem does not require.
   (mask only) and the existing `AGENT_FRAMEWORK_USER_AGENT_DISABLED` (whole UA).
 - Good, first-party-only + per-request emission gives a live mask and no
   third-party fingerprint leak.
-- Good, 64-bit keeps .NET lock-free; per-language lists remove all cross-language
-  sync; hand-written enums avoid a codegen toolchain.
+- Good, staying within 64-bit keeps .NET lock-free; per-language lists remove all
+  cross-language sync; hand-written enums avoid a codegen toolchain.
 - Neutral, the token's reach equals first-party traffic; broader per-call signal
   (OTel) can be added later if needed.
+- Neutral, v1 granularity is intentionally a separate choice; the registry should
+  start with fewer bits unless a more detailed bit answers a concrete question.
 - Bad, each feature must add a `mark_feature_used()` call, and first-party clients
   need a per-request hook (small, mirrors existing patterns).
 
@@ -278,7 +418,7 @@ Takeaways that shaped (or validate) our choices:
   bitmask** (compact, bounded, decode-by-AND, but needs per-language bit
   allocation). We keep the bitmask for boundedness and trivial AND-decoding;
   AWS's short-code set is recorded as a viable alternative if bit-position
-  coordination ever becomes painful (it would also drop the 64-bit ceiling).
+  coordination ever becomes painful (it would also drop the preferred 64-bit target).
 - **A fixed-width bitmask gives bounded token size for free.** botocore must cap
   the `m/` component at 1024 bytes and truncate at delimiter boundaries (with a
   fallback log) precisely *because* its short-code set is unbounded. Our 64-bit
@@ -290,7 +430,7 @@ Takeaways that shaped (or validate) our choices:
   service request. We are more general: some features are request-scoped (a chat
   call, an MCP tool invocation) but many are **not bound to any request**
   (agent / workflow / provider construction, session setup). So we use a
-  **process-global, monotonic** mask (option P), which is the only scope that can
+  **process-global, monotonic** mask (option S1), which is the only scope that can
   represent the non-request features. Our mask therefore intentionally "bleeds"
   (accumulates) for the life of the process — the opposite of botocore's reset —
   and that is the intended semantic, not the bug botocore guards against.
@@ -348,28 +488,27 @@ independent for Python and .NET.
 | Limitation | Caused by (choice) | Why we accepted it |
 | --- | --- | --- |
 | **No signal for self-hosted or third-party-only traffic.** If a process never calls Azure/Foundry, we see nothing. | First-party-only emission (A) | We can't read third-party logs anyway, and must not leak a fingerprint into them. Reach traded for privacy. |
-| **No OTel / per-call signal in v1.** | OTel deferred (C) — primarily on **privacy** grounds | A broadly-emitted span attribute would push the fingerprint into the user's general telemetry / third-party APM vendors, undoing the first-party-only scoping. Left open to add later if there is a compelling reason to add. |
+| **No OTel / per-call signal in v1.** | OTel deferred (C) — primarily on **privacy** and availability grounds | A broadly-emitted span attribute would push the fingerprint into the user's general telemetry / third-party APM vendors, undoing the first-party-only scoping. It also requires customer/user OTel setup, and even Foundry users may not export data where we can query it. Left open only if there is a compelling reason to add. |
 | **Mask reflects "usage so far," not the whole session.** Early requests carry fewer bits than later ones. | Process-global accumulator + per-request stamping | Honest and still useful; the team aggregates across requests. The per-request design is what makes it *grow* rather than freeze. |
-| **No per-agent / per-call attribution.** The mask is one process-wide value — "this process used X", not "this agent/call used X". | Process-global monotonic scope (P) | A deliberate choice, not a transport limit: botocore *does* per-call attribution in the UA via a per-request `contextvars` set (Q), but that assumes every feature lives inside a service request. Many of ours don't (agent/workflow/provider construction, session setup), so process-global is the only scope that captures them. Per-call detail for the request-scoped subset is left to the deferred OTel path. |
-| **Coarse granularity.** Can't distinguish sub-features (e.g. openai chat vs embeddings, which shell tool). | Per-package granularity (F) + 64-bit (keeps .NET lock-free) | Matches the actual questions; finer bits can be promoted later behind the version prefix. |
-| **Fingerprinting risk is reduced, not eliminated.** A feature-combination mask is still a deployment signature, and it transits intermediaries (proxies/CDNs) even when first-party-scoped. | Emitting any feature-combination value | Scope + opt-out + coarse granularity mitigate it; residual risk is the subject of the privacy review below. |
+| **No per-agent / per-call attribution.** The mask is one process-wide value — "this process used X", not "this agent/call used X". | Process-global monotonic scope (S1) | A deliberate choice, not a transport limit: botocore *does* per-call attribution in the UA via a per-request `contextvars` set (S2), but that assumes every feature lives inside a service request. Many of ours don't (agent/workflow/provider construction, session setup), so process-global is the only scope that captures them. Per-call detail for the request-scoped subset is left to the deferred OTel path. |
+| **Granularity may be too coarse or too detailed.** The chosen level may miss useful distinctions or create more specificity than needed. | v1 granularity choice (F0-F4) | This is the main remaining decision. Adding bits later is easier than removing/redefining them, so v1 should lean toward fewer bits that answer known questions. |
+| **Fingerprinting risk is reduced, not eliminated.** A feature-combination mask is still a deployment signature, and it transits intermediaries (proxies/CDNs) even when first-party-scoped. | Emitting any feature-combination value | Scope + opt-out + coarse granularity mitigate it; v1 should avoid unnecessary detailed bits. |
 
 ## Open Questions (for decider discussion)
 
-These are unresolved and should be decided before/at approval:
+These are unresolved and should be decided before implementation:
 
-1. **Privacy / telemetry-acceptance review (blocking).** Is a coarse,
-   first-party-only, opt-out-able feature-combination mask acceptable telemetry?
-   Even scoped, it transits intermediaries and is a deployment fingerprint. This
-   is a **release precondition**. Possible outcomes that would further change the
-   design: coarser granularity, hashing, or explicit opt-in (a dedicated mask-only
-   opt-out flag is already included — see below).
-2. **When (if ever) to add the OTel path?** Held back mainly for **privacy**: a
-   span attribute broadcasts the fingerprint into the user's general telemetry
-   and onward to third-party APM vendors, contradicting the first-party-only
-   stance. It also carries a metric-cardinality hazard. Would the privacy review
-   allow a broadly-emitted mask, a scoped/redacted variant, or none? Decide if/when
-   to revisit.
+1. **Which v1 granularity level (F0-F4)?** This is the primary remaining choice.
+   Adding bits later is easier than removing or redefining bits, so v1 should
+   choose the least detailed level that answers known questions and avoids a quick
+   v2.
+2. **When (if ever) to add the OTel path?** Held back mainly for **privacy** and
+   data availability: a span attribute broadcasts the fingerprint into the user's
+   general telemetry and onward to third-party APM vendors, contradicting the
+   first-party-only stance, and it requires user-side OTel setup that may not make
+   the data available to us even for Foundry users. It also carries a
+   metric-cardinality hazard. Revisit only if the User-Agent path cannot answer a
+   concrete question.
 3. **Honor the cross-tool `DO_NOT_TRACK` convention?** Several ecosystems treat
    `DO_NOT_TRACK=1` as a universal telemetry opt-out (HuggingFace Hub honors it;
    see [Prior art](#prior-art)). Should our opt-out also respect `DO_NOT_TRACK`

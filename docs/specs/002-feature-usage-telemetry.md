@@ -9,7 +9,7 @@ informed:
 
 # Feature-usage telemetry via an accumulating bitmask
 
-> Companion design for [ADR-0027](../decisions/0027-feature-usage-bitmask-user-agent.md).
+> Companion design for [ADR-0029](../decisions/0029-feature-usage-bitmask-user-agent.md).
 > The per-language bit tables, encoding, opt-out, and governance live in
 > [feature-usage-bit-registry.md](feature-usage-bit-registry.md). Each SDK's
 > hand-written `FeatureBit` enum is the source of truth for that language.
@@ -226,8 +226,9 @@ vendors (Datadog, Honeycomb, …) — re-introducing exactly the leakage the
 first-party scoping was chosen to avoid. (It also carries a cardinality footgun:
 a monotonically-growing, combinatorial value must never become a metric
 dimension.) The version prefix leaves the door open to add it later **if** the
-privacy review blesses a broadly-emitted or scoped/redacted variant; v1 ships the
-UA path only. See [ADR-0027 → option C](../decisions/0027-feature-usage-bitmask-user-agent.md#considered-options).
+User-Agent path cannot answer a concrete query and there is an acceptable
+scoped/redacted variant; v1 ships the UA path only. See
+[ADR-0029 → option C](../decisions/0029-feature-usage-bitmask-user-agent.md#considered-options).
 
 ## API Changes
 
@@ -309,7 +310,9 @@ AGENT_FRAMEWORK_USER_AGENT_DISABLED=true python app.py
   truth** for the .NET bit list, matching the .NET table in the registry doc —
   plus `FeatureUsage.MarkUsed(FeatureBit)` (universal marking, as in Python).
 - 64-bit width means the accumulator is **lock-free**:
-  `Interlocked.Or(ref _mask, (long)bit)`. No lock, no `UInt128`, no split-long.
+  `Interlocked.Or(ref _mask, 1L << (int)bit)`. No lock, no `UInt128`, no
+  split-long. The enum value is the bit index; the accumulator ORs the mask value,
+  not the raw index.
 - **Emission is per-request and first-party-scoped**, matching Python. The
   existing `AgentFrameworkUserAgentPolicy` / `HostedAgentUserAgentPolicy`
   pipeline policies already run per request — extend them to append/refresh the
@@ -381,12 +384,12 @@ the table) are ignored.
 
 ## Limitations & open questions
 
-The decision-level limitations and unresolved trade-offs — privacy review
-(blocking), reach, per-process (not per-call) attribution, coarse granularity,
-fingerprinting residue, and the OTel question — are owned by the ADR (the
-dedicated mask-only opt-out is now decided and included). See
-**[ADR-0027 → Limitations](../decisions/0027-feature-usage-bitmask-user-agent.md#limitations)**
-and **[Open Questions](../decisions/0027-feature-usage-bitmask-user-agent.md#open-questions-for-decider-discussion)**.
+The decision-level limitations and unresolved trade-offs — reach, per-process
+(not per-call) attribution, v1 granularity, fingerprinting residue, and the OTel
+question — are owned by the ADR (the dedicated mask-only opt-out is now decided
+and included). See
+**[ADR-0029 → Limitations](../decisions/0029-feature-usage-bitmask-user-agent.md#limitations)**
+and **[Open Questions](../decisions/0029-feature-usage-bitmask-user-agent.md#open-questions-for-decider-discussion)**.
 This spec is the implementation reference; it does not re-litigate those choices.
 
 Implementation-only note:

@@ -1,6 +1,6 @@
 # Feature-usage bit registry (per-language)
 
-> **Status:** draft, accompanies [ADR-0027](../decisions/0027-feature-usage-bitmask-user-agent.md)
+> **Status:** draft, accompanies [ADR-0029](../decisions/0029-feature-usage-bitmask-user-agent.md)
 > and [SPEC-002](002-feature-usage-telemetry.md).
 > **Version:** `1` per language · **Width:** 64-bit
 
@@ -72,7 +72,7 @@ no \"same bit, same meaning\" rule.
 - **OpenTelemetry: not in v1.** Deferred primarily for privacy (a span attribute
   would broadcast the fingerprint into the user's general telemetry / third-party
   APM vendors). Left open behind the version prefix; see
-  [ADR-0027](../decisions/0027-feature-usage-bitmask-user-agent.md#considered-options).
+  [ADR-0029](../decisions/0029-feature-usage-bitmask-user-agent.md#considered-options).
 
 ## Bit table — Python (`agent-framework-python`, version 1)
 
