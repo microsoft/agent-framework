@@ -106,22 +106,142 @@ class IntegrityLabel(str, Enum):
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
-class ConfidentialityLabel(str, Enum):
+class ConfidentialityLabel:
     """Represents the confidentiality level of content.
 
+    Two levels: ``PUBLIC`` and ``PRIVATE``.  ``PRIVATE`` can optionally carry a
+    *readers* list restricting who may access the content.
+
+    Construction::
+
+        ConfidentialityLabel("public")           # PUBLIC
+        ConfidentialityLabel("private")           # PRIVATE, no readers
+        ConfidentialityLabel(["Alice", "Bob"])     # PRIVATE with readers
+
+    When a list of reader identities is provided the level is implicitly
+    ``PRIVATE``.  The *readers* frozenset tracks the allowed audience.
+
     Attributes:
-        PUBLIC: Content can be shared publicly.
-        PRIVATE: Content is private and should not be shared.
-        USER_IDENTITY: Content is restricted to specific user identities only.
+        PUBLIC: Singleton for public content.
+        PRIVATE: Singleton for private content with no specific readers.
     """
 
-    PUBLIC = "public"
-    PRIVATE = "private"
-    USER_IDENTITY = "user_identity"
+    PUBLIC: "ConfidentialityLabel"   # set after class body
+    PRIVATE: "ConfidentialityLabel"  # set after class body
+
+    def __init__(self, value: "str | list[str]" = "public", *, readers: "frozenset[str] | None" = None) -> None:
+        """Initialize a ConfidentialityLabel.
+
+        Args:
+            value: Either ``"public"``, ``"private"``, or a list of reader
+                identities. A list implies ``"private"`` restricted to those readers.
+            readers: Optional frozenset of reader identities. Only applied when
+                ``value`` is ``"private"``; ignored for ``"public"``.
+
+        Raises:
+            ValueError: If ``value`` is not ``"public"``, ``"private"``, or a list.
+        """
+        if isinstance(value, list):
+            self._level = "private"
+            self._readers: frozenset[str] | None = frozenset(value)
+        elif value in ("public", "private"):
+            self._level: str = value
+            self._readers = readers if value == "private" else None
+        else:
+            raise ValueError(f"Invalid confidentiality value: {value!r}")
+
+    # -- properties ----------------------------------------------------------
+
+    @property
+    def value(self) -> str:
+        """Return the level string (``'public'`` or ``'private'``)."""
+        return self._level
+
+    @property
+    def readers(self) -> "frozenset[str] | None":
+        """Return the readers frozenset, or ``None`` if unrestricted."""
+        return self._readers
+
+    @property
+    def is_private(self) -> bool:
+        """Return ``True`` if the level is private."""
+        return self._level == "private"
+
+    # -- dunder methods ------------------------------------------------------
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, ConfidentialityLabel):
+            return self._level == other._level and self._readers == other._readers
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash((self._level, self._readers))
 
     def __str__(self) -> str:
-        """Return the string value of the confidentiality label."""
-        return self.value
+        """Return a human-readable string.
+
+        Examples::
+
+            str(ConfidentialityLabel.PUBLIC)        # "public"
+            str(ConfidentialityLabel.PRIVATE)        # "private"
+            str(ConfidentialityLabel(["A", "B"]))    # "private: (A, B)"
+        """
+        if self._level == "public":
+            return "public"
+        if self._readers:
+            readers_str = ", ".join(sorted(self._readers))
+            return f"private: ({readers_str})"
+        return "private"
+
+    def __repr__(self) -> str:
+        if self._readers:
+            return f"ConfidentialityLabel('private', readers={{{', '.join(repr(r) for r in sorted(self._readers))}}})"
+        return f"ConfidentialityLabel('{self._level}')"
+
+    # -- ordering helpers (for hierarchy comparisons) ------------------------
+
+    @property
+    def _priority(self) -> int:
+        """Return numeric priority: PUBLIC=0, PRIVATE=1."""
+        return 0 if self._level == "public" else 1
+
+    # -- combination ---------------------------------------------------------
+
+    @classmethod
+    def combine(cls, *labels: "ConfidentialityLabel") -> "ConfidentialityLabel":
+        """Combine confidentiality labels using the most restrictive policy.
+
+        - ``PRIVATE`` dominates ``PUBLIC``.
+        - When multiple ``PRIVATE`` labels carry readers lists, the readers are
+          *intersected* (only readers common to every restricted label remain).
+        - A ``PRIVATE`` label without readers imposes no reader restriction and
+          does not constrain the intersection.
+
+        Args:
+            *labels: Confidentiality labels to combine.
+
+        Returns:
+            The most restrictive combined label. Returns ``PUBLIC`` when no
+            labels are provided or none are private; ``PRIVATE`` (unrestricted)
+            when a private label carries no readers list.
+        """
+        private = [label for label in labels if label.is_private]
+        if not private:
+            return cls.PUBLIC
+
+        readers_sets = [label.readers for label in private if label.readers is not None]
+        if not readers_sets:
+            return cls.PRIVATE
+
+        combined_readers = readers_sets[0]
+        for rs in readers_sets[1:]:
+            combined_readers = combined_readers & rs
+        return cls("private", readers=combined_readers)
+
+
+# Singletons for the two basic levels
+ConfidentialityLabel.PUBLIC = ConfidentialityLabel("public")
+ConfidentialityLabel.PRIVATE = ConfidentialityLabel("private")
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
@@ -141,11 +261,10 @@ class ContentLabel(SerializationMixin):
             # Create a label for trusted public content
             label = ContentLabel(integrity=IntegrityLabel.TRUSTED, confidentiality=ConfidentialityLabel.PUBLIC)
 
-            # Create a label with user identity
+            # Create a label with private readers
             user_label = ContentLabel(
                 integrity=IntegrityLabel.TRUSTED,
-                confidentiality=ConfidentialityLabel.USER_IDENTITY,
-                metadata={"user_id": "user-123"},
+                confidentiality=ConfidentialityLabel(["Alice", "Bob"]),
             )
     """
 
@@ -184,9 +303,14 @@ class ContentLabel(SerializationMixin):
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert to dictionary representation."""
+        conf = self.confidentiality
+        if conf.readers:
+            conf_value: str | list[str] = sorted(conf.readers)
+        else:
+            conf_value = conf.value
         result: dict[str, Any] = {
             "integrity": str(self.integrity),
-            "confidentiality": str(self.confidentiality),
+            "confidentiality": conf_value,
         }
         if self.metadata:
             result["metadata"] = self.metadata
@@ -202,9 +326,12 @@ class ContentLabel(SerializationMixin):
     ) -> ContentLabel:
         """Create ContentLabel from dictionary."""
         del dependencies
+        raw_conf = data.get("confidentiality", "public")
+        # Support both string ("public"/"private") and list (["Alice", "Bob"])
+        confidentiality = ConfidentialityLabel(raw_conf)
         return cls(
             integrity=IntegrityLabel(data.get("integrity", "trusted")),
-            confidentiality=ConfidentialityLabel(data.get("confidentiality", "public")),
+            confidentiality=confidentiality,
             metadata=data.get("metadata"),
         )
 
@@ -214,7 +341,9 @@ def combine_labels(*labels: ContentLabel) -> ContentLabel:
 
     The combined label will be:
     - UNTRUSTED if any input is UNTRUSTED
-    - Most restrictive confidentiality level (USER_IDENTITY > PRIVATE > PUBLIC)
+    - Most restrictive confidentiality level (PRIVATE > PUBLIC)
+    - When multiple PRIVATE labels carry readers lists, the readers are
+      *intersected* (only readers common to all labels remain)
     - Merged metadata from all labels
 
     Args:
@@ -244,14 +373,8 @@ def combine_labels(*labels: ContentLabel) -> ContentLabel:
         else IntegrityLabel.TRUSTED
     )
 
-    # Most restrictive confidentiality
-    confidentiality_priority = {
-        ConfidentialityLabel.PUBLIC: 0,
-        ConfidentialityLabel.PRIVATE: 1,
-        ConfidentialityLabel.USER_IDENTITY: 2,
-    }
-
-    confidentiality = max((label.confidentiality for label in labels), key=lambda c: confidentiality_priority[c])
+    # Most restrictive confidentiality (PRIVATE > PUBLIC, readers intersected).
+    confidentiality = ConfidentialityLabel.combine(*(label.confidentiality for label in labels))
 
     # Merge metadata
     merged_metadata: dict[str, Any] = {}
@@ -275,7 +398,7 @@ def check_confidentiality_allowed(
     from being sent to PUBLIC endpoints.
 
     The check passes if context_label.confidentiality <= max_allowed in the hierarchy:
-        PUBLIC (0) < PRIVATE (1) < USER_IDENTITY (2)
+        PUBLIC (0) < PRIVATE (1)
 
     Args:
         context_label: The label tracking the confidentiality of data in the current context.
@@ -310,13 +433,7 @@ def check_confidentiality_allowed(
                     )
                 # Proceed with sending...
     """
-    conf_hierarchy = {
-        ConfidentialityLabel.PUBLIC: 0,
-        ConfidentialityLabel.PRIVATE: 1,
-        ConfidentialityLabel.USER_IDENTITY: 2,
-    }
-
-    return conf_hierarchy[context_label.confidentiality] <= conf_hierarchy[max_allowed]
+    return context_label.confidentiality._priority <= max_allowed._priority
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
@@ -817,15 +934,15 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
 
         if old_label != self._context_label:
             logger.info(
-                f">>> CONTEXT TAINT: [{old_label.integrity.value}, {old_label.confidentiality.value}] "
-                f"-> [{self._context_label.integrity.value}, {self._context_label.confidentiality.value}] "
-                f"(new content: [{new_content_label.integrity.value}, {new_content_label.confidentiality.value}])"
+                f">>> CONTEXT TAINT: [{old_label.integrity}, {old_label.confidentiality}] "
+                f"-> [{self._context_label.integrity}, {self._context_label.confidentiality}] "
+                f"(new content: [{new_content_label.integrity}, {new_content_label.confidentiality}])"
             )
         else:
             logger.debug(
                 "Context label unchanged: [%s, %s]",
-                self._context_label.integrity.value,
-                self._context_label.confidentiality.value,
+                self._context_label.integrity,
+                self._context_label.confidentiality,
             )
 
     @staticmethod
@@ -1357,12 +1474,16 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             self._update_context_label(exposed_label)
             logger.info(
                 f"Context label after processing '{function_name}': "
-                f"{self._context_label.integrity.value}, "
-                f"{self._context_label.confidentiality.value}"
+                f"{self._context_label.integrity}, "
+                f"{self._context_label.confidentiality}"
             )
 
     def _get_function_confidentiality(self, context: FunctionInvocationContext) -> ConfidentialityLabel:
         """Get confidentiality label from function metadata.
+
+        Supports both string values (``"public"``, ``"private"``) and a list of
+        reader identities (e.g. ``["Alice", "Bob"]``), which implies ``PRIVATE``
+        with a readers restriction.
 
         Args:
             context: The function invocation context.
@@ -1372,14 +1493,14 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         """
         # Check function's additional_properties for confidentiality setting
         function_props = _get_additional_properties(context.function)
-        confidentiality_str = function_props.get("confidentiality", None)
+        confidentiality_raw = function_props.get("confidentiality", None)
 
-        if confidentiality_str:
+        if confidentiality_raw is not None:
             try:
-                return ConfidentialityLabel(confidentiality_str)
-            except ValueError:
+                return ConfidentialityLabel(confidentiality_raw)
+            except (ValueError, TypeError):
                 logger.warning(
-                    f"Invalid confidentiality label '{confidentiality_str}' "
+                    f"Invalid confidentiality label '{confidentiality_raw}' "
                     f"for function '{context.function.name}', using default"
                 )
 
@@ -1830,6 +1951,13 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         )
         function_props = _get_additional_properties(context.function)
 
+        # --- Gateway policy check (takes precedence over built-in checks) ---
+        gateway_policy_fn = function_props.get("_gateway_policy_fn")
+        if gateway_policy_fn is not None:
+            await self._enforce_gateway_policy(context, call_next, context_label, gateway_policy_fn)
+            return
+
+        # --- Built-in policy checks (when no gateway policy is attached) ---
         # Check integrity policy based on context label
         # If context is UNTRUSTED (tainted), check if tool allows untrusted context
         if context_label.integrity == IntegrityLabel.UNTRUSTED and function_name not in self.allow_untrusted_tools:
@@ -1979,12 +2107,6 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         """
         function_props = _get_additional_properties(context.function)
 
-        conf_hierarchy = {
-            ConfidentialityLabel.PUBLIC: 0,
-            ConfidentialityLabel.PRIVATE: 1,
-            ConfidentialityLabel.USER_IDENTITY: 2,
-        }
-
         # Check max_allowed_confidentiality (output restriction / data exfiltration prevention)
         # Context confidentiality must be <= max allowed level
         # This prevents PRIVATE data from being written to PUBLIC destinations
@@ -1992,7 +2114,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         if max_allowed_conf is not None:
             try:
                 max_allowed_level = ConfidentialityLabel(max_allowed_conf)
-                if conf_hierarchy[label.confidentiality] > conf_hierarchy[max_allowed_level]:
+                if label.confidentiality._priority > max_allowed_level._priority:
                     return {
                         "passed": False,
                         "failure_type": "max_allowed_confidentiality",
@@ -2001,10 +2123,163 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                             f"{max_allowed_level.value.upper()} destination (data exfiltration blocked)"
                         ),
                     }
-            except ValueError:
+            except (ValueError, TypeError):
                 logger.warning(f"Invalid max_allowed_confidentiality: {max_allowed_conf}")
 
         return {"passed": True, "failure_type": None, "reason": None}
+
+    async def _enforce_gateway_policy(
+        self,
+        context: FunctionInvocationContext,
+        call_next: Callable[[], Awaitable[None]],
+        context_label: ContentLabel,
+        gateway_policy_fn: Callable[..., Awaitable[dict[str, Any]]],
+    ) -> None:
+        """Evaluate the gateway's ``eval_policy`` and enforce its decision.
+
+        The gateway returns a decision dict with ``decision`` (``"allow"``,
+        ``"deny"``, or ``"ask"``) and ``message``.  These are mapped to the
+        same enforcement actions as built-in policy violations:
+
+        - ``allow`` → continue execution (``call_next``).
+        - ``deny`` → block or request approval, depending on middleware config.
+        - ``ask`` → request user approval.
+        - ``error`` → gateway unreachable; fall through to built-in checks.
+
+        Args:
+            context: The function invocation context.
+            call_next: Callback to continue to next middleware or function execution.
+            context_label: The cumulative conversation security label.
+            gateway_policy_fn: The callable that invokes the gateway's ``eval_policy``.
+        """
+        function_name = context.function.name
+
+        # Build arguments dict for the policy call
+        if isinstance(context.arguments, BaseModel):
+            arguments: dict[str, Any] = context.arguments.model_dump()
+        elif isinstance(context.arguments, dict):
+            arguments = dict(context.arguments)
+        else:
+            arguments = {}
+
+        # Get the remote MCP tool name (the upstream name the gateway knows)
+        remote_name = _get_additional_properties(context.function).get("_mcp_remote_name", function_name)
+
+        logger.info(f"Calling gateway eval_policy for tool '{remote_name}'")
+        decision = await gateway_policy_fn(remote_name, arguments, context_label)
+
+        decision_value = decision.get("decision", "allow")
+        message = decision.get("message", "")
+
+        logger.info(f"Gateway policy decision for '{remote_name}': {decision_value} — {message}")
+
+        if decision_value == "error":
+            # Gateway unreachable — fall through to built-in checks
+            logger.warning(
+                f"Gateway policy check failed for '{function_name}': {message}. "
+                "Falling through to built-in policy checks."
+            )
+            await self._fallback_to_builtin_policy(context, call_next, context_label)
+            return
+
+        if decision_value == "allow":
+            logger.debug(f"Gateway policy ALLOWED tool '{function_name}': {message}")
+            await call_next()
+            return
+
+        # decision_value is "deny" or "ask"
+        violation = {
+            "type": "gateway_policy",
+            "function": function_name,
+            "context_label": context_label.to_dict(),
+            "turn": context.metadata.get("turn_number", -1),
+            "reason": message,
+            "gateway_decision": decision_value,
+        }
+        self._log_violation(violation)
+
+        if decision_value == "ask" or (decision_value == "deny" and self.approval_on_violation):
+            if self._is_policy_violation_approved(context):
+                self._mark_policy_violation_approved(
+                    context,
+                    warning_message=(
+                        f"APPROVED BY USER: Tool '{function_name}' executing despite gateway "
+                        f"policy decision '{decision_value}': {message}"
+                    ),
+                )
+                await call_next()
+                return
+
+            self._request_policy_violation_approval(
+                context,
+                context_label=context_label,
+                violation_type="gateway_policy",
+                reason=f"Gateway policy: {message}",
+                log_message=(
+                    f"APPROVAL REQUESTED: Tool '{function_name}' requires user approval "
+                    f"per gateway policy ({decision_value}): {message}"
+                ),
+            )
+            return
+
+        # decision_value == "deny" and not approval_on_violation
+        if self._is_policy_violation_approved(context):
+            self._mark_policy_violation_approved(
+                context,
+                warning_message=(
+                    f"APPROVED BY USER: Tool '{function_name}' executing despite gateway "
+                    f"policy denial: {message}"
+                ),
+            )
+            await call_next()
+            return
+
+        self._block_policy_violation(
+            context,
+            error_message=f"Gateway policy denied: {message}",
+            context_label=context_label,
+            violation_type="gateway_policy",
+        )
+
+    async def _fallback_to_builtin_policy(
+        self,
+        context: FunctionInvocationContext,
+        call_next: Callable[[], Awaitable[None]],
+        context_label: ContentLabel,
+    ) -> None:
+        """Run built-in integrity and confidentiality checks as a fallback.
+
+        Called when the gateway policy function is unreachable or returns an
+        error decision.
+        """
+        function_name = context.function.name
+        function_props = _get_additional_properties(context.function)
+
+        # Integrity check
+        if context_label.integrity == IntegrityLabel.UNTRUSTED and function_name not in self.allow_untrusted_tools:
+            accepts_untrusted = function_props.get("accepts_untrusted", False)
+            if not accepts_untrusted:
+                if self.block_on_violation:
+                    self._block_policy_violation(
+                        context,
+                        error_message="Policy violation: Tool cannot be called in untrusted context",
+                        context_label=context_label,
+                    )
+                    return
+
+        # Confidentiality check
+        conf_result = self._check_confidentiality_policy_detailed(context, context_label)
+        if not conf_result["passed"]:
+            if self.block_on_violation:
+                self._block_policy_violation(
+                    context,
+                    error_message=f"Policy violation: {conf_result['reason']}",
+                    context_label=context_label,
+                    violation_type=conf_result["failure_type"],
+                )
+                return
+
+        await call_next()
 
     def _log_violation(self, violation: dict[str, Any]) -> None:
         """Log a policy violation.
@@ -2632,7 +2907,7 @@ def _inspect_variable_result_parser(result: Any) -> list[Content]:
     """Parse ``inspect_variable``'s dict result while preserving its security label.
 
     ``inspect_variable`` returns a dict whose ``security_label`` field carries the
-    label of the inspected content (which may be ``USER_IDENTITY`` or any other
+    label of the inspected content (which may be ``PRIVATE`` with readers or any other
     confidentiality level). The default :meth:`FunctionTool.parse_result`
     serializes that dict to plain text, dropping the label from
     ``Content.additional_properties``. The middleware's Tier 1 label extraction
@@ -3085,8 +3360,13 @@ def _label_from_mcp_meta(meta: Any) -> ContentLabel | None:
     if not isinstance(ifc, dict):
         return None
     ifc_map = cast(dict[str, Any], ifc)
-    integ_raw = ifc_map.get("integrity")
-    conf_raw = ifc_map.get("confidentiality")
+    if "$" in ifc_map:  # gateway uses jsonpath format
+        dollar = cast(dict[str, Any], ifc_map.get("$") or {})
+        integ_raw = dollar.get("integrity")
+        conf_raw = dollar.get("confidentiality")
+    else:
+        integ_raw = ifc_map.get("integrity")
+        conf_raw = ifc_map.get("confidentiality")
     try:
         integrity = IntegrityLabel(integ_raw) if integ_raw is not None else None
         confidentiality = ConfidentialityLabel(conf_raw) if conf_raw is not None else None
@@ -3167,6 +3447,96 @@ def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: Integ
     func_tool.func = _wrapped
 
 
+# -- Gateway policy callable factory ----------------------------------------
+
+_IFC_LABELS_META_KEY = "com.github.ifc/labels"
+
+
+def _build_ifc_meta(
+    tool_name: str,
+    arguments: dict[str, Any],
+    context_label: ContentLabel,
+) -> dict[str, Any]:
+    """Build the ``_meta`` dict with IFC labels for an ``eval_policy`` call.
+
+    The gateway's ``eval_policy`` expects labels keyed by RFC 9535 JSONPath
+    strings.  We populate:
+    - ``$`` — the call-level fallback from the conversation context label
+    - ``$['name']`` — trusted (tool name is framework-controlled)
+    - ``$['arguments']`` — the context label (arguments may be tainted)
+    """
+    def _conf_wire(conf: ConfidentialityLabel) -> list[str]:
+        """Convert to gateway wire format: always a list of readers.
+
+        The gateway's ``IFCLabels`` model expects ``confidentiality`` as a
+        ``list[str]``.  An empty list means public (no reader restriction).
+        """
+        if conf.readers:
+            return sorted(conf.readers)
+        if conf.is_private:
+            # PRIVATE with no explicit readers → empty list (private, unrestricted)
+            return []
+        # PUBLIC → empty list
+        return []
+
+    ctx_label = {
+        "integrity": context_label.integrity.value,
+        "confidentiality": _conf_wire(context_label.confidentiality),
+    }
+    trusted_public = {"integrity": "trusted", "confidentiality": []}
+
+    labels: dict[str, Any] = {
+        "$": ctx_label,
+        "$['name']": ctx_label,
+        "$['arguments']": ctx_label,
+    }
+    return {_IFC_LABELS_META_KEY: labels}
+
+
+def _make_gateway_policy_fn(
+    mcp_tool: Any,
+) -> "Callable[[str, dict[str, Any], ContentLabel], Awaitable[dict[str, Any]]]":
+    """Create a gateway policy callable bound to *mcp_tool*.
+
+    The returned coroutine function calls the gateway's ``eval_policy`` MCP
+    tool with the proposed tool call and context label, then returns the
+    decision dict (``{"decision": "allow"|"deny"|"ask", "message": "..."}``).
+    """
+
+    async def _call_gateway_policy(
+        tool_name: str,
+        arguments: dict[str, Any],
+        context_label: ContentLabel,
+    ) -> dict[str, Any]:
+        meta = _build_ifc_meta(tool_name, arguments, context_label)
+        call_payload: dict[str, Any] = {
+            "name": tool_name,
+            "arguments": arguments,
+            "_meta": meta,
+        }
+        try:
+            result = await mcp_tool.call_tool("eval_policy", call=call_payload)
+            # MCP tool results are list[Content]; parse the structured content
+            if isinstance(result, list) and result:
+                text = result[0].text if hasattr(result[0], "text") else str(result[0])
+                try:
+                    return cast(dict[str, Any], json.loads(text))
+                except (json.JSONDecodeError, TypeError):
+                    return {"decision": "allow", "message": str(text)}
+            if isinstance(result, str):
+                try:
+                    return cast(dict[str, Any], json.loads(result))
+                except (json.JSONDecodeError, TypeError):
+                    return {"decision": "allow", "message": result}
+            return {"decision": "allow", "message": "No structured policy response"}
+        except Exception as exc:
+            logger.warning(f"Gateway eval_policy call failed for tool '{tool_name}': {exc}")
+            # Fail-open: if the gateway is unreachable, fall back to built-in checks
+            return {"decision": "error", "message": str(exc)}
+
+    return _call_gateway_policy
+
+
 @experimental(feature_id=ExperimentalFeature.FIDES)
 class SecureMCPToolProxy:
     """Convenience wrapper that auto-labels MCP tools on connection.
@@ -3234,6 +3604,7 @@ class SecureMCPToolProxy:
         default_integrity: IntegrityLabel = IntegrityLabel.UNTRUSTED,
         annotation_overrides: dict[str, tuple[IntegrityLabel, ConfidentialityLabel | None]] | None = None,
         mark_write_tools_as_sinks: bool = True,
+        gateway_policy: bool = False,
     ) -> None:
         """Initialize a secure proxy for an MCP tool or MCP URL endpoint.
 
@@ -3255,6 +3626,12 @@ class SecureMCPToolProxy:
             annotation_overrides: Per-tool-name label overrides keyed by remote MCP tool name.
             mark_write_tools_as_sinks: Whether to restrict write tools to PUBLIC
                 confidentiality. Defaults to ``True``.
+            gateway_policy: When ``True``, the proxy assumes the MCP server
+                exposes an ``eval_policy`` tool (e.g. a fides-gateway) and
+                attaches a callable to each tool's ``additional_properties``
+                under the key ``"_gateway_policy_fn"``.  The
+                :class:`PolicyEnforcementFunctionMiddleware` will invoke this
+                callable instead of (or before) its built-in policy checks.
 
         Raises:
             ValueError: If both ``mcp_tool`` and ``url`` are provided, or if neither is provided.
@@ -3293,10 +3670,11 @@ class SecureMCPToolProxy:
 
         # The validation above guarantees a tool is set (passed directly or built
         # from ``url``); declare the attribute as non-optional ``MCPTool``.
-        self._mcp_tool: MCPTool = cast(MCPTool, mcp_tool)
+        self._mcp_tool: MCPTool = cast("MCPTool", mcp_tool)
         self._default_integrity = default_integrity
         self._annotation_overrides = annotation_overrides
         self._mark_write_tools_as_sinks = mark_write_tools_as_sinks
+        self._gateway_policy = gateway_policy
 
     # -- Async context manager --
 
@@ -3376,3 +3754,17 @@ class SecureMCPToolProxy:
         # server omits ``_meta`` (or it cannot be parsed).
         for func_tool in getattr(self._mcp_tool, "functions", []):
             _wrap_mcp_function_for_ifc(func_tool, self._default_integrity)
+
+        # When gateway_policy is enabled, attach a policy callable to each
+        # tool's additional_properties.  PolicyEnforcementFunctionMiddleware
+        # will pick this up via ``_get_additional_properties(context.function)``
+        # and call the gateway's ``eval_policy`` MCP tool instead of (or
+        # before) its built-in checks.
+        if self._gateway_policy:
+            mcp_tool = self._mcp_tool
+            for func_tool in getattr(mcp_tool, "functions", []):
+                # Skip the eval_policy tool itself to avoid recursive calls
+                remote_name = _get_additional_properties(func_tool).get("_mcp_remote_name", func_tool.name)
+                if remote_name == "eval_policy":
+                    continue
+                func_tool.additional_properties["_gateway_policy_fn"] = _make_gateway_policy_fn(mcp_tool)
