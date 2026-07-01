@@ -10,6 +10,8 @@ import importlib.metadata
 import importlib.util
 import inspect
 import json
+import os
+import subprocess
 import sys
 import threading
 import time
@@ -466,7 +468,25 @@ def _symlinks_supported(tmp: Path) -> bool:
         test_target.unlink(missing_ok=True)
 
 
-def test_populate_input_dir_skips_symlink_to_file_outside_workspace(tmp_path: Path) -> None:
+def _create_junction_or_skip(*, link: Path, target: Path) -> None:
+    if sys.platform != "win32":
+        pytest.skip("Windows directory junctions are only available on Windows")
+
+    result = subprocess.run(
+        [os.environ.get("COMSPEC", "cmd"), "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"Could not create Windows directory junction: {result.stderr or result.stdout}")
+
+    if not execute_code_module._is_link_or_reparse_point(link):
+        link.rmdir()
+        pytest.skip("Created junction was not reported as a reparse point")
+
+
+def test_populate_input_dir_rejects_symlink_to_file_outside_workspace(tmp_path: Path) -> None:
     if not _symlinks_supported(tmp_path):
         pytest.skip("Symlinks not supported on this platform/environment")
     workspace = tmp_path / "workspace"
@@ -479,16 +499,14 @@ def test_populate_input_dir_skips_symlink_to_file_outside_workspace(tmp_path: Pa
     input_root = tmp_path / "input"
     input_root.mkdir()
 
-    execute_code_module._populate_input_dir(
-        config=_build_run_config(workspace_root=workspace),
-        input_root=input_root,
-    )
+    with pytest.raises(ValueError, match="Refusing to stage linked or reparse-point path"):
+        execute_code_module._populate_input_dir(
+            config=_build_run_config(workspace_root=workspace),
+            input_root=input_root,
+        )
 
-    # Real file copied; symlink and its target are absent.
-    assert (input_root / "real.txt").read_text(encoding="utf-8") == "real-content"
     assert not (input_root / "link.txt").exists()
     assert not (input_root / "link.txt").is_symlink()
-    # Sanity: no outside-content anywhere in the input tree.
     leaked = [
         path
         for path in input_root.rglob("*")
@@ -497,7 +515,7 @@ def test_populate_input_dir_skips_symlink_to_file_outside_workspace(tmp_path: Pa
     assert leaked == []
 
 
-def test_populate_input_dir_skips_symlinked_directory_outside_workspace(tmp_path: Path) -> None:
+def test_populate_input_dir_rejects_symlinked_directory_outside_workspace(tmp_path: Path) -> None:
     if not _symlinks_supported(tmp_path):
         pytest.skip("Symlinks not supported on this platform/environment")
     workspace = tmp_path / "workspace"
@@ -510,12 +528,12 @@ def test_populate_input_dir_skips_symlinked_directory_outside_workspace(tmp_path
     input_root = tmp_path / "input"
     input_root.mkdir()
 
-    execute_code_module._populate_input_dir(
-        config=_build_run_config(workspace_root=workspace),
-        input_root=input_root,
-    )
+    with pytest.raises(ValueError, match="Refusing to stage linked or reparse-point path"):
+        execute_code_module._populate_input_dir(
+            config=_build_run_config(workspace_root=workspace),
+            input_root=input_root,
+        )
 
-    # Neither the symlink itself nor anything under the symlinked target leaks.
     assert not (input_root / "linked_dir").exists()
     leaked = [
         path for path in input_root.rglob("*") if path.is_file() and path.read_text(encoding="utf-8") == "deep-content"
@@ -523,8 +541,8 @@ def test_populate_input_dir_skips_symlinked_directory_outside_workspace(tmp_path
     assert leaked == []
 
 
-def test_populate_input_dir_skips_nested_symlinks(tmp_path: Path) -> None:
-    """A symlink several levels deep inside a real subdir must also be skipped."""
+def test_populate_input_dir_rejects_nested_symlinks(tmp_path: Path) -> None:
+    """A symlink several levels deep inside a real subdir must also be rejected."""
     if not _symlinks_supported(tmp_path):
         pytest.skip("Symlinks not supported on this platform/environment")
     workspace = tmp_path / "workspace"
@@ -537,17 +555,95 @@ def test_populate_input_dir_skips_nested_symlinks(tmp_path: Path) -> None:
     input_root = tmp_path / "input"
     input_root.mkdir()
 
-    execute_code_module._populate_input_dir(
-        config=_build_run_config(workspace_root=workspace),
-        input_root=input_root,
-    )
+    with pytest.raises(ValueError, match="Refusing to stage linked or reparse-point path"):
+        execute_code_module._populate_input_dir(
+            config=_build_run_config(workspace_root=workspace),
+            input_root=input_root,
+        )
 
-    assert (input_root / "real_sub" / "ok.txt").read_text(encoding="utf-8") == "ok"
+    assert not any(
+        path.is_file() and path.read_text(encoding="utf-8") == "outside-content" for path in input_root.rglob("*")
+    )
     assert not (input_root / "real_sub" / "link.txt").exists()
 
 
-def test_path_tree_signature_does_not_follow_symlinks(tmp_path: Path) -> None:
-    """The cache-key signature must reflect only real files (mirrors the staged tree)."""
+def test_populate_input_dir_rejects_workspace_junction_outside_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "deep.txt").write_text("deep-content", encoding="utf-8")
+    _create_junction_or_skip(link=workspace / "linked_dir", target=outside_dir)
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+
+    with pytest.raises(ValueError, match="Refusing to stage linked or reparse-point path"):
+        execute_code_module._populate_input_dir(
+            config=_build_run_config(workspace_root=workspace),
+            input_root=input_root,
+        )
+
+    assert not (input_root / "linked_dir").exists()
+    assert not any(
+        path.is_file() and path.read_text(encoding="utf-8") == "deep-content" for path in input_root.rglob("*")
+    )
+
+
+def test_populate_input_dir_rejects_nested_workspace_junction(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    (workspace / "real_sub").mkdir(parents=True)
+    (workspace / "real_sub" / "ok.txt").write_text("ok", encoding="utf-8")
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "deep.txt").write_text("deep-content", encoding="utf-8")
+    _create_junction_or_skip(link=workspace / "real_sub" / "linked_dir", target=outside_dir)
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+
+    with pytest.raises(ValueError, match="Refusing to stage linked or reparse-point path"):
+        execute_code_module._populate_input_dir(
+            config=_build_run_config(workspace_root=workspace),
+            input_root=input_root,
+        )
+
+    assert not any(
+        path.is_file() and path.read_text(encoding="utf-8") == "deep-content" for path in input_root.rglob("*")
+    )
+    assert not (input_root / "real_sub" / "linked_dir").exists()
+
+
+def test_populate_input_dir_rejects_file_mount_junction(tmp_path: Path) -> None:
+    mount_root = tmp_path / "mount"
+    mount_root.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "deep.txt").write_text("deep-content", encoding="utf-8")
+    _create_junction_or_skip(link=mount_root / "linked_dir", target=outside_dir)
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    mount = execute_code_module._NormalizedFileMount(
+        host_path=mount_root,
+        mount_path="mounted",
+        path_signature=(),
+    )
+
+    with pytest.raises(ValueError, match="Refusing to stage linked or reparse-point path"):
+        execute_code_module._populate_input_dir(
+            config=_build_run_config(file_mounts=(mount,)),
+            input_root=input_root,
+        )
+
+    assert not (input_root / "mounted" / "linked_dir").exists()
+    assert not any(
+        path.is_file() and path.read_text(encoding="utf-8") == "deep-content" for path in input_root.rglob("*")
+    )
+
+
+def test_path_tree_signature_rejects_symlinks(tmp_path: Path) -> None:
+    """The cache-key signature must mirror staging and reject linked entries."""
     if not _symlinks_supported(tmp_path):
         pytest.skip("Symlinks not supported on this platform/environment")
     workspace = tmp_path / "workspace"
@@ -558,11 +654,8 @@ def test_path_tree_signature_does_not_follow_symlinks(tmp_path: Path) -> None:
     outside.write_text("outside-content", encoding="utf-8")
     (workspace / "link.txt").symlink_to(outside)
 
-    signature = execute_code_module._path_tree_signature(workspace)
-
-    names = [entry[0] for entry in signature]
-    assert "real.txt" in names
-    assert "link.txt" not in names
+    with pytest.raises(ValueError, match="Refusing to stage linked or reparse-point path"):
+        execute_code_module._path_tree_signature(workspace)
 
 
 def test_path_tree_signature_walks_through_symlinked_root(tmp_path: Path) -> None:
@@ -652,6 +745,20 @@ def test_collect_output_relative_paths_skips_symlinked_directory(tmp_path: Path)
     assert relative_paths == set()
 
 
+def test_collect_output_relative_paths_skips_junctioned_directory(tmp_path: Path) -> None:
+    """A junctioned directory in /output must not be descended into."""
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "deep.txt").write_text("deep-secret", encoding="utf-8")
+    _create_junction_or_skip(link=output_root / "linked_dir", target=outside_dir)
+
+    relative_paths = execute_code_module._collect_output_relative_paths(sandbox=object(), root=output_root)
+
+    assert relative_paths == set()
+
+
 def test_parse_output_files_skips_symlink_to_host_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """End-to-end: a /output symlink to a host file is never returned as Content."""
     if not _symlinks_supported(tmp_path):
@@ -698,6 +805,43 @@ def test_parse_output_files_rejects_intermediate_dir_symlink_from_listing(
 
     assert all(b"HOST_SECRET" not in _decode_content_bytes(item) for item in contents if item.type == "data")
     assert all(item.additional_properties.get("path") != "/output/sub/leak.txt" for item in contents)
+
+
+def test_parse_output_files_rejects_intermediate_dir_junction_from_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A backend-listed path traversing an intermediate dir junction must be rejected."""
+    monkeypatch.setattr(execute_code_module, "OUTPUT_FILE_RETRY_ATTEMPTS", 1)
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "leak.txt").write_text("HOST_SECRET", encoding="utf-8")
+    _create_junction_or_skip(link=output_root / "sub", target=outside_dir)
+
+    contents = execute_code_module._parse_output_files(
+        sandbox=_SandboxWithListing(["output/sub/leak.txt"]),
+        output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
+        expect_output_files=False,
+    )
+
+    assert all(b"HOST_SECRET" not in _decode_content_bytes(item) for item in contents if item.type == "data")
+    assert all(item.additional_properties.get("path") != "/output/sub/leak.txt" for item in contents)
+
+
+def test_clear_directory_removes_junction_without_deleting_target(tmp_path: Path) -> None:
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "keep.txt"
+    outside_file.write_text("do-not-delete", encoding="utf-8")
+    _create_junction_or_skip(link=output_root / "linked_dir", target=outside_dir)
+
+    execute_code_module._clear_directory(cast("TemporaryDirectory[str]", _OutputDirShim(output_root)))
+
+    assert outside_file.read_text(encoding="utf-8") == "do-not-delete"
+    assert not (output_root / "linked_dir").exists()
 
 
 def test_is_safe_output_file_rejects_parent_traversal(tmp_path: Path) -> None:
