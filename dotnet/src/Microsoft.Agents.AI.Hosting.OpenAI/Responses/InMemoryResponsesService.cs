@@ -366,6 +366,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             Id = responseId,
             IncompleteDetails = null,
             Instructions = request.Instructions,
+            Logprobs = request.Logprobs,
             MaxOutputTokens = request.MaxOutputTokens,
             MaxToolCalls = request.MaxToolCalls,
             Metadata = metadata,
