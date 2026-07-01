@@ -3807,6 +3807,78 @@ class TestSkillsProviderFactories:
         for t in tools:
             assert t.approval_mode == "always_require"
 
+    async def test_disable_load_skill_approval_only(self) -> None:
+        """disable_load_skill_approval opts out only load_skill from approval."""
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
+        skill._scripts.append(InlineSkillScript(name="s1", function=lambda: None))
+
+        provider = SkillsProvider([skill], disable_load_skill_approval=True)
+        await _init_provider(provider)
+        tools = {t.name: t for t in _ctx(provider)[2] if hasattr(t, "name")}
+        assert tools["load_skill"].approval_mode == "never_require"
+        assert tools["read_skill_resource"].approval_mode == "always_require"
+        assert tools["run_skill_script"].approval_mode == "always_require"
+
+    async def test_disable_read_skill_resource_approval_only(self) -> None:
+        """disable_read_skill_resource_approval opts out only read_skill_resource."""
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
+        skill._scripts.append(InlineSkillScript(name="s1", function=lambda: None))
+
+        provider = SkillsProvider([skill], disable_read_skill_resource_approval=True)
+        await _init_provider(provider)
+        tools = {t.name: t for t in _ctx(provider)[2] if hasattr(t, "name")}
+        assert tools["read_skill_resource"].approval_mode == "never_require"
+        assert tools["load_skill"].approval_mode == "always_require"
+        assert tools["run_skill_script"].approval_mode == "always_require"
+
+    async def test_disable_run_skill_script_approval_only(self) -> None:
+        """disable_run_skill_script_approval opts out only run_skill_script."""
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
+        skill._scripts.append(InlineSkillScript(name="s1", function=lambda: None))
+
+        provider = SkillsProvider([skill], disable_run_skill_script_approval=True)
+        await _init_provider(provider)
+        tools = {t.name: t for t in _ctx(provider)[2] if hasattr(t, "name")}
+        assert tools["run_skill_script"].approval_mode == "never_require"
+        assert tools["load_skill"].approval_mode == "always_require"
+        assert tools["read_skill_resource"].approval_mode == "always_require"
+
+    async def test_disable_all_approvals(self) -> None:
+        """Disabling all three flags opts every tool out of approval."""
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
+        skill._scripts.append(InlineSkillScript(name="s1", function=lambda: None))
+
+        provider = SkillsProvider(
+            [skill],
+            disable_load_skill_approval=True,
+            disable_read_skill_resource_approval=True,
+            disable_run_skill_script_approval=True,
+        )
+        await _init_provider(provider)
+        tools = [t for t in _ctx(provider)[2] if hasattr(t, "name")]
+        assert {t.name for t in tools} == {"load_skill", "read_skill_resource", "run_skill_script"}
+        for t in tools:
+            assert t.approval_mode == "never_require"
+
+    async def test_from_paths_forwards_disable_approval_flags(self, tmp_path: Path) -> None:
+        """from_paths forwards the disable_*_approval flags to the provider."""
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: A test skill.\n---\nBody.", encoding="utf-8"
+        )
+
+        provider = SkillsProvider.from_paths(
+            str(tmp_path),
+            disable_load_skill_approval=True,
+            disable_run_skill_script_approval=True,
+        )
+        await _init_provider(provider)
+        tools = {t.name: t for t in _ctx(provider)[2] if hasattr(t, "name")}
+        assert tools["load_skill"].approval_mode == "never_require"
+        assert tools["read_skill_resource"].approval_mode == "always_require"
+        assert tools["run_skill_script"].approval_mode == "never_require"
+
     async def test_tool_name_constants(self) -> None:
         """The provider exposes its tool names as class constants."""
         assert SkillsProvider.LOAD_SKILL_TOOL_NAME == "load_skill"
