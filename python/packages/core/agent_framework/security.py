@@ -129,9 +129,18 @@ class ConfidentialityLabel:
     PUBLIC: "ConfidentialityLabel"   # set after class body
     PRIVATE: "ConfidentialityLabel"  # set after class body
 
-    __slots__ = ("_level", "_readers")
-
     def __init__(self, value: "str | list[str]" = "public", *, readers: "frozenset[str] | None" = None) -> None:
+        """Initialize a ConfidentialityLabel.
+
+        Args:
+            value: Either ``"public"``, ``"private"``, or a list of reader
+                identities. A list implies ``"private"`` restricted to those readers.
+            readers: Optional frozenset of reader identities. Only applied when
+                ``value`` is ``"private"``; ignored for ``"public"``.
+
+        Raises:
+            ValueError: If ``value`` is not ``"public"``, ``"private"``, or a list.
+        """
         if isinstance(value, list):
             self._level = "private"
             self._readers: frozenset[str] | None = frozenset(value)
@@ -195,6 +204,39 @@ class ConfidentialityLabel:
     def _priority(self) -> int:
         """Return numeric priority: PUBLIC=0, PRIVATE=1."""
         return 0 if self._level == "public" else 1
+
+    # -- combination ---------------------------------------------------------
+
+    @classmethod
+    def combine(cls, *labels: "ConfidentialityLabel") -> "ConfidentialityLabel":
+        """Combine confidentiality labels using the most restrictive policy.
+
+        - ``PRIVATE`` dominates ``PUBLIC``.
+        - When multiple ``PRIVATE`` labels carry readers lists, the readers are
+          *intersected* (only readers common to every restricted label remain).
+        - A ``PRIVATE`` label without readers imposes no reader restriction and
+          does not constrain the intersection.
+
+        Args:
+            *labels: Confidentiality labels to combine.
+
+        Returns:
+            The most restrictive combined label. Returns ``PUBLIC`` when no
+            labels are provided or none are private; ``PRIVATE`` (unrestricted)
+            when a private label carries no readers list.
+        """
+        private = [label for label in labels if label.is_private]
+        if not private:
+            return cls.PUBLIC
+
+        readers_sets = [label.readers for label in private if label.readers is not None]
+        if not readers_sets:
+            return cls.PRIVATE
+
+        combined_readers = readers_sets[0]
+        for rs in readers_sets[1:]:
+            combined_readers = combined_readers & rs
+        return cls("private", readers=combined_readers)
 
 
 # Singletons for the two basic levels
@@ -331,28 +373,8 @@ def combine_labels(*labels: ContentLabel) -> ContentLabel:
         else IntegrityLabel.TRUSTED
     )
 
-    # Most restrictive confidentiality: PRIVATE > PUBLIC
-    any_private = any(label.confidentiality._priority >= 1 for label in labels)
-
-    if any_private:
-        # Intersect readers lists from all PRIVATE labels that carry them.
-        # PRIVATE(None) means "no reader restriction" and does not constrain
-        # the intersection.  If no PRIVATE label has a readers list the
-        # combined result is PRIVATE(None).
-        readers_sets: list[frozenset[str]] = [
-            label.confidentiality.readers
-            for label in labels
-            if label.confidentiality._priority >= 1 and label.confidentiality.readers is not None
-        ]
-        if readers_sets:
-            combined_readers: frozenset[str] | None = readers_sets[0]
-            for rs in readers_sets[1:]:
-                combined_readers = combined_readers & rs  # type: ignore[union-attr]
-            confidentiality = ConfidentialityLabel("private", readers=combined_readers)
-        else:
-            confidentiality = ConfidentialityLabel.PRIVATE
-    else:
-        confidentiality = ConfidentialityLabel.PUBLIC
+    # Most restrictive confidentiality (PRIVATE > PUBLIC, readers intersected).
+    confidentiality = ConfidentialityLabel.combine(*(label.confidentiality for label in labels))
 
     # Merge metadata
     merged_metadata: dict[str, Any] = {}
