@@ -2,10 +2,8 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -18,7 +16,6 @@ namespace Microsoft.Agents.AI;
 /// resources they own. The default <see cref="Dispose(bool)"/> implementation does nothing; sources
 /// that hold disposable resources override it. Decorators dispose the source they wrap.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public abstract class AgentSkillsSource : IDisposable
 {
     /// <summary>

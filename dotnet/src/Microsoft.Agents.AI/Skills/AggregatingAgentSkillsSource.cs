@@ -1,10 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -16,7 +14,6 @@ namespace Microsoft.Agents.AI;
 /// Skills from each child source are returned in the order the sources were registered,
 /// with each source's skills appended sequentially. No deduplication or filtering is applied.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AggregatingAgentSkillsSource : AgentSkillsSource
 {
     private readonly IEnumerable<AgentSkillsSource> _sources;
