@@ -131,7 +131,7 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
             {
                 if (DurableWorkflowLiveStatus.TryParse(metadata.SerializedCustomStatus, out DurableWorkflowLiveStatus liveStatus))
                 {
-                    (List<WorkflowEvent> events, lastReadEventIndex) = DrainNewEvents(liveStatus.Events, lastReadEventIndex);
+                    (List<WorkflowEvent> events, lastReadEventIndex) = DrainNewEvents(liveStatus.Events, liveStatus.EventsStartIndex, lastReadEventIndex);
                     foreach (WorkflowEvent evt in events)
                     {
                         hasNewEvents = true;
@@ -175,7 +175,9 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
                 // SerializedOutput as a DurableWorkflowResult wrapper.
                 if (TryParseWorkflowResult(metadata.SerializedOutput, out DurableWorkflowResult? outputResult))
                 {
-                    (List<WorkflowEvent> events, _) = DrainNewEvents(outputResult.Events, lastReadEventIndex);
+                    // The output carries the full, untrimmed event log starting at absolute index 0,
+                    // so any events that scrolled out of the live window are backfilled here.
+                    (List<WorkflowEvent> events, _) = DrainNewEvents(outputResult.Events, windowStartIndex: 0, lastReadEventIndex);
                     foreach (WorkflowEvent evt in events)
                     {
                         yield return evt;
@@ -285,14 +287,30 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
     }
 
     /// <summary>
-    /// Deserializes and returns any events beyond <paramref name="lastReadIndex"/> from the list.
+    /// Deserializes and returns any events not yet read, given a published window that begins at
+    /// absolute index <paramref name="windowStartIndex"/> and the consumer's absolute
+    /// <paramref name="lastReadIndex"/>.
     /// </summary>
-    private static (List<WorkflowEvent> Events, int UpdatedIndex) DrainNewEvents(List<string> serializedEvents, int lastReadIndex)
+    /// <remarks>
+    /// When the consumer has fallen behind the window (its <paramref name="lastReadIndex"/> is older than
+    /// the window's first element), the missing events are not in this window. They are not skipped: the
+    /// index is left unchanged so they are recovered from the full workflow output at completion.
+    /// </remarks>
+    private static (List<WorkflowEvent> Events, int UpdatedIndex) DrainNewEvents(List<string> windowEvents, int windowStartIndex, int lastReadIndex)
     {
         List<WorkflowEvent> events = [];
-        while (lastReadIndex < serializedEvents.Count)
+
+        // Consumer is behind the published window — defer the gap to the completion backfill.
+        if (lastReadIndex < windowStartIndex)
         {
-            string serializedEvent = serializedEvents[lastReadIndex];
+            return (events, lastReadIndex);
+        }
+
+        int relativeIndex = lastReadIndex - windowStartIndex;
+        while (relativeIndex < windowEvents.Count)
+        {
+            string serializedEvent = windowEvents[relativeIndex];
+            relativeIndex++;
             lastReadIndex++;
 
             WorkflowEvent? workflowEvent = TryDeserializeEvent(serializedEvent);

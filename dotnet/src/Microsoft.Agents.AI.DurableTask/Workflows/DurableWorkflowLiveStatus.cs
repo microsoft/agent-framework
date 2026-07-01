@@ -28,9 +28,28 @@ internal sealed class DurableWorkflowLiveStatus
     public List<PendingRequestPortStatus> PendingEvents { get; set; } = [];
 
     /// <summary>
-    /// Gets or sets the serialized workflow events emitted so far.
+    /// Gets or sets the serialized workflow events currently published in the live status.
     /// </summary>
+    /// <remarks>
+    /// This may be a bounded trailing window of the workflow's full event sequence rather than
+    /// every event emitted so far. Durable Functions caps custom status at 16&#160;KB (UTF-16), so
+    /// older events are omitted once the cumulative size would exceed that ceiling. <see cref="EventsStartIndex"/>
+    /// gives the absolute position of the first element here, and the complete, untrimmed event log
+    /// is always available from the workflow output (<see cref="DurableWorkflowResult.Events"/>) at completion.
+    /// </remarks>
     public List<string> Events { get; set; } = [];
+
+    /// <summary>
+    /// Gets or sets the absolute index, within the workflow's full event sequence, of the first
+    /// element of <see cref="Events"/>.
+    /// </summary>
+    /// <remarks>
+    /// This is <c>0</c> when <see cref="Events"/> carries the full log from the beginning. It is greater
+    /// than zero when only a trailing window is published (older events trimmed to respect the custom
+    /// status size limit). Consumers use it to map window positions back to absolute event indices so
+    /// no event is delivered twice or skipped.
+    /// </remarks>
+    public int EventsStartIndex { get; set; }
 
     /// <summary>
     /// Attempts to deserialize a serialized custom status string into a <see cref="DurableWorkflowLiveStatus"/>.

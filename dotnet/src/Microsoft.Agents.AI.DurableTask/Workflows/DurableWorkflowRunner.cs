@@ -71,6 +71,19 @@ internal sealed class DurableWorkflowRunner
 {
     private const int MaxSupersteps = 100;
 
+    // Durable Functions caps orchestration custom status at 16 KB (UTF-16), i.e. 8192 .NET chars.
+    // We target a value comfortably below that so the JSON envelope, the eventsStartIndex field, and
+    // small estimation differences (e.g. the real serializer vs. our per-element estimate) cannot push
+    // the payload over the hard limit.
+    private const int LiveStatusTargetChars = 7600;
+
+    // Fixed headroom reserved for the JSON envelope (property names, brackets, eventsStartIndex digits).
+    private const int LiveStatusEnvelopeBudgetChars = 256;
+
+    // Per-pending-event overhead (JSON object braces, property names, quotes) added to the
+    // measured EventName/Input lengths when estimating the PendingEvents portion of the status.
+    private const int PendingEventOverheadChars = 64;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="DurableWorkflowRunner"/> class.
     /// </summary>
@@ -278,6 +291,13 @@ internal sealed class DurableWorkflowRunner
         public List<string> AccumulatedEvents { get; } = [];
 
         /// <summary>
+        /// Running estimate, in UTF-16 characters, of the serialized cost of <see cref="AccumulatedEvents"/>
+        /// when written as a JSON string array. Used to decide cheaply whether the full event log still
+        /// fits within the custom status size budget before falling back to windowing.
+        /// </summary>
+        public int AccumulatedEventsCharCost { get; set; }
+
+        /// <summary>
         /// Workflow status published via <c>SetCustomStatus</c> so external clients can poll for streaming events and pending HITL requests.
         /// </summary>
         public DurableWorkflowLiveStatus LiveStatus { get; } = new();
@@ -385,6 +405,10 @@ internal sealed class DurableWorkflowRunner
 
             // Accumulate events for the durable workflow status (streaming)
             state.AccumulatedEvents.AddRange(resultInfo.Events);
+            foreach (string serializedEvent in resultInfo.Events)
+            {
+                state.AccumulatedEventsCharCost += SerializedElementCost(serializedEvent);
+            }
 
             // Check for halt request
             haltRequested |= resultInfo.HaltRequested;
@@ -473,19 +497,155 @@ internal sealed class DurableWorkflowRunner
     /// making them available to <see cref="DurableStreamingWorkflowRun"/> for live streaming.
     /// </summary>
     /// <remarks>
-    /// Custom status is the only orchestration state readable by external clients while
-    /// the orchestration is still running. It is cleared by the framework on completion,
-    /// so events are also included in <see cref="DurableWorkflowResult"/> for final retrieval.
+    /// <para>
+    /// Custom status is the only orchestration state readable by external clients while the
+    /// orchestration is still running. Durable Functions caps it at 16&#160;KB (UTF-16), so the
+    /// full cumulative event log cannot always be published live: a workflow with enough
+    /// executors and/or large typed outputs would otherwise overflow the cap and fail the
+    /// orchestration (see issue #5745).
+    /// </para>
+    /// <para>
+    /// To stay within the cap, only a bounded trailing window of the most recent events is
+    /// published, tagged with <see cref="DurableWorkflowLiveStatus.EventsStartIndex"/> so the
+    /// consumer can map window positions to absolute indices. The complete, untrimmed log is
+    /// still returned in <see cref="DurableWorkflowResult.Events"/> (the orchestration output is
+    /// not subject to the custom status cap) and is drained by the consumer at completion, so no
+    /// event is ever lost — events that scroll out of the live window are delivered at completion
+    /// instead of mid-run.
+    /// </para>
     /// </remarks>
     private static void PublishEventsToLiveStatus(
         TaskOrchestrationContext context,
         SuperstepState state)
     {
-        state.LiveStatus.Events = state.AccumulatedEvents;
+        (List<string> windowEvents, int startIndex) = BuildEventWindow(
+            state.AccumulatedEvents, state.AccumulatedEventsCharCost, state.LiveStatus.PendingEvents);
+        state.LiveStatus.Events = windowEvents;
+        state.LiveStatus.EventsStartIndex = startIndex;
 
         // Pass the object directly — the framework's DataConverter handles serialization.
         // Pre-serializing would cause double-serialization (string wrapped in JSON quotes).
         context.SetCustomStatus(state.LiveStatus);
+    }
+
+    /// <summary>
+    /// Selects the largest trailing window of <see cref="SuperstepState.AccumulatedEvents"/> whose
+    /// serialized size fits within the custom status budget, newest events first.
+    /// </summary>
+    /// <returns>
+    /// The window to publish and the absolute index of its first element. When even the single newest
+    /// event exceeds the budget, an empty window is returned with a start index equal to the event count,
+    /// so the oversized event is never written to custom status (it is still delivered via the output at
+    /// completion).
+    /// </returns>
+    internal static (List<string> Window, int StartIndex) BuildEventWindow(
+        List<string> accumulatedEvents,
+        int accumulatedEventsCharCost,
+        List<PendingRequestPortStatus> pendingEvents)
+    {
+        List<string> all = accumulatedEvents;
+
+        // Reserve budget for the JSON envelope and the PendingEvents portion of the status.
+        int reserved = LiveStatusEnvelopeBudgetChars + EstimatePendingEventsCost(pendingEvents);
+        int eventsBudget = Math.Max(0, LiveStatusTargetChars - reserved);
+
+        // Fast path: the entire event log still fits, so publish it from the beginning.
+        if (accumulatedEventsCharCost <= eventsBudget)
+        {
+            return (all, 0);
+        }
+
+        // Otherwise include as many of the most recent events as fit, scanning newest to oldest.
+        int total = 0;
+        int start = all.Count;
+        for (int i = all.Count - 1; i >= 0; i--)
+        {
+            int cost = SerializedElementCost(all[i]);
+            if (total + cost > eventsBudget)
+            {
+                break;
+            }
+
+            total += cost;
+            start = i;
+        }
+
+        return start < all.Count
+            ? (all.GetRange(start, all.Count - start), start)
+            : ([], all.Count);
+    }
+
+    /// <summary>
+    /// Re-windows an already-published live status in place so its events fit the custom status budget
+    /// alongside the current <see cref="DurableWorkflowLiveStatus.PendingEvents"/>.
+    /// </summary>
+    /// <remarks>
+    /// Used by code paths that mutate <see cref="DurableWorkflowLiveStatus.PendingEvents"/> after the last
+    /// <see cref="PublishEventsToLiveStatus"/> call (e.g. a request port adding a pending input). Adding a
+    /// pending event grows the reserved budget, which can push a previously-fitting event window over the
+    /// 16&#160;KB cap. Trimming the trailing window here keeps the write within the limit while advancing
+    /// <see cref="DurableWorkflowLiveStatus.EventsStartIndex"/> so the consumer still maps window positions
+    /// to absolute indices. Trimmed events remain available via the orchestration output at completion, so
+    /// none are lost.
+    /// </remarks>
+    internal static void TrimLiveStatusToBudget(DurableWorkflowLiveStatus liveStatus)
+    {
+        int cost = 0;
+        foreach (string serializedEvent in liveStatus.Events)
+        {
+            cost += SerializedElementCost(serializedEvent);
+        }
+
+        (List<string> window, int relativeStart) = BuildEventWindow(liveStatus.Events, cost, liveStatus.PendingEvents);
+        if (relativeStart == 0 && window.Count == liveStatus.Events.Count)
+        {
+            return;
+        }
+
+        liveStatus.EventsStartIndex += relativeStart;
+        liveStatus.Events = window;
+    }
+
+    /// <summary>
+    /// Estimates the serialized cost, in UTF-16 characters, of a single serialized event when written
+    /// as a JSON string element (escaped payload plus surrounding quotes and a separating comma).
+    /// </summary>
+    /// <remarks>
+    /// Uses <see cref="JsonEncodedText.Encode(string, System.Text.Encodings.Web.JavaScriptEncoder?)"/> with the
+    /// default (strict) encoder. This is intentionally stricter than the serializer that actually writes the custom
+    /// status, which uses <see cref="System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping"/> and so
+    /// escapes fewer characters. Because the strict encoder never produces a shorter result, the estimate is an upper
+    /// bound on the actual contribution — never an underestimate that could lead to an overflow.
+    /// </remarks>
+    internal static int SerializedElementCost(string serializedEvent)
+        => JsonEncodedText.Encode(serializedEvent).Value.Length + 3;
+
+    /// <summary>
+    /// Estimates the serialized cost, in UTF-16 characters, of the pending request ports carried in the
+    /// live status, so the event window leaves room for them.
+    /// </summary>
+    /// <remarks>
+    /// The <see cref="PendingRequestPortStatus.Input"/> is serialized request data; quotes, backslashes,
+    /// and control characters in it are escaped again when the live status is serialized. The cost is
+    /// therefore measured on the JSON-escaped length (matching <see cref="SerializedElementCost"/>) so the
+    /// reserve is conservative and never undercounts.
+    /// </remarks>
+    internal static int EstimatePendingEventsCost(List<PendingRequestPortStatus> pendingEvents)
+    {
+        if (pendingEvents.Count == 0)
+        {
+            return 0;
+        }
+
+        int cost = 0;
+        foreach (PendingRequestPortStatus pending in pendingEvents)
+        {
+            cost += JsonEncodedText.Encode(pending.EventName ?? string.Empty).Value.Length
+                + JsonEncodedText.Encode(pending.Input ?? string.Empty).Value.Length
+                + PendingEventOverheadChars;
+        }
+
+        return cost;
     }
 
     /// <summary>
