@@ -7,8 +7,9 @@ using System.CommandLine;
 using System.ComponentModel;
 using System.Reflection;
 using System.Text;
+using AGUI.Abstractions;
+using AGUI.Client;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AGUI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -78,10 +79,10 @@ public static class Program
             serializerOptions: AGUIClientSerializerContext.Default.Options
         );
 
-        var chatClient = new AGUIChatClient(
-            httpClient,
-            serverUrl,
-            jsonSerializerOptions: AGUIClientSerializerContext.Default.Options);
+        var chatClient = new AGUIChatClient(new(httpClient, serverUrl)
+        {
+            JsonSerializerOptions = AGUIClientSerializerContext.Default.Options,
+        });
 
         AIAgent agent = chatClient.AsAIAgent(
             name: "agui-client",
@@ -112,23 +113,25 @@ public static class Program
 
                 // Call RunStreamingAsync to get streaming updates
                 bool isFirstUpdate = true;
-                string? sessionId = null;
+                string? threadId = null;
                 var updates = new List<ChatResponseUpdate>();
                 await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session, cancellationToken: cancellationToken))
                 {
                     // Use AsChatResponseUpdate to access ChatResponseUpdate properties
                     ChatResponseUpdate chatUpdate = update.AsChatResponseUpdate();
                     updates.Add(chatUpdate);
-                    if (chatUpdate.ConversationId != null)
+                    // AGUIChatClient is stateless and never surfaces a ConversationId; the thread
+                    // id is carried on the AG-UI RUN_STARTED event's raw representation.
+                    if (chatUpdate.RawRepresentation is RunStartedEvent runStarted)
                     {
-                        sessionId = chatUpdate.ConversationId;
+                        threadId = runStarted.ThreadId;
                     }
 
                     // Display run started information from the first update
-                    if (isFirstUpdate && sessionId != null && update.ResponseId != null)
+                    if (isFirstUpdate && threadId != null && update.ResponseId != null)
                     {
                         Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.WriteLine($"\n[Run Started - Session: {sessionId}, Run: {update.ResponseId}]");
+                        Console.WriteLine($"\n[Run Started - Thread: {threadId}, Run: {update.ResponseId}]");
                         Console.ResetColor();
                         isFirstUpdate = false;
                     }
@@ -177,7 +180,7 @@ public static class Program
                     var lastUpdate = updates[^1];
                     Console.ForegroundColor = ConsoleColor.Yellow;
                     Console.WriteLine();
-                    Console.WriteLine($"[Run Ended - Session: {sessionId}, Run: {lastUpdate.ResponseId}]");
+                    Console.WriteLine($"[Run Ended - Thread: {threadId}, Run: {lastUpdate.ResponseId}]");
                     Console.ResetColor();
                 }
                 messages.Clear();

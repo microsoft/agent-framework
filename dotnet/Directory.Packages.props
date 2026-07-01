@@ -1,4 +1,4 @@
-<Project>
+﻿<Project>
   <PropertyGroup>
     <!-- Enable central package management -->
     <!-- https://learn.microsoft.com/en-us/nuget/consume-packages/Central-Package-Management -->
@@ -52,7 +52,13 @@
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.8" />
     <PackageVersion Include="System.Linq.AsyncEnumerable" Version="10.0.5" />
     <PackageVersion Include="System.Net.Http.Json" Version="10.0.0" />
-    <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.5" />
+    <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.8" />
+    <!-- AG-UI .NET SDK packages (published by the AG-UI team). -->
+    <PackageVersion Include="AGUI.Abstractions" Version="0.1.0-preview" />
+    <PackageVersion Include="AGUI.Formatting" Version="0.1.0-preview" />
+    <PackageVersion Include="AGUI.Protobuf" Version="0.1.0-preview" />
+    <PackageVersion Include="AGUI.Client" Version="0.1.0-preview" />
+    <PackageVersion Include="AGUI.Server" Version="0.1.0-preview" />
     <PackageVersion Include="System.Text.Json" Version="10.0.8" />
     <PackageVersion Include="System.Threading.Channels" Version="10.0.8" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
@@ -89,7 +95,7 @@
     <PackageVersion Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.1" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.1" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.8" />
-    <PackageVersion Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.6" />
+    <PackageVersion Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.8" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.1" />
