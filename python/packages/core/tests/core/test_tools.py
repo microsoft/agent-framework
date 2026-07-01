@@ -171,6 +171,36 @@ async def test_tool_decorator_with_json_schema_invoke_invalid_type():
         await search.invoke(arguments={"query": "hello", "max_results": "three"})
 
 
+async def test_tool_invoke_preserves_explicit_null_for_required_nullable_argument() -> None:
+    """Explicit null values are valid for required nullable tool parameters."""
+
+    @tool
+    def get_weather(location: str, unit: Literal["C", "F"] | None) -> str:
+        return f"{location}:{unit or 'C'}"
+
+    result = await get_weather.invoke(arguments={"location": "Seattle", "unit": None})
+
+    assert result[0].text == "Seattle:C"
+
+
+async def test_tool_invoke_preserves_nested_explicit_null_argument() -> None:
+    class WeatherOptions(BaseModel):
+        unit: Literal["C", "F"] | None
+
+    class WeatherArgs(BaseModel):
+        location: str
+        options: WeatherOptions
+
+    def get_weather(location: str, options: dict[str, Any]) -> str:
+        return f"{location}:{options['unit'] or 'C'}"
+
+    weather_tool = FunctionTool(name="get_weather", func=get_weather, input_model=WeatherArgs)
+
+    result = await weather_tool.invoke(arguments={"location": "Seattle", "options": {"unit": None}})
+
+    assert result[0].text == "Seattle:C"
+
+
 def test_tool_decorator_with_json_schema_preserves_custom_properties():
     """Test schema passthrough keeps custom JSON schema properties."""
 

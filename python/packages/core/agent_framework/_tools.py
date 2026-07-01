@@ -194,6 +194,44 @@ def _parse_inputs(  # pyright: ignore[reportUnusedFunction]
     return parsed_inputs
 
 
+def _model_dump_preserving_explicit_none(model: BaseModel) -> dict[str, Any]:
+    """Dump a model without dropping fields that were explicitly set to None."""
+    # Pydantic's exclude_none removes both default None values and explicit null arguments.
+    # Restore only fields present in model_fields_set so omitted optional fields stay omitted.
+    dumped = model.model_dump(exclude_none=True)
+    _restore_explicit_none_fields(model, dumped)
+    return dumped
+
+
+def _restore_explicit_none_fields(value: Any, dumped: Any) -> None:
+    if isinstance(value, BaseModel) and isinstance(dumped, dict):
+        # model_fields_set distinguishes an explicitly provided null from a default None.
+        for field_name in value.model_fields_set:
+            if not isinstance(field_name, str):
+                continue
+
+            field_value = getattr(value, field_name, None)
+            if field_value is None:
+                dumped[field_name] = None
+            elif field_name in dumped:
+                _restore_explicit_none_fields(field_value, dumped[field_name])
+        return
+
+    if isinstance(value, Mapping) and isinstance(dumped, Mapping):
+        value_mapping = cast(Mapping[object, object], value)
+        dumped_mapping = cast(Mapping[object, object], dumped)
+        for key, item in value_mapping.items():
+            if key in dumped_mapping:
+                _restore_explicit_none_fields(item, dumped_mapping[key])
+        return
+
+    if isinstance(value, list | tuple) and isinstance(dumped, list):
+        value_sequence = cast(Sequence[object], value)
+        dumped_list = cast(list[object], dumped)
+        for item, dumped_item in zip(value_sequence, dumped_list):
+            _restore_explicit_none_fields(item, dumped_item)
+
+
 # region Tools
 
 
@@ -650,8 +688,8 @@ class FunctionTool(SerializationMixin):
                 if isinstance(arguments, Mapping):
                     parsed_arguments = dict(arguments)
                     if self.input_model is not None and not self._schema_supplied:
-                        parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(
-                            exclude_none=True
+                        parsed_arguments = _model_dump_preserving_explicit_none(
+                            self.input_model.model_validate(parsed_arguments)
                         )
                 elif isinstance(arguments, BaseModel):
                     if (
@@ -660,7 +698,7 @@ class FunctionTool(SerializationMixin):
                         and not isinstance(arguments, self.input_model)
                     ):
                         raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
-                    parsed_arguments = arguments.model_dump(exclude_none=True)
+                    parsed_arguments = _model_dump_preserving_explicit_none(arguments)
                 else:
                     raise TypeError(
                         f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
@@ -1475,7 +1513,7 @@ async def _auto_invoke_function(
         runtime_kwargs["session"] = invocation_session
     try:
         if not cast(bool, getattr(tool, "_schema_supplied", False)) and tool.input_model is not None:
-            args = tool.input_model.model_validate(parsed_args).model_dump(exclude_none=True)
+            args = _model_dump_preserving_explicit_none(tool.input_model.model_validate(parsed_args))
         else:
             args = dict(parsed_args)
         args = _validate_arguments_against_schema(
