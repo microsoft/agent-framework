@@ -8,7 +8,7 @@ from agent_framework import Agent, MCPStdioTool
 from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
-"""
+__doc__ = """
 MCP Progressive Disclosure Example
 
 This sample demonstrates how to connect an agent to a large MCP server without

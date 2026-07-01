@@ -857,9 +857,23 @@ class MCPTool:
         """Return the initial model-facing function list for progressive disclosure."""
         initial_functions = list(self._progressive_loader_tools())
         initial_functions.extend(
-            func for func in self._filtered_functions() if self._function_matches_names(func, self._always_load_names)
+            func
+            for func in self._filtered_functions()
+            if self._function_matches_names(func, self._always_load_names)
+            and not self._function_collides_with_progressive_loader(func)
         )
         return initial_functions
+
+    def _progressive_loader_names(self) -> set[str]:
+        """Return the local names reserved for progressive disclosure loader tools."""
+        return {
+            _build_prefixed_mcp_name(_MCP_PROGRESSIVE_LIST_TOOL_NAME, self.tool_name_prefix),
+            _build_prefixed_mcp_name(_MCP_PROGRESSIVE_LOAD_TOOL_NAME, self.tool_name_prefix),
+        }
+
+    def _function_collides_with_progressive_loader(self, func: FunctionTool) -> bool:
+        """Return whether an MCP function's local name collides with a loader tool name."""
+        return func.name in self._progressive_loader_names()
 
     def _progressive_loader_tools(self) -> list[FunctionTool]:
         """Create or return the generated progressive disclosure loader tools."""
@@ -900,7 +914,14 @@ class MCPTool:
         matches = [func for func in self._filtered_functions() if self._function_matches_names(func, {tool_name})]
         matches.extend(func for func in self._filtered_functions() if func.name == tool_name and func not in matches)
         if not matches:
-            available = ", ".join(func.name for func in self._filtered_functions()) or "none"
+            available = (
+                ", ".join(
+                    func.name
+                    for func in self._filtered_functions()
+                    if not self._function_collides_with_progressive_loader(func)
+                )
+                or "none"
+            )
             raise ToolExecutionException(f"MCP tool '{tool_name}' is not available. Available tools: {available}.")
         if len(matches) > 1:
             raise ToolExecutionException(f"MCP tool name '{tool_name}' is ambiguous.")
@@ -922,6 +943,8 @@ class MCPTool:
         """List allowed MCP tools that can be loaded progressively."""
         tools: list[dict[str, Any]] = []
         for func in self._filtered_functions():
+            if self._function_collides_with_progressive_loader(func):
+                continue
             additional_properties = func.additional_properties or {}
             remote_name = additional_properties.get(_MCP_REMOTE_NAME_KEY)
             tools.append({
@@ -935,11 +958,17 @@ class MCPTool:
             })
         return tools
 
-    def _load_progressive_mcp_tool(self, ctx: FunctionInvocationContext, tool: str) -> str:
+    async def _load_progressive_mcp_tool(self, ctx: FunctionInvocationContext, tool: str) -> str:
         """Load an allowed MCP tool into the live function-calling tool list."""
         if ctx.tools is None:
             raise ToolExecutionException("load_tool can only be used inside an agent function-calling run.")
         func = self._resolve_progressive_function(tool)
+        if self._function_collides_with_progressive_loader(func):
+            loader_names = ", ".join(sorted(self._progressive_loader_names()))
+            raise ToolExecutionException(
+                f"MCP tool '{func.name}' conflicts with progressive disclosure loader tool name(s): "
+                f"{loader_names}. Set tool_name_prefix or exclude the colliding MCP tool."
+            )
         if any(tool_item is func for tool_item in ctx.tools):
             return f"MCP tool '{func.name}' is already available."
         try:

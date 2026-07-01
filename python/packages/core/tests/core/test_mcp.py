@@ -1745,7 +1745,9 @@ def test_mcp_progressive_disclosure_requires_loading_tools() -> None:
         )
 
 
-def _progressive_tool_list_page() -> types.ListToolsResult:
+def _progressive_tool_list_page(*, tools: list[types.Tool] | None = None) -> types.ListToolsResult:
+    if tools is not None:
+        return types.ListToolsResult(tools=tools)
     return types.ListToolsResult(
         tools=[
             types.Tool(
@@ -1784,6 +1786,7 @@ async def _load_progressive_test_server(
     always_load: list[str] | None = None,
     tool_name_prefix: str | None = None,
     approval_mode: Any = None,
+    tools: list[types.Tool] | None = None,
 ) -> MCPTool:
     server = MCPTool(  # type: ignore[abstract]
         name="test_server",
@@ -1794,7 +1797,7 @@ async def _load_progressive_test_server(
         use_progressive_disclosure=True,
     )
     server.session = AsyncMock()
-    server.session.list_tools = AsyncMock(return_value=_progressive_tool_list_page())
+    server.session.list_tools = AsyncMock(return_value=_progressive_tool_list_page(tools=tools))
     server.session.call_tool = AsyncMock(
         return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
     )
@@ -1804,6 +1807,26 @@ async def _load_progressive_test_server(
 
 async def test_mcp_progressive_disclosure_exposes_loaders_and_always_loaded_tools() -> None:
     server = await _load_progressive_test_server(always_load=["tool_one", "missing_tool"])
+
+    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "tool_one"]
+
+
+async def test_mcp_progressive_disclosure_filters_always_loaded_loader_name_collisions() -> None:
+    server = await _load_progressive_test_server(
+        always_load=["list_mcp_tools", "tool_one"],
+        tools=[
+            types.Tool(
+                name="list_mcp_tools",
+                description="Remote tool whose local name collides with the list loader.",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+            types.Tool(
+                name="tool_one",
+                description="First tool",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+        ],
+    )
 
     assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "tool_one"]
 
@@ -1831,6 +1854,29 @@ async def test_mcp_progressive_list_mcp_tools_only_reports_allowed_tools() -> No
     assert result[0]["parameters"]["properties"] == {"param": {"type": "string"}}
     assert result[0]["loaded"] is False
     assert result[0]["always_loaded"] is False
+
+
+async def test_mcp_progressive_list_mcp_tools_skips_loader_name_collisions() -> None:
+    server = await _load_progressive_test_server(
+        tools=[
+            types.Tool(
+                name="list_mcp_tools",
+                description="Remote tool whose local name collides with the list loader.",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+            types.Tool(
+                name="tool_one",
+                description="First tool",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+        ],
+    )
+    list_tool = server.functions[0]
+    context = FunctionInvocationContext(function=list_tool, arguments={}, tools=list(server.functions))
+
+    result = await list_tool.invoke(arguments={}, context=context, skip_parsing=True)
+
+    assert [item["name"] for item in result] == ["tool_one"]
 
 
 async def test_mcp_progressive_list_mcp_tools_treats_empty_allowed_tools_as_no_tools() -> None:
@@ -1863,6 +1909,11 @@ async def test_mcp_progressive_load_tool_adds_hidden_tool_to_live_tools() -> Non
         "tool_two",
     ]
 
+    list_tool = server.functions[0]
+    list_result = await list_tool.invoke(arguments={}, context=context, skip_parsing=True)
+
+    assert next(item for item in list_result if item["name"] == "tool_two")["loaded"] is True
+
     result = await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
 
     assert result[0].text == "MCP tool 'tool_two' is already available."
@@ -1884,6 +1935,61 @@ async def test_mcp_progressive_load_tool_rejects_filtered_tool() -> None:
 
     with pytest.raises(ToolExecutionException, match="not available"):
         await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+
+
+async def test_mcp_progressive_load_tool_rejects_missing_live_tool_list() -> None:
+    server = await _load_progressive_test_server()
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "tool_two"},
+    )
+
+    with pytest.raises(ToolExecutionException, match="inside an agent function-calling run"):
+        await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+
+
+async def test_mcp_progressive_load_tool_rejects_loader_name_collision() -> None:
+    server = await _load_progressive_test_server(
+        tools=[
+            types.Tool(
+                name="load_tool",
+                description="Remote tool whose local name collides with the load loader.",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+        ],
+    )
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "load_tool"},
+        tools=list(server.functions),
+    )
+
+    with pytest.raises(ToolExecutionException, match="Set tool_name_prefix"):
+        await load_tool.invoke(arguments={"tool": "load_tool"}, context=context)
+
+
+async def test_mcp_progressive_resolve_rejects_ambiguous_tool_name() -> None:
+    def _tool() -> None:
+        return None
+
+    server = MCPTool(name="test_server", use_progressive_disclosure=True)  # type: ignore[abstract]
+    server._functions = [
+        FunctionTool(
+            func=_tool,
+            name="remote_one",
+            additional_properties={"_mcp_remote_name": "shared", "_mcp_normalized_name": "remote_one"},
+        ),
+        FunctionTool(
+            func=_tool,
+            name="remote_two",
+            additional_properties={"_mcp_remote_name": "shared", "_mcp_normalized_name": "remote_two"},
+        ),
+    ]
+
+    with pytest.raises(ToolExecutionException, match="ambiguous"):
+        server._resolve_progressive_function("shared")
 
 
 async def test_mcp_progressive_loaded_tool_preserves_remote_approval_mode() -> None:
