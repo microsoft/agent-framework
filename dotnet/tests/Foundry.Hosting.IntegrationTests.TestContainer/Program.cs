@@ -31,6 +31,7 @@ var projectClient = new AIProjectClient(projectEndpoint, new DefaultAzureCredent
 AIAgent agent = scenario switch
 {
     "happy-path" => CreateHappyPathAgent(projectClient, deployment),
+    "unsupported-protocol" => CreateHappyPathAgent(projectClient, deployment),
     "store-config" => CreateStoreConfigAgent(projectClient, deployment),
     "tool-calling" => CreateToolCallingAgent(projectClient, deployment),
     "tool-calling-approval" => CreateToolCallingApprovalAgent(projectClient, deployment),

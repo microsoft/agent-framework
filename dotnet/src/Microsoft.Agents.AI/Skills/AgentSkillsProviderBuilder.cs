@@ -46,8 +46,9 @@ public sealed class AgentSkillsProviderBuilder
     private AgentSkillsProviderOptions? _options;
     private ILoggerFactory? _loggerFactory;
     private AgentFileSkillScriptRunner? _scriptRunner;
-    private Func<AgentSkill, bool>? _filter;
+    private Func<AgentSkill, AgentSkillsSourceContext, bool>? _filter;
     private bool _disableCaching;
+    private CachingAgentSkillsSourceOptions? _cachingOptions;
 
     /// <summary>
     /// Adds a file-based skill source that discovers skills from a filesystem directory.
@@ -123,6 +124,16 @@ public sealed class AgentSkillsProviderBuilder
     /// <summary>
     /// Adds a custom skill source.
     /// </summary>
+    /// <remarks>
+    /// The provider returned by <see cref="Build"/> takes ownership of <paramref name="source"/> and
+    /// disposes it when the provider is disposed. Because the same instance is reused on every
+    /// <see cref="Build"/> call, do not build more than one provider from a builder that captures a
+    /// shared <paramref name="source"/>; otherwise disposing one provider would dispose the source out
+    /// from under the others. To build multiple providers, use the
+    /// <see cref="UseSource(Func{ILoggerFactory?, AgentSkillsSource})"/> overload, which creates a fresh
+    /// source per build, or pass the source directly to an <see cref="AgentSkillsProvider"/> constructor
+    /// with <c>ownsSource: false</c> to retain ownership.
+    /// </remarks>
     /// <param name="source">The custom skill source.</param>
     /// <returns>This builder instance for chaining.</returns>
     public AgentSkillsProviderBuilder UseSource(AgentSkillsSource source)
@@ -189,7 +200,7 @@ public sealed class AgentSkillsProviderBuilder
     /// </remarks>
     /// <param name="predicate">A predicate that determines which skills to include.</param>
     /// <returns>This builder instance for chaining.</returns>
-    public AgentSkillsProviderBuilder UseFilter(Func<AgentSkill, bool> predicate)
+    public AgentSkillsProviderBuilder UseFilter(Func<AgentSkill, AgentSkillsSourceContext, bool> predicate)
     {
         _ = Throw.IfNull(predicate);
         this._filter = predicate;
@@ -220,8 +231,32 @@ public sealed class AgentSkillsProviderBuilder
     }
 
     /// <summary>
+    /// Configures skill caching behavior.
+    /// </summary>
+    /// <param name="configure">A delegate to configure caching options.</param>
+    /// <returns>This builder instance for chaining.</returns>
+    public AgentSkillsProviderBuilder UseCachingOptions(Action<CachingAgentSkillsSourceOptions> configure)
+    {
+        _ = Throw.IfNull(configure);
+        this._cachingOptions ??= new CachingAgentSkillsSourceOptions();
+        configure(this._cachingOptions);
+        return this;
+    }
+
+    /// <summary>
     /// Builds the <see cref="AgentSkillsProvider"/>.
     /// </summary>
+    /// <remarks>
+    /// The returned provider owns the source pipeline constructed by this builder, so disposing the
+    /// provider disposes the pipeline (including any sources added to this builder).
+    /// <para>
+    /// Build more than one provider from the same builder only when every source it produces is
+    /// independent per build (for example, sources added via
+    /// <see cref="UseSource(Func{ILoggerFactory?, AgentSkillsSource})"/>). A source captured as a shared
+    /// instance through <see cref="UseSource(AgentSkillsSource)"/> is reused across builds and would be
+    /// disposed by whichever provider is disposed first; build only one provider in that case.
+    /// </para>
+    /// </remarks>
     /// <returns>A configured <see cref="AgentSkillsProvider"/>.</returns>
     public AgentSkillsProvider Build()
     {
@@ -243,7 +278,7 @@ public sealed class AgentSkillsProviderBuilder
 
         if (!this._disableCaching)
         {
-            source = new CachingAgentSkillsSource(source);
+            source = new CachingAgentSkillsSource(source, this._cachingOptions);
         }
 
         // Apply user-specified filter, then dedup.
@@ -254,7 +289,7 @@ public sealed class AgentSkillsProviderBuilder
 
         source = new DeduplicatingAgentSkillsSource(source, this._loggerFactory);
 
-        return new AgentSkillsProvider(source, this._options, this._loggerFactory);
+        return new AgentSkillsProvider(source, this._options, this._loggerFactory, ownsSource: true);
     }
 
     private AgentSkillsProviderOptions GetOrCreateOptions()

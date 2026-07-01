@@ -54,7 +54,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeVar, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import ContextProvider
@@ -72,6 +72,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # region Models
+
+
+SkillScriptArgumentParser: TypeAlias = Callable[[dict[str, Any] | list[str] | str | None], dict[str, Any] | None]
+"""Callable that converts raw script arguments before an inline script runs.
+
+The parser receives the raw ``args`` value supplied by the agent/LLM (a
+``dict`` of named arguments, a ``list[str]`` of positional arguments, a
+``str`` for backends that send arguments as an unparsed JSON string, or
+``None``) and returns the named keyword arguments to pass to the inline
+script callable: a ``dict`` (or ``None`` for no arguments).  Inline scripts
+bind arguments by keyword name, so the parser must normalize whatever shape
+it receives into a ``dict`` or ``None``.
+
+When no parser is configured, inline scripts use the raw value unchanged.
+This hook lets callers plug in their own argument conversion logic to support
+backends (for example, vLLM and some OpenAI-compatible servers) that encode
+tool-call arguments as a JSON string instead of a JSON object.
+"""
 
 
 @experimental(feature_id=ExperimentalFeature.SKILLS)
@@ -336,6 +354,7 @@ class InlineSkillScript(SkillScript):
         name: str,
         description: str | None = None,
         function: Callable[..., Any],
+        argument_parser: SkillScriptArgumentParser | None = None,
     ) -> None:
         """Initialize an InlineSkillScript.
 
@@ -343,10 +362,18 @@ class InlineSkillScript(SkillScript):
             name: Identifier for this script (e.g. ``"analyze"``).
             description: Optional human-readable summary.
             function: Callable (sync or async) that implements the script.
+            argument_parser: Optional callable that converts the raw
+                ``args`` value into the named arguments passed to
+                ``function`` before the script runs.  When ``None`` (the
+                default), the raw value is used unchanged, which expects a
+                ``dict`` (or ``None``).  Supply a parser to support
+                backends that send arguments in a non-conforming shape (for
+                example, vLLM-style JSON strings).
         """
         super().__init__(name=name, description=description)
 
         self.function = function
+        self.argument_parser = argument_parser
         self._parameters_schema: dict[str, Any] | None = None
         self._parameters_schema_resolved: bool = False
 
@@ -369,15 +396,22 @@ class InlineSkillScript(SkillScript):
             self._parameters_schema_resolved = True
         return self._parameters_schema
 
-    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | None = None, **kwargs: Any) -> Any:
+    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | str | None = None, **kwargs: Any) -> Any:
         """Run the script by invoking the callable in-process.
+
+        When an ``argument_parser`` is configured, it is applied to
+        ``args`` first to convert it into the named arguments for the
+        callable.  Otherwise ``args`` is used unchanged.
 
         Args:
             skill: The skill that owns this script.
             args: Optional keyword arguments for the script, provided by the
-                agent/LLM.  Must be a ``dict`` or ``None``; passing a
-                ``list`` raises :class:`TypeError` because inline scripts
-                bind arguments by keyword name.
+                agent/LLM.  May be a raw ``str`` when an
+                ``argument_parser`` is configured to convert it.  After
+                any configured ``argument_parser`` runs, the result must
+                be a ``dict`` or ``None``; a ``list`` raises
+                :class:`TypeError` because inline scripts bind arguments by
+                keyword name.
             **kwargs: Runtime keyword arguments forwarded only to script
                 functions that accept ``**kwargs``.
 
@@ -385,9 +419,19 @@ class InlineSkillScript(SkillScript):
             The script execution result.
 
         Raises:
-            TypeError: If ``args`` is a ``list`` (array-style arguments
-                are only supported for file-based scripts).
+            TypeError: If ``args`` (after parsing) is a ``str`` or a
+                ``list``.  A leftover ``str`` means no ``argument_parser``
+                converted it; a ``list`` is array-style and only supported
+                for file-based scripts.
         """
+        if self.argument_parser is not None:
+            args = self.argument_parser(args)
+        if isinstance(args, str):
+            raise TypeError(
+                f"Inline script '{self.name}' received string arguments that were not "
+                f"converted to a dict. Configure an 'argument_parser' to convert "
+                f"string-encoded arguments into named keyword arguments."
+            )
         if isinstance(args, list):
             raise TypeError(
                 f"Inline script '{self.name}' requires keyword arguments (dict), "
@@ -800,6 +844,7 @@ class InlineSkill(Skill):
         instructions: str,
         resources: Sequence[SkillResource] | None = None,
         scripts: Sequence[SkillScript] | None = None,
+        argument_parser: SkillScriptArgumentParser | None = None,
     ) -> None:
         """Initialize an InlineSkill.
 
@@ -810,10 +855,15 @@ class InlineSkill(Skill):
             instructions: The skill instructions text.
             resources: Pre-built resources to attach to this skill.
             scripts: Pre-built scripts to attach to this skill.
+            argument_parser: Optional default :data:`SkillScriptArgumentParser`
+                applied to scripts registered via the :meth:`script` decorator.
+                Pre-built ``scripts`` keep their own parser. When ``None``
+                (the default), scripts use the raw argument value unchanged.
         """
         self._frontmatter = frontmatter
 
         self.instructions = instructions
+        self._argument_parser = argument_parser
         self._resources: list[SkillResource] = list(resources) if resources is not None else []
         self._scripts: list[SkillScript] = list(scripts) if scripts is not None else []
         self._cached_content: str | None = None
@@ -987,6 +1037,7 @@ class InlineSkill(Skill):
                     name=script_name,
                     description=script_description,
                     function=f,
+                    argument_parser=self._argument_parser,
                 )
             )
             return f
@@ -1153,6 +1204,7 @@ class ClassSkill(Skill, ABC):
         self,
         *,
         frontmatter: SkillFrontmatter,
+        argument_parser: SkillScriptArgumentParser | None = None,
     ) -> None:
         """Initialize a ClassSkill.
 
@@ -1160,8 +1212,13 @@ class ClassSkill(Skill, ABC):
             frontmatter: Skill specification metadata (name, description,
                 and optional spec fields). Construct a :class:`SkillFrontmatter`
                 with the desired fields.
+            argument_parser: Optional default :data:`SkillScriptArgumentParser`
+                applied to scripts discovered from :meth:`ClassSkill.script`-decorated
+                methods. When ``None`` (the default), discovered scripts use the
+                raw argument value unchanged.
         """
         self._frontmatter = frontmatter
+        self._argument_parser = argument_parser
         self._cached_content: str | None = None
         self._cached_resources: list[SkillResource] | None = None
         self._cached_scripts: list[SkillScript] | None = None
@@ -1390,6 +1447,7 @@ class ClassSkill(Skill, ABC):
                     name=script_name,
                     function=bound_method,
                     description=script_description,
+                    argument_parser=self._argument_parser,
                 )
             )
 

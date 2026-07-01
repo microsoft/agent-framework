@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI;
 /// A skill source that holds <see cref="AgentSkill"/> instances in memory.
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-internal sealed class AgentInMemorySkillsSource : AgentSkillsSource
+public sealed class AgentInMemorySkillsSource : AgentSkillsSource
 {
     private readonly List<AgentSkill> _skills;
 
@@ -28,7 +28,7 @@ internal sealed class AgentInMemorySkillsSource : AgentSkillsSource
     }
 
     /// <inheritdoc/>
-    public override Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+    public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
         return Task.FromResult<IList<AgentSkill>>(this._skills);
     }
