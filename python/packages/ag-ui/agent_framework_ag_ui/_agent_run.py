@@ -718,8 +718,11 @@ def _build_messages_snapshot(
 
     # Add assistant message with tool calls only (no content)
     if flow.pending_tool_calls:
+        tool_call_message_id = (
+            generate_event_id() if flow.accumulated_text else (flow.message_id or generate_event_id())
+        )
         tool_call_message = {
-            "id": flow.message_id or generate_event_id(),
+            "id": tool_call_message_id,
             "role": "assistant",
             "tool_calls": flow.pending_tool_calls.copy(),
         }
@@ -732,10 +735,7 @@ def _build_messages_snapshot(
     # This is a separate message from the tool calls message to maintain
     # the expected AG-UI protocol format (see issue #3619)
     if flow.accumulated_text:
-        # Use a new ID for the content message if we had tool calls (separate message)
-        content_message_id = (
-            generate_event_id() if flow.pending_tool_calls else (flow.message_id or generate_event_id())
-        )
+        content_message_id = flow.message_id or generate_event_id()
         all_messages.append(
             {
                 "id": content_message_id,

@@ -693,6 +693,26 @@ class TestBuildMessagesSnapshot:
         # The text message should have a different ID than the tool call message
         assert assistant_text_msg.id != assistant_tool_msg.id
 
+    def test_tool_calls_and_text_preserve_streamed_text_message_id(self):
+        """Mixed tool-call/text snapshots preserve the streamed text message ID."""
+        from agent_framework_ag_ui._agent_run import FlowState, _build_messages_snapshot
+
+        flow = FlowState()
+        flow.message_id = "streamed-text-msg"
+        flow.pending_tool_calls = [
+            {"id": "call_1", "function": {"name": "get_weather", "arguments": '{"city": "NYC"}'}},
+        ]
+        flow.accumulated_text = "Here is the weather information."
+        flow.tool_results = [{"id": "result-1", "role": "tool", "content": '{"temp": 72}', "toolCallId": "call_1"}]
+
+        result = _build_messages_snapshot(flow, [])
+
+        assistant_tool_msg = result.messages[0]
+        assistant_text_msg = result.messages[2]
+
+        assert assistant_text_msg.id == "streamed-text-msg"
+        assert assistant_tool_msg.id != "streamed-text-msg"
+
     def test_only_tool_calls_no_text(self):
         """Test snapshot with only tool calls and no accumulated text."""
         from agent_framework_ag_ui._agent_run import FlowState, _build_messages_snapshot
