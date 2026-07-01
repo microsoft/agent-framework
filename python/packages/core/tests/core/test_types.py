@@ -536,6 +536,18 @@ def test_function_call_content_add_merging_and_errors():
     with raises(ContentError):
         _ = a + b
 
+    # name merging: when the first chunk has no name (e.g. a streaming delta where
+    # the function name arrives later), the merged content must keep the name from
+    # whichever side provides it, regardless of order.
+    a = Content.from_function_call(call_id="1", name=None, arguments='{"a":')
+    b = Content.from_function_call(call_id="1", name="get_weather", arguments="1}")
+    assert (a + b).name == "get_weather"
+    assert (b + a).name == "get_weather"
+    # both sides missing a name stays None
+    a = Content.from_function_call(call_id="1", name=None, arguments="")
+    b = Content.from_function_call(call_id="1", name=None, arguments="")
+    assert (a + b).name is None
+
 
 # region FunctionResultContent
 
