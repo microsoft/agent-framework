@@ -92,7 +92,9 @@ builder.AddDevUI("devui", port: 8090);
 
 ### DevUI frontend assembly
 
-To serve the DevUI frontend directly from the aggregator (instead of proxying from a backend), add the `Microsoft.Agents.AI.DevUI` NuGet package to your AppHost project. The aggregator loads its embedded resources at runtime via `Assembly.Load`.
+The DevUI frontend assets are loaded at runtime from the `Microsoft.Agents.AI.DevUI` assembly, which is referenced transitively by this package. No additional setup is required to serve the frontend directly from the aggregator.
+
+If the assembly cannot be loaded (for example, when trimming or AOT settings strip it), the aggregator falls back to proxying the frontend from the first backend agent service that serves `/devui`.
 
 ## Additional documentation
 
