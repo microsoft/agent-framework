@@ -14,24 +14,22 @@ See [main.py](main.py) for the full implementation.
 
 The agent is hosted using the [Agent Framework](https://github.com/microsoft/agent-framework) with the `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
 
-### Durability behavior for background requests
+### Crash recovery for background requests
 
-When deployed to a hosted Foundry environment, `ResponsesHostServer` automatically enables crash recovery for background requests (`resilient_background=True`). If the server process crashes while handling a background request, the Foundry platform automatically re-invokes the handler on the next process start without the client needing to retry. Persisted SSE events are replayed to clients that reconnect after the crash.
-
-This is the default in hosted environments because it provides better availability at no extra cost to the agent author.
-
-**Opting out:** if your agent makes non-idempotent external calls that must not be repeated on crash (and you prefer fail-fast semantics over automatic retry), pass explicit `options` to disable crash recovery:
+To enable crash recovery, pass `resilient_background=True` via explicit options:
 
 ```python
 from azure.ai.agentserver.responses import ResponsesServerOptions
 
 server = ResponsesHostServer(
     agent,
-    options=ResponsesServerOptions(resilient_background=False),
+    options=ResponsesServerOptions(resilient_background=True),
 )
 ```
 
-With `resilient_background=False`, a crash during a background request marks the response as `failed` instead of re-invoking the handler. The client receives the failed status and is responsible for retrying if desired.
+With crash recovery enabled, if the server process crashes while handling a background request, the Foundry platform automatically re-invokes the handler on the next process start without the client needing to retry. Persisted SSE events are replayed to clients that reconnect after the crash.
+
+Crash recovery requires a persistent response store. In a hosted Foundry environment the Foundry storage API is automatically used as the store, which satisfies this requirement. Passing `InMemoryResponseProvider` (e.g. for local testing) will raise an error when combined with `resilient_background=True`.
 
 ### Steerable conversations
 

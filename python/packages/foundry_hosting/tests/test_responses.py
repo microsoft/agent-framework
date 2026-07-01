@@ -196,82 +196,38 @@ class TestResponsesHostServerInit:
         with pytest.raises(RuntimeError, match="history provider"):
             ResponsesHostServer(agent)
 
-    def test_init_auto_enables_resilient_background_in_hosted_env(self) -> None:
-        """In a hosted environment with no explicit options, resilient_background is auto-enabled."""
-        from azure.ai.agentserver.core._config import AgentConfig
-
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
-        mock_config = MagicMock(spec=AgentConfig)
-        mock_config.is_hosted = True
-        with patch("agent_framework_foundry_hosting._responses.AgentConfig") as mock_agent_config_cls:
-            mock_agent_config_cls.from_env.return_value = mock_config
-            server = _make_server(agent)
-        assert server is not None
-
-    def test_init_does_not_auto_enable_resilient_background_locally(self) -> None:
-        """In a local (non-hosted) environment, resilient_background is NOT auto-enabled."""
-        from azure.ai.agentserver.core._config import AgentConfig
-
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
-        mock_config = MagicMock(spec=AgentConfig)
-        mock_config.is_hosted = False
-        with patch("agent_framework_foundry_hosting._responses.AgentConfig") as mock_agent_config_cls:
-            mock_agent_config_cls.from_env.return_value = mock_config
-            server = _make_server(agent)
-        assert server is not None
-
-    def test_init_respects_explicit_options_over_auto_enable(self) -> None:
-        """Explicit options are not overridden by the hosted auto-enable logic."""
-        from azure.ai.agentserver.core._config import AgentConfig
-
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
-        # Pass a real options object which prevents the auto-enable check
-        # from even running, since options is not None.
-        from azure.ai.agentserver.responses import ResponsesServerOptions
-
-        explicit_options = ResponsesServerOptions()
-        mock_config = MagicMock(spec=AgentConfig)
-        mock_config.is_hosted = True
-        with patch("agent_framework_foundry_hosting._responses.AgentConfig") as mock_agent_config_cls:
-            mock_agent_config_cls.from_env.return_value = mock_config
-            server = ResponsesHostServer(agent, options=explicit_options, store=InMemoryResponseProvider())
-        mock_agent_config_cls.from_env.assert_not_called()
-        assert server is not None
-
-    def test_init_steerable_conversations_threaded_into_auto_enable_options(self) -> None:
-        """steerable_conversations=True is included when auto-enabling resilient_background."""
-        from azure.ai.agentserver.core._config import AgentConfig
+    def test_init_does_not_auto_enable_resilient_background(self) -> None:
+        """resilient_background is never auto-enabled — it requires explicit opt-in."""
         from azure.ai.agentserver.responses import ResponsesServerOptions
 
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
-        mock_config = MagicMock(spec=AgentConfig)
-        mock_config.is_hosted = True
-        captured_options: list[ResponsesServerOptions] = []
-
+        created_options: list[ResponsesServerOptions] = []
         original_init = ResponsesServerOptions.__init__
 
-        def capture_options(self: ResponsesServerOptions, **kwargs: Any) -> None:
+        def capture(self: ResponsesServerOptions, **kwargs: Any) -> None:
             original_init(self, **kwargs)
-            captured_options.append(self)
+            created_options.append(self)
 
-        with (
-            patch("agent_framework_foundry_hosting._responses.AgentConfig") as mock_agent_config_cls,
-            patch.object(ResponsesServerOptions, "__init__", capture_options),
-        ):
-            mock_agent_config_cls.from_env.return_value = mock_config
-            _make_server(agent, steerable_conversations=True)
+        with patch.object(ResponsesServerOptions, "__init__", capture):
+            _make_server(agent)
 
-        assert any(o.steerable_conversations for o in captured_options), (
-            "Expected at least one ResponsesServerOptions with steerable_conversations=True"
+        # No ResponsesServerOptions should have been created with resilient_background=True.
+        assert not any(o.resilient_background for o in created_options), (
+            "resilient_background should not be auto-enabled; it requires explicit opt-in."
         )
+
+    def test_init_respects_explicit_options(self) -> None:
+        """Explicit options are used as-is without modification."""
+        from azure.ai.agentserver.responses import ResponsesServerOptions
+
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        explicit_options = ResponsesServerOptions(resilient_background=False)
+        server = ResponsesHostServer(agent, options=explicit_options, store=InMemoryResponseProvider())
+        assert server is not None
 
     def test_init_steerable_conversations_creates_options_when_store_supplied(self) -> None:
         """steerable_conversations=True creates options even when an explicit store is supplied."""

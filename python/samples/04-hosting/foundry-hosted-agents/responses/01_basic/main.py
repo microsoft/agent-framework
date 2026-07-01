@@ -28,11 +28,22 @@ def main():
         default_options={"store": False},
     )
 
-    # When running in a hosted Foundry environment, ResponsesHostServer automatically
-    # enables resilient_background=True for background requests. This means:
+    # To enable crash recovery for background requests, pass resilient_background=True.
+    # This means:
     # - If the server crashes mid-response, the handler is automatically re-invoked
     #   on the next process start without the client needing to retry.
     # - Persisted SSE events replay to clients that reconnect after a crash.
+    #
+    # Crash recovery requires a persistent response store (e.g. the Foundry-backed
+    # store that is automatically configured in hosted environments). It cannot be
+    # used with an in-memory store.
+    #
+    #   from azure.ai.agentserver.responses import ResponsesServerOptions
+    #
+    #   server = ResponsesHostServer(
+    #       agent,
+    #       options=ResponsesServerOptions(resilient_background=True),
+    #   )
     #
     # To also enable steerable conversations, pass steerable_conversations=True.
     # With steering enabled, when a client sends a new turn while the current one is
@@ -45,21 +56,6 @@ def main():
     #       agent,
     #       steerable_conversations=True,
     #   )
-    #
-    # To opt out of crash recovery entirely — for example when your agent makes
-    # non-idempotent external calls that must not be repeated on crash, and you prefer
-    # fail-fast semantics — pass explicit options with resilient_background=False:
-    #
-    #   from azure.ai.agentserver.responses import ResponsesServerOptions
-    #
-    #   server = ResponsesHostServer(
-    #       agent,
-    #       options=ResponsesServerOptions(resilient_background=False),
-    #   )
-    #
-    # With resilient_background=False, a crash during a background request marks the
-    # response as failed instead of re-invoking the handler. The client receives a
-    # failed status and is responsible for retrying if desired.
     server = ResponsesHostServer(agent)
     server.run()
 
