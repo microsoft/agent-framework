@@ -711,6 +711,143 @@ def test_function_call_part_preserves_thought_signature_from_raw_part() -> None:
     assert parts[0].function_call.args == {"location": "Paris"}
 
 
+# multimodal (data/uri) parts
+
+
+def test_data_content_converted_to_inline_data_part() -> None:
+    """Content.from_data is converted to a Gemini inline_data Part so images reach the model."""
+    import base64
+
+    client, _ = _make_gemini_client()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    content = Content.from_data(data=png, media_type="image/png")
+    assert content.type == "data"
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].inline_data is not None
+    assert parts[0].inline_data.mime_type == "image/png"
+    assert parts[0].inline_data.data == png
+
+
+def test_data_uri_content_converted_to_inline_data_part() -> None:
+    """A data URI created via Content.from_uri becomes an inline_data Part with decoded bytes."""
+    import base64
+
+    client, _ = _make_gemini_client()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    content = Content.from_uri(uri=f"data:image/png;base64,{base64.b64encode(png).decode()}")
+    assert content.type == "data"
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].inline_data is not None
+    assert parts[0].inline_data.mime_type == "image/png"
+    assert parts[0].inline_data.data == png
+
+
+def test_external_uri_content_converted_to_file_data_part() -> None:
+    """Content.from_uri with an external URL becomes a Gemini file_data Part."""
+    client, _ = _make_gemini_client()
+    content = Content.from_uri(uri="https://example.com/image.png", media_type="image/png")
+    assert content.type == "uri"
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].file_data is not None
+    assert parts[0].file_data.file_uri == "https://example.com/image.png"
+    assert parts[0].file_data.mime_type == "image/png"
+
+
+def test_text_and_image_content_both_reach_the_model() -> None:
+    """A multimodal message keeps both the text and the image parts."""
+    import base64
+
+    client, _ = _make_gemini_client()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    text = Content.from_text("What is in this image?")
+    image = Content.from_data(data=png, media_type="image/png")
+
+    parts = client._convert_message_contents([text, image], {})
+
+    assert len(parts) == 2
+    assert parts[0].text == "What is in this image?"
+    assert any(p.inline_data is not None for p in parts)
+
+
+def test_non_base64_data_uri_is_skipped(caplog: pytest.LogCaptureFixture) -> None:
+    """A data URI that is not base64-encoded is skipped with a warning rather than crashing."""
+    client, _ = _make_gemini_client()
+    content = Content.from_text("placeholder")
+    content.type = "data"  # type: ignore[assignment]
+    content.uri = "data:text/plain,hello"
+
+    with caplog.at_level(logging.WARNING):
+        parts = client._convert_message_contents([content], {})
+
+    assert parts == []
+    assert any("base64" in r.message for r in caplog.records)
+
+
+def test_data_uri_media_type_parameters_are_stripped() -> None:
+    """Parameters in a data URI media type (e.g. charset) are dropped before reaching Gemini."""
+    client, _ = _make_gemini_client()
+    content = Content.from_uri(uri="data:text/plain;charset=utf-8;base64,aGVsbG8=")
+    assert content.type == "data"
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].inline_data is not None
+    assert parts[0].inline_data.mime_type == "text/plain"
+
+
+def test_data_uri_media_type_detected_from_bytes_when_missing() -> None:
+    """When a data URI has no media_type, it is detected from the decoded bytes' magic bytes."""
+    import base64
+
+    client, _ = _make_gemini_client()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    content = Content.from_text("placeholder")
+    content.type = "data"  # type: ignore[assignment]
+    content.uri = f"data:;base64,{base64.b64encode(png).decode()}"
+    content.media_type = None
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].inline_data is not None
+    assert parts[0].inline_data.mime_type == "image/png"
+
+
+def test_external_uri_without_inferable_media_type_is_passed_through(caplog: pytest.LogCaptureFixture) -> None:
+    """A URI with no media_type and no guessable extension is sent as file_data without crashing."""
+    client, _ = _make_gemini_client()
+    content = Content.from_uri(uri="https://api.example.com/files/123")
+    assert content.type == "uri"
+    assert content.media_type is None
+
+    with caplog.at_level(logging.WARNING):
+        parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].file_data is not None
+    assert parts[0].file_data.file_uri == "https://api.example.com/files/123"
+    assert parts[0].file_data.mime_type is None
+    assert any("media_type" in r.message for r in caplog.records)
+
+
 # code execution parts
 
 

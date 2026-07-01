@@ -17,7 +17,7 @@ namespace Microsoft.Agents.AI;
 /// with each source's skills appended sequentially. No deduplication or filtering is applied.
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-internal sealed class AggregatingAgentSkillsSource : AgentSkillsSource
+public sealed class AggregatingAgentSkillsSource : AgentSkillsSource
 {
     private readonly IEnumerable<AgentSkillsSource> _sources;
 

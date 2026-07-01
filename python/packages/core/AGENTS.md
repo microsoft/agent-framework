@@ -74,6 +74,7 @@ agent_framework/
 - **`SkillResource`** - Named supplementary content attached to a skill; holds either static `content` or a dynamic `function` (sync or async). Exactly one must be provided.
 - **`SkillScript`** - An executable script attached to a skill; holds either an inline `function` (code-defined, runs in-process) or a `path` to a file on disk (file-based, delegated to a runner). Exactly one must be provided.
 - **`SkillScriptRunner`** - Protocol for file-based script execution. Any callable matching `(skill, script, args) -> Any` satisfies it. Code-defined scripts do not use a runner.
+- **`SkillScriptArgumentParser`** - Public type alias for an optional callable `(raw args: dict | list[str] | str | None) -> dict | None` that converts the raw `args` value before an `InlineSkillScript` runs (applied before the inline list-args guard). It is an opt-in customization hook (port of .NET PR #6498) that lets callers support backends sending tool-call arguments in a non-conforming shape (e.g. vLLM JSON strings). The output is constrained to a `dict` (named keyword arguments) or `None`, because inline scripts bind arguments by keyword name. Supply it via the `argument_parser=` constructor arg on `InlineSkillScript`, `InlineSkill` (default for scripts added via `@skill.script`), or `ClassSkill` (default for scripts discovered via `@ClassSkill.script`). When `None` (the default), the raw value is used unchanged. File-based scripts are unaffected (their runner owns arg handling).
 - **`SkillsProvider`** - Context provider (extends `ContextProvider`) that discovers file-based skills from `SKILL.md` files and/or accepts code-defined `Skill` instances. Follows progressive disclosure: advertise → load → read resources / run scripts. All three tools it exposes (`load_skill`, `read_skill_resource`, `run_skill_script`) are registered with `approval_mode="always_require"`, so every skill operation needs approval. To run unattended, pass one of the static auto-approval rules to `ToolApprovalMiddleware` (via `auto_approval_rules`): `SkillsProvider.read_only_tools_auto_approval_rule` approves only the read-only tools (`load_skill`, `read_skill_resource`) while still prompting for `run_skill_script`, and `SkillsProvider.all_tools_auto_approval_rule` approves every skill tool including script execution. Both rules reject any call carrying a `server_label` so they stay scoped to this provider's local tools and never auto-approve a same-named hosted tool. The tool names are also exposed as class constants (`LOAD_SKILL_TOOL_NAME`, `READ_SKILL_RESOURCE_TOOL_NAME`, `RUN_SKILL_SCRIPT_TOOL_NAME`).
 
 ### Model Context Protocol (`_mcp.py`)
@@ -189,11 +190,13 @@ agent = OpenAIChatClient().as_agent(
 ```python
 from agent_framework import Agent, AgentMiddleware, AgentContext
 
+
 class LoggingMiddleware(AgentMiddleware):
     async def process(self, context: AgentContext, call_next) -> None:
         print(f"Input: {context.messages}")
         await call_next()
         print(f"Output: {context.result}")
+
 
 agent = Agent(..., middleware=[LoggingMiddleware()])
 ```
@@ -202,6 +205,7 @@ agent = Agent(..., middleware=[LoggingMiddleware()])
 
 ```python
 from agent_framework import BaseChatClient, ChatResponse, Message
+
 
 class MyClient(BaseChatClient):
     async def _inner_get_response(self, *, messages, options, **kwargs) -> ChatResponse:

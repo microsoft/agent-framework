@@ -4,7 +4,7 @@
   Local smoke test for the Hosted-MemoryAgent sample.
 .DESCRIPTION
   Publishes the sample, builds the contributor Docker image, runs the container twice with two
-  distinct HOSTED_USER_ISOLATION_KEY values, drives a multi-turn conversation per user via curl
+  distinct HOSTED_USER_ID values, drives a multi-turn conversation per user via curl
   invocations, and asserts that each user only sees their own remembered details.
   Exits non-zero on failure.
 
@@ -49,7 +49,7 @@ function Start-Container([string]$UserKey, [string]$ContainerName) {
     docker run -d --name $ContainerName -p ${Port}:8088 `
         -e AGENT_NAME=hosted-memory-agent `
         -e AZURE_BEARER_TOKEN=$bearer `
-        -e HOSTED_USER_ISOLATION_KEY=$UserKey `
+        -e HOSTED_USER_ID=$UserKey `
         --env-file .env `
         $ImageName | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "docker run failed for $ContainerName." }

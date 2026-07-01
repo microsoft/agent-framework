@@ -69,6 +69,13 @@ public abstract class HostedAgentFixture : IAsyncLifetime
     protected virtual TimeSpan ProvisioningTimeout => TimeSpan.FromMinutes(5);
 
     /// <summary>
+    /// Container responses protocol version declared in <c>container_protocol_versions</c>. Defaults to
+    /// <c>2.0.0</c> (the only version this image supports). The unsupported-protocol scenario overrides
+    /// it to <c>1.0.0</c> to assert the container fails fast with a clear, actionable error.
+    /// </summary>
+    protected virtual string ResponsesProtocolVersion => "2.0.0";
+
+    /// <summary>
     /// The wrapped agent. Available after <see cref="InitializeAsync"/>.
     /// </summary>
     public AIAgent Agent { get; private set; } = null!;
@@ -157,7 +164,7 @@ public abstract class HostedAgentFixture : IAsyncLifetime
         {
             Image = image,
         };
-        definition.Versions.Add(new ProtocolVersionRecord(ProjectsAgentProtocol.Responses, "2.0.0"));
+        definition.Versions.Add(new ProtocolVersionRecord(ProjectsAgentProtocol.Responses, this.ResponsesProtocolVersion));
         definition.EnvironmentVariables[ScenarioEnvironmentVariable] = this.ScenarioName;
         // Forward the test-side model deployment to the container so it targets the same model the
         // tests expect. Without this the container falls back to its hard-coded default (gpt-4o),
