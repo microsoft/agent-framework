@@ -1,11 +1,14 @@
-# Copyright (c) Microsoft. All rights reserved.
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "agent-framework",
+#     "pyatr",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/02-agents/middleware/atr_validation_middleware.py
 
-# Dependencies (beyond agent-framework + azure-identity):
-#
-#     pip install pyatr
-#
-# ``pyatr`` is the published Agent Threat Rules (ATR) engine; it bundles the ATR ruleset and
-# evaluates it locally. Install it before running this sample.
+# Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
 import logging
