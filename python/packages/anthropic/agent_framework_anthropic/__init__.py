@@ -3,7 +3,11 @@
 import importlib.metadata
 
 from ._bedrock_client import AnthropicBedrockClient, RawAnthropicBedrockClient
-from ._chat_client import AnthropicChatOptions, AnthropicClient, RawAnthropicClient
+from ._chat_client import (
+    AnthropicChatOptions,
+    AnthropicClient,
+    RawAnthropicClient,
+)
 from ._foundry_client import AnthropicFoundryClient, RawAnthropicFoundryClient
 from ._vertex_client import AnthropicVertexClient, RawAnthropicVertexClient
 

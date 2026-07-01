@@ -41,6 +41,7 @@ from anthropic.types.beta import (
     BetaRawContentBlockDelta,
     BetaRawMessageStreamEvent,
     BetaTextBlock,
+    BetaTextBlockParam,
     BetaUsage,
 )
 from anthropic.types.beta.beta_bash_code_execution_tool_result_error import (
@@ -126,8 +127,9 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
         response_format: Structured output schema.
         metadata: Request metadata with user_id for tracking.
         user: User identifier, translates to ``metadata.user_id`` in Anthropic API.
-        instructions: System instructions for the model,
-            translates to ``system`` in Anthropic API.
+        instructions: System instructions for the model, translating to ``system`` in
+            the Anthropic API. Use a string for generic instructions or structured
+            Anthropic system blocks when you need prompt-cache ``cache_control``.
         top_k: Number of top tokens to consider for sampling.
         service_tier: Service tier ("auto" or "standard_only").
         thinking: Extended thinking configuration for Claude models.
@@ -145,6 +147,9 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
 
     # Extended thinking (Claude models)
     thinking: ThinkingConfig
+
+    # Anthropic-native structured system prompt support
+    instructions: str | Sequence[BetaTextBlockParam]  # type: ignore[misc]
 
     # Skills
     container: dict[str, Any]
@@ -573,13 +578,6 @@ class RawAnthropicClient(
         Returns:
             A dictionary of run options for the Anthropic client.
         """
-        # Prepend instructions from options if they exist
-        instructions = options.get("instructions")
-        if instructions:
-            from agent_framework._types import prepend_instructions_to_messages
-
-            messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
-
         # Start with a copy of options, excluding keys we handle separately
         run_options: dict[str, Any] = {
             k: v for k, v in options.items() if v is not None and k not in {"instructions", "response_format"}
@@ -600,6 +598,16 @@ class RawAnthropicClient(
         _apply_option_translations(filtered_kwargs)
         run_options.update(filtered_kwargs)
 
+        # system message - Anthropic expects system instructions as a separate request parameter
+        instructions = options.get("instructions")
+        if instructions is not None:
+            if self._is_text_instructions(instructions):
+                run_options["system"] = self._prepare_text_instructions_for_anthropic(messages, instructions)
+            else:
+                run_options["system"] = self._extract_structured_instructions(messages, instructions)
+        elif messages and isinstance(messages[0], Message) and messages[0].role == "system":
+            run_options["system"] = messages[0].text
+
         # model
         if not run_options.get("model"):
             if not self.model:
@@ -612,10 +620,6 @@ class RawAnthropicClient(
 
         # messages
         run_options["messages"] = self._prepare_messages_for_anthropic(messages)
-
-        # system message - first system message is passed as instructions
-        if messages and isinstance(messages[0], Message) and messages[0].role == "system":
-            run_options["system"] = messages[0].text
 
         # betas
         run_options["betas"] = self._prepare_betas(options)
@@ -642,6 +646,36 @@ class RawAnthropicClient(
             run_options["betas"].add(STRUCTURED_OUTPUTS_BETA_FLAG)
 
         return run_options
+
+    def _extract_structured_instructions(
+        self,
+        messages: Sequence[Message],
+        instructions: Any,
+    ) -> Sequence[BetaTextBlockParam] | Sequence[Mapping[str, Any]]:
+        if messages and isinstance(messages[0], Message) and messages[0].role == "system":
+            raise ValueError("structured Anthropic instructions cannot be combined with a leading system message.")
+
+        return cast(Sequence[BetaTextBlockParam] | Sequence[Mapping[str, Any]], instructions)
+
+    def _prepare_text_instructions_for_anthropic(self, messages: Sequence[Message], instructions: Any) -> str:
+        if isinstance(instructions, str):
+            text_instructions = instructions
+        else:
+            text_instructions = "\n\n".join(cast(Sequence[str], instructions))
+
+        if messages and isinstance(messages[0], Message) and messages[0].role == "system":
+            return "\n\n".join(part for part in [text_instructions, messages[0].text] if part)
+
+        return text_instructions
+
+    def _is_text_instructions(self, instructions: Any) -> bool:
+        if isinstance(instructions, str):
+            return True
+
+        if not isinstance(instructions, Sequence):
+            return False
+
+        return all(isinstance(instruction, str) for instruction in cast(Sequence[object], instructions))
 
     def _prepare_betas(self, options: Mapping[str, Any]) -> set[str]:
         """Prepare the beta flags for the Anthropic API request.
@@ -709,7 +743,9 @@ class RawAnthropicClient(
         else:
             msgs = list(messages)
 
-        result = [self._prepare_message_for_anthropic(msg) for msg in msgs]
+        result: list[dict[str, Any]] = []
+        for msg in msgs:
+            result.extend(self._prepare_message_groups_for_anthropic(msg))
 
         # Anthropic requires the conversation to end with a user message.
         # Append a synthetic user turn so chained agent outputs work as
@@ -718,6 +754,41 @@ class RawAnthropicClient(
             result.append({"role": "user", "content": "Continue"})
 
         return result
+
+    def _prepare_message_groups_for_anthropic(self, message: Message) -> list[dict[str, Any]]:
+        """Prepare a Message and split Anthropic content blocks into valid role groups."""
+        prepared_message = self._prepare_message_for_anthropic(message)
+        content = prepared_message.get("content")
+        if not isinstance(content, list):
+            return [prepared_message]
+
+        default_role = cast(str, prepared_message.get("role", "user"))
+        result: list[dict[str, Any]] = []
+        current_role: str | None = None
+        current_content: list[dict[str, Any]] = []
+
+        for content_block in cast(list[dict[str, Any]], content):
+            block_role = self._role_for_anthropic_content_block(content_block, default_role)
+            if current_content and current_role != block_role:
+                result.append({"role": current_role, "content": current_content})
+                current_content = []
+            current_role = block_role
+            current_content.append(content_block)
+
+        if current_content:
+            result.append({"role": current_role or default_role, "content": current_content})
+
+        return result or [prepared_message]
+
+    def _role_for_anthropic_content_block(self, content_block: Mapping[str, Any], default_role: str) -> str:
+        """Return the Anthropic message role required for a content block."""
+        match content_block:
+            case {"type": "tool_use" | "mcp_tool_use" | "server_tool_use"}:
+                return "assistant"
+            case {"type": "tool_result" | "mcp_tool_result"}:
+                return "user"
+            case _:
+                return default_role
 
     def _message_has_tool_use(self, message: dict[str, Any]) -> bool:
         """Return whether an Anthropic message contains tool_use blocks."""
