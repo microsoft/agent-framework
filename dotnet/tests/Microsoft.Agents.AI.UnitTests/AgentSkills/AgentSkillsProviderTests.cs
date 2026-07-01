@@ -1047,18 +1047,8 @@ public sealed class AgentSkillsProviderTests : IDisposable
     public async Task InvokingCoreAsync_DisableLoadSkillApproval_LoadSkillToolNotWrappedAsync()
     {
         // Arrange
-        string skillDir = Path.Combine(this._testRoot, "disable-load-approval");
-        Directory.CreateDirectory(Path.Combine(skillDir, "scripts"));
-        File.WriteAllText(
-            Path.Combine(skillDir, "SKILL.md"),
-            "---\nname: test-skill\ndescription: Test\n---\nBody.");
-        File.WriteAllText(
-            Path.Combine(skillDir, "scripts", "run.py"),
-            "print('hello')");
-
-        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
         var options = new AgentSkillsProviderOptions { DisableLoadSkillApproval = true };
-        var provider = new AgentSkillsProvider(source, options);
+        var provider = new AgentSkillsProvider([new AgentInlineSkill("test-skill", "Test", "Body.")], options);
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
 
         // Act
@@ -1083,18 +1073,8 @@ public sealed class AgentSkillsProviderTests : IDisposable
     public async Task InvokingCoreAsync_DisableReadSkillResourceApproval_ReadToolNotWrappedAsync()
     {
         // Arrange
-        string skillDir = Path.Combine(this._testRoot, "disable-read-approval");
-        Directory.CreateDirectory(Path.Combine(skillDir, "scripts"));
-        File.WriteAllText(
-            Path.Combine(skillDir, "SKILL.md"),
-            "---\nname: test-skill\ndescription: Test\n---\nBody.");
-        File.WriteAllText(
-            Path.Combine(skillDir, "scripts", "run.py"),
-            "print('hello')");
-
-        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
         var options = new AgentSkillsProviderOptions { DisableReadSkillResourceApproval = true };
-        var provider = new AgentSkillsProvider(source, options);
+        var provider = new AgentSkillsProvider([new AgentInlineSkill("test-skill", "Test", "Body.")], options);
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
 
         // Act
@@ -1119,18 +1099,8 @@ public sealed class AgentSkillsProviderTests : IDisposable
     public async Task InvokingCoreAsync_DisableRunSkillScriptApproval_ScriptToolNotWrappedAsync()
     {
         // Arrange
-        string skillDir = Path.Combine(this._testRoot, "disable-script-approval");
-        Directory.CreateDirectory(Path.Combine(skillDir, "scripts"));
-        File.WriteAllText(
-            Path.Combine(skillDir, "SKILL.md"),
-            "---\nname: test-skill\ndescription: Test\n---\nBody.");
-        File.WriteAllText(
-            Path.Combine(skillDir, "scripts", "run.py"),
-            "print('hello')");
-
-        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
         var options = new AgentSkillsProviderOptions { DisableRunSkillScriptApproval = true };
-        var provider = new AgentSkillsProvider(source, options);
+        var provider = new AgentSkillsProvider([new AgentInlineSkill("test-skill", "Test", "Body.")], options);
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
 
         // Act
@@ -1155,23 +1125,13 @@ public sealed class AgentSkillsProviderTests : IDisposable
     public async Task InvokingCoreAsync_DisableAllApprovals_NoToolsWrappedAsync()
     {
         // Arrange
-        string skillDir = Path.Combine(this._testRoot, "disable-all-approval");
-        Directory.CreateDirectory(Path.Combine(skillDir, "scripts"));
-        File.WriteAllText(
-            Path.Combine(skillDir, "SKILL.md"),
-            "---\nname: test-skill\ndescription: Test\n---\nBody.");
-        File.WriteAllText(
-            Path.Combine(skillDir, "scripts", "run.py"),
-            "print('hello')");
-
-        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
         var options = new AgentSkillsProviderOptions
         {
             DisableLoadSkillApproval = true,
             DisableReadSkillResourceApproval = true,
             DisableRunSkillScriptApproval = true,
         };
-        var provider = new AgentSkillsProvider(source, options);
+        var provider = new AgentSkillsProvider([new AgentInlineSkill("test-skill", "Test", "Body.")], options);
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
 
         // Act
