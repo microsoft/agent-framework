@@ -1,4 +1,4 @@
-#requires -Version 7
+﻿#requires -Version 7
 <#
 .SYNOPSIS
   Local smoke test for the Hosted-AgentSkills sample.
@@ -50,8 +50,7 @@ function Start-Container {
     docker run -d --name $ContainerName -p ${Port}:8088 `
         -e AGENT_NAME=hosted-agent-skills `
         -e AZURE_BEARER_TOKEN=$bearer `
-        -e HOSTED_USER_ISOLATION_KEY=smoke-user `
-        -e HOSTED_CHAT_ISOLATION_KEY=smoke-chat-1 `
+        -e HOSTED_USER_ID=smoke-user `
         --env-file .env `
         $ImageName | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "docker run failed." }

@@ -14,7 +14,7 @@ This folder contains examples demonstrating how to use the Azure AI Search conte
 ## Installation
 
 ```bash
-pip install agent-framework-foundry-search agent-framework-foundry
+pip install agent-framework-azure-ai-search agent-framework-foundry
 ```
 
 ## Prerequisites
@@ -41,6 +41,22 @@ Both examples support two authentication methods:
 - **Entra ID (Managed Identity)**: Uses `DefaultAzureCredential` when API key is not provided
 
 Run `az login` if using Entra ID authentication.
+
+### API versions (stable vs preview)
+
+The provider auto-detects which build of `azure-search-documents` is installed — nothing to
+configure in code:
+
+- **Stable / GA** — `pip install azure-search-documents` (`>=12.0.0`) → api-version `2026-04-01`.
+- **Preview** — `pip install --pre azure-search-documents` (e.g. `12.1.0b1`) → api-version `2026-05-01-preview`.
+
+The installed build picks its own api-version, so newer releases work without code changes.
+
+Agentic `knowledge_base_output_mode="answer_synthesis"` and `retrieval_reasoning_effort` of
+`"low"`/`"medium"` ship **only** in the preview build. On a stable build the provider uses
+extractive output with minimal reasoning effort and raises an actionable error if a preview-only
+option is requested. To enable them, just install the preview build (`pip install --pre
+azure-search-documents`) — no code change.
 
 ## Configuration
 

@@ -16,18 +16,17 @@ public static class HostedContributorSetupExtensions
     ///
     /// <para><b>For local Docker debugging only and should not be used in production.</b></para>
     ///
-    /// Currently this method registers a <see cref="DevTemporaryLocalSessionIsolationKeyProvider"/>
-    /// so that requests succeed when the platform's <c>x-agent-user-isolation-key</c> and
-    /// <c>x-agent-chat-isolation-key</c> headers are absent. In production those headers are
-    /// always present and the default platform isolation key provider (registered automatically by
-    /// the hosting layer) is used instead.
+    /// Currently this method registers a <see cref="DevTemporaryLocalUserIdProvider"/>
+    /// so that requests succeed when the platform's <c>x-agent-user-id</c> header is absent. In
+    /// production that header is always present and the default platform user-id provider (registered
+    /// automatically by the hosting layer) is used instead.
     /// </summary>
     /// <param name="services">The service collection to register the developer-only services into.</param>
     /// <returns>The same <see cref="IServiceCollection"/> for chaining.</returns>
     public static IServiceCollection AddDevTemporaryLocalContributorSetup(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
-        services.AddSingleton<HostedSessionIsolationKeyProvider, DevTemporaryLocalSessionIsolationKeyProvider>();
+        services.AddSingleton<HostedSessionIsolationKeyProvider, DevTemporaryLocalUserIdProvider>();
         return services;
     }
 }

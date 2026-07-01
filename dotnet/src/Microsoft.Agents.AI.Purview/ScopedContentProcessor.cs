@@ -75,9 +75,10 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
         foreach (ChatMessage message in messages)
         {
             if (message.AdditionalProperties != null &&
-                message.AdditionalProperties.TryGetValue(Constants.UserId, out userId) &&
-                !string.IsNullOrEmpty(userId))
+                message.AdditionalProperties.TryGetValue(Constants.UserId, out string? potentialUserId) &&
+                Guid.TryParse(potentialUserId, out Guid _))
             {
+                userId = potentialUserId;
                 return true;
             }
             else if (Guid.TryParse(message.AuthorName, out Guid _))
@@ -103,20 +104,13 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     private async Task<List<ProcessContentRequest>> MapMessageToPCRequestsAsync(IEnumerable<ChatMessage> messages, string? sessionId, Activity activity, PurviewSettings settings, string? userId, CancellationToken cancellationToken)
     {
         List<ProcessContentRequest> pcRequests = [];
-        TokenInfo? tokenInfo = null;
-
-        bool needUserId = userId == null && TryGetUserIdFromPayload(messages, out userId);
-
-        // Only get user info if the tenant id is null or if there's no location.
-        // If location is missing, we will create a new location using the client id.
-        if (settings.TenantId == null ||
-            settings.PurviewAppLocation == null ||
-            needUserId)
+        TokenInfo? tokenInfo = await this._purviewClient.GetUserInfoFromTokenAsync(cancellationToken, settings.TenantId).ConfigureAwait(false);
+        string tenantId = tokenInfo?.TenantId ?? settings.TenantId ?? throw new PurviewRequestException("No tenant id provided or inferred for Purview request. Please provide a tenant id in PurviewSettings or configure the TokenCredential to authenticate to a tenant.");
+        string? resolvedUserId = !string.IsNullOrEmpty(tokenInfo?.UserId) ? tokenInfo.UserId : userId;
+        if (string.IsNullOrEmpty(resolvedUserId) && TryGetUserIdFromPayload(messages, out string? payloadUserId))
         {
-            tokenInfo = await this._purviewClient.GetUserInfoFromTokenAsync(cancellationToken, settings.TenantId).ConfigureAwait(false);
+            resolvedUserId = payloadUserId;
         }
-
-        string tenantId = settings.TenantId ?? tokenInfo?.TenantId ?? throw new PurviewRequestException("No tenant id provided or inferred for Purview request. Please provide a tenant id in PurviewSettings or configure the TokenCredential to authenticate to a tenant.");
 
         foreach (ChatMessage message in messages)
         {
@@ -166,18 +160,12 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
             };
             ContentToProcess contentToProcess = new([conversationMetadata], activityMetadata, deviceMetadata, integratedAppMetadata, protectedAppMetadata);
 
-            if (userId == null &&
-                tokenInfo?.UserId != null)
+            if (string.IsNullOrEmpty(resolvedUserId))
             {
-                userId = tokenInfo.UserId;
+                throw new PurviewRequestException("No user id provided or inferred for Purview request. Please provide an Entra user id in each message, pass a user id to the processor, or configure the TokenCredential to authenticate to an Entra user.");
             }
 
-            if (string.IsNullOrEmpty(userId))
-            {
-                throw new PurviewRequestException("No user id provided or inferred for Purview request. Please provide an Entra user id in each message's AuthorName, set a default Entra user id in PurviewSettings, or configure the TokenCredential to authenticate to an Entra user.");
-            }
-
-            ProcessContentRequest pcRequest = new(contentToProcess, userId, tenantId);
+            ProcessContentRequest pcRequest = new(contentToProcess, resolvedUserId, tenantId);
             pcRequests.Add(pcRequest);
         }
 

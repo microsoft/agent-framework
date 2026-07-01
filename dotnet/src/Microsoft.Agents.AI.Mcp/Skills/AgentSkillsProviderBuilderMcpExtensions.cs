@@ -15,12 +15,13 @@ public static class AgentSkillsProviderBuilderMcpExtensions
     /// </summary>
     /// <param name="builder">The builder to extend.</param>
     /// <param name="client">An MCP client connected to a server exposing Agent Skills resources.</param>
+    /// <param name="options">Optional options that control archive-distributed skill handling.</param>
     /// <returns>The builder instance for chaining.</returns>
-    public static AgentSkillsProviderBuilder UseMcpSkills(this AgentSkillsProviderBuilder builder, McpClient client)
+    public static AgentSkillsProviderBuilder UseMcpSkills(this AgentSkillsProviderBuilder builder, McpClient client, AgentMcpSkillsSourceOptions? options = null)
     {
         _ = Throw.IfNull(builder);
         _ = Throw.IfNull(client);
 
-        return builder.UseSource(new AgentMcpSkillsSource(client));
+        return builder.UseSource(loggerFactory => new AgentMcpSkillsSource(client, options, loggerFactory));
     }
 }

@@ -11,18 +11,18 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 
 /// <summary>
 /// Default <see cref="HostedSessionIsolationKeyProvider"/> implementation that maps the platform-injected
-/// <c>x-agent-user-isolation-key</c> and <c>x-agent-chat-isolation-key</c> headers from
-/// <see cref="ResponseContext.Isolation"/> into a <see cref="HostedSessionContext"/>.
+/// <c>x-agent-user-id</c> header from <see cref="ResponseContext.PlatformContext"/> into a
+/// <see cref="HostedSessionContext"/>.
 /// </summary>
 /// <remarks>
 /// This is the implementation used in production Foundry hosted environments. When running locally
-/// outside the platform, both isolation keys are <see langword="null"/>, which causes
+/// outside the platform, the user id is <see langword="null"/>, which causes
 /// <see cref="GetKeysAsync"/> to return <see langword="null"/>. The hosting layer treats a null
 /// result as a configuration error and surfaces it as a 500 from the request. Local development
 /// should register an alternate <see cref="HostedSessionIsolationKeyProvider"/> implementation
-/// that provides fallback values for the missing headers.
+/// that provides a fallback value for the missing header.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 internal sealed class PlatformHostedSessionIsolationKeyProvider : HostedSessionIsolationKeyProvider
 {
     /// <inheritdoc />
@@ -31,14 +31,13 @@ internal sealed class PlatformHostedSessionIsolationKeyProvider : HostedSessionI
         CreateResponse request,
         CancellationToken cancellationToken)
     {
-        var userKey = context?.Isolation?.UserIsolationKey;
-        var chatKey = context?.Isolation?.ChatIsolationKey;
+        var userKey = context?.PlatformContext?.UserIdKey;
 
-        if (string.IsNullOrWhiteSpace(userKey) || string.IsNullOrWhiteSpace(chatKey))
+        if (string.IsNullOrWhiteSpace(userKey))
         {
             return new ValueTask<HostedSessionContext?>((HostedSessionContext?)null);
         }
 
-        return new ValueTask<HostedSessionContext?>(new HostedSessionContext(userKey!, chatKey!));
+        return new ValueTask<HostedSessionContext?>(new HostedSessionContext(userKey!));
     }
 }

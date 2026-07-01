@@ -27,7 +27,7 @@ namespace Microsoft.Agents.AI;
 /// Resource and script paths are checked against path traversal and symlink escape attacks.
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
+public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 {
     private const string SkillFileName = "SKILL.md";
     private const int DefaultSearchDepth = 2;
@@ -114,7 +114,7 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
     }
 
     /// <inheritdoc/>
-    public override Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+    public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
         var discoveredPaths = DiscoverSkillDirectories(this._skillPaths);
 
@@ -162,7 +162,10 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
         string skillFilePath = Path.Combine(directory, SkillFileName);
         if (File.Exists(skillFilePath))
         {
+            // Once a SKILL.md is found, this directory is the skill root.
+            // Subdirectories are part of this skill and should not be treated as independent skill roots.
             results.Add(Path.GetFullPath(directory));
+            return;
         }
 
         if (currentDepth >= MaxSkillDirectorySearchDepth)

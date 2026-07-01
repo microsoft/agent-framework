@@ -12,6 +12,8 @@ using System.Threading.Channels;
 using System.Threading.Tasks;
 using GitHub.Copilot;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.GitHub.Copilot;
@@ -31,6 +33,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     private readonly SessionConfig? _sessionConfig;
     private readonly bool _ownsClient;
     private readonly JsonSerializerOptions _jsonSerializerOptions;
+    private readonly ILogger _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="GitHubCopilotAgent"/> class.
@@ -42,6 +45,15 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="name">The name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
     /// <param name="jsonSerializerOptions">Optional JSON serializer options. Defaults to <see cref="GitHubCopilotJsonUtilities.DefaultOptions"/>.</param>
+    /// <param name="loggerFactory">Optional logger factory used to create the agent's logger.</param>
+    /// <remarks>
+    /// When a tool wrapped in <see cref="ApprovalRequiredAIFunction"/> is registered and the supplied
+    /// <paramref name="sessionConfig"/> does not already define a <c>Hooks.OnPreToolUse</c> handler, the agent installs a
+    /// default <c>OnPreToolUse</c> hook that returns <c>"ask"</c> for those tools (routing the decision to
+    /// <c>SessionConfig.OnPermissionRequest</c>) and defers all other tools. If the caller supplies their own
+    /// <c>OnPreToolUse</c> hook, it takes precedence and the caller is fully responsible for approval handling; in that
+    /// case a warning is logged for any approval-required tool that will not be automatically gated.
+    /// </remarks>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
         SessionConfig? sessionConfig = null,
@@ -49,12 +61,14 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         string? id = null,
         string? name = null,
         string? description = null,
-        JsonSerializerOptions? jsonSerializerOptions = null)
+        JsonSerializerOptions? jsonSerializerOptions = null,
+        ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNull(copilotClient);
 
         this._copilotClient = copilotClient;
-        this._sessionConfig = sessionConfig;
+        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<GitHubCopilotAgent>();
+        this._sessionConfig = ConfigureApprovalHook(sessionConfig, this._logger);
         this._ownsClient = ownsClient;
         this._id = id;
         this._name = name ?? DefaultName;
@@ -73,6 +87,12 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="tools">The tools to make available to the agent.</param>
     /// <param name="instructions">Optional instructions to append as a system message.</param>
     /// <param name="jsonSerializerOptions">Optional JSON serializer options. Defaults to <see cref="GitHubCopilotJsonUtilities.DefaultOptions"/>.</param>
+    /// <param name="loggerFactory">Optional logger factory used to create the agent's logger.</param>
+    /// <remarks>
+    /// When a tool wrapped in <see cref="ApprovalRequiredAIFunction"/> is registered, the agent installs a default
+    /// <c>Hooks.OnPreToolUse</c> handler that returns <c>"ask"</c> for those tools (routing the decision to
+    /// <c>SessionConfig.OnPermissionRequest</c>) and defers all other tools.
+    /// </remarks>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
         bool ownsClient = false,
@@ -81,7 +101,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         string? description = null,
         IList<AITool>? tools = null,
         string? instructions = null,
-        JsonSerializerOptions? jsonSerializerOptions = null)
+        JsonSerializerOptions? jsonSerializerOptions = null,
+        ILoggerFactory? loggerFactory = null)
         : this(
             copilotClient,
             GetSessionConfig(tools, instructions),
@@ -89,7 +110,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             id,
             name,
             description,
-            jsonSerializerOptions)
+            jsonSerializerOptions,
+            loggerFactory)
     {
     }
 
@@ -517,6 +539,92 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         }
 
         return new SessionConfig { Tools = mappedTools, SystemMessage = systemMessage };
+    }
+
+    /// <summary>
+    /// Installs a default <c>OnPreToolUse</c> hook that gates tools wrapped in <see cref="ApprovalRequiredAIFunction"/>
+    /// by returning <c>"ask"</c> (routing the decision to <c>SessionConfig.OnPermissionRequest</c>) while deferring all
+    /// other tools, so the GitHub Copilot SDK enforces approval through its native pre-tool-use hook.
+    /// </summary>
+    /// <remarks>
+    /// The source <paramref name="sessionConfig"/> is returned unchanged when it contains no approval-required tools.
+    /// If the caller already supplied a <c>Hooks.OnPreToolUse</c> handler, it takes precedence and is left untouched; a
+    /// warning is logged for any approval-required tool that will therefore not be automatically gated. Otherwise a
+    /// clone is returned (with a fresh <see cref="SessionHooks"/>) so the caller-supplied configuration is not mutated.
+    /// </remarks>
+    private static SessionConfig? ConfigureApprovalHook(SessionConfig? sessionConfig, ILogger logger)
+    {
+        if (sessionConfig?.Tools is not { Count: > 0 } tools)
+        {
+            return sessionConfig;
+        }
+
+        HashSet<string> approvalRequiredToolNames = new(StringComparer.Ordinal);
+        foreach (AIFunctionDeclaration tool in tools)
+        {
+            if (tool is AIFunction function && function.GetService<ApprovalRequiredAIFunction>() is not null)
+            {
+                approvalRequiredToolNames.Add(function.Name);
+            }
+        }
+
+        if (approvalRequiredToolNames.Count == 0)
+        {
+            return sessionConfig;
+        }
+
+        // A caller-supplied OnPreToolUse hook takes precedence and is fully responsible for approval handling.
+        // Warn so the developer knows the ApprovalRequiredAIFunction marker(s) will not be automatically gated.
+        if (sessionConfig.Hooks?.OnPreToolUse is not null)
+        {
+            if (logger.IsEnabled(LogLevel.Warning))
+            {
+                logger.LogApprovalGatingSkippedDueToCustomHook(
+                    approvalRequiredToolNames.Count,
+                    string.Join(", ", approvalRequiredToolNames));
+            }
+
+            return sessionConfig;
+        }
+
+        SessionConfig configured = sessionConfig.Clone();
+
+        // SessionConfig.Clone() shallow-copies Hooks, so build a fresh SessionHooks (preserving any other hooks)
+        // to avoid mutating the caller's instance when setting OnPreToolUse.
+        SessionHooks hooks = CloneHooks(configured.Hooks);
+        hooks.OnPreToolUse = (input, invocation) =>
+            Task.FromResult(
+                approvalRequiredToolNames.Contains(input.ToolName)
+                    ? new PreToolUseHookOutput
+                    {
+                        PermissionDecision = "ask",
+                        PermissionDecisionReason = $"Tool '{input.ToolName}' is marked as requiring approval (ApprovalRequiredAIFunction).",
+                    }
+                    : null);
+        configured.Hooks = hooks;
+
+        return configured;
+    }
+
+    /// <summary>
+    /// Creates a shallow copy of a <see cref="SessionHooks"/> instance, preserving all configured hook delegates.
+    /// </summary>
+    private static SessionHooks CloneHooks(SessionHooks? source)
+    {
+        SessionHooks clone = new();
+        if (source is not null)
+        {
+            clone.OnPreToolUse = source.OnPreToolUse;
+            clone.OnPreMcpToolCall = source.OnPreMcpToolCall;
+            clone.OnPostToolUse = source.OnPostToolUse;
+            clone.OnPostToolUseFailure = source.OnPostToolUseFailure;
+            clone.OnUserPromptSubmitted = source.OnUserPromptSubmitted;
+            clone.OnSessionStart = source.OnSessionStart;
+            clone.OnSessionEnd = source.OnSessionEnd;
+            clone.OnErrorOccurred = source.OnErrorOccurred;
+        }
+
+        return clone;
     }
 
     private static async Task<(List<AttachmentFile>? Attachments, string? TempDir)> ProcessDataContentAttachmentsAsync(

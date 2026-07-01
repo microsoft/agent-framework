@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import logging
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, cast
@@ -3132,6 +3133,223 @@ def test_get_span_attributes_with_agent_info():
     assert attrs[OtelAttr.AGENT_DESCRIPTION] == "A test agent"
 
 
+def test_get_span_attributes_emits_otel_tool_definitions() -> None:
+    """``tools`` are serialized to OTel GenAI tool definitions on the span."""
+    import json as _json
+
+    from agent_framework import tool
+    from agent_framework.observability import OtelAttr, _get_span_attributes
+
+    @tool(name="echo", description="Echo input")
+    def echo(value: str) -> str:
+        return value
+
+    attrs = _get_span_attributes(
+        operation_name="chat",
+        provider_name="openai",
+        model="gpt-4",
+        service_url="https://api.openai.com",
+        tools=[
+            echo,
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup",
+                    "description": "Lookup by id",
+                    "parameters": {"type": "object", "properties": {"id": {"type": "string"}}},
+                },
+            },
+            {"type": "web_search", "name": "web_search"},
+        ],
+    )
+
+    assert OtelAttr.TOOL_DEFINITIONS in attrs
+    definitions = _json.loads(attrs[OtelAttr.TOOL_DEFINITIONS])
+    assert definitions == [
+        {
+            "type": "function",
+            "name": "echo",
+            "description": "Echo input",
+            "parameters": echo.parameters(),
+        },
+        {
+            "type": "function",
+            "name": "lookup",
+            "description": "Lookup by id",
+            "parameters": {"type": "object", "properties": {"id": {"type": "string"}}},
+        },
+        {"type": "web_search", "name": "web_search"},
+    ]
+
+
+def test_get_span_attributes_omits_tool_definitions_when_unparseable() -> None:
+    """When no tool can be converted, the tool definitions attribute is omitted."""
+    from agent_framework.observability import OtelAttr, _get_span_attributes
+
+    attrs = _get_span_attributes(
+        operation_name="chat",
+        provider_name="openai",
+        model="gpt-4",
+        service_url="https://api.openai.com",
+        tools=[{"kind": "not_an_otel_tool"}],
+    )
+
+    assert OtelAttr.TOOL_DEFINITIONS not in attrs
+
+
+def test_tools_to_dict_supports_pydantic_tool_models() -> None:
+    """Pydantic-based tool specs are reshaped into the OTel GenAI tool-definition shape."""
+    from pydantic import BaseModel
+
+    from agent_framework.observability import _tools_to_dict
+
+    class ProviderTool(BaseModel):
+        type: str
+        name: str
+        enabled: bool = True
+        note: str | None = None
+
+    result = _tools_to_dict([ProviderTool(type="web_search", name="web_search")])
+
+    assert result == [{"type": "web_search", "name": "web_search", "enabled": True}]
+
+
+def test_tools_to_dict_returns_none_for_empty_input() -> None:
+    """``_tools_to_dict`` returns None when no tools are supplied."""
+    from agent_framework.observability import _tools_to_dict
+
+    assert _tools_to_dict(None) is None
+    assert _tools_to_dict([]) is None
+
+
+def test_tools_to_dict_function_tool_uses_otel_function_definition() -> None:
+    """``FunctionTool`` instances are emitted as flat OTel FunctionToolDefinition dicts."""
+    from agent_framework import tool
+    from agent_framework.observability import _tools_to_dict
+
+    @tool(name="add", description="Add two numbers")
+    def add(x: int, y: int) -> int:
+        return x + y
+
+    result = _tools_to_dict([add])
+
+    assert result is not None
+    assert len(result) == 1
+    definition = result[0]
+    assert definition["type"] == "function"
+    assert definition["name"] == "add"
+    assert definition["description"] == "Add two numbers"
+    assert definition["parameters"]["type"] == "object"
+    assert set(definition["parameters"]["required"]) == {"x", "y"}
+    # The legacy OpenAI Chat Completions ``function`` wrapper is not part of the OTel shape.
+    assert "function" not in definition
+
+
+def test_tools_to_dict_flattens_openai_chat_completions_function_spec() -> None:
+    """OpenAI Chat Completions nested ``function`` spec is flattened to the OTel shape."""
+    from agent_framework.observability import _tools_to_dict
+
+    openai_spec = {
+        "type": "function",
+        "function": {
+            "name": "lookup_user",
+            "description": "Look up a user by id",
+            "parameters": {
+                "type": "object",
+                "properties": {"user_id": {"type": "string"}},
+                "required": ["user_id"],
+            },
+            "strict": True,
+        },
+    }
+
+    result = _tools_to_dict([openai_spec])
+
+    assert result == [
+        {
+            "type": "function",
+            "name": "lookup_user",
+            "description": "Look up a user by id",
+            "parameters": {
+                "type": "object",
+                "properties": {"user_id": {"type": "string"}},
+                "required": ["user_id"],
+            },
+            "strict": True,
+        }
+    ]
+
+
+def test_tools_to_dict_passes_through_hosted_tool_dicts() -> None:
+    """Hosted-tool dicts pass through with the OTel required keys preserved."""
+    from agent_framework.observability import _tools_to_dict
+
+    result = _tools_to_dict([{"type": "web_search", "name": "web_search", "max_results": 5}])
+
+    assert result == [{"type": "web_search", "name": "web_search", "max_results": 5}]
+
+
+def test_tools_to_dict_falls_back_to_type_when_name_missing() -> None:
+    """Hosted-tool dicts without ``name`` fall back to the ``type`` value."""
+    from agent_framework.observability import _tools_to_dict
+
+    result = _tools_to_dict([{"type": "code_interpreter"}])
+
+    assert result == [{"type": "code_interpreter", "name": "code_interpreter"}]
+
+
+def test_tools_to_dict_warns_when_type_missing(caplog: pytest.LogCaptureFixture) -> None:
+    """Tools without an extractable ``type`` are skipped with a warning."""
+    from agent_framework.observability import _tools_to_dict
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        result = _tools_to_dict([{"kind": "not_an_otel_tool"}])
+
+    assert result is None
+    assert any("missing 'type'" in rec.message for rec in caplog.records)
+
+
+def test_tools_to_dict_warns_for_unknown_tool_object(caplog: pytest.LogCaptureFixture) -> None:
+    """Tools that are neither callable, mapping, BaseModel, nor known type are skipped."""
+    from agent_framework.observability import _tools_to_dict
+
+    class _Opaque:
+        pass
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        result = _tools_to_dict([_Opaque()])
+
+    assert result is None
+    assert any("OpenTelemetry tool definition" in rec.message for rec in caplog.records)
+
+
+def test_tool_to_otel_definition_caches_per_tool_object() -> None:
+    """Converting the same tool object twice reuses the cached OTel definition."""
+    from agent_framework import tool
+    from agent_framework.observability import _build_tool_otel_definition, _tool_to_otel_definition
+
+    @tool(name="add", description="Add two numbers")
+    def add(x: int, y: int) -> int:
+        return x + y
+
+    first = _tool_to_otel_definition(add)
+    second = _tool_to_otel_definition(add)
+
+    # The cached result is returned as the same object on subsequent conversions.
+    assert first is second
+    # A fresh (uncached) build produces an equal but distinct object.
+    assert _build_tool_otel_definition(add) == first
+
+
+def test_tool_to_otel_definition_skips_cache_for_unhashable_specs() -> None:
+    """Plain-dict tool specs are converted without raising despite being uncacheable."""
+    from agent_framework.observability import _tool_to_otel_definition
+
+    spec = {"type": "web_search", "name": "web_search"}
+
+    assert _tool_to_otel_definition(spec) == {"type": "web_search", "name": "web_search"}
+
+
 # region Test _capture_response
 
 
@@ -5032,7 +5250,212 @@ async def test_agent_streaming_execute_failure_closes_span_and_resets_contextvar
     assert agent_spans[0].status.status_code == StatusCode.ERROR
 
 
-# region Test heavy operations skipped when span is not recording
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_run_contextvars_safe_when_awaited_in_different_context(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """``run()`` is a sync method that returns an awaitable; the telemetry contextvar set and reset
+    must happen in the same execution context so the returned coroutine can be awaited in a different
+    context.
+
+    Regression for background agents (``BackgroundAgentsProvider``), which do
+    ``asyncio.create_task(agent.run(...))``: ``run()`` executes synchronously in the parent context
+    while the returned coroutine is awaited in a fresh copied context. If the contextvar token were
+    created eagerly in the parent context but reset inside the coroutine, this raised
+    ``ValueError: <Token ...> was created in a different Context``.
+    """
+
+    class _SimpleAgent:
+        AGENT_PROVIDER_NAME = "test_provider"
+
+        def __init__(self):
+            self._id = "simple"
+            self._name = "Simple"
+            self._description = "Agent that returns a response without raising"
+            self._default_options: dict[str, Any] = {}
+
+        @property
+        def id(self):
+            return self._id
+
+        @property
+        def name(self):
+            return self._name
+
+        @property
+        def description(self):
+            return self._description
+
+        @property
+        def default_options(self):
+            return self._default_options
+
+        def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
+            async def _inner() -> AgentResponse:
+                return AgentResponse(messages=[Message(role="assistant", contents=["hi"])])
+
+            return _inner()
+
+    class SimpleAgent(AgentTelemetryLayer, _SimpleAgent):  # type: ignore[misc]
+        pass
+
+    agent = SimpleAgent()
+    span_exporter.clear()
+
+    # Mimic BackgroundAgentsProvider: invoke run() synchronously in this context, then await the
+    # returned coroutine inside a separate task (a different/copied context).
+    awaitable = agent.run(messages="Hello", stream=False)
+
+    async def _runner(aw):
+        return await aw
+
+    result = await asyncio.create_task(_runner(awaitable))
+    assert isinstance(result, AgentResponse)
+
+    spans = span_exporter.get_finished_spans()
+    agent_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert len(agent_spans) == 1
+    assert agent_spans[0].status.status_code != StatusCode.ERROR
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_run_error_path_contextvars_safe_when_awaited_in_different_context(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Error-path variant: the coroutine returned by ``run()`` raises, and is awaited in a different
+    context via ``asyncio.create_task``. The telemetry contextvars are set and reset inside the
+    coroutine (its ``finally``), so the reset on the exception path must not raise
+    ``ValueError: <Token ...> was created in a different Context``; the original error must surface.
+    """
+
+    class _FailingRunAgent:
+        AGENT_PROVIDER_NAME = "test_provider"
+
+        def __init__(self):
+            self._id = "failing_run"
+            self._name = "Failing Run"
+            self._description = "Agent whose run coroutine raises"
+            self._default_options: dict[str, Any] = {}
+
+        @property
+        def id(self):
+            return self._id
+
+        @property
+        def name(self):
+            return self._name
+
+        @property
+        def description(self):
+            return self._description
+
+        @property
+        def default_options(self):
+            return self._default_options
+
+        def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
+            async def _inner() -> AgentResponse:
+                raise RuntimeError("run failed")
+
+            return _inner()
+
+    class FailingRunAgent(AgentTelemetryLayer, _FailingRunAgent):  # type: ignore[misc]
+        pass
+
+    agent = FailingRunAgent()
+    span_exporter.clear()
+
+    awaitable = agent.run(messages="Hello", stream=False)
+
+    async def _runner(aw):
+        return await aw
+
+    # The original RuntimeError must propagate unchanged — not a cross-context ValueError from the
+    # contextvar reset in the coroutine's finally block.
+    with pytest.raises(RuntimeError, match="run failed"):
+        await asyncio.create_task(_runner(awaitable))
+
+    spans = span_exporter.get_finished_spans()
+    agent_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert len(agent_spans) == 1
+    assert agent_spans[0].status.status_code == StatusCode.ERROR
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_streaming_contextvars_safe_when_consumed_in_different_context(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """``run(stream=True)`` returns a ``ResponseStream`` synchronously, but its cleanup hooks (which
+    reset the telemetry contextvars) run when the stream is *consumed* — possibly in a different
+    context (e.g. ``stream = agent.run(stream=True)`` then ``await asyncio.create_task(consume(stream))``).
+
+    The contextvars are therefore set lazily on the first pull, in the consuming context, so the set
+    and the reset both run there. Otherwise this raised
+    ``ValueError: <Token ...> was created in a different Context``.
+    """
+    from agent_framework import AgentResponseUpdate
+
+    class _StreamingAgent:
+        AGENT_PROVIDER_NAME = "test_provider"
+
+        def __init__(self):
+            self._id = "streaming_xctx"
+            self._name = "Streaming XCtx"
+            self._description = "Streaming agent for cross-context consumption"
+            self._default_options: dict[str, Any] = {}
+
+        @property
+        def id(self):
+            return self._id
+
+        @property
+        def name(self):
+            return self._name
+
+        @property
+        def description(self):
+            return self._description
+
+        @property
+        def default_options(self):
+            return self._default_options
+
+        def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
+            if stream:
+
+                async def _stream():
+                    yield AgentResponseUpdate(contents=[Content.from_text("Hello ")], role="assistant")
+                    yield AgentResponseUpdate(contents=[Content.from_text("World")], role="assistant")
+
+                return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+            raise NotImplementedError
+
+    class StreamingAgent(AgentTelemetryLayer, _StreamingAgent):  # type: ignore[misc]
+        pass
+
+    agent = StreamingAgent()
+    span_exporter.clear()
+
+    # Create the stream synchronously in this context, then consume it inside a separate task (a
+    # different/copied context) — mirroring how a caller might hand the stream off to be drained.
+    stream = agent.run(messages="Hello", stream=True)
+
+    async def _consume(s):
+        collected = []
+        async for update in s:
+            collected.append(update)
+        await s.get_final_response()
+        return collected
+
+    updates = await asyncio.create_task(_consume(stream))
+    assert len(updates) == 2
+
+    spans = span_exporter.get_finished_spans()
+    agent_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert len(agent_spans) == 1
+    assert agent_spans[0].status.status_code != StatusCode.ERROR
+
+
 #
 # When ``ENABLE_INSTRUMENTATION`` is on (the default) but no OpenTelemetry
 # tracer provider has been configured, the global provider is the

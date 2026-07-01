@@ -24,8 +24,9 @@ async def main() -> None:
     Creates a task for the chat request, waits briefly, then cancels it to show proper cleanup.
 
     Configuration:
-    - OpenAI model ID: Use "model" parameter or "OPENAI_MODEL" environment variable
-    - OpenAI API key: Use "api_key" parameter or "OPENAI_API_KEY" environment variable
+    - FOUNDRY_PROJECT_ENDPOINT: Azure AI Foundry project endpoint URL
+    - FOUNDRY_MODEL: Model deployment name (e.g. gpt-4o)
+    - Authentication: Run `az login` to authenticate via AzureCliCredential
     """
     client = FoundryChatClient(credential=AzureCliCredential())
 
