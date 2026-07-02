@@ -29,6 +29,7 @@ from agent_framework import (
     TodoItem,
     TodoProvider,
     background_tasks_running,
+    background_tasks_running_message,
     set_agent_mode,
     todos_remaining,
     todos_remaining_message,
@@ -974,10 +975,11 @@ def test_background_tasks_running_helper_reflects_state() -> None:
 
     provider = BackgroundAgentsProvider([_DummyAgent()])  # type: ignore[list-item]  # ty: ignore[invalid-argument-type]
     session = AgentSession()
-    predicate = background_tasks_running(provider)
+    agent = _FakeHarnessAgent(provider)
+    predicate = background_tasks_running()
 
     # No tasks -> not running.
-    assert predicate(session=session) is False
+    assert predicate(session=session, agent=agent) is False
 
     running = BackgroundTaskInfo(
         id=1,
@@ -986,7 +988,7 @@ def test_background_tasks_running_helper_reflects_state() -> None:
         status=BackgroundTaskStatus.RUNNING,
     )
     session.state[provider_source] = {"next_task_id": 2, "tasks": [running.to_dict()]}
-    assert predicate(session=session) is True
+    assert predicate(session=session, agent=agent) is True
 
     completed = BackgroundTaskInfo(
         id=1,
@@ -995,10 +997,10 @@ def test_background_tasks_running_helper_reflects_state() -> None:
         status=BackgroundTaskStatus.COMPLETED,
     )
     session.state[provider_source] = {"next_task_id": 2, "tasks": [completed.to_dict()]}
-    assert predicate(session=session) is False
+    assert predicate(session=session, agent=agent) is False
 
 
-def test_background_tasks_running_helper_without_session() -> None:
+def test_background_tasks_running_helper_requires_session_agent_and_provider() -> None:
     from agent_framework import BackgroundAgentsProvider
 
     class _DummyAgent:
@@ -1008,8 +1010,78 @@ def test_background_tasks_running_helper_without_session() -> None:
         def run(self, *args: Any, **kwargs: Any) -> Any: ...
 
     provider = BackgroundAgentsProvider([_DummyAgent()])  # type: ignore[list-item]  # ty: ignore[invalid-argument-type]
-    predicate = background_tasks_running(provider)
-    assert predicate(session=None) is False
+    session = AgentSession()
+    session.state["background_agents"] = {
+        "next_task_id": 2,
+        "tasks": [
+            BackgroundTaskInfo(
+                id=1, agent_name="worker", description="job", status=BackgroundTaskStatus.RUNNING
+            ).to_dict()
+        ],
+    }
+    predicate = background_tasks_running()
+
+    # Missing session or agent -> False.
+    assert predicate(session=None, agent=_FakeHarnessAgent(provider)) is False
+    assert predicate(session=session, agent=None) is False
+    # Agent without a BackgroundAgentsProvider -> False.
+    assert predicate(session=session, agent=_FakeHarnessAgent()) is False
+
+
+def test_background_tasks_running_message_lists_running_tasks() -> None:
+    from agent_framework import BackgroundAgentsProvider
+
+    class _DummyAgent:
+        name = "worker"
+        description = "does work"
+
+        def run(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    provider = BackgroundAgentsProvider([_DummyAgent()])  # type: ignore[list-item]  # ty: ignore[invalid-argument-type]
+    session = AgentSession()
+    agent = _FakeHarnessAgent(provider)
+    session.state["background_agents"] = {
+        "next_task_id": 4,
+        "tasks": [
+            BackgroundTaskInfo(
+                id=1, agent_name="worker", description="first job", status=BackgroundTaskStatus.RUNNING
+            ).to_dict(),
+            BackgroundTaskInfo(
+                id=2, agent_name="worker", description="done job", status=BackgroundTaskStatus.COMPLETED
+            ).to_dict(),
+            BackgroundTaskInfo(
+                id=3, agent_name="worker", description="third job", status=BackgroundTaskStatus.RUNNING
+            ).to_dict(),
+        ],
+    }
+
+    message = background_tasks_running_message(session=session, agent=agent)
+    assert message is not None
+    assert "2 background task(s) running" in message
+    assert "#1 (worker): first job" in message
+    assert "#3 (worker): third job" in message
+    assert "done job" not in message
+
+
+def test_background_tasks_running_message_returns_none_when_idle() -> None:
+    from agent_framework import BackgroundAgentsProvider
+
+    class _DummyAgent:
+        name = "worker"
+        description = "does work"
+
+        def run(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    provider = BackgroundAgentsProvider([_DummyAgent()])  # type: ignore[list-item]  # ty: ignore[invalid-argument-type]
+    session = AgentSession()
+    agent = _FakeHarnessAgent(provider)
+
+    # No running tasks at all.
+    assert background_tasks_running_message(session=session, agent=agent) is None
+    # Missing session/agent/provider -> None.
+    assert background_tasks_running_message(session=None, agent=agent) is None
+    assert background_tasks_running_message(session=session, agent=None) is None
+    assert background_tasks_running_message(session=session, agent=_FakeHarnessAgent()) is None
 
 
 # region todos_remaining / todos_remaining_message helpers

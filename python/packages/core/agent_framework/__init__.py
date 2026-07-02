@@ -99,6 +99,7 @@ from ._harness._file_access import (
     FileAccessProvider,
     FileSearchMatch,
     FileSearchResult,
+    FileStoreEntry,
     FileSystemAgentFileStore,
     InMemoryAgentFileStore,
 )
@@ -111,6 +112,7 @@ from ._harness._loop import (
     AgentLoopMiddleware,
     JudgeVerdict,
     background_tasks_running,
+    background_tasks_running_message,
     todos_remaining,
     todos_remaining_message,
 )
@@ -179,6 +181,7 @@ from ._sessions import (
 from ._settings import SecretString, load_settings
 from ._skills import (
     AggregatingSkillsSource,
+    CachingSkillsSource,
     ClassSkill,
     DeduplicatingSkillsSource,
     DelegatingSkillsSource,
@@ -197,6 +200,7 @@ from ._skills import (
     SkillFrontmatter,
     SkillResource,
     SkillScript,
+    SkillScriptArgumentParser,
     SkillScriptRunner,
     SkillsProvider,
     SkillsSource,
@@ -394,6 +398,7 @@ __all__ = [
     "BaseAgent",
     "BaseChatClient",
     "BaseEmbeddingClient",
+    "CachingSkillsSource",
     "Case",
     "CharacterEstimatorTokenizer",
     "ChatAndFunctionMiddlewareTypes",
@@ -446,6 +451,7 @@ __all__ = [
     "FileSkill",
     "FileSkillScript",
     "FileSkillsSource",
+    "FileStoreEntry",
     "FileSystemAgentFileStore",
     "FilteringSkillsSource",
     "FinalT",
@@ -510,6 +516,7 @@ __all__ = [
     "SkillFrontmatter",
     "SkillResource",
     "SkillScript",
+    "SkillScriptArgumentParser",
     "SkillScriptRunner",
     "SkillsProvider",
     "SkillsSource",
@@ -577,6 +584,7 @@ __all__ = [
     "annotate_message_groups",
     "apply_compaction",
     "background_tasks_running",
+    "background_tasks_running_message",
     "chat_middleware",
     "create_always_approve_tool_response",
     "create_always_approve_tool_with_arguments_response",

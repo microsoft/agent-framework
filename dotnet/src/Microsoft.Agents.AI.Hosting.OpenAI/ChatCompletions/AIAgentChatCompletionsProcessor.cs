@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Converters;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
+using Microsoft.Agents.AI.Hosting.OpenAI.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.AI;
@@ -18,19 +19,40 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 
 internal static class AIAgentChatCompletionsProcessor
 {
-    public static async Task<IResult> CreateChatCompletionAsync(AIAgent agent, CreateChatCompletion request, CancellationToken cancellationToken)
+    public static async Task<IResult> CreateChatCompletionAsync(AIAgent agent, CreateChatCompletion request, OpenAIChatCompletionsMapOptions? mapOptions, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(agent);
 
+        var runOptionsFactory = (mapOptions ?? new OpenAIChatCompletionsMapOptions()).RunOptionsFactory;
+
+        AgentRunOptions? runOptions;
+        try
+        {
+            // The hosting developer controls, via OpenAIChatCompletionsMapOptions.RunOptionsFactory, which (if any)
+            // request settings are mapped onto the agent run. By default no request setting is mapped.
+            runOptions = runOptionsFactory(request.ToRequestInfo());
+        }
+        catch (NotSupportedException ex)
+        {
+            return Results.BadRequest(new ErrorResponse
+            {
+                Error = new ErrorDetails
+                {
+                    Message = ex.Message,
+                    Type = "invalid_request_error",
+                    Code = "unsupported_parameter"
+                }
+            });
+        }
+
         var chatMessages = request.Messages.Select(i => i.ToChatMessage());
-        var chatClientAgentRunOptions = request.BuildOptions();
 
         if (request.Stream == true)
         {
-            return new StreamingResponse(agent, request, chatMessages, chatClientAgentRunOptions);
+            return new StreamingResponse(agent, request, chatMessages, runOptions);
         }
 
-        var response = await agent.RunAsync(chatMessages, options: chatClientAgentRunOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var response = await agent.RunAsync(chatMessages, options: runOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
         return Results.Ok(response.ToChatCompletion(request));
     }
 
@@ -38,7 +60,7 @@ internal static class AIAgentChatCompletionsProcessor
         AIAgent agent,
         CreateChatCompletion request,
         IEnumerable<ChatMessage> chatMessages,
-        ChatClientAgentRunOptions? options) : IResult
+        AgentRunOptions? options) : IResult
     {
         public Task ExecuteAsync(HttpContext httpContext)
         {

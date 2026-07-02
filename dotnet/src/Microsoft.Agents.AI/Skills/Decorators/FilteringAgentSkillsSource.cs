@@ -17,9 +17,9 @@ namespace Microsoft.Agents.AI;
 /// Skills for which the predicate returns <see langword="true"/> are included in the result;
 /// skills for which it returns <see langword="false"/> are excluded and logged at debug level.
 /// </remarks>
-internal sealed partial class FilteringAgentSkillsSource : DelegatingAgentSkillsSource
+public sealed partial class FilteringAgentSkillsSource : DelegatingAgentSkillsSource
 {
-    private readonly Func<AgentSkill, bool> _predicate;
+    private readonly Func<AgentSkill, AgentSkillsSourceContext, bool> _predicate;
     private readonly ILogger<FilteringAgentSkillsSource> _logger;
 
     /// <summary>
@@ -33,7 +33,7 @@ internal sealed partial class FilteringAgentSkillsSource : DelegatingAgentSkills
     /// <param name="loggerFactory">Optional logger factory.</param>
     public FilteringAgentSkillsSource(
         AgentSkillsSource innerSource,
-        Func<AgentSkill, bool> predicate,
+        Func<AgentSkill, AgentSkillsSourceContext, bool> predicate,
         ILoggerFactory? loggerFactory = null)
         : base(innerSource)
     {
@@ -42,14 +42,14 @@ internal sealed partial class FilteringAgentSkillsSource : DelegatingAgentSkills
     }
 
     /// <inheritdoc/>
-    public override async Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+    public override async Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
-        var allSkills = await this.InnerSource.GetSkillsAsync(cancellationToken).ConfigureAwait(false);
+        var allSkills = await this.InnerSource.GetSkillsAsync(context, cancellationToken).ConfigureAwait(false);
 
         var filtered = new List<AgentSkill>();
         foreach (var skill in allSkills)
         {
-            if (this._predicate(skill))
+            if (this._predicate(skill, context))
             {
                 filtered.Add(skill);
             }
