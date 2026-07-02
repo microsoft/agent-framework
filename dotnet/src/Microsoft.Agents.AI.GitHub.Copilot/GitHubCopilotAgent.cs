@@ -583,7 +583,6 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                     approvalRequiredToolNames.Count,
                     string.Join(", ", approvalRequiredToolNames));
             }
-
             return sessionConfig;
         }
 

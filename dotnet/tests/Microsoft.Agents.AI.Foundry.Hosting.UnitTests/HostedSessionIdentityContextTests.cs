@@ -85,18 +85,24 @@ public class HostedSessionIdentityContextTests
     }
 
     [Fact]
-    public async Task Handler_NullKeysFromProvider_ThrowsInvalidOperationAsync()
+    public async Task Handler_NullKeysFromProvider_NotHosted_SucceedsWithoutContextAsync()
     {
-        // Arrange
+        // Arrange: a provider that returns null keys (as the default platform provider does locally when
+        // no x-agent-user-id header is present). Under unit tests FoundryEnvironment.IsHosted is false, so
+        // the container is treated as local: the request must proceed with per-user isolation not triggered
+        // rather than 500ing. No hosted context is stamped on the session.
         var capturingAgent = new HostedContextCapturingAgent();
         var fakeProvider = new FakeHostedSessionIsolationKeyProvider(userId: null);
         var handler = BuildHandler(capturingAgent, fakeProvider);
 
         var (request, mockContext) = BuildFreshRequest();
 
-        // Act & Assert
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => DrainAsync(handler.CreateAsync(request, mockContext.Object, CancellationToken.None)));
-        Assert.Contains(nameof(HostedSessionIsolationKeyProvider), ex.Message);
+        // Act
+        await DrainAsync(handler.CreateAsync(request, mockContext.Object, CancellationToken.None));
+
+        // Assert: no throw, a session was produced, and it carries no hosted identity context.
+        Assert.NotNull(capturingAgent.LastSession);
+        Assert.Null(capturingAgent.LastSession.GetHostedContext());
     }
 
     [Fact]

@@ -46,7 +46,10 @@ namespace Microsoft.Agents.AI;
 /// (<c>file_access_read</c>, <c>file_access_ls</c>, and <c>file_access_grep</c>) are exposed.
 /// </para>
 /// <para>
-/// All of these tools always require approval: each is exposed as an <see cref="ApprovalRequiredAIFunction"/>.
+/// By default, all of these tools require approval: each is exposed as an <see cref="ApprovalRequiredAIFunction"/>.
+/// Approval can be disabled per group via <see cref="FileAccessProviderOptions.DisableReadOnlyToolApproval"/>
+/// (read, ls, and grep) and <see cref="FileAccessProviderOptions.DisableWriteToolApproval"/>
+/// (write, delete, replace, and replace_lines).
 /// </para>
 /// <para>
 /// To auto-approve these tools without prompting, use the <see cref="ToolApprovalAgent"/> and add one of the provided rules to
@@ -130,6 +133,8 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     private readonly AgentFileStore _fileStore;
     private readonly string _instructions;
     private readonly bool _disableWriteTools;
+    private readonly bool _disableReadOnlyToolApproval;
+    private readonly bool _disableWriteToolApproval;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private AITool[]? _tools;
 
@@ -149,6 +154,8 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
         this._fileStore = fileStore;
         this._instructions = options?.Instructions ?? DefaultInstructions;
         this._disableWriteTools = options?.DisableWriteTools ?? false;
+        this._disableReadOnlyToolApproval = options?.DisableReadOnlyToolApproval ?? false;
+        this._disableWriteToolApproval = options?.DisableWriteToolApproval ?? false;
     }
 
     /// <summary>
@@ -157,7 +164,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The tools exposed by <see cref="FileAccessProvider"/> always require approval. Add this rule to
+    /// By default, the tools exposed by <see cref="FileAccessProvider"/> require approval. Add this rule to
     /// <see cref="ToolApprovalAgentOptions.AutoApprovalRules"/> to automatically approve only the tools
     /// that read from the file store, while still prompting for tools that modify it
     /// (<see cref="WriteToolName"/>, <see cref="DeleteFileToolName"/>, <see cref="ReplaceToolName"/>,
@@ -178,7 +185,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The tools exposed by <see cref="FileAccessProvider"/> always require approval. Add this rule to
+    /// By default, the tools exposed by <see cref="FileAccessProvider"/> require approval. Add this rule to
     /// <see cref="ToolApprovalAgentOptions.AutoApprovalRules"/> to automatically approve every file access
     /// tool without prompting the user.
     /// </para>
@@ -410,24 +417,31 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     {
         var serializerOptions = AgentJsonUtilities.DefaultOptions;
 
-        // All file access tools always require approval. Callers can use the
-        // ReadOnlyToolsAutoApprovalRule or AllToolsAutoApprovalRule with the ToolApprovalAgent
-        // to automatically approve these tools.
+        // Read-only and store-modifying tools require approval by default. Approval can be disabled
+        // per group via FileAccessProviderOptions.DisableReadOnlyToolApproval and DisableWriteToolApproval;
+        // otherwise callers can use the ReadOnlyToolsAutoApprovalRule or AllToolsAutoApprovalRule with the
+        // ToolApprovalAgent to automatically approve these tools.
+        bool readOnlyRequiresApproval = !this._disableReadOnlyToolApproval;
+        bool writeRequiresApproval = !this._disableWriteToolApproval;
+
         var tools = new List<AITool>
         {
-            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(this.ReadAsync, new AIFunctionFactoryOptions { Name = ReadFileToolName, SerializerOptions = serializerOptions })),
-            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(this.LsAsync, new AIFunctionFactoryOptions { Name = LsToolName, SerializerOptions = serializerOptions })),
-            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(this.GrepAsync, new AIFunctionFactoryOptions { Name = GrepToolName, SerializerOptions = serializerOptions })),
+            WrapWithApprovalIfRequired(AIFunctionFactory.Create(this.ReadAsync, new AIFunctionFactoryOptions { Name = ReadFileToolName, SerializerOptions = serializerOptions }), readOnlyRequiresApproval),
+            WrapWithApprovalIfRequired(AIFunctionFactory.Create(this.LsAsync, new AIFunctionFactoryOptions { Name = LsToolName, SerializerOptions = serializerOptions }), readOnlyRequiresApproval),
+            WrapWithApprovalIfRequired(AIFunctionFactory.Create(this.GrepAsync, new AIFunctionFactoryOptions { Name = GrepToolName, SerializerOptions = serializerOptions }), readOnlyRequiresApproval),
         };
 
         if (!this._disableWriteTools)
         {
-            tools.Add(new ApprovalRequiredAIFunction(AIFunctionFactory.Create(this.WriteAsync, new AIFunctionFactoryOptions { Name = WriteToolName, SerializerOptions = serializerOptions })));
-            tools.Add(new ApprovalRequiredAIFunction(AIFunctionFactory.Create(this.DeleteAsync, new AIFunctionFactoryOptions { Name = DeleteFileToolName, SerializerOptions = serializerOptions })));
-            tools.Add(new ApprovalRequiredAIFunction(AIFunctionFactory.Create(this.ReplaceAsync, new AIFunctionFactoryOptions { Name = ReplaceToolName, SerializerOptions = serializerOptions })));
-            tools.Add(new ApprovalRequiredAIFunction(AIFunctionFactory.Create(this.ReplaceLinesAsync, new AIFunctionFactoryOptions { Name = ReplaceLinesToolName, SerializerOptions = serializerOptions })));
+            tools.Add(WrapWithApprovalIfRequired(AIFunctionFactory.Create(this.WriteAsync, new AIFunctionFactoryOptions { Name = WriteToolName, SerializerOptions = serializerOptions }), writeRequiresApproval));
+            tools.Add(WrapWithApprovalIfRequired(AIFunctionFactory.Create(this.DeleteAsync, new AIFunctionFactoryOptions { Name = DeleteFileToolName, SerializerOptions = serializerOptions }), writeRequiresApproval));
+            tools.Add(WrapWithApprovalIfRequired(AIFunctionFactory.Create(this.ReplaceAsync, new AIFunctionFactoryOptions { Name = ReplaceToolName, SerializerOptions = serializerOptions }), writeRequiresApproval));
+            tools.Add(WrapWithApprovalIfRequired(AIFunctionFactory.Create(this.ReplaceLinesAsync, new AIFunctionFactoryOptions { Name = ReplaceLinesToolName, SerializerOptions = serializerOptions }), writeRequiresApproval));
         }
 
         return tools.ToArray();
     }
+
+    private static AITool WrapWithApprovalIfRequired(AIFunction function, bool requireApproval)
+        => requireApproval ? new ApprovalRequiredAIFunction(function) : function;
 }

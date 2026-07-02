@@ -1058,25 +1058,28 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_NoUserIdCaptured_IsRejectedAndWritesNoFileAsync()
+    public async Task CreateAsync_NoUserIdCaptured_NotHosted_SucceedsUnscopedAsync()
     {
         var root = NewIsolationTempRoot();
         try
         {
             // Arrange: a non-hosted (local) request whose x-agent-user-id was not captured (PlatformContext
-            // is null). Under unit tests FoundryEnvironment.IsHosted is false, so the protocol-compatibility
-            // gate does not apply; the handler still rejects rather than persisting an unscoped session. The
-            // hosted 1.0.0 path (which returns the clear 501 instead) is covered by
-            // HostedProtocolCompatibilityTests and the UnsupportedProtocol integration test.
+            // is null). Under unit tests FoundryEnvironment.IsHosted is false, so the container is treated as
+            // local: per-user isolation is simply not triggered and the request succeeds instead of 500ing.
+            // The session is persisted without a u-{userId} segment (unscoped). The hosted-but-missing-user
+            // branch (which still rejects) cannot be unit-tested because FoundryEnvironment.IsHosted is a
+            // process-cached static; it is exercised by the investigation repro app's "hosted" scenario.
             var store = new FileSystemAgentSessionStore(root);
             var handler = BuildMultiAgentHandler(store, ("concierge", new RecordingAgent("concierge")));
             var (req, ctx) = BuildUserRequest("concierge", "trip", userId: null);
 
-            // Act & Assert: the default platform provider returns null, so the handler rejects the request
-            // rather than persisting an unscoped session — nothing is written to disk.
-            await Assert.ThrowsAsync<InvalidOperationException>(
-                async () => await DrainEventsAsync(handler.CreateAsync(req, ctx.Object, CancellationToken.None)));
-            Assert.False(Directory.Exists(store.RootDirectory) && Directory.GetFiles(store.RootDirectory, "*.json", SearchOption.AllDirectories).Length > 0);
+            // Act: the request drains without throwing.
+            await DrainEventsAsync(handler.CreateAsync(req, ctx.Object, CancellationToken.None));
+
+            // Assert: the session is written under the agent bucket with NO per-user (u-*) segment.
+            Assert.True(File.Exists(Path.Combine(store.RootDirectory, "a-concierge", "c-trip.json")));
+            var agentDir = Path.Combine(store.RootDirectory, "a-concierge");
+            Assert.Empty(Directory.GetDirectories(agentDir, "u-*"));
         }
         finally
         {

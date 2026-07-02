@@ -93,6 +93,10 @@ SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
 _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
 _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY: Final[str] = "already_approved_approval_request_groups"
 _FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget_state"
+_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
+    "Function invocation limit reached before a final answer could be produced."
+)
+_USER_VISIBLE_CONTENT_TYPES: Final[set[str]] = {"data", "uri", "error", "hosted_file", "hosted_vector_store"}
 ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -1875,6 +1879,42 @@ def _clear_internal_conversation_id(response: ChatResponse[Any]) -> ChatResponse
     return response
 
 
+def _response_has_visible_content(response: ChatResponse[Any]) -> bool:
+    for message in response.messages:
+        for content in message.contents:
+            if content.type == "text":
+                if content.text and content.text.strip():
+                    return True
+            elif content.type in _USER_VISIBLE_CONTENT_TYPES:
+                return True
+    return False
+
+
+def _ensure_function_invocation_limit_fallback_response(response: ChatResponse[Any]) -> ChatResponse[Any]:
+    if _response_has_visible_content(response):
+        return response
+
+    from ._types import Content, Message
+
+    fallback_content = Content.from_text(_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT)
+    if response.messages:
+        response.messages[-1].role = "assistant"
+        response.messages[-1].contents = [fallback_content]
+    else:
+        response.messages.append(Message(role="assistant", contents=[fallback_content]))
+    return response
+
+
+def _function_invocation_limit_fallback_update() -> ChatResponseUpdate:
+    from ._types import ChatResponseUpdate, Content
+
+    return ChatResponseUpdate(
+        contents=[Content.from_text(_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT)],
+        role="assistant",
+        finish_reason="stop",
+    )
+
+
 def _extract_tools(
     options: dict[str, Any] | None,
 ) -> ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None:
@@ -2569,6 +2609,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                             client_kwargs=filtered_kwargs,
                         ),
                     )
+                    if (
+                        mutable_options.get("tool_choice") == "none"
+                        and max_function_calls is not None
+                        and total_function_calls >= max_function_calls
+                    ):
+                        response = _ensure_function_invocation_limit_fallback_response(response)
                     aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
                     _update_continuation_state(
                         filtered_kwargs,
@@ -2649,6 +2695,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         client_kwargs=filtered_kwargs,
                     ),
                 )
+                response = _ensure_function_invocation_limit_fallback_response(response)
                 aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
                 _update_continuation_state(
                     filtered_kwargs,
@@ -2730,6 +2777,14 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 # Get the finalized response from the inner stream
                 # This triggers the inner stream's finalizer and result hooks
                 response = await inner_stream.get_final_response()
+                response_had_visible_content = _response_has_visible_content(response)
+                function_call_limit_reached = (
+                    mutable_options.get("tool_choice") == "none"
+                    and max_function_calls is not None
+                    and total_function_calls >= max_function_calls
+                )
+                if function_call_limit_reached:
+                    response = _ensure_function_invocation_limit_fallback_response(response)
                 _update_continuation_state(
                     filtered_kwargs,
                     response,
@@ -2742,6 +2797,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     for msg in response.messages
                     for item in msg.contents
                 ):
+                    if function_call_limit_reached and not response_had_visible_content:
+                        yield _function_invocation_limit_fallback_update()
                     return
 
                 if response.conversation_id is not None:
@@ -2825,12 +2882,16 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 yield update
             # Finalize the inner stream to trigger its hooks
             final_response = await final_inner_stream.get_final_response()
+            final_response_had_visible_content = _response_has_visible_content(final_response)
+            final_response = _ensure_function_invocation_limit_fallback_response(final_response)
             _update_continuation_state(
                 filtered_kwargs,
                 final_response,
                 session=invocation_session,
                 options=mutable_options,
             )
+            if not final_response_had_visible_content:
+                yield _function_invocation_limit_fallback_update()
 
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
             # Note: stream_result_hooks are already run via inner stream's get_final_response()

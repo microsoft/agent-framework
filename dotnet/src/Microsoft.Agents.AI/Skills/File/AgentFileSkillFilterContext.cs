@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -11,7 +9,6 @@ namespace Microsoft.Agents.AI;
 /// <see cref="AgentFileSkillsSourceOptions.ScriptFilter"/> and
 /// <see cref="AgentFileSkillsSourceOptions.ResourceFilter"/> predicates.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentFileSkillFilterContext
 {
     /// <summary>

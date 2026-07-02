@@ -28,8 +28,7 @@ Env.TraversePath().Load();
 
 var projectEndpoint = new Uri(Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set."));
-var agentName = Environment.GetEnvironmentVariable("AGENT_NAME")
-    ?? throw new InvalidOperationException("AGENT_NAME is not set.");
+var agentName = Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-memory-agent";
 var deployment = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-4o";
 var embeddingDeployment = Environment.GetEnvironmentVariable("AZURE_AI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-ada-002";
 var memoryStoreName = Environment.GetEnvironmentVariable("AZURE_AI_MEMORY_STORE_ID") ?? "hosted-memory-sample";
@@ -75,9 +74,15 @@ ChatClientAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions()
 });
 
 // Host the agent as a Foundry Hosted Agent using the Responses API.
+//
+// Per-user memory isolation comes from the platform-injected x-agent-user-id header, resolved by the
+// default HostedSessionIsolationKeyProvider into the session's HostedSessionContext. This sample scopes
+// memory per user via HostedFoundryMemoryProviderScopes.PerUser(), which REQUIRES that context: a
+// request with no resolved user identity throws. So locally you must send an x-agent-user-id request
+// header (see scripts/smoke.ps1); vary it to simulate distinct users. On the Foundry platform the
+// header is always present, so no local provider registration is needed.
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
-builder.Services.AddDevTemporaryLocalContributorSetup(); // Local Docker debugging only - must not be used in production.
 
 var app = builder.Build();
 app.MapFoundryResponses();

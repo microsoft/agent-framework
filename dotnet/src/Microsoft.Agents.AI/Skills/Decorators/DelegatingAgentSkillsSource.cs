@@ -1,10 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -18,7 +16,6 @@ namespace Microsoft.Agents.AI;
 /// enabling the creation of source pipelines where each layer can add functionality (caching, deduplication,
 /// filtering, etc.) while delegating core operations to an underlying source.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public abstract class DelegatingAgentSkillsSource : AgentSkillsSource
 {
     /// <summary>
