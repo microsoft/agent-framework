@@ -126,10 +126,10 @@ class ConfidentialityLabel:
         PRIVATE: Singleton for private content with no specific readers.
     """
 
-    PUBLIC: "ConfidentialityLabel"  # set after class body
-    PRIVATE: "ConfidentialityLabel"  # set after class body
+    PUBLIC: ConfidentialityLabel  # set after class body
+    PRIVATE: ConfidentialityLabel  # set after class body
 
-    def __init__(self, value: "str | list[str]" = "public", *, readers: "frozenset[str] | None" = None) -> None:
+    def __init__(self, value: str | list[str] = "public", *, readers: frozenset[str] | None = None) -> None:
         """Initialize a ConfidentialityLabel.
 
         Args:
@@ -158,7 +158,7 @@ class ConfidentialityLabel:
         return self._level
 
     @property
-    def readers(self) -> "frozenset[str] | None":
+    def readers(self) -> frozenset[str] | None:
         """Return the readers frozenset, or ``None`` if unrestricted."""
         return self._readers
 
@@ -209,7 +209,7 @@ class ConfidentialityLabel:
         """Return numeric priority: PUBLIC=0, PRIVATE=1."""
         return 0 if self._level == "public" else 1
 
-    def is_at_most(self, other: "ConfidentialityLabel") -> bool:
+    def is_at_most(self, other: ConfidentialityLabel) -> bool:
         """Return ``True`` if this label is no more restrictive than *other*.
 
         Uses the confidentiality hierarchy (``PUBLIC`` < ``PRIVATE``): returns
@@ -222,7 +222,7 @@ class ConfidentialityLabel:
     # -- combination ---------------------------------------------------------
 
     @classmethod
-    def combine(cls, *labels: "ConfidentialityLabel") -> "ConfidentialityLabel":
+    def combine(cls, *labels: ConfidentialityLabel) -> ConfidentialityLabel:
         """Combine confidentiality labels using the most restrictive policy.
 
         - ``PRIVATE`` dominates ``PUBLIC``.
@@ -3582,7 +3582,7 @@ def _build_ifc_meta(
 
 def _make_gateway_policy_fn(
     mcp_tool: Any,
-) -> "Callable[[str, dict[str, Any], ContentLabel], Awaitable[dict[str, Any]]]":
+) -> Callable[[str, dict[str, Any], ContentLabel], Awaitable[dict[str, Any]]]:
     """Create a gateway policy callable bound to *mcp_tool*.
 
     The returned coroutine function calls the gateway's ``eval_policy`` MCP
