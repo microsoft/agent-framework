@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import cast
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from agent_framework import SkillsProvider, SkillsSourceContext
+from agent_framework import SkillsProvider, SkillsSourceContext, SupportsAgentRun
 from azure.ai.agentserver.core import (
     FoundryAgentRequestContext,
     reset_request_context,
@@ -33,7 +34,7 @@ class _StubAgent:
 
 def _source_context() -> SkillsSourceContext:
     """Build a :class:`SkillsSourceContext` for exercising skill sources in tests."""
-    return SkillsSourceContext(agent=_StubAgent())  # type: ignore[arg-type]
+    return SkillsSourceContext(agent=cast(SupportsAgentRun, _StubAgent()))
 
 
 class _FakeAccessToken:

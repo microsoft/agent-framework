@@ -46,23 +46,28 @@ from agent_framework._skills import (
     _FileSkillResource,
 )
 
+from .conftest import MockAgent, MockAgentSession
+
 pytestmark = pytest.mark.filterwarnings(r"ignore:\[SKILLS\].*:FutureWarning")
 
 # Cross-platform absolute path prefix for tests
 _ABS = "C:\\skills" if os.name == "nt" else "/skills"
 
 
-class _StubAgent:
-    """Minimal stand-in for a ``SupportsAgentRun`` used to build a source context."""
+class _NamedMockAgent(MockAgent):
+    """A :class:`MockAgent` with a configurable name for context-aware skill tests."""
 
-    name = "test-agent"
+    def __init__(self, name: str = "test-agent") -> None:
+        self._name = name
+
+    @property
+    def name(self) -> str | None:  # type: ignore[override]  # pyrefly: ignore[bad-override]
+        return self._name
 
 
 def _make_source_context(agent_name: str = "test-agent") -> SkillsSourceContext:
     """Build a :class:`SkillsSourceContext` for exercising skill sources in tests."""
-    agent = _StubAgent()
-    agent.name = agent_name
-    return SkillsSourceContext(agent=agent)  # type: ignore[arg-type]
+    return SkillsSourceContext(agent=_NamedMockAgent(agent_name))  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]
 
 
 # Shared context for the common case where the agent/session are irrelevant.
@@ -5496,13 +5501,13 @@ class TestSkillsSourceContext:
 
     async def test_context_exposes_agent_and_session(self) -> None:
         """SkillsSourceContext carries the agent and optional session."""
-        agent = _StubAgent()
-        ctx = SkillsSourceContext(agent=agent)  # type: ignore[arg-type]
+        agent = _NamedMockAgent()  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]
+        ctx = SkillsSourceContext(agent=agent)
         assert ctx.agent is agent
         assert ctx.session is None
 
-        session = object()
-        ctx_with_session = SkillsSourceContext(agent=agent, session=session)  # type: ignore[arg-type]
+        session = MockAgentSession()
+        ctx_with_session = SkillsSourceContext(agent=agent, session=session)
         assert ctx_with_session.session is session
 
     async def test_context_flows_through_decorator_pipeline(self) -> None:
@@ -5525,7 +5530,7 @@ class TestSkillsSourceContext:
         skills = await source.get_skills(ctx)
         assert [s.frontmatter.name for s in skills] == ["skill-a"]
         assert received == [ctx]
-        assert received[0].agent.name == "agent-x"  # type: ignore[attr-defined]
+        assert received[0].agent.name == "agent-x"
 
     async def test_filtering_predicate_receives_context(self) -> None:
         """FilteringSkillsSource passes the context to the predicate."""
@@ -5536,7 +5541,7 @@ class TestSkillsSourceContext:
         def _predicate(skill: Skill, context: SkillsSourceContext) -> bool:
             seen.append(context)
             # Keep only skills whose name matches the invoking agent's name.
-            return skill.frontmatter.name == context.agent.name  # type: ignore[attr-defined]
+            return skill.frontmatter.name == context.agent.name
 
         s1 = InlineSkill(frontmatter=SkillFrontmatter(name="agent-x", description="A"), instructions="body")
         s2 = InlineSkill(frontmatter=SkillFrontmatter(name="agent-y", description="B"), instructions="body")
@@ -5568,7 +5573,7 @@ class TestSkillsSourceContext:
         ])
         cached = CachingSkillsSource(
             inner,
-            cache_isolation_key_selector=lambda context: context.agent.name,  # type: ignore[attr-defined]
+            cache_isolation_key_selector=lambda context: context.agent.name,
         )
 
         first_x = await cached.get_skills(_make_source_context("agent-x"))

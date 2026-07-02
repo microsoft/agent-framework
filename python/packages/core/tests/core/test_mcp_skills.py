@@ -21,19 +21,15 @@ from pydantic import AnyUrl
 from agent_framework import MCPSkill, MCPSkillResource, MCPSkillsSource, SkillsSourceContext
 from agent_framework._skills import _parse_mcp_skill_index
 
+from .conftest import MockAgent
+
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
 # ---------------------------------------------------------------------------
 
 
-class _StubAgent:
-    """Minimal stand-in for a ``SupportsAgentRun`` used to build a source context."""
-
-    name = "test-agent"
-
-
 # Shared context for exercising skill sources where the agent/session are irrelevant.
-_SOURCE_CTX = SkillsSourceContext(agent=_StubAgent())  # type: ignore[arg-type]
+_SOURCE_CTX = SkillsSourceContext(agent=MockAgent())  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]
 
 SAMPLE_SKILL_MD = """\
 ---
