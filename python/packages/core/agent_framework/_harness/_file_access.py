@@ -227,17 +227,37 @@ def _apply_replace(content: str, old_string: str, new_string: str, replace_all: 
     return content.replace(old_string, new_string), count
 
 
-def _apply_replace_lines(content: str, edits: list[tuple[int, str]]) -> str:
-    """Apply whole-line replacements (1-based) to ``content``.
+def _split_lines_keepends(content: str) -> list[str]:
+    r"""Split ``content`` into lines on ``\n`` only, keeping the terminator attached.
 
-    Raises :class:`ValueError` when any line number is out of range or when a
-    line number is targeted more than once. Returns the modified content,
-    preserving a trailing newline if the original had one.
+    Splits solely on ``\n`` (a trailing ``\r`` stays as line content), reproducing
+    :func:`_search_file_content`'s ``content.split("\n")`` enumeration exactly, so a
+    ``line_number`` obtained from ``grep`` always targets the same line here and stays
+    in range. This means the result has ``len(content.split("\n"))`` elements: a
+    trailing ``\n`` yields a final empty (editable) line, and empty content yields a
+    single empty line. ``"".join(...)`` reproduces ``content`` verbatim.
+    """
+    segments = content.split("\n")
+    lines = [segment + "\n" for segment in segments[:-1]]
+    lines.append(segments[-1])
+    return lines
+
+
+def _apply_replace_lines(content: str, edits: list[tuple[int, str]]) -> str:
+    r"""Apply literal 1-based line replacements to ``content``.
+
+    Each ``new_line`` is written **verbatim** in place of the target line,
+    including any trailing newline the caller wants to keep — the editor never
+    adds a separator. An empty ``new_line`` deletes the line entirely (content
+    and its terminator), and a ``new_line`` containing embedded newlines expands
+    one line into several.
+
+    Raises :class:`ValueError` when no edits are provided, when any line number
+    is out of range, or when a line number is targeted more than once.
     """
     if not edits:
         raise ValueError("At least one line edit must be provided.")
-    had_trailing_newline = content.endswith("\n")
-    lines = content.splitlines()
+    lines = _split_lines_keepends(content)
     seen: set[int] = set()
     for line_number, _ in edits:
         if line_number in seen:
@@ -247,8 +267,7 @@ def _apply_replace_lines(content: str, edits: list[tuple[int, str]]) -> str:
             raise ValueError(f"line_number {line_number} is out of range (file has {len(lines)} lines).")
     for line_number, new_line in edits:
         lines[line_number - 1] = new_line
-    result = "\n".join(lines)
-    return result + "\n" if had_trailing_newline else result
+    return "".join(lines)
 
 
 def _line_edits(edits: list[Any]) -> list[tuple[int, str]]:
@@ -1124,10 +1143,19 @@ class _ReplaceInput(BaseModel):
 
 
 class _LineEdit(BaseModel):
-    """A single whole-line replacement for ``file_access_replace_lines``."""
+    """A single literal line replacement for ``file_access_replace_lines``."""
 
     line_number: Annotated[int, Field(description="1-based line number to replace.")]
-    new_line: Annotated[str, Field(description="Replacement content for the whole line (no trailing newline).")]
+    new_line: Annotated[
+        str,
+        Field(
+            description=(
+                "Literal replacement text for the line, including any trailing newline you want to keep "
+                "(the editor does not add one). Set to an empty string to delete the line entirely, "
+                "including its line break."
+            )
+        ),
+    ]
 
 
 class _ReplaceLinesInput(BaseModel):
@@ -1136,7 +1164,7 @@ class _ReplaceLinesInput(BaseModel):
     file_name: Annotated[str, Field(description="Name (relative path) of the file to modify.")]
     edits: Annotated[
         list[_LineEdit],
-        Field(description="List of 1-based line numbers and their replacement content."),
+        Field(description="List of 1-based line numbers and their literal replacement text."),
     ]
 
 
@@ -1448,7 +1476,7 @@ class FileAccessProvider(ContextProvider):
             approval_mode="always_require",
         )
         async def file_access_replace_lines(file_name: str, edits: list[_LineEdit]) -> str:
-            """Replace whole lines in a file. Provide a list of edits, each with a 1-based line_number and the new_line content. Fails on out-of-range or duplicate line numbers."""  # noqa: E501
+            """Replace lines in a file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers."""  # noqa: E501
             try:
                 normalized = _normalize_relative_path(file_name)
                 async with self._write_lock:

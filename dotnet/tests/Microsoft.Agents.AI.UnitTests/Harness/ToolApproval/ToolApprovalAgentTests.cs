@@ -1683,7 +1683,7 @@ public class ToolApprovalAgentTests
     [Theory]
     [InlineData("ReadTool")]
     [InlineData("DangerousTool")]
-    [InlineData("file_access_delete_file")]
+    [InlineData("file_access_delete")]
     public async Task AllToolsAutoApprovalRule_ApprovesAnyToolAsync(string toolName)
     {
         // Arrange

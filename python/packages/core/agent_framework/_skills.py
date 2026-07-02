@@ -34,7 +34,8 @@ Skills can come from different sources:
   skills from arbitrary origins (REST APIs, databases, etc.).
 
 Multiple sources can be composed using :class:`AggregatingSkillsSource`,
-:class:`FilteringSkillsSource`, and :class:`DeduplicatingSkillsSource`.
+:class:`FilteringSkillsSource`, :class:`DeduplicatingSkillsSource`, and
+:class:`CachingSkillsSource`.
 
 **Security:** file-based skill metadata is XML-escaped before prompt injection, and
 file-based resource reads are guarded against path traversal and symlink escape.
@@ -2056,12 +2057,16 @@ class SkillsProvider(ContextProvider):
         else:
             source = DeduplicatingSkillsSource(InMemorySkillsSource(list(source)))
 
+        # Caching is a composable pipeline layer: wrap the resolved source in a
+        # CachingSkillsSource so the (potentially expensive) skills discovery
+        # runs once and is reused on subsequent runs. Pass disable_caching=True
+        # to re-query the source on every invocation instead.
+        if not disable_caching:
+            source = CachingSkillsSource(source)
+
         self._source = source
         self._instruction_template = instruction_template
         self._disable_caching = disable_caching
-
-        # Lazy-initialized via _get_or_create_context / _create_context
-        self._cached_context: tuple[Sequence[Skill], str | None, list[FunctionTool]] | None = None
 
     @classmethod
     def from_paths(
@@ -2214,8 +2219,11 @@ class SkillsProvider(ContextProvider):
     async def _create_context(self) -> tuple[Sequence[Skill], str | None, list[FunctionTool]]:
         """Build skills, instructions, and tools from the source.
 
-        Always performs a fresh build by querying the source and
-        constructing the instruction prompt and tool definitions.
+        Queries the source for skills and constructs the instruction prompt
+        and tool definitions.  Caching of the skills list is handled by the
+        source pipeline (see :class:`CachingSkillsSource`), so this method
+        rebuilds instructions and tools from the (possibly cached) skills on
+        every call.
 
         Returns:
             A tuple of ``(skills, instructions, tools)``.
@@ -2234,28 +2242,6 @@ class SkillsProvider(ContextProvider):
 
         return skills, instructions, tools
 
-    async def _get_or_create_context(self) -> tuple[Sequence[Skill], str | None, list[FunctionTool]]:
-        """Return the cached context, building it on first call.
-
-        On the first call, delegates to :meth:`_create_context` and caches
-        the result.  Subsequent calls return the cached result immediately.
-        If the first build fails, the cache is reset so the next call
-        retries.
-
-        Returns:
-            A tuple of ``(skills, instructions, tools)``.
-        """
-        if self._cached_context is not None:
-            return self._cached_context
-
-        try:
-            result = await self._create_context()
-            self._cached_context = result
-            return result
-        except Exception:
-            self._cached_context = None
-            raise
-
     async def before_run(
         self,
         *,
@@ -2266,11 +2252,12 @@ class SkillsProvider(ContextProvider):
     ) -> None:
         """Inject skill instructions and tools into the session context.
 
-        Called by the framework before the agent runs.  On the first call,
-        loads skills from the configured source asynchronously and builds
-        the instruction prompt and tool definitions.  When at least one
-        skill is registered, appends the skill-list system prompt and the
-        ``load_skill`` / ``read_skill_resource`` tools to *context*.
+        Called by the framework before the agent runs.  Loads skills from the
+        configured source (the skills list is cached by the source pipeline
+        unless ``disable_caching=True``) and builds the instruction prompt and
+        tool definitions.  When at least one skill is registered, appends the
+        skill-list system prompt and the ``load_skill`` /
+        ``read_skill_resource`` tools to *context*.
 
         When any registered skill defines one or more scripts (file-based or
         code-based), the system prompt also includes script-runner
@@ -2283,10 +2270,7 @@ class SkillsProvider(ContextProvider):
             context: Session context to extend with instructions and tools.
             state: Mutable per-run state dictionary (unused by this provider).
         """
-        if self._disable_caching:
-            skills, instructions, tools = await self._create_context()
-        else:
-            skills, instructions, tools = await self._get_or_create_context()
+        skills, instructions, tools = await self._create_context()
 
         if not skills:
             return
@@ -2953,13 +2937,12 @@ class FileSkillsSource(SkillsSource):
 
             resources.append(rel_path)
 
-        # Recurse into subdirectories if within depth limit
+        # Recurse into subdirectories if within depth limit.
+        # Subdirectories that contain their own SKILL.md are NOT skipped: a nested
+        # SKILL.md is not an independent skill (see _discover_skill_directories), so
+        # its contents belong to this skill.
         if current_depth < self._search_depth:
             for subdir in subdirectories:
-                # Skip subdirectories that contain their own SKILL.md — they are
-                # separate skills and their files should not be attached to this one.
-                if (subdir / SKILL_FILE_NAME).is_file():
-                    continue
                 self._scan_directory_for_resources(
                     target_dir=subdir,
                     skill_dir=skill_dir,
@@ -3104,13 +3087,12 @@ class FileSkillsSource(SkillsSource):
 
             scripts.append(rel_path)
 
-        # Recurse into subdirectories if within depth limit
+        # Recurse into subdirectories if within depth limit.
+        # Subdirectories that contain their own SKILL.md are NOT skipped: a nested
+        # SKILL.md is not an independent skill (see _discover_skill_directories), so
+        # its contents belong to this skill.
         if current_depth < self._search_depth:
             for subdir in subdirectories:
-                # Skip subdirectories that contain their own SKILL.md — they are
-                # separate skills and their files should not be attached to this one.
-                if (subdir / SKILL_FILE_NAME).is_file():
-                    continue
                 self._scan_directory_for_scripts(
                     target_dir=subdir,
                     skill_dir=skill_dir,
@@ -3327,7 +3309,10 @@ class FileSkillsSource(SkillsSource):
     def _discover_skill_directories(skill_paths: Sequence[str]) -> list[str]:
         """Return absolute paths of all directories that contain a ``SKILL.md`` file.
 
-        Recursively searches each root path up to :data:`MAX_SEARCH_DEPTH`.
+        Recursively searches each root path up to :data:`MAX_SEARCH_DEPTH`. Once a
+        ``SKILL.md`` is found in a directory, that directory is the skill root and the
+        search does not descend into its subdirectories: everything beneath a skill
+        boundary is part of that skill, not an independent skill root.
 
         Args:
             skill_paths: Root directory paths to search.
@@ -3340,7 +3325,10 @@ class FileSkillsSource(SkillsSource):
         def _search(directory: str, current_depth: int) -> None:
             dir_path = Path(directory)
             if (dir_path / SKILL_FILE_NAME).is_file():
+                # This directory is a skill root. Subdirectories are part of this
+                # skill and must not be treated as independent skill roots.
                 discovered.append(str(dir_path.absolute()))
+                return
 
             if current_depth >= MAX_SEARCH_DEPTH:
                 return
@@ -3523,6 +3511,67 @@ class FilteringSkillsSource(DelegatingSkillsSource):
         """
         skills = await self._inner_source.get_skills()
         return [s for s in skills if self._predicate(s)]
+
+
+@experimental(feature_id=ExperimentalFeature.SKILLS)
+class CachingSkillsSource(DelegatingSkillsSource):
+    """Decorator that caches the skills list returned by an inner source.
+
+    The first call to :meth:`get_skills` queries the inner source and caches
+    the resulting list; subsequent calls return the cached list without
+    re-querying the inner source.  This makes caching a composable layer in
+    the skills-source pipeline rather than logic baked into a provider.
+
+    Caching is useful when the inner source is expensive to query — for
+    example, a :class:`FileSkillsSource` that walks the filesystem on every
+    call, or an :class:`MCPSkillsSource` that makes network requests.  Skills
+    are typically static discovery metadata, so querying once and reusing the
+    result is a pure performance win.
+
+    Concurrency: concurrent callers share a single in-flight fetch, so the
+    inner source is queried at most once even under concurrent access.  If the
+    fetch fails (or is cancelled), the cache is left empty so the next call
+    retries.
+
+    Examples:
+        .. code-block:: python
+
+            cached = CachingSkillsSource(expensive_source)
+            skills = await cached.get_skills()  # queries the inner source
+            skills = await cached.get_skills()  # returns the cached list
+    """
+
+    def __init__(self, inner_source: SkillsSource) -> None:
+        """Initialize a CachingSkillsSource.
+
+        Args:
+            inner_source: The source whose results will be cached.
+        """
+        super().__init__(inner_source)
+        self._lock = asyncio.Lock()
+        self._cached_skills: list[Skill] | None = None
+
+    async def get_skills(self) -> list[Skill]:
+        """Return the inner source's skills, caching them on first call.
+
+        Returns:
+            The cached list of :class:`Skill` instances.  On the first call
+            the inner source is queried; subsequent calls return the cached
+            list.  If the first query fails, the cache is not populated and
+            the next call retries.
+        """
+        if self._cached_skills is not None:
+            return self._cached_skills
+
+        async with self._lock:
+            # Another coroutine may have populated the cache while we awaited
+            # the lock; re-check before querying the inner source.
+            if self._cached_skills is not None:
+                return self._cached_skills
+
+            skills = await self._inner_source.get_skills()
+            self._cached_skills = skills
+            return skills
 
 
 class AggregatingSkillsSource(SkillsSource):

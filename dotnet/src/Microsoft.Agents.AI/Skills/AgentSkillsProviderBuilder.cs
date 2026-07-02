@@ -2,9 +2,7 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Logging;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -39,7 +37,6 @@ namespace Microsoft.Agents.AI;
 ///     .Build();
 /// </code>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentSkillsProviderBuilder
 {
     private readonly List<Func<AgentFileSkillScriptRunner?, ILoggerFactory?, AgentSkillsSource>> _sourceFactories = [];

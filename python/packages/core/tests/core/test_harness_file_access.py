@@ -1004,23 +1004,66 @@ async def test_file_access_replace(chat_client_base: SupportsChatGetResponse) ->
 
 
 async def test_file_access_replace_lines(chat_client_base: SupportsChatGetResponse) -> None:
-    """``file_access_replace_lines`` should replace whole 1-based lines and reject bad input."""
+    """``file_access_replace_lines`` should apply literal 1-based line edits and reject bad input."""
     tools = await _prepare_access_tools(chat_client_base)
     save = _tool_by_name(tools, "file_access_write")
     read = _tool_by_name(tools, "file_access_read")
     replace_lines = _tool_by_name(tools, "file_access_replace_lines")
 
-    await save.invoke(arguments={"file_name": "a.txt", "content": "one\ntwo\nthree"})
+    async def write(content: str) -> None:
+        await save.invoke(arguments={"file_name": "a.txt", "content": content, "overwrite": True})
 
+    async def current() -> str:
+        return _text((await read.invoke(arguments={"file_name": "a.txt"}))[0])
+
+    # Literal replacement: the caller supplies the trailing newline.
+    await write("one\ntwo\nthree")
     done = await replace_lines.invoke(
-        arguments={"file_name": "a.txt", "edits": [{"line_number": 2, "new_line": "TWO"}]}
+        arguments={"file_name": "a.txt", "edits": [{"line_number": 2, "new_line": "TWO\n"}]}
     )
     assert "1 line" in _text(done[0])
-    assert _text((await read.invoke(arguments={"file_name": "a.txt"}))[0]) == "one\nTWO\nthree"
+    assert await current() == "one\nTWO\nthree"
+
+    # Empty new_line deletes a middle line, including its terminator.
+    await write("line1\nline2\nline3\n")
+    await replace_lines.invoke(arguments={"file_name": "a.txt", "edits": [{"line_number": 2, "new_line": ""}]})
+    assert await current() == "line1\nline3\n"
+
+    # Empty new_line deletes the last line even when it has no terminator.
+    await write("line1\nline2")
+    await replace_lines.invoke(arguments={"file_name": "a.txt", "edits": [{"line_number": 2, "new_line": ""}]})
+    assert await current() == "line1\n"
+
+    # Delete + replace in the same call.
+    await write("a\nb\nc\n")
+    await replace_lines.invoke(
+        arguments={
+            "file_name": "a.txt",
+            "edits": [{"line_number": 1, "new_line": ""}, {"line_number": 3, "new_line": "C\n"}],
+        }
+    )
+    assert await current() == "b\nC\n"
+
+    # Embedded newlines expand one line into several.
+    await write("a\nb\nc\n")
+    await replace_lines.invoke(arguments={"file_name": "a.txt", "edits": [{"line_number": 2, "new_line": "b1\nb2\n"}]})
+    assert await current() == "a\nb1\nb2\nc\n"
+
+    # CRLF terminators are preserved when the caller keeps them.
+    await write("line1\r\nline2\r\nline3")
+    await replace_lines.invoke(
+        arguments={"file_name": "a.txt", "edits": [{"line_number": 2, "new_line": "CHANGED\r\n"}]}
+    )
+    assert await current() == "line1\r\nCHANGED\r\nline3"
 
     # Out-of-range line -> failure.
+    await write("one\ntwo\nthree")
     oor = await replace_lines.invoke(arguments={"file_name": "a.txt", "edits": [{"line_number": 9, "new_line": "x"}]})
     assert "out of range" in _text(oor[0])
+
+    # Empty edits list -> failure.
+    empty = await replace_lines.invoke(arguments={"file_name": "a.txt", "edits": []})
+    assert "At least one line edit" in _text(empty[0])
 
     # Duplicate line numbers -> failure.
     dup = await replace_lines.invoke(
@@ -1030,6 +1073,52 @@ async def test_file_access_replace_lines(chat_client_base: SupportsChatGetRespon
         }
     )
     assert "Duplicate" in _text(dup[0])
+
+
+async def test_file_access_grep_line_numbers_are_editable(chat_client_base: SupportsChatGetResponse) -> None:
+    """A ``line_number`` returned by ``file_access_grep`` must be in range for ``replace_lines``.
+
+    This is the core cross-tool invariant: agents locate lines with grep and then edit
+    them by number, so the two tools must enumerate lines identically -- including the
+    trailing empty line of a newline-terminated file and interior blank lines.
+    """
+    tools = await _prepare_access_tools(chat_client_base)
+    save = _tool_by_name(tools, "file_access_write")
+    read = _tool_by_name(tools, "file_access_read")
+    grep = _tool_by_name(tools, "file_access_grep")
+    replace_lines = _tool_by_name(tools, "file_access_replace_lines")
+
+    async def write(content: str) -> None:
+        await save.invoke(arguments={"file_name": "a.txt", "content": content, "overwrite": True})
+
+    async def current() -> str:
+        return _text((await read.invoke(arguments={"file_name": "a.txt"}))[0])
+
+    async def grep_line_numbers(pattern: str) -> list[int]:
+        result = await grep.invoke(arguments={"regex_pattern": pattern, "glob_pattern": "a.txt"})
+        payload = json.loads(_text(result[0]))
+        return [match["line_number"] for entry in payload for match in entry["matching_lines"]]
+
+    # Interior blank line: grep ^$ finds it, replace_lines can fill it in range.
+    # The trailing empty line (line 4) is also exposed by grep -- both must be editable.
+    await write("a\n\nc\n")
+    blanks = await grep_line_numbers("^$")
+    assert blanks == [2, 4]
+    await replace_lines.invoke(
+        arguments={"file_name": "a.txt", "edits": [{"line_number": blanks[0], "new_line": "b\n"}]}
+    )
+    assert await current() == "a\nb\nc\n"
+
+    # Trailing empty line of a newline-terminated file: grep exposes it and it is
+    # editable (e.g. to append), rather than being rejected as out of range.
+    await write("a\nb\n")
+    trailing = await grep_line_numbers("^$")
+    assert trailing == [3]
+    appended = await replace_lines.invoke(
+        arguments={"file_name": "a.txt", "edits": [{"line_number": trailing[0], "new_line": "c\n"}]}
+    )
+    assert "out of range" not in _text(appended[0])
+    assert await current() == "a\nb\nc\n"
 
 
 async def test_file_access_disable_write_tools_hides_write_tools(
