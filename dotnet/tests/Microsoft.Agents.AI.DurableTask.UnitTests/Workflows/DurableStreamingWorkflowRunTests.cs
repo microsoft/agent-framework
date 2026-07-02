@@ -263,6 +263,37 @@ public sealed class DurableStreamingWorkflowRunTests
     }
 
     [Fact]
+    public async Task WatchStreamAsync_WorkflowOutputEvent_LegacySourceId_RoundTripsCorrectlyAsync()
+    {
+        // Arrange — simulate a legacy payload that uses "sourceId" instead of "executorId"
+        const string legacyEventJson = """{"sourceId":"legacy-executor","data":"legacy-data"}""";
+        string typeName = typeof(WorkflowOutputEvent).AssemblyQualifiedName!;
+        string serializedEvent = JsonSerializer.Serialize(
+            new { typeName, data = legacyEventJson },
+            DurableSerialization.Options);
+        string serializedOutput = SerializeWorkflowResult("done", [serializedEvent]);
+
+        Mock<DurableTaskClient> mockClient = new("test");
+        mockClient.Setup(c => c.GetInstanceAsync(InstanceId, true, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateMetadata(OrchestrationRuntimeStatus.Completed, serializedOutput: serializedOutput));
+
+        DurableStreamingWorkflowRun run = new(mockClient.Object, InstanceId, CreateTestWorkflow());
+
+        // Act
+        List<WorkflowEvent> events = [];
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Equal(2, events.Count);
+        WorkflowOutputEvent result = Assert.IsType<WorkflowOutputEvent>(events[0]);
+        Assert.Equal("legacy-executor", result.ExecutorId);
+        Assert.Equal("legacy-data", result.Data?.ToString());
+    }
+
+    [Fact]
     public async Task WatchStreamAsync_CompletedWithoutWrapper_YieldsFailedEventAsync()
     {
         // Arrange — output not wrapped in DurableWorkflowResult (indicates a bug)
