@@ -266,10 +266,10 @@ public sealed class DurableStreamingWorkflowRunTests
     public async Task WatchStreamAsync_WorkflowOutputEvent_LegacySourceId_RoundTripsCorrectlyAsync()
     {
         // Arrange — simulate a legacy payload that uses "sourceId" instead of "executorId"
-        const string legacyEventJson = """{"sourceId":"legacy-executor","data":"legacy-data"}""";
+        const string LegacyEventJson = """{"sourceId":"legacy-executor","data":"legacy-data"}""";
         string typeName = typeof(WorkflowOutputEvent).AssemblyQualifiedName!;
         string serializedEvent = JsonSerializer.Serialize(
-            new { typeName, data = legacyEventJson },
+            new { typeName, data = LegacyEventJson },
             DurableSerialization.Options);
         string serializedOutput = SerializeWorkflowResult("done", [serializedEvent]);
 
