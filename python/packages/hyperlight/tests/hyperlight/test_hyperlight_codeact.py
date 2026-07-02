@@ -572,6 +572,34 @@ def _create_junction_or_skip(*, link: Path, target: Path) -> None:
         pytest.skip("Created junction was not reported as a reparse point")
 
 
+def test_resolve_contained_path_reports_runtime_resolve_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    candidate = workspace / "candidate.txt"
+    candidate.write_text("content", encoding="utf-8")
+    original_resolve = type(candidate).resolve
+
+    def fail_candidate_resolve(self: Path, strict: bool = False) -> Path:
+        if self == candidate:
+            raise RuntimeError("symlink loop from candidate")
+        return original_resolve(self, strict=strict)
+
+    monkeypatch.setattr(type(candidate), "resolve", fail_candidate_resolve)
+
+    with pytest.raises(ValueError) as exc_info:
+        execute_code_module._resolve_contained_path(path=candidate, root=workspace)
+
+    message = str(exc_info.value)
+    assert "Could not resolve Hyperlight sandbox input path" in message
+    assert "validating it stays under the configured source root" in message
+    assert str(candidate) in message
+    assert str(workspace) in message
+    assert "symlink loop from candidate" in message
+
+
 def test_populate_input_dir_rejects_symlink_to_file_outside_workspace(tmp_path: Path) -> None:
     if not _symlinks_supported(tmp_path):
         pytest.skip("Symlinks not supported on this platform/environment")
@@ -941,6 +969,26 @@ def test_is_safe_output_file_rejects_parent_traversal(tmp_path: Path) -> None:
         execute_code_module._is_safe_output_file(root=output_root, host_path=output_root / ".." / "secret.txt") is False
     )
     assert execute_code_module._is_safe_output_file(root=output_root, host_path=secret) is False
+
+
+def test_is_safe_output_file_rejects_runtime_resolve_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    report = output_root / "report.txt"
+    report.write_text("artifact", encoding="utf-8")
+    original_resolve = type(report).resolve
+
+    def fail_report_resolve(self: Path, strict: bool = False) -> Path:
+        if self == report:
+            raise RuntimeError("symlink loop from output")
+        return original_resolve(self, strict=strict)
+
+    monkeypatch.setattr(type(report), "resolve", fail_report_resolve)
+
+    assert execute_code_module._is_safe_output_file(root=output_root, host_path=report) is False
 
 
 def test_parse_output_files_collects_real_output_file(tmp_path: Path) -> None:

@@ -391,13 +391,15 @@ def _is_relative_to_or_same(*, path: Path, root: Path) -> bool:
 def _resolve_contained_path(*, path: Path, root: Path) -> Path:
     try:
         resolved_path = path.resolve(strict=True)
-    except OSError as exc:
-        raise ValueError(f"Could not inspect Hyperlight sandbox input path: {path}") from exc
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(
+            "Could not resolve Hyperlight sandbox input path while validating it stays under the configured "
+            f"source root: {path}. Source root: {root}. Ensure the path exists, is accessible, and does not "
+            f"contain symlink loops. Original error: {exc}"
+        ) from exc
 
     if not _is_relative_to_or_same(path=resolved_path, root=root):
-        raise ValueError(
-            f"Refusing to stage Hyperlight sandbox input path outside the configured source root: {path}"
-        )
+        raise ValueError(f"Refusing to stage Hyperlight sandbox input path outside the configured source root: {path}")
 
     return resolved_path
 
@@ -419,7 +421,7 @@ def _is_resolved_under_root(*, path: Path, root: Path) -> bool:
     try:
         resolved_path = path.resolve(strict=True)
         resolved_root = root.resolve(strict=True)
-    except OSError:
+    except (OSError, RuntimeError):
         return False
     return _is_relative_to_or_same(path=resolved_path, root=resolved_root)
 
@@ -615,7 +617,7 @@ def _path_tree_signature(path: Path) -> tuple[tuple[str, int, int], ...]:
     if path.is_symlink():
         try:
             path = path.resolve(strict=True)
-        except OSError:
+        except (OSError, RuntimeError):
             return ()
     if path.is_file():
         path_stat = path.lstat()
