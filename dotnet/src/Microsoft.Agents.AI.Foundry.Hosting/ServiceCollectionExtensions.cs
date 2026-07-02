@@ -3,6 +3,7 @@
 using System;
 using System.ClientModel.Primitives;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using Azure.AI.AgentServer.Responses;
 using Azure.Core;
@@ -12,6 +13,8 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -152,6 +155,13 @@ public static class FoundryHostingExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(credential);
 
+        if (services.Any(d => d.ServiceType == typeof(FoundryToolboxService)))
+        {
+            throw new InvalidOperationException(
+                $"{nameof(FoundryToolboxService)} is already registered. " +
+                $"Call {nameof(AddFoundryToolboxes)} only once per service collection.");
+        }
+
         services.Configure<FoundryToolboxOptions>(opt =>
         {
             foreach (var name in toolboxNames)
@@ -165,22 +175,20 @@ public static class FoundryHostingExtensions
             configureOptions?.Invoke(opt);
         });
 
-        // Register the caller-provided credential as the default TokenCredential for toolbox access.
-        services.AddSingleton(credential);
-
-        // Register FoundryToolboxService as a singleton so it can be injected into the handler
-        services.TryAddSingleton<FoundryToolboxService>();
-
-        // AddHostedService uses TryAddEnumerable internally, so calling AddFoundryToolboxes
-        // multiple times will not invoke StartAsync twice on the same singleton.
+        // Register FoundryToolboxService as a singleton, injecting the caller-provided credential
+        // directly rather than resolving TokenCredential from DI.
+        services.AddSingleton(sp => new FoundryToolboxService(
+            sp.GetRequiredService<IOptions<FoundryToolboxOptions>>(),
+            credential: credential,
+            sp.GetService<ILogger<FoundryToolboxService>>()));
         services.AddHostedService(sp => sp.GetRequiredService<FoundryToolboxService>());
 
         // Register the toolbox health check on the same /readiness pipeline that
         // MapFoundryResponses maps. This gates the Foundry hosted runtime's readiness
         // probe (per container-image-spec.md §3.1) on the outcome of the pre-registered
         // toolbox connections opened in FoundryToolboxService.StartAsync.
-        // AddCheck<T>(name, ...) does NOT dedupe by name, so guard against duplicate
-        // registration when AddFoundryToolboxes is called multiple times.
+        // AddCheck<T>(name, ...) does NOT dedupe by name, so guard against a host that
+        // already registered a health check with this name.
         const string HealthCheckName = "foundry-toolbox";
         services.AddHealthChecks();
         services.Configure<HealthCheckServiceOptions>(opts =>
