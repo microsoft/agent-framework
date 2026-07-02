@@ -166,7 +166,7 @@ public static class FoundryHostingExtensions
         });
 
         // Register the caller-provided credential as the default TokenCredential for toolbox access.
-        services.AddSingleton<TokenCredential>(credential);
+        services.AddSingleton(credential);
 
         // Register FoundryToolboxService as a singleton so it can be injected into the handler
         services.TryAddSingleton<FoundryToolboxService>();
