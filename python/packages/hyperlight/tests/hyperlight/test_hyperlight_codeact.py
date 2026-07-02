@@ -72,17 +72,22 @@ def _hyperlight_integration_runtime_skip_reason() -> str | None:
     if (reason := _hyperlight_integration_static_skip_reason()) is not None:
         return reason
 
+    sandbox: Any | None = None
     try:
         sandbox_cls = execute_code_module._load_sandbox_class()
-        sandbox = sandbox_cls(
+        sandbox_instance = sandbox_cls(
             backend=execute_code_module.DEFAULT_HYPERLIGHT_BACKEND,
             module=execute_code_module.DEFAULT_HYPERLIGHT_MODULE,
         )
-        sandbox.run("None")
+        sandbox = sandbox_instance
+        sandbox_instance.run("None")
     except RuntimeError as exc:
         message = str(exc)
         if "no hypervisor was found for sandbox" in message.lower():
             return "Hyperlight integration tests require a runner with a working Hyperlight hypervisor."
+    finally:
+        if sandbox is not None:
+            _close_sandbox(sandbox)
 
     return None
 
@@ -146,6 +151,23 @@ def span_exporter(monkeypatch) -> Generator[InMemorySpanExporter]:
         exporter.clear()
 
 
+def _close_sandbox(sandbox: Any) -> None:
+    close_hook = getattr(sandbox, "close", None) or getattr(sandbox, "shutdown", None)
+    if callable(close_hook):
+        with contextlib.suppress(Exception):
+            close_hook()
+
+
+def _close_execute_code_registry(execute_code: HyperlightExecuteCodeTool) -> None:
+    close_hook = getattr(execute_code._registry, "close", None)
+    if callable(close_hook):
+        close_hook()
+
+
+def _close_provider_registry(provider: HyperlightCodeActProvider) -> None:
+    _close_execute_code_registry(provider._execute_code_tool)
+
+
 @pytest.fixture(scope="module")
 def shared_sandbox():
     """Long-lived sandbox with snapshot/restore for read-mostly tests.
@@ -163,7 +185,10 @@ def shared_sandbox():
     )
     sandbox.run("None")
     snapshot = sandbox.snapshot()
-    yield sandbox, snapshot
+    try:
+        yield sandbox, snapshot
+    finally:
+        _close_sandbox(sandbox)
 
 
 @pytest.fixture
@@ -190,7 +215,10 @@ def fresh_sandbox():
         module=execute_code_module.DEFAULT_HYPERLIGHT_MODULE,
         temp_output=True,
     )
-    yield sandbox
+    try:
+        yield sandbox
+    finally:
+        _close_sandbox(sandbox)
 
 
 @tool(approval_mode="never_require")
@@ -1233,10 +1261,13 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_fake_sandbox(monkey
     provider = HyperlightCodeActProvider(tools=[compute])
     agent = Agent(client=client, context_providers=[provider])
 
-    response = await agent.run("Use the sandbox to add 20 and 22.")
+    try:
+        response = await agent.run("Use the sandbox to add 20 and 22.")
 
-    assert response.text == "The sandbox returned 42."
-    assert client.call_count == 2
+        assert response.text == "The sandbox returned 42."
+        assert client.call_count == 2
+    finally:
+        _close_provider_registry(provider)
     assert len(_FakeSandbox.instances) == 1
     assert "compute" in _FakeSandbox.instances[0].registered_tools
 
@@ -1250,10 +1281,13 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> N
     provider = HyperlightCodeActProvider(tools=[compute])
     agent = Agent(client=client, context_providers=[provider])
 
-    response = await agent.run("Use the sandbox to add 20 and 22.")
+    try:
+        response = await agent.run("Use the sandbox to add 20 and 22.")
 
-    assert response.text == "The sandbox returned 42."
-    assert client.call_count == 2
+        assert response.text == "The sandbox returned 42."
+        assert client.call_count == 2
+    finally:
+        _close_provider_registry(provider)
 
 
 @pytest.mark.integration
@@ -1272,41 +1306,44 @@ async def test_provider_run_tool_writes_files_with_real_sandbox(tmp_path: Path) 
     run_tool = context.tools[0][1][0]
     assert isinstance(run_tool, HyperlightExecuteCodeTool)
 
-    result = await run_tool.invoke(
-        arguments={
-            "code": (
-                'payload = "hello from sandbox"\n'
-                "output_path = None\n"
-                'for candidate in ("/output/result.txt",):\n'
-                "    try:\n"
-                '        with open(candidate, "w", encoding="utf-8") as f:\n'
-                "            f.write(payload)\n"
-                "    except OSError:\n"
-                "        continue\n"
-                "    output_path = candidate\n"
-                "    break\n"
-                'assert output_path is not None, "output path unavailable"\n'
-                'print("validated")\n'
-            )
-        }
-    )
+    try:
+        result = await run_tool.invoke(
+            arguments={
+                "code": (
+                    'payload = "hello from sandbox"\n'
+                    "output_path = None\n"
+                    'for candidate in ("/output/result.txt",):\n'
+                    "    try:\n"
+                    '        with open(candidate, "w", encoding="utf-8") as f:\n'
+                    "            f.write(payload)\n"
+                    "    except OSError:\n"
+                    "        continue\n"
+                    "    output_path = candidate\n"
+                    "    break\n"
+                    'assert output_path is not None, "output path unavailable"\n'
+                    'print("validated")\n'
+                )
+            }
+        )
 
-    outputs = result
-    error_outputs = [
-        f"{item.message}: {item.error_details}"
-        for item in outputs
-        if item.type == "error" and item.error_details is not None
-    ]
-    assert not error_outputs, error_outputs
+        outputs = result
+        error_outputs = [
+            f"{item.message}: {item.error_details}"
+            for item in outputs
+            if item.type == "error" and item.error_details is not None
+        ]
+        assert not error_outputs, error_outputs
 
-    text_output = next((item for item in outputs if item.type == "text" and item.text is not None), None)
-    if text_output is not None:
-        assert text_output.text == "validated\n"
+        text_output = next((item for item in outputs if item.type == "text" and item.text is not None), None)
+        if text_output is not None:
+            assert text_output.text == "validated\n"
 
-    file_output = next((item for item in outputs if item.type == "data"), None)
-    if file_output is not None:
-        assert file_output.uri is not None and file_output.uri.startswith("data:")
-        assert file_output.additional_properties["path"] in {"/output/result.txt", "/output/output/result.txt"}
+        file_output = next((item for item in outputs if item.type == "data"), None)
+        if file_output is not None:
+            assert file_output.uri is not None and file_output.uri.startswith("data:")
+            assert file_output.additional_properties["path"] in {"/output/result.txt", "/output/output/result.txt"}
+    finally:
+        _close_execute_code_registry(run_tool)
 
 
 @pytest.mark.integration
@@ -1325,46 +1362,49 @@ async def test_provider_run_tool_pings_bing_with_real_sandbox() -> None:
     run_tool = context.tools[0][1][0]
     assert isinstance(run_tool, HyperlightExecuteCodeTool)
 
-    result = await run_tool.invoke(
-        arguments={
-            "code": (
-                "import _socket\n\n"
-                'addresses = _socket.getaddrinfo("bing.com", 80, _socket.AF_INET, _socket.SOCK_STREAM)\n'
-                'assert addresses, "bing.com did not resolve"\n'
-                "last_error = None\n"
-                "for family, socktype, proto, _, sockaddr in addresses:\n"
-                "    connection = None\n"
-                "    try:\n"
-                "        connection = _socket.socket(family, socktype, proto)\n"
-                "        connection.settimeout(10)\n"
-                "        connection.connect(sockaddr)\n"
-                '        print("pinged bing.com")\n'
-                "        break\n"
-                "    except OSError as exc:\n"
-                "        last_error = exc\n"
-                "    finally:\n"
-                "        if connection is not None:\n"
-                "            try:\n"
-                "                connection.close()\n"
-                "            except OSError:\n"
-                "                pass\n"
-                "else:\n"
-                '    raise last_error or RuntimeError("unable to reach bing.com")\n'
-            )
-        }
-    )
+    try:
+        result = await run_tool.invoke(
+            arguments={
+                "code": (
+                    "import _socket\n\n"
+                    'addresses = _socket.getaddrinfo("bing.com", 80, _socket.AF_INET, _socket.SOCK_STREAM)\n'
+                    'assert addresses, "bing.com did not resolve"\n'
+                    "last_error = None\n"
+                    "for family, socktype, proto, _, sockaddr in addresses:\n"
+                    "    connection = None\n"
+                    "    try:\n"
+                    "        connection = _socket.socket(family, socktype, proto)\n"
+                    "        connection.settimeout(10)\n"
+                    "        connection.connect(sockaddr)\n"
+                    '        print("pinged bing.com")\n'
+                    "        break\n"
+                    "    except OSError as exc:\n"
+                    "        last_error = exc\n"
+                    "    finally:\n"
+                    "        if connection is not None:\n"
+                    "            try:\n"
+                    "                connection.close()\n"
+                    "            except OSError:\n"
+                    "                pass\n"
+                    "else:\n"
+                    '    raise last_error or RuntimeError("unable to reach bing.com")\n'
+                )
+            }
+        )
 
-    outputs = result
-    error_outputs = [
-        f"{item.message}: {item.error_details}"
-        for item in outputs
-        if item.type == "error" and item.error_details is not None
-    ]
-    assert not error_outputs, error_outputs
+        outputs = result
+        error_outputs = [
+            f"{item.message}: {item.error_details}"
+            for item in outputs
+            if item.type == "error" and item.error_details is not None
+        ]
+        assert not error_outputs, error_outputs
 
-    text_output = next((item for item in outputs if item.type == "text" and item.text is not None), None)
-    if text_output is not None:
-        assert text_output.text == "pinged bing.com\n"
+        text_output = next((item for item in outputs if item.type == "text" and item.text is not None), None)
+        if text_output is not None:
+            assert text_output.text == "pinged bing.com\n"
+    finally:
+        _close_execute_code_registry(run_tool)
 
 
 # ---------------------------------------------------------------------------
@@ -1475,25 +1515,29 @@ async def test_output_dir_cleared_between_invocations() -> None:
     run_tool = context.tools[0][1][0]
     assert isinstance(run_tool, HyperlightExecuteCodeTool)
 
-    # First invocation: write a file
-    result1 = await run_tool.invoke(
-        arguments={"code": ('with open("/output/stale.txt", "w") as f:\n    f.write("first")\nprint("wrote")\n')}
-    )
-    assert result1[0].type == "text" or result1[0].type == "data"
-    outputs1 = result1
-    assert any(
-        item.type == "data" and "stale.txt" in (item.additional_properties or {}).get("path", "") for item in outputs1
-    ), "First invocation should produce stale.txt"
+    try:
+        # First invocation: write a file
+        result1 = await run_tool.invoke(
+            arguments={"code": ('with open("/output/stale.txt", "w") as f:\n    f.write("first")\nprint("wrote")\n')}
+        )
+        assert result1[0].type == "text" or result1[0].type == "data"
+        outputs1 = result1
+        assert any(
+            item.type == "data" and "stale.txt" in (item.additional_properties or {}).get("path", "")
+            for item in outputs1
+        ), "First invocation should produce stale.txt"
 
-    # Second invocation: no file writes
-    result2 = await run_tool.invoke(arguments={"code": 'print("clean")\n'})
-    outputs2 = result2
-    stale_files = [
-        item
-        for item in outputs2
-        if item.type == "data" and "stale.txt" in (item.additional_properties or {}).get("path", "")
-    ]
-    assert not stale_files, "Stale output file leaked into second invocation"
+        # Second invocation: no file writes
+        result2 = await run_tool.invoke(arguments={"code": 'print("clean")\n'})
+        outputs2 = result2
+        stale_files = [
+            item
+            for item in outputs2
+            if item.type == "data" and "stale.txt" in (item.additional_properties or {}).get("path", "")
+        ]
+        assert not stale_files, "Stale output file leaked into second invocation"
+    finally:
+        _close_execute_code_registry(run_tool)
 
 
 @pytest.mark.integration
@@ -1532,12 +1576,16 @@ async def test_run_code_does_not_block_event_loop() -> None:
         concurrent_ran = True
         release.set()
 
-    code_task = asyncio.create_task(run_tool.invoke(arguments={"code": 'print("done")\n'}))
-    await _concurrent_task()
-    result = await code_task
+    try:
+        code_task = asyncio.create_task(run_tool.invoke(arguments={"code": 'print("done")\n'}))
+        await _concurrent_task()
+        result = await code_task
 
-    assert concurrent_ran, "Event loop was blocked during sandbox execution"
-    assert result[0].type == "text"
+        assert concurrent_ran, "Event loop was blocked during sandbox execution"
+        assert result[0].type == "text"
+    finally:
+        release.set()
+        _close_execute_code_registry(run_tool)
 
 
 class _ThreadAffinityFakeSandbox(_FakeSandbox):
