@@ -61,7 +61,7 @@ def skip_if_no_env() -> None:
 
 
 @pytest.fixture
-async def live_provider(skip_if_no_env: None) -> AsyncGenerator[CosmosMemoryContextProvider, None]:
+async def live_provider(skip_if_no_env: None) -> AsyncGenerator[CosmosMemoryContextProvider]:
     """Create a live CosmosMemoryContextProvider with real Azure credentials."""
     provider = CosmosMemoryContextProvider(
         cosmos_endpoint=os.environ["COSMOS_ENDPOINT"],
