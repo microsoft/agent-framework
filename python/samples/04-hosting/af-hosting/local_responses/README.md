@@ -1,19 +1,29 @@
-# local_responses — Responses-only with a settings-altering hook
+# local_responses — Responses helpers with native FastAPI routes
 
-The smallest end-to-end `agent-framework-hosting` shape: one Foundry
-agent with a `@tool`, one `ResponsesChannel`, one `run_hook`. Useful as
-the entry-point sample for understanding the **channel run-hook** seam
-without any multi-channel or identity-link concerns.
+The smallest end-to-end Responses hosting shape: one Foundry agent with a
+`@tool`, one native FastAPI route, a small `SessionStore`, and the Responses
+helper functions:
 
-What the run hook demonstrates:
+- `responses_to_run(...)`
+- `responses_session_id(...)`
+- `create_response_id(...)`
+- `responses_from_run(...)`
 
-- **Strips** caller-supplied `model` / `temperature` / `store` so the
-  host owns the backing deployment and persistence settings.
-- **Forces** a `reasoning` preset (`effort=medium`, `summary=auto`) on
-  every turn — caller-side overrides are ignored.
+The sample demonstrates the lighter hosting direction. Agent Framework provides
+the run conversion and session-state pieces; FastAPI owns route registration,
+request bodies, response objects, and server startup.
 
-`app:app` is a module-level Starlette ASGI app; recommended local launch
-is Hypercorn.
+What the route demonstrates:
+
+- **Strips** caller-supplied `model` / `temperature` / `store` so the app owns
+  deployment and persistence settings.
+- **Forces** a `reasoning` preset (`effort=medium`, `summary=auto`) on every
+  turn.
+- Produces the AF messages, options, and session id that the route passes to
+  `agent.run(...)`.
+
+`app:app` is a module-level FastAPI ASGI app; recommended local launch is
+Hypercorn.
 
 ## Run
 
@@ -40,14 +50,14 @@ uv sync --group dev
 # Plain OpenAI SDK call:
 uv run python call_server.py
 
-# The client intentionally omits `model`; the host chooses the backing
-# deployment from FOUNDRY_MODEL.
+# The client intentionally omits `model`; the app chooses the backing deployment
+# from FOUNDRY_MODEL.
 
-# The script then sends a second turn, "And what about Amsterdam?",
-# using the first `response.id` as `previous_response_id`.
+# The script then sends a second turn, "And what about Amsterdam?", using the
+# first `response.id` as `previous_response_id`.
 
 # Same two-turn interaction through an Agent Framework Agent backed by
-# OpenAIChatClient, with streaming enabled:
+# OpenAIChatClient:
 uv run python call_server_af.py
 ```
 

@@ -1,28 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Minimal Responses-only hosting sample.
+"""Minimal Responses-only hosting sample with native FastAPI routes.
 
-Single agent with one ``@tool`` (``lookup_weather``), single channel
-(``ResponsesChannel``), one ``run_hook`` that demonstrates the
-settings-mutation seam over caller-supplied options.
+This sample demonstrates the helper-first hosting shape:
 
-What the hook does
-------------------
-On every Responses request the hook receives the ``ChannelRequest`` that
-the channel built from the inbound HTTP body. It:
-
-- strips ``model`` (the host owns the backing deployment), ``store``
-  (this agent owns persistence), and ``temperature`` (the configured
-  model may not honor it),
-- forces a ``reasoning`` effort + summary preset so the deployed surface
-  is consistent regardless of what the caller sent.
-
-The hook is the documented escape hatch over the uniform
-``ChannelRequest`` envelope.
+1. ``agent-framework-hosting-responses`` converts Responses request/response
+   payloads to and from Agent Framework run values.
+2. ``agent-framework-hosting`` owns shared execution state via
+   ``AgentFrameworkState`` and ``SessionStore``.
+3. FastAPI owns the route, request parsing, policy decisions, and response
+   object.
 
 Run
 ---
-``app`` is a module-level Starlette ASGI app. Recommended local launch::
+``app`` is a module-level FastAPI ASGI app. Recommended local launch::
 
     uv sync
     az login
@@ -42,16 +33,26 @@ Then call it::
 
 from __future__ import annotations
 
+import asyncio
 import os
-from dataclasses import replace
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, cast
 
-from agent_framework import Agent, FileHistoryProvider, tool
+from agent_framework import Agent, FileHistoryProvider, ResponseStream, tool
 from agent_framework_foundry import FoundryChatClient
-from agent_framework_hosting import AgentFrameworkHost, ChannelRequest
-from agent_framework_hosting_responses import ResponsesChannel
+from agent_framework_hosting import AgentFrameworkState, SessionStore
+from agent_framework_hosting_responses import (
+    create_response_id,
+    responses_from_run,
+    responses_session_id,
+    responses_stream_events_from_run,
+    responses_to_run,
+)
 from azure.identity.aio import DefaultAzureCredential
+from fastapi import Body, FastAPI, HTTPException
+from fastapi.responses import JSONResponse, StreamingResponse
+from hypercorn.asyncio import serve
+from hypercorn.config import Config
 
 SESSIONS_DIR = Path(__file__).resolve().parent / "storage" / "sessions"
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -71,37 +72,9 @@ def lookup_weather(
     return reports.get(location, f"{location} is sunny with a high of {high_temp}°C.")
 
 
-# the run hook defines what you want to allow the user to passthrough when they call your host
-# since the responses clients can call with all of the responses options,
-# you can decide with this run_hook which of those: are rejected
-# which are passed through, which are altered, which are added.
-# In this sample below, we are removing, model, temperature and store if set
-# and we add reasoning, but note that this could also be set on the Agent itself
-# the difference is that this option is specific to the Responses channel
-# so if you want to differentiate between options over channels
-# you would set the option in the run_hook, if it needs to be the same (like store)
-# you would set it in the agent.
-def run_hook(request: ChannelRequest, **_: object) -> ChannelRequest:
-    """Strip caller-supplied options the host should own and force a
-    reasoning preset."""
-    options = dict(request.options or {})
-
-    # The host owns the backing deployment; the agent's default_options
-    # own ``store``; the model may not honor ``temperature``. Strip them
-    # so the caller can't override.
-    options.pop("model", None)
-    options.pop("temperature", None)
-    options.pop("store", None)
-
-    # Force a consistent reasoning preset on every turn.
-    options["reasoning"] = {"effort": "medium", "summary": "auto"}
-
-    return replace(request, options=options or None)
-
-
-def build_host() -> AgentFrameworkHost:
-    # Here we define how our agent should run, with tools, options, etc:
-    agent = Agent(
+def create_agent() -> Agent:
+    """Create the sample weather agent."""
+    return Agent(
         client=FoundryChatClient(credential=DefaultAzureCredential()),
         name="WeatherAgent",
         instructions=(
@@ -112,15 +85,75 @@ def build_host() -> AgentFrameworkHost:
         context_providers=[FileHistoryProvider(SESSIONS_DIR)],
         default_options={"store": False},
     )
-    return AgentFrameworkHost(
-        target=agent,
-        channels=[ResponsesChannel(run_hook=run_hook)],
-        debug=True,
+
+
+app = FastAPI()
+state = AgentFrameworkState(create_agent, session_store=SessionStore)
+
+
+@app.post("/responses")
+async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | StreamingResponse:  # noqa: B008
+    """Handle one OpenAI Responses-shaped request."""
+    run = responses_to_run(body)
+    session_id = responses_session_id(body)
+    response_id = create_response_id()
+
+    options = dict(run["options"])
+    # App-specific policy: caller cannot pick deployment/persistence settings,
+    # and this sample forces a consistent reasoning preset.
+    options.pop("model", None)
+    options.pop("temperature", None)
+    options.pop("store", None)
+    options["reasoning"] = {"effort": "medium", "summary": "auto"}
+    options_for_run = cast(Any, options)
+
+    target = cast(Agent[Any], await state.get_target())
+    session = await state.get_session(session_id or response_id)
+    if run["stream"]:
+        stream = target.run(
+            run["messages"],
+            stream=True,
+            session=session,
+            options=options_for_run,
+        )
+        if not isinstance(stream, ResponseStream):
+            raise HTTPException(status_code=500, detail="agent did not return a response stream")
+        return StreamingResponse(
+            responses_stream_events_from_run(
+                stream,
+                response_id=response_id,
+                session_id=session_id,
+            ),
+            media_type="text/event-stream",
+        )
+
+    result = await target.run(
+        run["messages"],
+        session=session,
+        options=options_for_run,
+    )
+    return JSONResponse(
+        responses_from_run(
+            result,
+            response_id=response_id,
+            session_id=session_id,
+        )
     )
 
 
-app = build_host().app
+async def main() -> None:
+    """Run the sample with Hypercorn for local development."""
+    config = Config()
+    config.bind = [f"0.0.0.0:{int(os.environ.get('PORT', '8000'))}"]
+    await serve(cast(Any, app), config)
 
 
 if __name__ == "__main__":
-    build_host().serve(host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))
+    asyncio.run(main())
+
+"""
+Sample output:
+User: What is the weather in Tokyo?
+Agent: Tokyo is clear with a high of 18°C.
+Response ID: resp_...
+"""

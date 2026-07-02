@@ -4,12 +4,20 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Sequence
+
 import pytest
+from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream
 
 from agent_framework_hosting_responses import (
+    create_response_id,
     messages_from_responses_input,
     parse_responses_identity,
     parse_responses_request,
+    responses_from_run,
+    responses_session_id,
+    responses_stream_events_from_run,
+    responses_to_run,
 )
 
 
@@ -167,3 +175,124 @@ class TestParseResponsesIdentity:
 
     def test_returns_none_for_non_string(self) -> None:
         assert parse_responses_identity({"safety_identifier": 42}, "responses") is None
+
+
+class TestResponsesRunHelpers:
+    def test_create_response_id_shape(self) -> None:
+        response_id = create_response_id()
+
+        assert response_id.startswith("resp_")
+
+    def test_responses_session_id_prefers_previous_response(self) -> None:
+        assert responses_session_id({"previous_response_id": "resp_1", "conversation_id": "conv_1"}) == "resp_1"
+
+    def test_responses_session_id_uses_conversation_id(self) -> None:
+        assert responses_session_id({"conversation_id": "conv_1"}) == "conv_1"
+
+    def test_responses_session_id_returns_none_when_absent(self) -> None:
+        assert responses_session_id({"input": "hi"}) is None
+
+    def test_responses_to_run_returns_messages_options_and_stream(self) -> None:
+        run = responses_to_run({
+            "input": "hi",
+            "stream": True,
+            "previous_response_id": "resp_1",
+            "conversation_id": "conv_1",
+            "max_output_tokens": 32,
+            "model": "gpt-x",
+        })
+
+        assert run["messages"][0].text == "hi"
+        assert run["stream"] is True
+        assert run["options"] == {"max_tokens": 32, "model": "gpt-x"}
+
+    def test_responses_from_run_returns_response_payload(self) -> None:
+        result = AgentResponse(
+            messages=Message(role="assistant", contents=[Content.from_text("hello")]),
+            additional_properties={"model": "test-model"},
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        assert payload["id"] == "resp_new"
+        assert payload["model"] == "test-model"
+        assert payload["output"][0]["content"][0]["text"] == "hello"
+
+    def test_responses_from_run_preserves_multimodal_output_items(self) -> None:
+        result = AgentResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_text_reasoning(id="rs_1", text="checking"),
+                    Content.from_function_call("call_1", "collect_media", arguments={"city": "Seattle"}),
+                    Content.from_function_result(
+                        "call_1",
+                        result=[
+                            Content.from_text("caption"),
+                            Content.from_uri("https://example.com/cat.png", media_type="image/png"),
+                            Content.from_hosted_file("file_pdf", media_type="application/pdf"),
+                        ],
+                    ),
+                    Content.from_text("done"),
+                ],
+            )
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        output = payload["output"]
+        assert [item["type"] for item in output] == [
+            "reasoning",
+            "function_call",
+            "function_call_output",
+            "message",
+        ]
+        assert output[0]["content"][0]["text"] == "checking"
+        assert output[1]["name"] == "collect_media"
+        assert output[1]["arguments"] == '{"city": "Seattle"}'
+        assert output[2]["output"] == [
+            {"text": "caption", "type": "input_text"},
+            {"detail": "auto", "type": "input_image", "image_url": "https://example.com/cat.png"},
+            {"type": "input_file", "file_id": "file_pdf"},
+        ]
+        assert output[3]["content"][0]["text"] == "done"
+
+    def test_responses_from_run_maps_conversation_session(self) -> None:
+        result = AgentResponse(messages=Message(role="assistant", contents=[Content.from_text("hello")]))
+
+        payload = responses_from_run(result, response_id="resp_new", session_id="conv_1")
+
+        assert payload["conversation"] == {"id": "conv_1"}
+
+    def test_responses_from_run_omits_previous_response_session(self) -> None:
+        result = AgentResponse(messages=Message(role="assistant", contents=[Content.from_text("hello")]))
+
+        payload = responses_from_run(result, response_id="resp_new", session_id="resp_1")
+
+        assert "conversation" not in payload
+
+    async def test_responses_stream_events_from_run(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("hel")], role="assistant")
+            yield AgentResponseUpdate(contents=[Content.from_text("lo")], role="assistant")
+
+        def finalizer(items: Sequence[AgentResponseUpdate]) -> AgentResponse:
+            return AgentResponse.from_updates(items)
+
+        stream = ResponseStream(updates(), finalizer=finalizer)
+
+        events = [
+            event
+            async for event in responses_stream_events_from_run(
+                stream,
+                response_id="resp_new",
+                session_id="conv_1",
+            )
+        ]
+
+        assert events[0].startswith("event: response.created")
+        assert "response.output_text.delta" in events[1]
+        assert "hel" in events[1]
+        assert "lo" in events[2]
+        assert events[-1].startswith("event: response.completed")
+        assert '"conversation":{"id":"conv_1"}' in events[-1]

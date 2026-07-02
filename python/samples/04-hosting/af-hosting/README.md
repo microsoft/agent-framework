@@ -10,7 +10,7 @@ its own package. This first sample set includes
 
 | Sample | What it shows | Packaging |
 |---|---|---|
-| [`local_responses/`](./local_responses) | The minimal shape: one agent + one `@tool` + `ResponsesChannel` + a single `run_hook` that strips caller-supplied options and forces a `reasoning` preset. | **Local only.** Start here to learn the run-hook seam. |
+| [`local_responses/`](./local_responses) | The minimal shape: one agent + one `@tool` + native FastAPI route + Responses helper functions + `SessionStore`. | **Local only.** Start here to learn the helper seam. |
 | [`local_responses_workflow/`](./local_responses_workflow) | A 4-step `Workflow` (typed `SloganBrief` intake → writer → legal → formatter) hosted behind the Responses channel via a `run_hook` that parses inbound text/JSON into the workflow's typed input. The host writes per-conversation checkpoints via `checkpoint_location=…`. Demonstrates workflow targets + structured input adaptation + resume-across-turns. Includes a `call_server.rest` file with REST examples. | **Local only.** |
 | [`local_telegram/`](./local_telegram) | Telegram bot with `@tool`, `FileHistoryProvider`, `run_hook`, and slash commands (`/new`, `/whoami`, `/weather`). Pure Telegram — no HTTP endpoint. | **Local only.** Start here to learn the Telegram channel. |
 | [`local_multi_channel/`](./local_multi_channel) | Same agent behind two channels at once: `ResponsesChannel` + `TelegramChannel`. Shared `FileHistoryProvider` enables cross-channel session resumption (resume a Telegram chat from the Responses endpoint by passing the Telegram isolation key as `previous_response_id`). | **Local only.** |

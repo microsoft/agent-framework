@@ -20,6 +20,7 @@ from ._isolation import (
     reset_current_isolation_keys,
     set_current_isolation_keys,
 )
+from ._state import AgentFrameworkState, AgentRunArgs, SessionStore, WorkflowRunArgs
 from ._types import (
     Channel,
     ChannelCommand,
@@ -44,6 +45,8 @@ __all__ = [
     "ISOLATION_HEADER_CHAT",
     "ISOLATION_HEADER_USER",
     "AgentFrameworkHost",
+    "AgentFrameworkState",
+    "AgentRunArgs",
     "Channel",
     "ChannelCommand",
     "ChannelCommandContext",
@@ -58,6 +61,8 @@ __all__ = [
     "HostStatePaths",
     "HostedRunResult",
     "IsolationKeys",
+    "SessionStore",
+    "WorkflowRunArgs",
     "__version__",
     "get_current_isolation_keys",
     "logger",

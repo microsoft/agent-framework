@@ -3,8 +3,8 @@
 """Agent Framework agent client for the local_responses sample.
 
 Creates a local :class:`agent_framework.Agent` backed by
-:class:`agent_framework.openai.OpenAIChatClient`, points that client at the
-hosted ``/responses`` endpoint, and streams both turns:
+:class:`agent_framework.openai.OpenAIChatClient` and points that client at the
+hosted ``/responses`` endpoint for both turns:
 
 1. ``What is the weather in Tokyo?``
 2. ``And what about Amsterdam?``
@@ -45,14 +45,8 @@ async def main() -> None:
 
     for prompt in PROMPTS:
         print(f"User: {prompt}")
-        stream = agent.run(prompt, stream=True, session=session)
-        print("Agent: ", end="", flush=True)
-        async for update in stream:
-            if update.text:
-                print(update.text, end="", flush=True)
-
-        response = await stream.get_final_response()
-        print("\n")
+        response = await agent.run(prompt, session=session)
+        print(f"Agent: {response.text}\n")
         print(f"Response ID: {response.response_id}\n")
 
 
