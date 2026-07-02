@@ -29,12 +29,12 @@ if TYPE_CHECKING:
     from azure.cosmos.agent_memory.aio import AsyncCosmosMemoryClient
 
 try:
-    from azure.cosmos.agent_memory.aio import AsyncCosmosMemoryClient
+    from azure.cosmos.agent_memory.aio import AsyncCosmosMemoryClient as _RuntimeCosmosMemoryClient
 
     _memory_toolkit_available = True
 except ImportError:
     _memory_toolkit_available = False
-    AsyncCosmosMemoryClient = None  # type: ignore
+    _RuntimeCosmosMemoryClient = None
 
 logger = logging.getLogger(__name__)
 
@@ -175,9 +175,9 @@ class CosmosMemoryContextProvider(ContextProvider):
                 chat_model=chat_model,
                 required_fields=["cosmos_endpoint", "foundry_endpoint"],
             )
-            cosmos_endpoint = settings["cosmos_endpoint"]
+            cosmos_endpoint = settings.get("cosmos_endpoint")
             cosmos_database = settings.get("cosmos_database") or DEFAULT_DATABASE
-            foundry_endpoint = settings["foundry_endpoint"]
+            foundry_endpoint = settings.get("foundry_endpoint")
             embedding_model = settings.get("embedding_model") or DEFAULT_EMBEDDING_MODEL
             chat_model = settings.get("chat_model") or DEFAULT_CHAT_MODEL
 
@@ -187,7 +187,7 @@ class CosmosMemoryContextProvider(ContextProvider):
             # ManagedIdentityCredential → AzureCliCredential → …), which it also owns and closes.
             # This works in production (via ManagedIdentity) and local dev (via az login).
             if credential is not None:
-                memory_client = AsyncCosmosMemoryClient(
+                memory_client = _RuntimeCosmosMemoryClient(
                     cosmos_endpoint=cosmos_endpoint,
                     cosmos_database=cosmos_database,
                     ai_foundry_endpoint=foundry_endpoint,
@@ -198,7 +198,7 @@ class CosmosMemoryContextProvider(ContextProvider):
                     use_default_credential=False,
                 )
             else:
-                memory_client = AsyncCosmosMemoryClient(
+                memory_client = _RuntimeCosmosMemoryClient(
                     cosmos_endpoint=cosmos_endpoint,
                     cosmos_database=cosmos_database,
                     ai_foundry_endpoint=foundry_endpoint,
@@ -250,13 +250,12 @@ class CosmosMemoryContextProvider(ContextProvider):
     async def __aenter__(self) -> Self:
         """Async context manager entry."""
         if self.memory_client and isinstance(self.memory_client, AbstractAsyncContextManager):
-            await self.memory_client.__aenter__()  # type: ignore
+            await self.memory_client.__aenter__()
         # The async client cannot create or connect Cosmos containers in __init__ (no running
         # event loop), so ensure the database and memory containers exist and the client is
         # connected here. create_memory_store() is idempotent (create-if-not-exists), so it is
         # safe to call for both provider-created and caller-provided clients.
-        if self.memory_client is not None:
-            await self.memory_client.create_memory_store()
+        await self.memory_client.create_memory_store()
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
@@ -270,7 +269,7 @@ class CosmosMemoryContextProvider(ContextProvider):
             and self.memory_client
             and isinstance(self.memory_client, AbstractAsyncContextManager)
         ):
-            await self.memory_client.__aexit__(exc_type, exc_val, exc_tb)  # type: ignore
+            await self.memory_client.__aexit__(exc_type, exc_val, exc_tb)
 
     async def before_run(
         self,
@@ -305,7 +304,7 @@ class CosmosMemoryContextProvider(ContextProvider):
                 search_terms=query_text,
                 user_id=user_id,
                 top_k=self.top_k,
-                memory_types=self.memory_types,
+                memory_types=[str(t) for t in self.memory_types],
                 min_confidence=self.min_confidence,
             )
 
@@ -356,7 +355,7 @@ class CosmosMemoryContextProvider(ContextProvider):
             # Store input messages (skip empty/whitespace-only content to avoid junk turns)
             for msg in context.input_messages:
                 if hasattr(msg, "role") and hasattr(msg, "text") and msg.text and msg.text.strip():
-                    role_value = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+                    role_value = getattr(msg.role, "value", None) or str(msg.role)
                     if role_value in {"user", "assistant", "system"}:
                         await self.memory_client.add_cosmos(
                             user_id=user_id,
@@ -369,7 +368,7 @@ class CosmosMemoryContextProvider(ContextProvider):
             if context.response and context.response.messages:
                 for msg in context.response.messages:
                     if hasattr(msg, "role") and hasattr(msg, "text") and msg.text and msg.text.strip():
-                        role_value = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+                        role_value = getattr(msg.role, "value", None) or str(msg.role)
                         if role_value in {"user", "assistant", "system"}:
                             await self.memory_client.add_cosmos(
                                 user_id=user_id,

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,6 +21,10 @@ from agent_framework_azure_cosmos_memory._context_provider import (
 # The Agent Memory Toolkit requires Python 3.11+, so it is not installed on the 3.10 CI
 # leg. Skip this module there (mirrors the github_copilot package's importorskip guard).
 pytest.importorskip("azure.cosmos.agent_memory")
+
+# The provider methods accept an ``agent`` implementing ``SupportsAgentRun`` but never
+# use it in these tests, so a typed ``None`` stub keeps the call sites clean.
+_STUB_AGENT: Any = None
 
 
 @pytest.fixture
@@ -76,7 +81,7 @@ class TestInit:
     def test_init_creates_client_when_none(self) -> None:
         """When no client provided, creates AsyncCosmosMemoryClient with default credential."""
         with patch(
-            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+            "agent_framework_azure_cosmos_memory._context_provider._RuntimeCosmosMemoryClient"
         ) as mock_client_class:
             mock_client_class.return_value = AsyncMock()
 
@@ -96,7 +101,7 @@ class TestInit:
     def test_init_wires_explicit_credential(self) -> None:
         """An explicit credential is passed to both Cosmos and AI Foundry, disabling default."""
         with patch(
-            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+            "agent_framework_azure_cosmos_memory._context_provider._RuntimeCosmosMemoryClient"
         ) as mock_client_class:
             mock_client_class.return_value = AsyncMock()
             sentinel = MagicMock()
@@ -133,7 +138,7 @@ class TestInit:
         original_value = os.environ.get("FACT_EXTRACTION_EVERY_N")
         try:
             CosmosMemoryContextProvider(
-                memory_client=mock_memory_client, processor_config={"FACT_EXTRACTION_EVERY_N": "10"}
+                memory_client=mock_memory_client, processor_config={"FACT_EXTRACTION_EVERY_N": 10}
             )
             assert os.environ.get("FACT_EXTRACTION_EVERY_N") == "10"
         finally:
@@ -188,8 +193,8 @@ class TestBeforeRun:
         )
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         # Verify search was called
         mock_memory_client.search_cosmos.assert_awaited_once()
@@ -224,8 +229,8 @@ class TestBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         assert len(ctx.instructions) == 1
         assert "User Profile:" in ctx.instructions[0]
@@ -241,8 +246,8 @@ class TestBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         assert len(ctx.instructions) == 0
 
@@ -256,8 +261,8 @@ class TestBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         assert len(ctx.instructions) == 0
 
@@ -268,8 +273,8 @@ class TestBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=[""])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         mock_memory_client.search_cosmos.assert_not_awaited()
         assert "cosmos_memory" not in ctx.context_messages
@@ -283,8 +288,8 @@ class TestBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         assert "cosmos_memory" not in ctx.context_messages
 
@@ -298,8 +303,8 @@ class TestBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         call_kwargs = mock_memory_client.search_cosmos.call_args.kwargs
         assert call_kwargs["user_id"] == "custom-user-123"
@@ -316,8 +321,8 @@ class TestBeforeRun:
 
         # Should not raise
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         assert "Failed to retrieve memories" in caplog.text
 
@@ -332,8 +337,8 @@ class TestBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         # Memories failed, but the user summary was still injected as an instruction.
         assert any("Prefers concise answers" in instr for instr in ctx.instructions)
@@ -351,8 +356,8 @@ class TestBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         injected = ctx.context_messages[provider.source_id]
         assert any("User likes hiking" in m.text for m in injected)  # type: ignore[arg-type]
@@ -364,8 +369,8 @@ class TestBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         # Search used the session id as the fallback user id.
         assert mock_memory_client.search_cosmos.call_args.kwargs["user_id"] == "ephemeral-session"
@@ -388,8 +393,8 @@ class TestAfterRun:
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["Hello! How can I help?"])])
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         assert mock_memory_client.add_cosmos.await_count == 2
         calls = mock_memory_client.add_cosmos.await_args_list
@@ -419,8 +424,8 @@ class TestAfterRun:
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["Hello there"])])
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         stored_roles = [c.kwargs["role"] for c in mock_memory_client.add_cosmos.await_args_list]
         assert stored_roles == ["user", "agent"]
@@ -440,8 +445,8 @@ class TestAfterRun:
         )
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         call_kwargs = mock_memory_client.add_cosmos.await_args_list[0].kwargs
         assert call_kwargs["user_id"] == "user-456"
@@ -460,8 +465,8 @@ class TestAfterRun:
         )
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         # Only one message should be stored
         assert mock_memory_client.add_cosmos.await_count == 1
@@ -482,8 +487,8 @@ class TestAfterRun:
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["\n\t "])])
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         # Whitespace-only input and the whitespace-only response are both skipped.
         assert mock_memory_client.add_cosmos.await_count == 1
@@ -502,8 +507,8 @@ class TestAfterRun:
 
         # Should not raise
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
 
         assert "Failed to store conversation turns" in caplog.text
 
@@ -565,7 +570,7 @@ class TestContextManager:
         """Enters and exits the memory client when provider owns it."""
         # When provider creates the client, it should manage its lifecycle
         with patch(
-            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+            "agent_framework_azure_cosmos_memory._context_provider._RuntimeCosmosMemoryClient"
         ) as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
@@ -652,7 +657,7 @@ class TestFlush:
     async def test_only_closes_owned_client(self) -> None:
         """Only closes client if provider created it."""
         with patch(
-            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+            "agent_framework_azure_cosmos_memory._context_provider._RuntimeCosmosMemoryClient"
         ) as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client

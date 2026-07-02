@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 
@@ -36,6 +37,10 @@ from azure.cosmos.agent_memory.aio import AsyncCosmosMemoryClient  # noqa: E402
 from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider  # noqa: E402
 
 pytestmark = pytest.mark.integration
+
+# The provider methods accept an ``agent`` implementing ``SupportsAgentRun`` but never
+# use it in these tests, so a typed ``None`` stub keeps the call sites clean.
+_STUB_AGENT: Any = None
 
 # The well-known Cosmos DB emulator key is a fixed, publicly documented value (not a secret).
 _WELL_KNOWN_EMULATOR_KEY = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
@@ -114,7 +119,7 @@ async def emulator_provider(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Co
 
     _orig_policies = _aio_client_mod._container_policies
 
-    def _vector_only_policies(**kwargs: object) -> tuple[dict, dict, dict | None]:
+    def _vector_only_policies(**kwargs: Any) -> tuple[dict, dict, dict | None]:
         vec_policy, idx_policy, _ft_policy = _orig_policies(**kwargs)
         idx_policy = {k: v for k, v in idx_policy.items() if k != "fullTextIndexes"}
         return vec_policy, idx_policy, None
@@ -166,6 +171,7 @@ class TestEmulatorVectorSearch:
         # Seed a fact directly with a deterministic embedding (embed=True uses the fake
         # embeddings client). This lands in the memories container under the quantizedFlat
         # vector index, without needing LLM extraction.
+        assert provider.memory_client is not None
         await provider.memory_client.add_cosmos(
             user_id=user_id,
             thread_id=thread_id,
@@ -183,7 +189,7 @@ class TestEmulatorVectorSearch:
         )
 
         await provider.before_run(
-            agent=None,  # type: ignore[arg-type]
+            agent=_STUB_AGENT,
             session=session,
             context=ctx,
             state=session.state.setdefault(provider.source_id, {}),
@@ -208,12 +214,13 @@ class TestEmulatorVectorSearch:
         )
 
         await provider.after_run(
-            agent=None,  # type: ignore[arg-type]
+            agent=_STUB_AGENT,
             session=session,
             context=ctx,
             state=scoped,
         )
 
+        assert provider.memory_client is not None
         turns = await provider.memory_client.get_thread(user_id=user_id, thread_id=thread_id)
         contents = " ".join(str(t.get("content", "")) for t in turns)
         assert "window seats" in contents.lower()

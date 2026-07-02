@@ -82,6 +82,16 @@ omit = [
 [tool.pyright]
 extends = "../../pyproject.toml"
 include = ["agent_framework_azure_cosmos_memory"]
+# The Agent Memory Toolkit (azure-cosmos-agent-memory) ships no type information, so
+# strict ``Unknown`` reporting fires on every toolkit call and on the loosely-typed dict
+# results it returns. Narrowing happens via runtime checks instead. Other type checks
+# remain strict.
+reportUnknownArgumentType = "none"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownParameterType = "none"
+reportOptionalMemberAccess = "none"
+reportOptionalCall = "none"
 
 [tool.mypy]
 plugins = ['pydantic.mypy']

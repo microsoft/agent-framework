@@ -3,11 +3,11 @@
 """Integration tests for CosmosMemoryContextProvider with live Azure accounts.
 
 These tests require valid Azure credentials and environment variables:
-- COSMOS_DB_ENDPOINT: Cosmos DB account endpoint
-- COSMOS_DB_DATABASE: Database name (will be created if not exists)
-- AI_FOUNDRY_ENDPOINT: AI Foundry project endpoint
-- AI_FOUNDRY_EMBEDDING_DEPLOYMENT_NAME: Embedding model deployment
-- AI_FOUNDRY_CHAT_DEPLOYMENT_NAME: Chat model deployment
+- COSMOS_ENDPOINT: Cosmos DB account endpoint
+- COSMOS_DATABASE: Database name (will be created if not exists)
+- FOUNDRY_ENDPOINT: AI Foundry project endpoint
+- EMBEDDING_MODEL: Embedding model deployment
+- CHAT_MODEL: Chat model deployment
 
 Run with: pytest -m integration tests/
 """
@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import AsyncGenerator
+from typing import Any
 
 import pytest
 from agent_framework import Message
@@ -34,9 +36,13 @@ pytest.importorskip("azure.cosmos.agent_memory")
 # ``test_emulator.py`` is marked ``integration`` only and runs without any Azure account.
 pytestmark = [pytest.mark.integration, pytest.mark.azure]
 
+# The provider methods accept an ``agent`` implementing ``SupportsAgentRun`` but never
+# use it in these tests, so a typed ``None`` stub keeps the call sites clean.
+_STUB_AGENT: Any = None
+
 REQUIRED_ENV_VARS = [
-    "COSMOS_DB_ENDPOINT",
-    "AI_FOUNDRY_ENDPOINT",
+    "COSMOS_ENDPOINT",
+    "FOUNDRY_ENDPOINT",
 ]
 
 
@@ -55,14 +61,14 @@ def skip_if_no_env() -> None:
 
 
 @pytest.fixture
-async def live_provider(skip_if_no_env: None) -> CosmosMemoryContextProvider:
+async def live_provider(skip_if_no_env: None) -> AsyncGenerator[CosmosMemoryContextProvider, None]:
     """Create a live CosmosMemoryContextProvider with real Azure credentials."""
     provider = CosmosMemoryContextProvider(
-        cosmos_endpoint=os.environ["COSMOS_DB_ENDPOINT"],
-        cosmos_database=os.getenv("COSMOS_DB_DATABASE", "test_agent_memory"),
-        ai_foundry_endpoint=os.environ["AI_FOUNDRY_ENDPOINT"],
-        embedding_deployment_name=os.getenv("AI_FOUNDRY_EMBEDDING_DEPLOYMENT_NAME", "text-embedding-3-large"),
-        chat_deployment_name=os.getenv("AI_FOUNDRY_CHAT_DEPLOYMENT_NAME", "gpt-4o-mini"),
+        cosmos_endpoint=os.environ["COSMOS_ENDPOINT"],
+        cosmos_database=os.getenv("COSMOS_DATABASE", "test_agent_memory"),
+        foundry_endpoint=os.environ["FOUNDRY_ENDPOINT"],
+        embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-large"),
+        chat_model=os.getenv("CHAT_MODEL", "gpt-4o-mini"),
         credential=DefaultAzureCredential(),
         top_k=3,
         min_confidence=0.5,
@@ -105,8 +111,8 @@ class TestBasicFunctionality:
         )
 
         await live_provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(live_provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(live_provider.source_id, {})
+        )
 
         # Verify messages were stored (this tests the memory client integration)
         # In a real scenario, the memory extraction pipeline would process these
@@ -126,8 +132,8 @@ class TestBasicFunctionality:
 
         # Should not raise even if no memories exist yet
         await live_provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(live_provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(live_provider.source_id, {})
+        )
 
 
 # -- Multi-turn conversation tests ---------------------------------------------
@@ -158,8 +164,11 @@ class TestMultiTurnConversation:
             )
 
             await live_provider.after_run(
-                agent=None, session=session, context=ctx, state=session.state.setdefault(live_provider.source_id, {})
-            )  # type: ignore
+                agent=_STUB_AGENT,
+                session=session,
+                context=ctx,
+                state=session.state.setdefault(live_provider.source_id, {}),
+            )
 
 
 # -- Error handling tests ------------------------------------------------------
@@ -178,8 +187,8 @@ class TestErrorHandling:
 
         # Should use session_id as fallback and not raise
         await live_provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(live_provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(live_provider.source_id, {})
+        )
 
     async def test_handles_empty_messages(
         self, live_provider: CosmosMemoryContextProvider, test_user_id: str, test_thread_id: str
@@ -196,8 +205,8 @@ class TestErrorHandling:
 
         # Should not raise
         await live_provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(live_provider.source_id, {})
-        )  # type: ignore
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(live_provider.source_id, {})
+        )
 
 
 # -- Configuration tests -------------------------------------------------------
@@ -209,9 +218,9 @@ class TestConfiguration:
     async def test_custom_memory_types(self, skip_if_no_env: None, test_user_id: str) -> None:
         """Provider with custom memory types configuration."""
         provider = CosmosMemoryContextProvider(
-            cosmos_endpoint=os.environ["COSMOS_DB_ENDPOINT"],
-            cosmos_database=os.getenv("COSMOS_DB_DATABASE", "test_agent_memory"),
-            ai_foundry_endpoint=os.environ["AI_FOUNDRY_ENDPOINT"],
+            cosmos_endpoint=os.environ["COSMOS_ENDPOINT"],
+            cosmos_database=os.getenv("COSMOS_DATABASE", "test_agent_memory"),
+            foundry_endpoint=os.environ["FOUNDRY_ENDPOINT"],
             credential=DefaultAzureCredential(),
             memory_types=["fact", "episodic", "procedural"],
             min_confidence=0.8,
@@ -229,19 +238,19 @@ class TestConfiguration:
 
             # Should not raise
             await provider.before_run(
-                agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-            )  # type: ignore
+                agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            )
 
     async def test_processor_config(self, skip_if_no_env: None, test_user_id: str, test_thread_id: str) -> None:
         """Provider with custom processor configuration."""
         provider = CosmosMemoryContextProvider(
-            cosmos_endpoint=os.environ["COSMOS_DB_ENDPOINT"],
-            cosmos_database=os.getenv("COSMOS_DB_DATABASE", "test_agent_memory"),
-            ai_foundry_endpoint=os.environ["AI_FOUNDRY_ENDPOINT"],
+            cosmos_endpoint=os.environ["COSMOS_ENDPOINT"],
+            cosmos_database=os.getenv("COSMOS_DATABASE", "test_agent_memory"),
+            foundry_endpoint=os.environ["FOUNDRY_ENDPOINT"],
             credential=DefaultAzureCredential(),
             processor_config={
-                "FACT_EXTRACTION_EVERY_N": "1",
-                "DEDUP_EVERY_N": "3",
+                "FACT_EXTRACTION_EVERY_N": 1,
+                "DEDUP_EVERY_N": 3,
             },
         )
 
@@ -257,8 +266,8 @@ class TestConfiguration:
 
             # Should not raise
             await provider.after_run(
-                agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-            )  # type: ignore
+                agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            )
 
 
 # -- Cleanup note --------------------------------------------------------------
