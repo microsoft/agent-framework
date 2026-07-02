@@ -1241,6 +1241,7 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_fake_sandbox(monkey
     assert "compute" in _FakeSandbox.instances[0].registered_tools
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> None:
     _skip_if_hyperlight_integration_runtime_disabled()
@@ -1255,6 +1256,7 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> N
     assert client.call_count == 2
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_provider_run_tool_writes_files_with_real_sandbox(tmp_path: Path) -> None:
     _skip_if_hyperlight_integration_runtime_disabled()
@@ -1370,6 +1372,7 @@ async def test_provider_run_tool_pings_bing_with_real_sandbox() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_sandbox_runs_simple_code(restored_sandbox) -> None:
     result = restored_sandbox.run('print("hello")')
@@ -1377,6 +1380,7 @@ async def test_sandbox_runs_simple_code(restored_sandbox) -> None:
     assert "hello" in result.stdout
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_sandbox_stdout_and_stderr_captured(restored_sandbox) -> None:
     result = restored_sandbox.run('import sys\nprint("out")\nprint("err", file=sys.stderr)')
@@ -1385,6 +1389,7 @@ async def test_sandbox_stdout_and_stderr_captured(restored_sandbox) -> None:
     assert "err" in result.stderr
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_sandbox_code_failure_returns_nonzero_exit(restored_sandbox) -> None:
     result = restored_sandbox.run("raise ValueError('boom')")
@@ -1392,6 +1397,7 @@ async def test_sandbox_code_failure_returns_nonzero_exit(restored_sandbox) -> No
     assert "boom" in result.stderr
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 @pytest.mark.skipif(
     sys.platform == "win32" and sys.version_info < (3, 11),
@@ -1418,6 +1424,7 @@ async def test_sandbox_snapshot_restore_keeps_sandbox_functional(restored_sandbo
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_sandbox_with_tool_registration_and_execution(fresh_sandbox) -> None:
     """Verify that a sync host tool round-trips via call_tool in the real sandbox."""
@@ -1434,6 +1441,7 @@ async def test_sandbox_with_tool_registration_and_execution(fresh_sandbox) -> No
     assert "42" in result.stdout
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_sandbox_async_callback_round_trips_with_real_sandbox(fresh_sandbox) -> None:
     """Confirm that _make_sandbox_callback (sync wrapper) works with real FFI."""
@@ -1453,6 +1461,7 @@ async def test_sandbox_async_callback_round_trips_with_real_sandbox(fresh_sandbo
     assert "42" in result.stdout
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_output_dir_cleared_between_invocations() -> None:
     """Verify stale output files don't leak across invocations (comment 23)."""
@@ -1487,6 +1496,7 @@ async def test_output_dir_cleared_between_invocations() -> None:
     assert not stale_files, "Stale output file leaked into second invocation"
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_run_code_does_not_block_event_loop() -> None:
     """Verify _run_code uses asyncio.to_thread so the event loop stays responsive (comment 26)."""
