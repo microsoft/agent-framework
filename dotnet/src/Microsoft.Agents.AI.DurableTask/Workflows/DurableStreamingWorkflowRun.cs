@@ -425,9 +425,9 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
             }
 
             // WorkflowOutputEvent
-            string sourceId = root.GetProperty("sourceId").GetString() ?? string.Empty;
+            string outputExecutorId = root.GetProperty("executorId").GetString() ?? string.Empty;
             object? outputData = GetDataProperty(root);
-            return new WorkflowOutputEvent(outputData!, sourceId);
+            return new WorkflowOutputEvent(outputData!, outputExecutorId);
         }
 
         return JsonSerializer.Deserialize(json, eventType, DurableSerialization.Options) as WorkflowEvent;
