@@ -2635,6 +2635,8 @@ class FileSkillsSource(SkillsSource):
         .. code-block:: python
 
             source = FileSkillsSource(skill_paths="./skills")
+            # `context` is normally supplied by SkillsProvider at runtime.
+            context = SkillsSourceContext(agent=agent)
             skills = await source.get_skills(context)
 
         With a script runner and filter predicates:
@@ -3404,6 +3406,8 @@ class InMemorySkillsSource(SkillsSource):
                 instructions="Instructions here...",
             )
             source = InMemorySkillsSource([skill])
+            # `context` is normally supplied by SkillsProvider at runtime.
+            context = SkillsSourceContext(agent=agent)
             skills = await source.get_skills(context)
     """
 
@@ -3481,6 +3485,8 @@ class DeduplicatingSkillsSource(DelegatingSkillsSource):
         .. code-block:: python
 
             deduped = DeduplicatingSkillsSource(inner_source)
+            # `context` is normally supplied by SkillsProvider at runtime.
+            context = SkillsSourceContext(agent=agent)
             skills = await deduped.get_skills(context)
     """
 
@@ -3536,7 +3542,9 @@ class FilteringSkillsSource(DelegatingSkillsSource):
                 inner_source=my_source,
                 predicate=lambda skill, context: skill.frontmatter.name != "internal",
             )
-            skills = await filtered.get_skills(context)
+            # `source_context` is normally supplied by SkillsProvider at runtime.
+            source_context = SkillsSourceContext(agent=agent)
+            skills = await filtered.get_skills(source_context)
     """
 
     def __init__(
@@ -3603,6 +3611,8 @@ class CachingSkillsSource(DelegatingSkillsSource):
         .. code-block:: python
 
             cached = CachingSkillsSource(expensive_source)
+            # `context` is normally supplied by SkillsProvider at runtime.
+            context = SkillsSourceContext(agent=agent)
             skills = await cached.get_skills(context)  # queries the inner source
             skills = await cached.get_skills(context)  # returns the cached list
 
@@ -4032,6 +4042,8 @@ class MCPSkillsSource(SkillsSource):
             from mcp.client.session import ClientSession
 
             source = MCPSkillsSource(client=session)
+            # `context` is normally supplied by SkillsProvider at runtime.
+            context = SkillsSourceContext(agent=agent)
             skills = await source.get_skills(context)
     """
 
