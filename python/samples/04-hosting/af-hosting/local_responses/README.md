@@ -21,6 +21,10 @@ What the route demonstrates:
   turn.
 - Produces the AF messages, options, and session id that the route passes to
   `agent.run(...)`.
+- **Aliases** each newly minted response id to the session it was just
+  resolved from. OpenAI's `previous_response_id` rotates every turn, so
+  without this alias step turn 3+ of a conversation would silently resolve to
+  a brand-new, empty session instead of the one from earlier turns.
 
 `app:app` is a module-level FastAPI ASGI app; recommended local launch is
 Hypercorn.
@@ -53,10 +57,12 @@ uv run python call_server.py
 # The client intentionally omits `model`; the app chooses the backing deployment
 # from FOUNDRY_MODEL.
 
-# The script then sends a second turn, "And what about Amsterdam?", using the
-# first `response.id` as `previous_response_id`.
+# The script then sends two more turns, each continuing from the previous
+# turn's `response.id` as `previous_response_id`. The third turn asks about
+# the first turn's city, so it only succeeds if the server still remembers
+# that far back in the chain.
 
-# Same two-turn interaction through an Agent Framework Agent backed by
+# Same three-turn interaction through an Agent Framework Agent backed by
 # OpenAIChatClient:
 uv run python call_server_af.py
 ```

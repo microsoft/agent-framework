@@ -4,14 +4,18 @@
 
 Creates a local :class:`agent_framework.Agent` backed by
 :class:`agent_framework.openai.OpenAIChatClient` and points that client at the
-hosted ``/responses`` endpoint for both turns:
+hosted ``/responses`` endpoint for all turns:
 
 1. ``What is the weather in Tokyo?``
 2. ``And what about Amsterdam?``
+3. ``Which of the two cities we just discussed is warmer?``
 
-Both turns use the same :class:`agent_framework.AgentSession`; the first
-turn binds the hosted response id to the session, and the second turn
-continues through that session.
+All turns use the same :class:`agent_framework.AgentSession`; the first turn
+binds the hosted response id to the session, and later turns continue through
+that session via a chain of rotating ``previous_response_id`` values. The
+third turn only makes sense if the server still remembers the first turn, so
+it also exercises session continuity across that whole chain, not just a
+single hop.
 
 Start the server first (in another shell)::
 
@@ -33,6 +37,7 @@ BASE_URL = "http://127.0.0.1:8000"
 PROMPTS = [
     "What is the weather in Tokyo?",
     "And what about Amsterdam?",
+    "Which of the two cities we just discussed is warmer?",
 ]
 
 

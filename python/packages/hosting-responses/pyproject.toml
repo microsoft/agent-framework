@@ -28,6 +28,12 @@ dependencies = [
     "openai>=1.99.0,<3",
 ]
 
+[dependency-groups]
+dev = [
+    "fastapi>=0.115.0,<0.138.1",
+    "httpx>=0.28.1",
+]
+
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
 environments = [

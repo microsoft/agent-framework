@@ -91,10 +91,13 @@ app = FastAPI()
 state = AgentFrameworkState(create_agent, session_store=SessionStore)
 
 
-@app.post("/responses")
+@app.post("/responses", response_model=None)
 async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | StreamingResponse:  # noqa: B008
     """Handle one OpenAI Responses-shaped request."""
-    run = responses_to_run(body)
+    try:
+        run = responses_to_run(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     session_id = responses_session_id(body)
     response_id = create_response_id()
 
@@ -108,7 +111,16 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
     options_for_run = cast(Any, options)
 
     target = cast(Agent[Any], await state.get_target())
-    session = await state.get_session(session_id or response_id)
+    store = await state.get_session_store()
+    lookup_id = session_id or response_id
+    session = await store.get(lookup_id)
+    if response_id != lookup_id:
+        # `previous_response_id` chaining rotates its id every turn. Alias the
+        # newly minted response id to this turn's session so the next
+        # request (which will send this response's id back as its
+        # `previous_response_id`) still resolves to the same conversation
+        # instead of silently starting a new one.
+        await store.put(response_id, session)
     if run["stream"]:
         stream = target.run(
             run["messages"],
@@ -151,9 +163,7 @@ async def main() -> None:
 if __name__ == "__main__":
     asyncio.run(main())
 
-"""
-Sample output:
-User: What is the weather in Tokyo?
-Agent: Tokyo is clear with a high of 18°C.
-Response ID: resp_...
-"""
+# Sample output:
+# User: What is the weather in Tokyo?
+# Agent: Tokyo is clear with a high of 18°C.
+# Response ID: resp_...

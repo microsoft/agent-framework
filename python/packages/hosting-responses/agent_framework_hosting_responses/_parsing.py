@@ -259,6 +259,21 @@ def responses_from_run(
     return _response_payload(OpenAIResponse(**response_kwargs))
 
 
+def _model_from_update(update: AgentResponseUpdate) -> str | None:
+    """Best-effort model id from one streamed update's raw representation.
+
+    ``AgentResponse.from_updates`` does not carry a chunk's raw representation
+    forward onto the finalized response (see ``_finalize_response`` in core),
+    so ``_model_from_result`` can never find a model for a streamed result.
+    Each ``AgentResponseUpdate`` still has its own raw chat chunk, which
+    usually reports the model, so the streaming SSE helper captures it here
+    instead.
+    """
+    raw = update.raw_representation
+    model = getattr(raw, "model", None)
+    return model if isinstance(model, str) and model else None
+
+
 def _model_from_result(result: Any) -> str:
     model = getattr(result, "model", None)
     if isinstance(model, str) and model:
@@ -903,7 +918,10 @@ async def responses_stream_events_from_run(
         },
     )
 
+    model: str | None = None
     async for update in stream:
+        if model is None:
+            model = _model_from_update(update)
         if update.text:
             yield _sse_event(
                 "response.output_text.delta",
@@ -914,11 +932,17 @@ async def responses_stream_events_from_run(
             )
 
     final = await stream.get_final_response()
+    payload = responses_from_run(final, response_id=response_id, session_id=session_id)
+    if model is not None:
+        # The finalized `AgentResponse` never carries a raw representation
+        # (see `_model_from_update`), so prefer the model observed on the
+        # stream's own chunks over `responses_from_run`'s "agent" fallback.
+        payload["model"] = model
     yield _sse_event(
         "response.completed",
         {
             "type": "response.completed",
-            "response": responses_from_run(final, response_id=response_id, session_id=session_id),
+            "response": payload,
         },
     )
 

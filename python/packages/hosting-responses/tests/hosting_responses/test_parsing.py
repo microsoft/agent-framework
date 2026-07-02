@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
+from typing import cast
 
 import pytest
 from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream
@@ -202,7 +203,10 @@ class TestResponsesRunHelpers:
             "model": "gpt-x",
         })
 
-        assert run["messages"][0].text == "hi"
+        # `responses_to_run` always produces a `list[Message]`; the TypedDict
+        # field is typed as the wider `Agent.run` input shape, so narrow here.
+        messages = cast("list[Message]", run["messages"])
+        assert messages[0].text == "hi"
         assert run["stream"] is True
         assert run["options"] == {"max_tokens": 32, "model": "gpt-x"}
 

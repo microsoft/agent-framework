@@ -2,20 +2,47 @@
 
 from __future__ import annotations
 
-from typing import Any
+import importlib
+from collections.abc import AsyncIterator, Awaitable, Mapping
+from typing import Any, Literal, overload
 
 import pytest
-from agent_framework import AgentResponse, AgentSession, Message
+from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
+    AgentRunInputs,
+    AgentSession,
+    Content,
+    Message,
+    ResponseStream,
+    Workflow,
+)
 
 from agent_framework_hosting import AgentFrameworkState, SessionStore
 
 
-class _FakeAgent:
-    """Minimal agent target for state tests."""
+def _workflow_fixture(name: str) -> Any:
+    """Load a fixture from ``_workflow_fixtures.py`` via the ``conftest``-registered alias.
 
-    id = "fake-agent"
-    name = "Fake Agent"
-    description = "Fake agent for tests"
+    Mirrors ``test_host.py``'s helper: the local ``conftest.py`` registers
+    ``_workflow_fixtures.py`` under the collision-proof name
+    ``hosting_workflow_fixtures`` so it stays importable in both
+    package-local and aggregate pytest runs.
+    """
+    return getattr(importlib.import_module("hosting_workflow_fixtures"), name)
+
+
+class _FakeAgent:
+    """Minimal agent target for state tests.
+
+    Declares ``run`` with the same two overloads as ``SupportsAgentRun`` (one
+    per ``stream`` value) so it satisfies the protocol under static type
+    checking, not just at runtime.
+    """
+
+    id: str = "fake-agent"
+    name: str | None = "Fake Agent"
+    description: str | None = "Fake agent for tests"
 
     def __init__(self) -> None:
         self.created_sessions: list[AgentSession] = []
@@ -28,8 +55,48 @@ class _FakeAgent:
     def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id, service_session_id=service_session_id)
 
-    async def run(self, messages: Any = None, **_: Any) -> AgentResponse:
-        return AgentResponse(messages=Message(role="assistant", contents=["ok"]))
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        if stream:
+
+            async def _stream() -> AsyncIterator[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text(text="ok")], role="assistant")
+
+            return ResponseStream(_stream(), finalizer=lambda updates: AgentResponse.from_updates(updates))
+
+        async def _get_response() -> AgentResponse[Any]:
+            return AgentResponse(messages=Message(role="assistant", contents=[Content.from_text(text="ok")]))
+
+        return _get_response()
 
 
 class TestSessionStore:
@@ -62,6 +129,24 @@ class TestSessionStore:
             await store.get("")
         with pytest.raises(ValueError, match="session_id"):
             await store.reset("")
+
+    async def test_put_aliases_new_id_to_existing_session(self) -> None:
+        agent = _FakeAgent()
+        store = SessionStore(agent)
+
+        session = await store.get("resp_1")
+        await store.put("resp_2", session)
+
+        assert await store.get("resp_2") is session
+        # Aliasing did not create a second session via the agent.
+        assert len(agent.created_sessions) == 1
+
+    async def test_put_empty_session_id_raises(self) -> None:
+        store = SessionStore(_FakeAgent())
+        session = await store.get("resp_1")
+
+        with pytest.raises(ValueError, match="session_id"):
+            await store.put("", session)
 
 
 class TestAgentFrameworkState:
@@ -136,3 +221,37 @@ class TestAgentFrameworkState:
         session = await state.get_session("session-1")
 
         assert session.session_id == "session-1"
+
+    async def test_reset_session_forgets_session(self) -> None:
+        agent = _FakeAgent()
+        state = AgentFrameworkState(agent)
+
+        first = await state.get_session("session-1")
+        await state.reset_session("session-1")
+        second = await state.get_session("session-1")
+
+        assert first is not second
+        assert len(agent.created_sessions) == 2
+
+    def test_session_store_for_non_agent_target_raises_type_error(self) -> None:
+        workflow = _workflow_fixture("build_echo_workflow")()
+
+        with pytest.raises(TypeError, match="session_store requires an agent target"):
+            AgentFrameworkState(workflow, session_store=SessionStore)
+
+    async def test_workflow_target_has_no_default_session_store(self) -> None:
+        workflow: Workflow = _workflow_fixture("build_echo_workflow")()
+        state = AgentFrameworkState(workflow)
+
+        assert await state.get_target() is workflow
+        assert state.session_store is None
+        with pytest.raises(TypeError, match="session_store requires an agent target"):
+            await state.get_session_store()
+
+    async def test_workflow_target_resolved_from_factory(self) -> None:
+        build_echo_workflow = _workflow_fixture("build_echo_workflow")
+
+        state = AgentFrameworkState(build_echo_workflow)
+
+        target = await state.get_target()
+        assert isinstance(target, Workflow)

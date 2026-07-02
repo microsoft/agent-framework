@@ -7,7 +7,11 @@ This package keeps Agent Framework state separate from web-framework concerns:
 - `AgentFrameworkState` — stores an agent/workflow target and optional session
   state for routes that the app owns.
 - `SessionStore` — maps an app-selected session id to an `AgentSession` for
-  non-persisted servers.
+  non-persisted servers. `get`/`reset` manage a session by its own id; `put`
+  aliases an *additional* id to an already-resolved session — useful when a
+  protocol's continuation id rotates every turn (for example, OpenAI
+  Responses' `previous_response_id`) and a later request needs to resolve the
+  new id back to the same conversation.
 - Existing experimental channel-hosting types remain available while the package
   is unreleased, but the v1 direction is protocol helpers plus app-owned routes.
 

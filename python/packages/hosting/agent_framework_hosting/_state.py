@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, Generic, TypedDict, TypeVar
+from typing import Any, Generic, TypedDict, TypeVar, overload
 
 from agent_framework import AgentRunInputs, AgentSession, ChatOptions, SupportsAgentRun, Workflow
 
@@ -59,8 +59,29 @@ class SessionStore:
             raise ValueError("session_id must be a non-empty string")
         self._sessions.pop(session_id, None)
 
+    async def put(self, session_id: str, session: AgentSession) -> None:
+        """Associate an existing ``session`` with an additional ``session_id``.
 
-TargetT = TypeVar("TargetT", SupportsAgentRun, Workflow)
+        Use this to alias a rotating protocol id (for example, a freshly
+        minted response id) to a session that was already looked up under a
+        different, prior id. Protocols whose continuation id changes every
+        turn (such as OpenAI Responses' ``previous_response_id`` chaining)
+        need this so a later request referencing the new id still resolves
+        to the same conversation instead of starting a fresh session.
+
+        Args:
+            session_id: Opaque app-selected session id to associate.
+            session: The session to associate with ``session_id``.
+
+        Raises:
+            ValueError: If ``session_id`` is empty.
+        """
+        if not session_id:
+            raise ValueError("session_id must be a non-empty string")
+        self._sessions[session_id] = session
+
+
+TargetT = TypeVar("TargetT", bound="SupportsAgentRun | Workflow")
 SessionStoreFactory = Callable[[SupportsAgentRun], SessionStore]
 
 
@@ -88,6 +109,48 @@ class AgentFrameworkState(Generic[TargetT]):
     this object holds the Agent Framework target and optional session store that
     route code may share.
     """
+
+    # `target` accepts an instance, a sync/async factory, or a bare awaitable.
+    # Each shape is declared as its own overload rather than one big union
+    # because type checkers struggle to bind `TargetT` when it appears both
+    # bare and inside `Callable`/`Awaitable` alternatives in a single union
+    # parameter (observed as inference failures across pyright, pyrefly, ty,
+    # and zuban).
+    @overload
+    def __init__(
+        self,
+        target: TargetT,
+        *,
+        session_store: SessionStore | type[SessionStore] | SessionStoreFactory | None = None,
+        cache_target: bool = True,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        target: Callable[[], TargetT],
+        *,
+        session_store: SessionStore | type[SessionStore] | SessionStoreFactory | None = None,
+        cache_target: bool = True,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        target: Callable[[], Awaitable[TargetT]],
+        *,
+        session_store: SessionStore | type[SessionStore] | SessionStoreFactory | None = None,
+        cache_target: bool = True,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        target: Awaitable[TargetT],
+        *,
+        session_store: SessionStore | type[SessionStore] | SessionStoreFactory | None = None,
+        cache_target: bool = True,
+    ) -> None: ...
 
     def __init__(
         self,
