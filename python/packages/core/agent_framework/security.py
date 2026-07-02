@@ -114,9 +114,9 @@ class ConfidentialityLabel:
 
     Construction::
 
-        ConfidentialityLabel("public")           # PUBLIC
-        ConfidentialityLabel("private")           # PRIVATE, no readers
-        ConfidentialityLabel(["Alice", "Bob"])     # PRIVATE with readers
+        ConfidentialityLabel("public")  # PUBLIC
+        ConfidentialityLabel("private")  # PRIVATE, no readers
+        ConfidentialityLabel(["Alice", "Bob"])  # PRIVATE with readers
 
     When a list of reader identities is provided the level is implicitly
     ``PRIVATE``.  The *readers* frozenset tracks the allowed audience.
@@ -126,7 +126,7 @@ class ConfidentialityLabel:
         PRIVATE: Singleton for private content with no specific readers.
     """
 
-    PUBLIC: "ConfidentialityLabel"   # set after class body
+    PUBLIC: "ConfidentialityLabel"  # set after class body
     PRIVATE: "ConfidentialityLabel"  # set after class body
 
     def __init__(self, value: "str | list[str]" = "public", *, readers: "frozenset[str] | None" = None) -> None:
@@ -170,11 +170,13 @@ class ConfidentialityLabel:
     # -- dunder methods ------------------------------------------------------
 
     def __eq__(self, other: object) -> bool:
+        """Return ``True`` if both labels share the same level and readers."""
         if isinstance(other, ConfidentialityLabel):
             return self._level == other._level and self._readers == other._readers
         return NotImplemented
 
     def __hash__(self) -> int:
+        """Return a hash based on the level and readers."""
         return hash((self._level, self._readers))
 
     def __str__(self) -> str:
@@ -182,21 +184,23 @@ class ConfidentialityLabel:
 
         Examples::
 
-            str(ConfidentialityLabel.PUBLIC)        # "public"
-            str(ConfidentialityLabel.PRIVATE)        # "private"
-            str(ConfidentialityLabel(["A", "B"]))    # "private: (A, B)"
+            str(ConfidentialityLabel.PUBLIC)  # "public"
+            str(ConfidentialityLabel.PRIVATE)  # "private"
+            str(ConfidentialityLabel(["A", "B"]))  # "private: (A, B)"
         """
         if self._level == "public":
             return "public"
-        if self._readers:
+        if self._readers is not None:
             readers_str = ", ".join(sorted(self._readers))
             return f"private: ({readers_str})"
         return "private"
 
     def __repr__(self) -> str:
-        if self._readers:
-            return f"ConfidentialityLabel('private', readers={{{', '.join(repr(r) for r in sorted(self._readers))}}})"
-        return f"ConfidentialityLabel('{self._level}')"
+        """Return an unambiguous representation of the label."""
+        if self._readers is None:
+            return f"ConfidentialityLabel('{self._level}')"
+        readers_repr = "{" + ", ".join(repr(r) for r in sorted(self._readers)) + "}" if self._readers else "frozenset()"
+        return f"ConfidentialityLabel('private', readers={readers_repr})"
 
     # -- ordering helpers (for hierarchy comparisons) ------------------------
 
@@ -204,6 +208,16 @@ class ConfidentialityLabel:
     def _priority(self) -> int:
         """Return numeric priority: PUBLIC=0, PRIVATE=1."""
         return 0 if self._level == "public" else 1
+
+    def is_at_most(self, other: "ConfidentialityLabel") -> bool:
+        """Return ``True`` if this label is no more restrictive than *other*.
+
+        Uses the confidentiality hierarchy (``PUBLIC`` < ``PRIVATE``): returns
+        ``True`` when this label's level is less than or equal to *other*'s
+        level. Useful for checking whether content may flow to a destination
+        that allows up to a given confidentiality level.
+        """
+        return self._priority <= other._priority
 
     # -- combination ---------------------------------------------------------
 
@@ -304,7 +318,7 @@ class ContentLabel(SerializationMixin):
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert to dictionary representation."""
         conf = self.confidentiality
-        if conf.readers:
+        if conf.readers is not None:
             conf_value: str | list[str] = sorted(conf.readers)
         else:
             conf_value = conf.value
@@ -433,7 +447,7 @@ def check_confidentiality_allowed(
                     )
                 # Proceed with sending...
     """
-    return context_label.confidentiality._priority <= max_allowed._priority
+    return context_label.confidentiality.is_at_most(max_allowed)
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
@@ -2114,7 +2128,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         if max_allowed_conf is not None:
             try:
                 max_allowed_level = ConfidentialityLabel(max_allowed_conf)
-                if label.confidentiality._priority > max_allowed_level._priority:
+                if not label.confidentiality.is_at_most(max_allowed_level):
                     return {
                         "passed": False,
                         "failure_type": "max_allowed_confidentiality",
@@ -2222,13 +2236,12 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
             )
             return
 
-        # decision_value == "deny" and not approval_on_violation
+        # Reaching here means the decision is a denial without approval enabled.
         if self._is_policy_violation_approved(context):
             self._mark_policy_violation_approved(
                 context,
                 warning_message=(
-                    f"APPROVED BY USER: Tool '{function_name}' executing despite gateway "
-                    f"policy denial: {message}"
+                    f"APPROVED BY USER: Tool '{function_name}' executing despite gateway policy denial: {message}"
                 ),
             )
             await call_next()
@@ -2250,7 +2263,9 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         """Run built-in integrity and confidentiality checks as a fallback.
 
         Called when the gateway policy function is unreachable or returns an
-        error decision.
+        error decision. Honors ``approval_on_violation`` and ``block_on_violation``
+        exactly like the normal built-in path, so a gateway outage does not
+        silently fail open when the middleware is configured to require approvals.
         """
         function_name = context.function.name
         function_props = _get_additional_properties(context.function)
@@ -2259,7 +2274,39 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         if context_label.integrity == IntegrityLabel.UNTRUSTED and function_name not in self.allow_untrusted_tools:
             accepts_untrusted = function_props.get("accepts_untrusted", False)
             if not accepts_untrusted:
-                if self.block_on_violation:
+                violation = {
+                    "type": "untrusted_context",
+                    "function": function_name,
+                    "context_label": context_label.to_dict(),
+                    "turn": context.metadata.get("turn_number", -1),
+                    "reason": "Context is UNTRUSTED and tool is not allowed to execute in an untrusted context",
+                }
+                self._log_violation(violation)
+
+                if self._is_policy_violation_approved(context):
+                    self._mark_policy_violation_approved(
+                        context,
+                        warning_message=(
+                            f"APPROVED BY USER: Tool '{function_name}' executing in UNTRUSTED context "
+                            "after gateway policy fallback."
+                        ),
+                    )
+                elif self.approval_on_violation:
+                    self._request_policy_violation_approval(
+                        context,
+                        context_label=context_label,
+                        violation_type="untrusted_context",
+                        reason=(
+                            f"Tool '{function_name}' is being called in an UNTRUSTED context while the "
+                            "gateway policy is unavailable. Approve to proceed anyway."
+                        ),
+                        log_message=(
+                            f"APPROVAL REQUESTED (gateway fallback): Tool '{function_name}' requires "
+                            "user approval due to UNTRUSTED context."
+                        ),
+                    )
+                    return
+                elif self.block_on_violation:
                     self._block_policy_violation(
                         context,
                         error_message="Policy violation: Tool cannot be called in untrusted context",
@@ -2270,7 +2317,40 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         # Confidentiality check
         conf_result = self._check_confidentiality_policy_detailed(context, context_label)
         if not conf_result["passed"]:
-            if self.block_on_violation:
+            violation = {
+                "type": "confidentiality_violation",
+                "subtype": conf_result["failure_type"],
+                "function": function_name,
+                "context_label": context_label.to_dict(),
+                "reason": conf_result["reason"],
+                "turn": context.metadata.get("turn_number", -1),
+            }
+            self._log_violation(violation)
+
+            if self._is_policy_violation_approved(context):
+                self._mark_policy_violation_approved(
+                    context,
+                    warning_message=(
+                        f"APPROVED BY USER: Tool '{function_name}' executing despite confidentiality "
+                        "violation after gateway policy fallback."
+                    ),
+                )
+            elif self.approval_on_violation:
+                self._request_policy_violation_approval(
+                    context,
+                    context_label=context_label,
+                    violation_type=conf_result["failure_type"],
+                    reason=(
+                        f"Tool '{function_name}' violates confidentiality policy while the gateway "
+                        f"policy is unavailable: {conf_result['reason']}. Approve to proceed anyway."
+                    ),
+                    log_message=(
+                        f"APPROVAL REQUESTED (gateway fallback): Tool '{function_name}' requires "
+                        "user approval due to confidentiality policy violation."
+                    ),
+                )
+                return
+            elif self.block_on_violation:
                 self._block_policy_violation(
                     context,
                     error_message=f"Policy violation: {conf_result['reason']}",
@@ -3465,6 +3545,7 @@ def _build_ifc_meta(
     - ``$['name']`` — trusted (tool name is framework-controlled)
     - ``$['arguments']`` — the context label (arguments may be tainted)
     """
+
     def _conf_wire(conf: ConfidentialityLabel) -> list[str]:
         """Convert to gateway wire format: always a list of readers.
 
@@ -3483,11 +3564,17 @@ def _build_ifc_meta(
         "integrity": context_label.integrity.value,
         "confidentiality": _conf_wire(context_label.confidentiality),
     }
-    trusted_public = {"integrity": "trusted", "confidentiality": []}
+
+    # The tool name is framework-controlled (not user- or tool-supplied data),
+    # so it is always trusted and public regardless of the conversation context.
+    name_label: dict[str, Any] = {
+        "integrity": IntegrityLabel.TRUSTED.value,
+        "confidentiality": [],
+    }
 
     labels: dict[str, Any] = {
         "$": ctx_label,
-        "$['name']": ctx_label,
+        "$['name']": name_label,
         "$['arguments']": ctx_label,
     }
     return {_IFC_LABELS_META_KEY: labels}
@@ -3518,7 +3605,8 @@ def _make_gateway_policy_fn(
             result = await mcp_tool.call_tool("eval_policy", call=call_payload)
             # MCP tool results are list[Content]; parse the structured content
             if isinstance(result, list) and result:
-                text = result[0].text if hasattr(result[0], "text") else str(result[0])
+                first = cast("Any", result[0])
+                text: str = cast("str", first.text) if hasattr(first, "text") else str(first)
                 try:
                     return cast(dict[str, Any], json.loads(text))
                 except (json.JSONDecodeError, TypeError):

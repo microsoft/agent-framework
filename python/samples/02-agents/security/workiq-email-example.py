@@ -29,7 +29,7 @@ AGENT_INSTRUCTIONS = (
 )
 
 
-async def run_cli_async(*, debug: bool = False, gateway_port: int = 9090) -> None:
+async def run_cli_async(*, debug: bool = False, gateway_port: int = 9090, auto_approve: bool = False) -> None:
     """Run the sample in CLI mode with two MCP proxies (WorkIQ email + teams)."""
     load_dotenv(Path(__file__).parent / ".env")
     load_dotenv()
@@ -105,11 +105,22 @@ async def run_cli_async(*, debug: bool = False, gateway_port: int = 9090) -> Non
         print("\nUser:", query)
 
         # ToolApprovalMiddleware surfaces policy-violation approvals one batch at
-        # a time (queuing parallel requests in session state). Auto-approve each
-        # until the agent returns a final answer.
+        # a time (queuing parallel requests in session state). Each request is
+        # resolved by prompting the user, unless --auto-approve was passed.
         result = await agent.run(query, session=session)
         while result.user_input_requests:
-            approvals = [req.to_function_approval_response(approved=True) for req in result.user_input_requests]
+            approvals = []
+            for req in result.user_input_requests:
+                function_call = req.function_call
+                tool_name = function_call.name if function_call is not None else "<unknown>"
+                if auto_approve:
+                    approved = True
+                    print(f"[auto-approve] gateway policy flagged '{tool_name}' -> approving")
+                else:
+                    prompt = f"Approve tool '{tool_name}' flagged by gateway policy? [y/N] "
+                    answer = (await asyncio.to_thread(input, prompt)).strip().lower()
+                    approved = answer in ("y", "yes")
+                approvals.append(req.to_function_approval_response(approved=approved))
             result = await agent.run(Message(role="user", contents=approvals), session=session)
         print("\nAgent:", result.text)
 
@@ -203,8 +214,8 @@ async def run_devui_async(*, debug: bool = False, gateway_port: int = 9090) -> N
             await uvicorn_server.serve()
 
 
-def _parse_args(argv: list[str]) -> tuple[str, bool, int]:
-    """Parse CLI arguments. Returns (mode, debug, gateway_port)."""
+def _parse_args(argv: list[str]) -> tuple[str, bool, int, bool]:
+    """Parse CLI arguments. Returns (mode, debug, gateway_port, auto_approve)."""
     parser = argparse.ArgumentParser(description="Run WorkIQ Email/Teams MCP + FIDES sample.")
     mode_group = parser.add_mutually_exclusive_group(required=True)
     mode_group.add_argument("--cli", action="store_true", help="Run in command line mode.")
@@ -216,14 +227,19 @@ def _parse_args(argv: list[str]) -> tuple[str, bool, int]:
         default=9090,
         help="Port of the local Fides gateway (default: 9090).",
     )
+    parser.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help="Auto-approve gateway policy prompts in CLI mode (default: prompt interactively).",
+    )
     args = parser.parse_args(argv)
     mode = "cli" if args.cli else "devui"
-    return mode, args.debug, args.gateway_port
+    return mode, args.debug, args.gateway_port, args.auto_approve
 
 
 def main() -> None:
     """Entry point for the sample script."""
-    mode, debug, gateway_port = _parse_args(sys.argv[1:])
+    mode, debug, gateway_port, auto_approve = _parse_args(sys.argv[1:])
     logging.basicConfig(
         level=logging.WARNING,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -232,7 +248,7 @@ def main() -> None:
     logging.getLogger("agent_framework.security").setLevel(logging.DEBUG if debug else logging.WARNING)
     try:
         if mode == "cli":
-            asyncio.run(run_cli_async(debug=debug, gateway_port=gateway_port))
+            asyncio.run(run_cli_async(debug=debug, gateway_port=gateway_port, auto_approve=auto_approve))
         else:
             asyncio.run(run_devui_async(debug=debug, gateway_port=gateway_port))
     except RuntimeError as ex:

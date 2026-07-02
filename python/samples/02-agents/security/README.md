@@ -139,6 +139,7 @@ The gateway must be running before starting the sample.
 
 ```bash
 uv run samples/02-agents/security/workiq-email-example.py --cli --gateway-port 9090
+uv run samples/02-agents/security/workiq-email-example.py --cli --gateway-port 9090 --auto-approve
 uv run samples/02-agents/security/workiq-email-example.py --devui --gateway-port 9090
 uv run samples/02-agents/security/workiq-email-example.py --devui --gateway-port 9090 --debug
 ```
@@ -146,13 +147,17 @@ uv run samples/02-agents/security/workiq-email-example.py --devui --gateway-port
 The `--gateway-port` flag specifies the port where the Fides Gateway is
 listening (default: `9090`).
 
+In CLI mode, gateway `ask`/`deny` decisions prompt you interactively to approve
+or reject each flagged tool call. Pass `--auto-approve` to approve them
+automatically (useful for non-interactive runs); avoid this for real workloads.
+
 When you run the DevUI variant, the sample prints the active DevUI bearer token
 before starting the server.
 
 What to look for:
 
 - Gateway `eval_policy` decisions control whether tool calls proceed
-- `ask` decisions surface as approval prompts in DevUI
+- `ask` decisions surface as approval prompts (interactive in CLI, in the DevUI otherwise)
 - Parallel tool calls that all require approval can be approved/rejected individually
 - Readers lattice tracks which identities are authorized to see data
 
