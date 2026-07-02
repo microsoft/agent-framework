@@ -947,7 +947,7 @@ public sealed class DefaultMcpToolHandlerTests
         request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
 
         // Act
-        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, "https://trusted.example.com");
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
 
         // Assert — same origin, credential is preserved
         request.Headers.Contains("Authorization").Should().BeTrue();
@@ -961,7 +961,7 @@ public sealed class DefaultMcpToolHandlerTests
         request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
 
         // Act
-        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, "https://trusted.example.com");
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
 
         // Assert — credential must not cross the origin boundary
         request.Headers.Contains("Authorization").Should().BeFalse();
@@ -975,10 +975,41 @@ public sealed class DefaultMcpToolHandlerTests
         request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
 
         // Act
-        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, "https://trusted.example.com");
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
 
         // Assert
         request.Headers.Contains("Authorization").Should().BeFalse();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_ExplicitDefaultPort_RetainsAuthorization()
+    {
+        // Arrange — pinned endpoint carries an explicit :443 while the request omits it; these are
+        // the same origin and Uri.Compare must normalize the default port rather than strip.
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com/mcp/message");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com:443/mcp"));
+
+        // Assert — explicit vs implicit default port is the same origin
+        request.Headers.Contains("Authorization").Should().BeTrue();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_RelativeRequestUri_RetainsAuthorization()
+    {
+        // Arrange — a relative URI resolves against the client's base address (the pinned origin) and
+        // therefore can never target a foreign origin. It must not throw and must retain credentials.
+        using HttpRequestMessage request = new(HttpMethod.Post, new Uri("/mcp/message", UriKind.Relative));
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        Action act = () => OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert — does not throw and leaves the credential in place
+        act.Should().NotThrow();
+        request.Headers.Contains("Authorization").Should().BeTrue();
     }
 
     [Fact]
@@ -989,7 +1020,7 @@ public sealed class DefaultMcpToolHandlerTests
         request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
 
         // Act
-        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, "https://trusted.example.com");
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
 
         // Assert
         request.Headers.Contains("Authorization").Should().BeFalse();
@@ -1005,7 +1036,7 @@ public sealed class DefaultMcpToolHandlerTests
         request.Headers.TryAddWithoutValidation("Proxy-Authorization", "Bearer proxy-token");
 
         // Act
-        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, "https://trusted.example.com");
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
 
         // Assert — all credential-bearing headers are stripped
         request.Headers.Contains("Authorization").Should().BeFalse();
@@ -1022,7 +1053,7 @@ public sealed class DefaultMcpToolHandlerTests
         request.Headers.TryAddWithoutValidation("X-Trace-Id", "trace-123");
 
         // Act
-        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, "https://trusted.example.com");
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
 
         // Assert — only credential headers are removed; other headers are untouched
         request.Headers.Contains("Authorization").Should().BeFalse();
@@ -1044,6 +1075,7 @@ public sealed class DefaultMcpToolHandlerTests
         using HttpResponseMessage response = await invoker.SendAsync(request, CancellationToken.None);
 
         // Assert — the credential never reached the inner handler for the foreign origin
+        response.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
         inner.LastRequestHadAuthorization.Should().BeFalse();
     }
 
@@ -1062,6 +1094,7 @@ public sealed class DefaultMcpToolHandlerTests
         using HttpResponseMessage response = await invoker.SendAsync(request, CancellationToken.None);
 
         // Assert — same-origin credential flows through normally
+        response.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
         inner.LastRequestHadAuthorization.Should().BeTrue();
     }
 

@@ -458,41 +458,49 @@ internal sealed class OriginPinningHandler : DelegatingHandler
         "Cookie",
     ];
 
-    private readonly string _pinnedOrigin;
+    private readonly Uri _pinnedEndpoint;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="OriginPinningHandler"/> class.
     /// </summary>
-    /// <param name="pinnedEndpoint">The configured MCP server endpoint whose origin credentials are pinned to.</param>
+    /// <param name="pinnedEndpoint">The configured MCP server endpoint whose origin credentials are pinned to. Must be an absolute URI.</param>
     public OriginPinningHandler(Uri pinnedEndpoint)
     {
         Throw.IfNull(pinnedEndpoint);
-        this._pinnedOrigin = pinnedEndpoint.GetLeftPart(UriPartial.Authority);
+        if (!pinnedEndpoint.IsAbsoluteUri)
+        {
+            throw new ArgumentException("The pinned endpoint must be an absolute URI.", nameof(pinnedEndpoint));
+        }
+
+        this._pinnedEndpoint = pinnedEndpoint;
     }
 
     /// <inheritdoc/>
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        StripCredentialHeadersOnCrossOrigin(request, this._pinnedOrigin);
+        StripCredentialHeadersOnCrossOrigin(request, this._pinnedEndpoint);
         return base.SendAsync(request, cancellationToken);
     }
 
     /// <summary>
-    /// Removes credential headers from <paramref name="request"/> when its origin differs from
-    /// <paramref name="pinnedOrigin"/>. Same-origin requests are left untouched. Origin comparison covers
-    /// scheme, host, and port (case-insensitive), matching the standard web-origin definition.
+    /// Removes credential headers from <paramref name="request"/> when its origin differs from that of
+    /// <paramref name="pinnedEndpoint"/>. Same-origin requests are left untouched. Origin comparison covers
+    /// scheme, host, and port (case-insensitive) via <see cref="Uri.Compare"/>, which normalizes default
+    /// ports so an explicit default port (for example <c>:443</c> for https) matches an omitted one. A
+    /// relative request URI is resolved by <see cref="HttpClient"/> against its base address (the pinned
+    /// origin) and so can never target a different origin; its headers are left untouched.
     /// </summary>
-    internal static void StripCredentialHeadersOnCrossOrigin(HttpRequestMessage request, string pinnedOrigin)
+    internal static void StripCredentialHeadersOnCrossOrigin(HttpRequestMessage request, Uri pinnedEndpoint)
     {
         Throw.IfNull(request);
+        Throw.IfNull(pinnedEndpoint);
 
-        if (request.RequestUri is not { } requestUri)
+        if (request.RequestUri is not { IsAbsoluteUri: true } requestUri)
         {
             return;
         }
 
-        string requestOrigin = requestUri.GetLeftPart(UriPartial.Authority);
-        if (string.Equals(requestOrigin, pinnedOrigin, StringComparison.OrdinalIgnoreCase))
+        if (Uri.Compare(requestUri, pinnedEndpoint, UriComponents.SchemeAndServer, UriFormat.Unescaped, StringComparison.OrdinalIgnoreCase) == 0)
         {
             return;
         }
