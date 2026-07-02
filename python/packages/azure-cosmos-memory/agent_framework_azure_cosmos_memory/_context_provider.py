@@ -241,9 +241,11 @@ class CosmosMemoryContextProvider(ContextProvider):
             timeout: Maximum seconds to wait for pending tasks to complete.
         """
         tasks = getattr(self.memory_client, "_background_tasks", None)
-        if not tasks:
+        # The toolkit client tracks in-flight extraction in a ``set`` of asyncio tasks. Guard
+        # against clients that expose no usable registry (missing, None, or a non-iterable).
+        if not isinstance(tasks, (set, frozenset, list, tuple)) or not tasks:
             return
-        pending = [task for task in list(tasks) if not task.done()]
+        pending = [task for task in tasks if not task.done()]
         if pending:
             await asyncio.wait(pending, timeout=timeout)
 
@@ -261,9 +263,17 @@ class CosmosMemoryContextProvider(ContextProvider):
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         """Async context manager exit.
 
+        Drains any in-flight background memory extraction before closing so it persists
+        instead of being cancelled. This keeps extraction transparent: callers get
+        non-blocking turn writes during the session and an automatic drain on exit, and never
+        need to call ``flush()`` in their own control flow.
+
         Only close the memory client if this provider created it (_should_close_client=True).
         If a pre-created client was provided, the caller is responsible for closing it.
         """
+        # Let pending fire-and-forget extraction tasks finish and persist; the client's
+        # close() would otherwise cancel them.
+        await self.flush()
         if (
             self._should_close_client
             and self.memory_client

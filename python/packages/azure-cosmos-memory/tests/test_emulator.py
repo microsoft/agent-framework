@@ -79,9 +79,12 @@ class _FakeEmbeddings:
 class _FakeChat:
     """Deterministic stand-in for the toolkit's chat client.
 
-    Returns an empty extraction result so the pipeline never invokes a real LLM. The tests
-    seed memories directly, so no chat output is needed.
+    Records each call so tests can assert the extraction pipeline was invoked, and returns an
+    empty extraction result so the pipeline never depends on a real LLM.
     """
+
+    def __init__(self) -> None:
+        self.calls: list[list[dict[str, str]]] = []
 
     async def generate(
         self,
@@ -92,29 +95,27 @@ class _FakeChat:
         base_delay: float = 2.0,
         **extra: object,
     ) -> str:
+        self.calls.append(messages)
         return '{"memories": []}'
 
     async def close(self) -> None:
         return None
 
 
-@pytest.fixture
-async def emulator_provider(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[CosmosMemoryContextProvider]:
-    """Provider wired to the emulator with quantizedFlat vectors and injected fakes.
+def _build_emulator_client(monkeypatch: pytest.MonkeyPatch, chat_client: _FakeChat) -> AsyncCosmosMemoryClient:
+    """Build a toolkit client pointed at the local emulator with injected fakes.
 
-    Uses a unique database per test run for isolation and to avoid cross-run interference.
-    Skips (rather than fails) if the emulator is not reachable, so the suite is a no-op when
-    no emulator is running.
+    Forces the emulator-compatible quantizedFlat vector index and strips the toolkit's
+    full-text index (the provider only does pure vector search), so the suite runs on a stock
+    emulator without the Full Text Search preview feature. Uses provisioned autoscale
+    throughput (the emulator rejects serverless).
+
+    Reuses a single fixed database rather than a per-run one: the emulator has a finite
+    partition budget, and creating a fresh database on every run exhausts it (ServiceUnavailable
+    "high demand"). Tests isolate themselves via unique ``user_id``/``thread_id`` values instead.
     """
-    # The emulator does not support the diskANN index; force the emulator-compatible
-    # quantizedFlat index type for the containers the provider creates on entry.
     monkeypatch.setenv("AI_FOUNDRY_EMBEDDING_VECTOR_INDEX_TYPE", "quantizedFlat")
 
-    # The provider only ever performs pure vector search (hybrid_search=False), so the
-    # toolkit's full-text index is not needed here. The toolkit bakes a full-text index into
-    # every container it creates, which requires the Cosmos "Full Text Search" preview feature.
-    # Strip it from the container-creation policies so the suite runs on a stock emulator that
-    # only has vector search. Vector queries are unaffected.
     from azure.cosmos.agent_memory.aio import cosmos_memory_client as _aio_client_mod
 
     _orig_policies = _aio_client_mod._container_policies
@@ -126,20 +127,28 @@ async def emulator_provider(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Co
 
     monkeypatch.setattr(_aio_client_mod, "_container_policies", _vector_only_policies)
 
-    client = AsyncCosmosMemoryClient(
+    return AsyncCosmosMemoryClient(
         cosmos_endpoint=_EMULATOR_ENDPOINT,
         cosmos_key=_EMULATOR_KEY,
-        cosmos_database=f"test_af_mem_{uuid.uuid4().hex[:8]}",
+        cosmos_database="test_af_mem",
         embedding_dimensions=_EMBED_DIM,
         embeddings_client=_FakeEmbeddings(),
-        chat_client=_FakeChat(),
+        chat_client=chat_client,
         use_default_credential=False,
-        # The toolkit defaults to serverless throughput, which the emulator (a provisioned
-        # account) does not support and rejects with a ServiceUnavailable "high demand" error.
-        # Use provisioned autoscale throughput at a low RU so the containers fit the emulator.
         cosmos_throughput_mode="autoscale",
         cosmos_autoscale_max_ru=1000,
     )
+
+
+@pytest.fixture
+async def emulator_provider(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[CosmosMemoryContextProvider]:
+    """Provider wired to the emulator with quantizedFlat vectors and injected fakes.
+
+    Tests isolate themselves via unique ``user_id``/``thread_id`` values (see
+    ``_build_emulator_client`` for why a shared database is used). Skips (rather than fails) if
+    the emulator is not reachable, so the suite is a no-op when no emulator is running.
+    """
+    client = _build_emulator_client(monkeypatch, _FakeChat())
     provider = CosmosMemoryContextProvider(
         memory_client=client,
         top_k=5,
@@ -224,3 +233,62 @@ class TestEmulatorVectorSearch:
         turns = await provider.memory_client.get_thread(user_id=user_id, thread_id=thread_id)
         contents = " ".join(str(t.get("content", "")) for t in turns)
         assert "window seats" in contents.lower()
+
+
+class TestEmulatorTransparentExtraction:
+    """Memory extraction must run transparently: storing a turn via ``after_run`` schedules the
+    toolkit's background pipeline on its own, and the provider drains it when the context exits.
+    The application never calls ``flush()``/``process_now()`` in its control flow.
+    """
+
+    async def test_after_run_triggers_and_drains_extraction(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A stored turn schedules background extraction; exiting the provider drains it.
+
+        This test manages the provider lifecycle directly (instead of the shared fixture) so it
+        can assert state both while extraction is in flight and after the context exits.
+        """
+        chat = _FakeChat()
+        client = _build_emulator_client(monkeypatch, chat)
+        provider = CosmosMemoryContextProvider(
+            memory_client=client,
+            top_k=5,
+            min_confidence=0.0,
+            memory_types=["fact"],
+        )
+        try:
+            await provider.__aenter__()
+        except Exception as exc:  # noqa: BLE001 - clear skip on any connectivity/setup failure
+            await client.close()
+            pytest.skip(f"Cosmos DB emulator not reachable or vector search unavailable at {_EMULATOR_ENDPOINT}: {exc}")
+
+        try:
+            user_id = f"user-{uuid.uuid4().hex[:8]}"
+            thread_id = f"thread-{uuid.uuid4().hex[:8]}"
+            session = AgentSession(session_id=thread_id)
+            session.state.setdefault(provider.source_id, {})["user_id"] = user_id
+            ctx = SessionContext(
+                input_messages=[Message(role="user", contents=["I live in Seattle and enjoy kayaking."])],
+                session_id=session.session_id,
+            )
+
+            # Storing the turn through the normal agent hook must, on its own, schedule the
+            # toolkit's extraction pipeline as a fire-and-forget background task
+            # (FACT_EXTRACTION_EVERY_N defaults to 1). The caller does nothing else.
+            await provider.after_run(
+                agent=_STUB_AGENT,
+                session=session,
+                context=ctx,
+                state=session.state.setdefault(provider.source_id, {}),
+            )
+
+            # The write scheduled background work rather than blocking the turn on extraction.
+            assert client._background_tasks, "after_run did not schedule background extraction"
+        finally:
+            # Exiting the context must drain in-flight extraction. No flush()/process_now() is called.
+            await provider.__aexit__(None, None, None)
+
+        # Draining ran the extraction pipeline transparently (its chat step was invoked) and
+        # left no pending background tasks behind.
+        assert chat.calls, "background extraction did not run transparently after the turn"
+        assert all(task.done() for task in client._background_tasks)
+        await client.close()

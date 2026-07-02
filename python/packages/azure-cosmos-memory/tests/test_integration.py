@@ -270,6 +270,68 @@ class TestConfiguration:
             )
 
 
+# -- Transparent extraction tests ----------------------------------------------
+
+
+class TestTransparentExtraction:
+    """Memory extraction must happen transparently.
+
+    A fact mentioned in one session is extracted and recalled in a later session without the
+    application ever calling ``flush()`` or ``process_now()`` in its control flow: ``after_run``
+    schedules extraction in the background and the provider drains it when its context exits.
+    """
+
+    def _build_provider(self) -> CosmosMemoryContextProvider:
+        return CosmosMemoryContextProvider(
+            cosmos_endpoint=os.environ["COSMOS_ENDPOINT"],
+            cosmos_database=os.getenv("COSMOS_DATABASE", "test_agent_memory"),
+            foundry_endpoint=os.environ["FOUNDRY_ENDPOINT"],
+            credential=DefaultAzureCredential(),
+            top_k=5,
+            min_confidence=0.3,
+        )
+
+    async def test_fact_extracted_and_recalled_without_manual_flush(
+        self, skip_if_no_env: None, test_user_id: str
+    ) -> None:
+        """Mention a fact, exit the context (auto-drain), then recall it in a new session."""
+        # Session 1: state a durable preference, then simply leave the context. No flush()/
+        # process_now() is called anywhere -- extraction must be scheduled and drained for us.
+        async with self._build_provider() as provider:
+            session = AgentSession(session_id=f"test-thread-{uuid.uuid4().hex[:8]}")
+            session.state.setdefault(provider.source_id, {})["user_id"] = test_user_id
+            ctx = SessionContext(
+                input_messages=[Message(role="user", contents=["My favourite programming language is Rust."])],
+                session_id=session.session_id,
+            )
+            await provider.after_run(
+                agent=_STUB_AGENT,
+                session=session,
+                context=ctx,
+                state=session.state.setdefault(provider.source_id, {}),
+            )
+        # Leaving the `async with` above drained the background extraction automatically.
+
+        # Session 2: a brand-new thread for the same user must recall the extracted fact.
+        async with self._build_provider() as provider:
+            session = AgentSession(session_id=f"test-thread-{uuid.uuid4().hex[:8]}")
+            session.state.setdefault(provider.source_id, {})["user_id"] = test_user_id
+            ctx = SessionContext(
+                input_messages=[Message(role="user", contents=["What is my favourite programming language?"])],
+                session_id=session.session_id,
+            )
+            await provider.before_run(
+                agent=_STUB_AGENT,
+                session=session,
+                context=ctx,
+                state=session.state.setdefault(provider.source_id, {}),
+            )
+            injected = ctx.context_messages.get(provider.source_id, [])
+            recalled = "\n".join(m.text for m in injected if m.text).lower()  # type: ignore[union-attr]
+
+        assert "rust" in recalled, f"expected the extracted fact to be recalled, got: {recalled!r}"
+
+
 # -- Cleanup note --------------------------------------------------------------
 # Note: These integration tests create data in the live Cosmos DB account.
 # Consider adding cleanup logic or using time-based partitions if running frequently.

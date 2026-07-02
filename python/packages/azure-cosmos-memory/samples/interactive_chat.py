@@ -100,7 +100,10 @@ async def chat_loop(agent: Agent, provider: CosmosMemoryContextProvider, user_id
     print(f"Started thread: {session.session_id}\n")
 
     while True:
-        user_input = input("You: ").strip()
+        # Read input in a worker thread so the asyncio event loop stays free while you type.
+        # The provider extracts memories in a background task after each turn; a blocking
+        # input() call would freeze the loop and defer all extraction until the app exits.
+        user_input = (await asyncio.to_thread(input, "You: ")).strip()
         if not user_input:
             continue
         if user_input == "/quit":
@@ -111,7 +114,7 @@ async def chat_loop(agent: Agent, provider: CosmosMemoryContextProvider, user_id
             print(f"\n[New thread: {session.session_id} - earlier memories still available]\n")
             continue
         if user_input == "/user":
-            new_user_id = input("Enter new user ID: ").strip()
+            new_user_id = (await asyncio.to_thread(input, "Enter new user ID: ")).strip()
             if new_user_id:
                 user_id = new_user_id
                 session = _new_thread(agent, provider, user_id)
@@ -126,13 +129,11 @@ async def main() -> None:
     """Entry point."""
     load_dotenv()
     agent, provider = create_agent_with_memory()
+    # Memory extraction runs in the background after each turn; the provider drains any
+    # in-flight extraction automatically when this ``async with`` block exits, so the sample
+    # never has to manage it explicitly.
     async with provider:
-        try:
-            await chat_loop(agent, provider, user_id="demo-user-123")
-        finally:
-            # Let in-flight background extraction finish and persist before the client closes.
-            print("Finalizing memory extraction...")
-            await provider.flush()
+        await chat_loop(agent, provider, user_id="demo-user-123")
 
 
 if __name__ == "__main__":
