@@ -2,12 +2,13 @@
 
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_declarative import WorkflowFactory
 from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework_openai import OpenAIChatOptions
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -17,6 +18,7 @@ load_dotenv()
 
 
 # --- Structured triage response --------------------------------------------------
+
 
 class TriageResponse(BaseModel):
     """Triage decision produced from the conversation so far."""
@@ -45,8 +47,7 @@ class TriageResponse(BaseModel):
     Reply: str = Field(
         default="",
         description=(
-            "A natural-language reply to the user. "
-            "Used when Category is 'General'; otherwise may be left empty."
+            "A natural-language reply to the user. Used when Category is 'General'; otherwise may be left empty."
         ),
     )
 
@@ -85,6 +86,7 @@ ask for them one at a time. Keep responses short and polite.
 
 # --- Host setup ------------------------------------------------------------------
 
+
 def main() -> None:
     workflow_path = Path(__file__).parent / "workflow.yaml"
 
@@ -99,19 +101,19 @@ def main() -> None:
         client=client,
         name="TriageAgent",
         instructions=TRIAGE_INSTRUCTIONS,
-        default_options={"response_format": TriageResponse, "store": False},
+        default_options=OpenAIChatOptions[Any](response_format=TriageResponse, store=False),
     )
     tech_support_agent = Agent(
         client=client,
         name="TechSupportAgent",
         instructions=TECH_SUPPORT_INSTRUCTIONS,
-        default_options={"store": False},
+        default_options=OpenAIChatOptions(store=False),
     )
     billing_agent = Agent(
         client=client,
         name="BillingAgent",
         instructions=BILLING_INSTRUCTIONS,
-        default_options={"store": False},
+        default_options=OpenAIChatOptions(store=False),
     )
 
     factory = WorkflowFactory(

@@ -4,9 +4,6 @@ A realistic **multi-turn** [Agent Framework](https://github.com/microsoft/agent-
 
 > Read more about declarative workflows in the [Agent Framework documentation](https://learn.microsoft.com/en-us/agent-framework/workflows/declarative/?pivots=programming-language-python) and about workflow-as-an-agent in the [Workflow as an Agent documentation](https://learn.microsoft.com/en-us/agent-framework/workflows/as-agents?pivots=programming-language-python).
 
-> [!IMPORTANT]
-> Deploy this sample as a **container** (not Code/ZIP). Its declarative workflow uses Power Fx, which needs the .NET runtime included in the `Dockerfile`. Choose **Container** in every deploy flow.
-
 ## How It Works
 
 ### The Workflow
@@ -28,71 +25,21 @@ Each user message re-runs the workflow from the trigger. Because `Workflow.as_ag
 
 The triage agent is configured with `response_format=TriageResponse` (a Pydantic model) so the workflow can read its structured fields via `Local.Triage.*`. The specialist agents are plain text and use `autoSend: true` to deliver their reply straight to the caller.
 
-## Option 1: Azure Developer CLI (`azd`)
+## Running the Agent Host
 
-### Prerequisites
+Follow the instructions in the [Running the Agent Host Locally](../../README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.
 
-1. **Azure Developer CLI (`azd`)** — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd)
-2. Install the AI agent extension:
-   ```bash
-   azd ext install microsoft.foundry
-   ```
-3. Authenticate:
-   ```bash
-   azd auth login
-   ```
+## Interacting with the agent
 
-### Initialize the agent project
+> Depending on how you run the agent host, you can invoke the agent using `curl` (`Invoke-WebRequest` in PowerShell) or `azd`. Please refer to the [parent README](../../README.md) for more details. Use this README for sample queries you can send to the agent.
 
-No cloning required. Create a new folder and initialize from the manifest:
+Send a POST request to the server with a JSON body containing an `"input"` field to interact with the agent. For example:
 
 ```bash
-mkdir my-declarative-agent && cd my-declarative-agent
-
-azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/09-declarative-customer-support/agent.manifest.yaml
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "I have a problem"}'
 ```
 
-Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one.
-
-### Provision Azure resources (if needed)
-
-If you don't already have a Foundry project and model deployment:
-
-```bash
-azd provision
-```
-
-### Run the agent locally
-
-```bash
-azd ai agent run
-```
-
-The agent host will start on `http://localhost:8088`.
-
-### Invoke the local agent
-
-In a separate terminal, from the project directory:
-
-```bash
-azd ai agent invoke --local "I have a problem"
-```
-
-A typical multi-turn session:
-
-```bash
-azd ai agent invoke --local "I have a problem"
-# → "Could you tell me a bit more about what's going on?"
-
-azd ai agent invoke --local "My laptop won't turn on"
-# → "Connecting you with technical support..."
-# → TechSupportAgent: "Let's start simple — is the charger LED on when plugged in?"
-
-azd ai agent invoke --local "Yes the LED is on"
-# → TechSupportAgent: "Great. Try a hard reset: hold the power button for 30 seconds..."
-```
-
-Or for billing:
+Invoke with `azd`:
 
 ```bash
 azd ai agent invoke --local "I was double-charged this month"
@@ -100,53 +47,9 @@ azd ai agent invoke --local "I was double-charged this month"
 # → BillingAgent: "I'm sorry about that. Can you share the last 4 digits of the card on file?"
 ```
 
-### Deploy to Foundry
+## Deploying the Agent to Foundry
 
-Once tested locally, deploy to Microsoft Foundry:
+To host the agent on Foundry, follow the instructions in the [Deploying the Agent to Foundry](../../README.md#deploying-the-agent-to-foundry) section of the README in the parent directory.
 
-```bash
-azd deploy
-```
-
-For the full deployment guide, see [Deploy a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
-
-### Invoke the deployed agent
-
-```bash
-azd ai agent invoke "I have a problem"
-```
-
-## Option 2: VS Code (Foundry Toolkit)
-
-### Prerequisites
-
-1. **VS Code** with the **[Foundry Toolkit](https://marketplace.visualstudio.com/items?itemName=ms-azuretools.azure-ai-foundry)** extension installed.
-2. Sign in to Azure in VS Code.
-
-### Create the project
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Create Hosted Agent**.
-2. Select this sample from the gallery. The extension scaffolds the project into a new workspace and generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically.
-3. Complete the **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one).
-
-### Run and debug the agent
-
-Press **F5** to start the agent in debug mode. The agent host will start on `http://localhost:8088`.
-
-### Test with Agent Inspector
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
-2. The Inspector connects to the running agent. Send messages to chat and view streamed responses.
-
-### Deploy to Foundry
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate settings.
-2. If prompted, complete **Foundry Project Setup** to select subscription and project.
-3. On the **Basics** tab, choose **Container** as the deployment method (this sample requires it — see the note above) and confirm the agent name.
-4. On **Review + Deploy**, confirm runtime details, pick **CPU and Memory** size, and click **Deploy**.
-5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
-
-## Next steps
-
-- [Quickstart: Create a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent) — end-to-end walkthrough using `azd`
-- [Manage hosted agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/manage-hosted-agent) — monitor and manage deployed agents
+> [!IMPORTANT]
+> Deploy this sample as a **container** (not Code/ZIP). Its declarative workflow uses Power Fx, which needs the .NET runtime included in the `Dockerfile`. Choose **Container** in every deploy flow.
