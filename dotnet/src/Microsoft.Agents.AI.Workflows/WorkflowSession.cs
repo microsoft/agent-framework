@@ -30,6 +30,7 @@ internal sealed class WorkflowSession : AgentSession
 
     private readonly bool _includeExceptionDetails;
     private readonly bool _includeWorkflowOutputsInResponse;
+    private readonly bool _filterToolCallMessages;
 
     private InMemoryCheckpointManager? _inMemoryCheckpointManager;
 
@@ -68,11 +69,12 @@ internal sealed class WorkflowSession : AgentSession
         return true;
     }
 
-    public WorkflowSession(Workflow workflow, string sessionId, IWorkflowExecutionEnvironment executionEnvironment, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false)
+    public WorkflowSession(Workflow workflow, string sessionId, IWorkflowExecutionEnvironment executionEnvironment, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false, bool filterToolCallMessages = false)
     {
         this._workflow = Throw.IfNull(workflow);
         this._includeExceptionDetails = includeExceptionDetails;
         this._includeWorkflowOutputsInResponse = includeWorkflowOutputsInResponse;
+        this._filterToolCallMessages = filterToolCallMessages;
 
         IWorkflowExecutionEnvironment env = Throw.IfNull(executionEnvironment);
         if (VerifyCheckpointingConfiguration(env, out InProcessExecutionEnvironment? inProcEnv))
@@ -96,11 +98,12 @@ internal sealed class WorkflowSession : AgentSession
         return new(this._inMemoryCheckpointManager ??= new());
     }
 
-    public WorkflowSession(Workflow workflow, JsonElement serializedSession, IWorkflowExecutionEnvironment executionEnvironment, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false, JsonSerializerOptions? jsonSerializerOptions = null)
+    public WorkflowSession(Workflow workflow, JsonElement serializedSession, IWorkflowExecutionEnvironment executionEnvironment, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false, bool filterToolCallMessages = false, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         this._workflow = Throw.IfNull(workflow);
         this._includeExceptionDetails = includeExceptionDetails;
         this._includeWorkflowOutputsInResponse = includeWorkflowOutputsInResponse;
+        this._filterToolCallMessages = filterToolCallMessages;
 
         IWorkflowExecutionEnvironment env = Throw.IfNull(executionEnvironment);
 
@@ -172,6 +175,71 @@ internal sealed class WorkflowSession : AgentSession
             RawRepresentation = raw
         };
     }
+
+    private AgentResponseUpdate? FilterToolCallContents(AgentResponseUpdate update)
+    {
+        if (!this._filterToolCallMessages || !ContainsToolCallContent(update.Contents))
+        {
+            return update;
+        }
+
+        List<AIContent> retainedContents = update.Contents
+            .Where(static content => !IsToolCallContent(content))
+            .ToList();
+
+        if (retainedContents.Count == 0)
+        {
+            return null;
+        }
+
+        return new AgentResponseUpdate
+        {
+            AdditionalProperties = update.AdditionalProperties,
+            AgentId = update.AgentId,
+            AuthorName = update.AuthorName,
+            Contents = retainedContents,
+            ContinuationToken = update.ContinuationToken,
+            CreatedAt = update.CreatedAt,
+            FinishReason = update.FinishReason,
+            MessageId = update.MessageId,
+            RawRepresentation = update.RawRepresentation,
+            ResponseId = update.ResponseId,
+            Role = update.Role,
+        };
+    }
+
+    private ChatMessage? FilterToolCallContents(ChatMessage message)
+    {
+        if (!this._filterToolCallMessages || !ContainsToolCallContent(message.Contents))
+        {
+            return message;
+        }
+
+        List<AIContent> retainedContents = message.Contents
+            .Where(static content => !IsToolCallContent(content))
+            .ToList();
+
+        if (retainedContents.Count == 0)
+        {
+            return null;
+        }
+
+        ChatMessage filteredMessage = message.Clone();
+        filteredMessage.Contents = retainedContents;
+        return filteredMessage;
+    }
+
+    private AgentResponseUpdate? CreateFilteredUpdate(string responseId, object raw, ChatMessage message)
+    {
+        ChatMessage? filteredMessage = this.FilterToolCallContents(message);
+        return filteredMessage == null ? null : this.CreateUpdate(responseId, raw, filteredMessage);
+    }
+
+    private static bool ContainsToolCallContent(IEnumerable<AIContent> contents)
+        => contents.Any(static content => IsToolCallContent(content));
+
+    private static bool IsToolCallContent(AIContent content)
+        => content is FunctionCallContent or FunctionResultContent;
 
     private async ValueTask<ResumeRunResult> CreateOrResumeRunAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default)
     {
@@ -480,7 +548,11 @@ internal sealed class WorkflowSession : AgentSession
             switch (evt)
             {
                 case AgentResponseUpdateEvent agentUpdate:
-                    yield return agentUpdate.Update;
+                    AgentResponseUpdate? filteredUpdate = this.FilterToolCallContents(agentUpdate.Update);
+                    if (filteredUpdate != null)
+                    {
+                        yield return filteredUpdate;
+                    }
                     break;
 
                 case RequestInfoEvent requestInfo:
@@ -553,7 +625,11 @@ internal sealed class WorkflowSession : AgentSession
                     // as an output executor.
                     foreach (ChatMessage message in agentResponse.Response.Messages)
                     {
-                        yield return this.CreateUpdate(this.LastResponseId, evt, message);
+                        AgentResponseUpdate? filteredMessageUpdate = this.CreateFilteredUpdate(this.LastResponseId, evt, message);
+                        if (filteredMessageUpdate != null)
+                        {
+                            yield return filteredMessageUpdate;
+                        }
                     }
                     break;
 
@@ -576,7 +652,11 @@ internal sealed class WorkflowSession : AgentSession
 
                     foreach (ChatMessage message in updateMessages)
                     {
-                        yield return this.CreateUpdate(this.LastResponseId, evt, message);
+                        AgentResponseUpdate? filteredMessageUpdate = this.CreateFilteredUpdate(this.LastResponseId, evt, message);
+                        if (filteredMessageUpdate != null)
+                        {
+                            yield return filteredMessageUpdate;
+                        }
                     }
                     break;
 
