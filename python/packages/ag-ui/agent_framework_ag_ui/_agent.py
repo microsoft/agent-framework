@@ -30,7 +30,10 @@ class AgentConfig:
             state_schema: Optional state schema for state management; accepts dict or Pydantic model/class
             predict_state_config: Configuration for predictive state updates
             use_service_session: Whether the agent session is service-managed
-            require_confirmation: Whether predictive updates require user confirmation before applying
+            require_confirmation: When True (default), emit a ``confirm_changes`` tool call for
+                approval-gated tools so a human-in-the-loop frontend can prompt for approval, and require
+                confirmation for predictive state updates. When False, no ``confirm_changes`` call is
+                emitted; tools remain gated server-side.
             snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence remains inactive unless
                 endpoint setup also provides an explicit Snapshot Scope resolver.
         """
@@ -94,7 +97,10 @@ class AgentFrameworkAgent:
             description: Optional description
             state_schema: Optional state schema for state management; accepts dict or Pydantic model/class
             predict_state_config: Configuration for predictive state updates
-            require_confirmation: Whether predictive updates require user confirmation before applying
+            require_confirmation: When True (default), emit a ``confirm_changes`` tool call for
+                approval-gated tools so a human-in-the-loop frontend can prompt for approval, and require
+                confirmation for predictive state updates. When False, no ``confirm_changes`` call is
+                emitted; tools remain gated server-side.
             use_service_session: Whether the agent session is service-managed
             snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence remains inactive unless
                 endpoint setup also provides an explicit Snapshot Scope resolver.
