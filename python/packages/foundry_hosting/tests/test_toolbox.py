@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from agent_framework import SkillsProvider
+from agent_framework import SkillsProvider, SkillsSourceContext
 from azure.ai.agentserver.core import (
     FoundryAgentRequestContext,
     reset_request_context,
@@ -23,6 +23,17 @@ from agent_framework_foundry_hosting._toolbox import (  # pyright: ignore[report
     _toolbox_name_from_endpoint,
     _ToolboxAuth,
 )
+
+
+class _StubAgent:
+    """Minimal stand-in for a ``SupportsAgentRun`` used to build a source context."""
+
+    name = "test-agent"
+
+
+def _source_context() -> SkillsSourceContext:
+    """Build a :class:`SkillsSourceContext` for exercising skill sources in tests."""
+    return SkillsSourceContext(agent=_StubAgent())  # type: ignore[arg-type]
 
 
 class _FakeAccessToken:
@@ -162,7 +173,7 @@ async def test_skills_source_requires_connection() -> None:
     assert toolbox.session is None
     source = _FoundryToolboxSkillsSource(toolbox)
     with pytest.raises(RuntimeError, match="not connected"):
-        await source.get_skills()
+        await source.get_skills(_source_context())
 
 
 async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -179,12 +190,12 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
         def __init__(self, *, client: object) -> None:
             captured["client"] = client
 
-        async def get_skills(self) -> list[str]:
+        async def get_skills(self, context: SkillsSourceContext) -> list[str]:
             return ["skill-a"]
 
     monkeypatch.setattr("agent_framework_foundry_hosting._toolbox.MCPSkillsSource", _StubSkillsSource)
 
-    result = await _FoundryToolboxSkillsSource(toolbox).get_skills()
+    result = await _FoundryToolboxSkillsSource(toolbox).get_skills(_source_context())
 
     assert result == ["skill-a"]
     assert captured["client"] is sentinel_session

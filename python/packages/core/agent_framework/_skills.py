@@ -53,6 +53,7 @@ import os
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
@@ -2216,7 +2217,9 @@ class SkillsProvider(ContextProvider):
             resource_instructions=resource_instructions or "",
         )
 
-    async def _create_context(self) -> tuple[Sequence[Skill], str | None, list[FunctionTool]]:
+    async def _create_context(
+        self, source_context: SkillsSourceContext
+    ) -> tuple[Sequence[Skill], str | None, list[FunctionTool]]:
         """Build skills, instructions, and tools from the source.
 
         Queries the source for skills and constructs the instruction prompt
@@ -2225,10 +2228,14 @@ class SkillsProvider(ContextProvider):
         rebuilds instructions and tools from the (possibly cached) skills on
         every call.
 
+        Args:
+            source_context: Contextual information about the agent and session
+                requesting skills, forwarded to the source pipeline.
+
         Returns:
             A tuple of ``(skills, instructions, tools)``.
         """
-        skills = await self._source.get_skills()
+        skills = await self._source.get_skills(source_context)
 
         if not skills:
             return skills, None, []
@@ -2270,7 +2277,8 @@ class SkillsProvider(ContextProvider):
             context: Session context to extend with instructions and tools.
             state: Mutable per-run state dictionary (unused by this provider).
         """
-        skills, instructions, tools = await self._create_context()
+        source_context = SkillsSourceContext(agent=agent, session=session)
+        skills, instructions, tools = await self._create_context(source_context)
 
         if not skills:
             return
@@ -2558,6 +2566,28 @@ def _create_script_element(script: SkillScript) -> str:
 
 
 @experimental(feature_id=ExperimentalFeature.SKILLS)
+@dataclass(frozen=True)
+class SkillsSourceContext:
+    """Contextual information passed to a :class:`SkillsSource` when retrieving skills.
+
+    Exposes the invoking *agent* and, when available, the current *session* so
+    that skill sources and decorators can make context-aware decisions such as
+    per-agent filtering (see :class:`FilteringSkillsSource`) or per-key cache
+    isolation (see :class:`CachingSkillsSource`).
+
+    The context is constructed by :class:`SkillsProvider` from the invoking
+    agent run and flows through every source and decorator in the pipeline.
+
+    Attributes:
+        agent: The agent requesting skills.
+        session: The session associated with the agent invocation, if any.
+    """
+
+    agent: SupportsAgentRun
+    session: AgentSession | None = None
+
+
+@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillsSource(ABC):
     """Abstract base class for skill sources.
 
@@ -2570,8 +2600,12 @@ class SkillsSource(ABC):
     """
 
     @abstractmethod
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         """Discover and return all skills from this source.
+
+        Args:
+            context: Contextual information about the agent and session
+                requesting skills.
 
         Returns:
             A list of :class:`Skill` instances discovered by this source.
@@ -2601,7 +2635,7 @@ class FileSkillsSource(SkillsSource):
         .. code-block:: python
 
             source = FileSkillsSource(skill_paths="./skills")
-            skills = await source.get_skills()
+            skills = await source.get_skills(context)
 
         With a script runner and filter predicates:
 
@@ -2675,12 +2709,16 @@ class FileSkillsSource(SkillsSource):
         self._script_filter = script_filter
         self._resource_filter = resource_filter
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         """Discover and return all file-based skills from configured paths.
 
         Scans directories for ``SKILL.md`` files, parses their frontmatter,
         discovers resource and script files, and returns populated
         :class:`Skill` instances.
+
+        Args:
+            context: Contextual information about the agent and session
+                requesting skills. Unused by this source.
 
         Returns:
             A list of discovered file-based skills.
@@ -3366,7 +3404,7 @@ class InMemorySkillsSource(SkillsSource):
                 instructions="Instructions here...",
             )
             source = InMemorySkillsSource([skill])
-            skills = await source.get_skills()
+            skills = await source.get_skills(context)
     """
 
     def __init__(self, skills: Sequence[Skill]) -> None:
@@ -3377,8 +3415,12 @@ class InMemorySkillsSource(SkillsSource):
         """
         self._skills = list(skills)
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         """Return the stored skills.
+
+        Args:
+            context: Contextual information about the agent and session
+                requesting skills. Unused by this source.
 
         Returns:
             A list of :class:`Skill` instances.
@@ -3410,15 +3452,19 @@ class DelegatingSkillsSource(SkillsSource, ABC):
         """The wrapped inner skill source."""
         return self._inner_source
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         """Delegate to the inner source.
 
         Subclasses should override this to intercept the results.
 
+        Args:
+            context: Contextual information about the agent and session
+                requesting skills, forwarded to the inner source.
+
         Returns:
             Skills from the inner source.
         """
-        return await self._inner_source.get_skills()
+        return await self._inner_source.get_skills(context)
 
 
 class DeduplicatingSkillsSource(DelegatingSkillsSource):
@@ -3435,7 +3481,7 @@ class DeduplicatingSkillsSource(DelegatingSkillsSource):
         .. code-block:: python
 
             deduped = DeduplicatingSkillsSource(inner_source)
-            skills = await deduped.get_skills()
+            skills = await deduped.get_skills(context)
     """
 
     def __init__(self, inner_source: SkillsSource) -> None:
@@ -3446,13 +3492,17 @@ class DeduplicatingSkillsSource(DelegatingSkillsSource):
         """
         super().__init__(inner_source)
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         """Return deduplicated skills (first-one-wins by name).
+
+        Args:
+            context: Contextual information about the agent and session
+                requesting skills, forwarded to the inner source.
 
         Returns:
             A list of :class:`Skill` instances with duplicate names removed.
         """
-        skills = await self._inner_source.get_skills()
+        skills = await self._inner_source.get_skills(context)
         seen: dict[str, Skill] = {}
         result: list[Skill] = []
 
@@ -3475,42 +3525,49 @@ class FilteringSkillsSource(DelegatingSkillsSource):
     """Decorator that filters skills from an inner source by predicate.
 
     Only skills for which *predicate* returns ``True`` are included in the
-    result.  The predicate receives each :class:`Skill` and should return
-    a boolean.
+    result.  The predicate receives each :class:`Skill` together with the
+    :class:`SkillsSourceContext` for the current invocation, enabling
+    context-aware filtering (for example, per-agent skill selection).
 
     Examples:
         .. code-block:: python
 
             filtered = FilteringSkillsSource(
                 inner_source=my_source,
-                predicate=lambda s: s.frontmatter.name != "internal",
+                predicate=lambda skill, context: skill.frontmatter.name != "internal",
             )
-            skills = await filtered.get_skills()
+            skills = await filtered.get_skills(context)
     """
 
     def __init__(
         self,
         inner_source: SkillsSource,
-        predicate: Callable[[Skill], bool],
+        predicate: Callable[[Skill, SkillsSourceContext], bool],
     ) -> None:
         """Initialize a FilteringSkillsSource.
 
         Args:
             inner_source: The source to filter.
-            predicate: A callable that receives a :class:`Skill` and returns
-                ``True`` to keep it or ``False`` to exclude it.
+            predicate: A callable that receives a :class:`Skill` and the
+                :class:`SkillsSourceContext` and returns ``True`` to keep the
+                skill or ``False`` to exclude it.
         """
         super().__init__(inner_source)
         self._predicate = predicate
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         """Return only skills that match the predicate.
+
+        Args:
+            context: Contextual information about the agent and session
+                requesting skills, forwarded to the inner source and passed to
+                the predicate.
 
         Returns:
             A filtered list of :class:`Skill` instances.
         """
-        skills = await self._inner_source.get_skills()
-        return [s for s in skills if self._predicate(s)]
+        skills = await self._inner_source.get_skills(context)
+        return [s for s in skills if self._predicate(s, context)]
 
 
 @experimental(feature_id=ExperimentalFeature.SKILLS)
@@ -3528,49 +3585,112 @@ class CachingSkillsSource(DelegatingSkillsSource):
     are typically static discovery metadata, so querying once and reusing the
     result is a pure performance win.
 
-    Concurrency: concurrent callers share a single in-flight fetch, so the
-    inner source is queried at most once even under concurrent access.  If the
-    fetch fails (or is cancelled), the cache is left empty so the next call
-    retries.
+    Concurrency: concurrent callers for the same cache key share a single
+    in-flight fetch, so the inner source is queried at most once per key even
+    under concurrent access.  If the fetch fails (or is cancelled), the cache
+    is left empty so the next call retries.
+
+    Cache isolation: by default all callers share a single cache bucket. Pass
+    a *cache_isolation_key_selector* to derive a cache key from the
+    :class:`SkillsSourceContext`, so context-aware inner sources (which may
+    return different skills per agent) are cached separately per key. The key
+    should be low-cardinality and stable (for example, an agent name or tenant
+    id); high-cardinality keys such as per-session ids can cause the cache to
+    grow without bound. Returning ``None`` from the selector (or leaving it
+    ``None``) uses the shared bucket.
 
     Examples:
         .. code-block:: python
 
             cached = CachingSkillsSource(expensive_source)
-            skills = await cached.get_skills()  # queries the inner source
-            skills = await cached.get_skills()  # returns the cached list
+            skills = await cached.get_skills(context)  # queries the inner source
+            skills = await cached.get_skills(context)  # returns the cached list
+
+        Isolating the cache per agent:
+
+        .. code-block:: python
+
+            cached = CachingSkillsSource(
+                expensive_source,
+                cache_isolation_key_selector=lambda context: context.agent.name,
+            )
     """
 
-    def __init__(self, inner_source: SkillsSource) -> None:
+    _SHARED_CACHE_KEY: Final[str] = "__caching_skills_source_shared__"
+
+    def __init__(
+        self,
+        inner_source: SkillsSource,
+        *,
+        cache_isolation_key_selector: Callable[[SkillsSourceContext], str | None] | None = None,
+    ) -> None:
         """Initialize a CachingSkillsSource.
 
         Args:
             inner_source: The source whose results will be cached.
+
+        Keyword Args:
+            cache_isolation_key_selector: Optional callable that derives a cache
+                key from the :class:`SkillsSourceContext`. When ``None`` (the
+                default), or when the callable returns ``None``, skills are
+                stored in a single shared bucket. Otherwise skills are cached
+                under the returned key. Keys should be low-cardinality and
+                stable to keep the cache bounded.
         """
         super().__init__(inner_source)
-        self._lock = asyncio.Lock()
-        self._cached_skills: list[Skill] | None = None
+        self._cache_isolation_key_selector = cache_isolation_key_selector
+        self._locks_guard = asyncio.Lock()
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._cached_skills: dict[str, list[Skill]] = {}
 
-    async def get_skills(self) -> list[Skill]:
-        """Return the inner source's skills, caching them on first call.
+    def _resolve_cache_key(self, context: SkillsSourceContext) -> str:
+        """Resolve the cache bucket key for *context*."""
+        if self._cache_isolation_key_selector is not None:
+            selected = self._cache_isolation_key_selector(context)
+            if selected is not None:
+                return selected
+        return self._SHARED_CACHE_KEY
+
+    async def _get_lock(self, key: str) -> asyncio.Lock:
+        """Return the per-key lock, creating it under a guard if needed."""
+        async with self._locks_guard:
+            lock = self._locks.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._locks[key] = lock
+            return lock
+
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
+        """Return the inner source's skills, caching them per key on first call.
+
+        Args:
+            context: Contextual information about the agent and session
+                requesting skills. Used to resolve the cache key (via
+                *cache_isolation_key_selector*) and forwarded to the inner
+                source.
 
         Returns:
-            The cached list of :class:`Skill` instances.  On the first call
-            the inner source is queried; subsequent calls return the cached
-            list.  If the first query fails, the cache is not populated and
-            the next call retries.
+            The cached list of :class:`Skill` instances for the resolved cache
+            key.  On the first call for a key the inner source is queried;
+            subsequent calls return the cached list.  If the first query fails,
+            the cache is not populated and the next call retries.
         """
-        if self._cached_skills is not None:
-            return self._cached_skills
+        key = self._resolve_cache_key(context)
 
-        async with self._lock:
+        cached = self._cached_skills.get(key)
+        if cached is not None:
+            return cached
+
+        lock = await self._get_lock(key)
+        async with lock:
             # Another coroutine may have populated the cache while we awaited
             # the lock; re-check before querying the inner source.
-            if self._cached_skills is not None:
-                return self._cached_skills
+            cached = self._cached_skills.get(key)
+            if cached is not None:
+                return cached
 
-            skills = await self._inner_source.get_skills()
-            self._cached_skills = skills
+            skills = await self._inner_source.get_skills(context)
+            self._cached_skills[key] = skills
             return skills
 
 
@@ -3580,10 +3700,10 @@ class AggregatingSkillsSource(SkillsSource):
     def __init__(self, sources: Sequence[SkillsSource]) -> None:
         self._sources = list(sources)
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         result: list[Skill] = []
         for source in self._sources:
-            skills = await source.get_skills()
+            skills = await source.get_skills(context)
             result.extend(skills)
         return result
 
@@ -3912,7 +4032,7 @@ class MCPSkillsSource(SkillsSource):
             from mcp.client.session import ClientSession
 
             source = MCPSkillsSource(client=session)
-            skills = await source.get_skills()
+            skills = await source.get_skills(context)
     """
 
     _INDEX_URI: Final[str] = "skill://index.json"
@@ -3927,11 +4047,15 @@ class MCPSkillsSource(SkillsSource):
         """
         self._client = client
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         """Discover and return skills from the MCP server.
 
         Reads ``skill://index.json``, parses it, and creates an
         :class:`MCPSkill` for each valid ``skill-md`` entry.
+
+        Args:
+            context: Contextual information about the agent and session
+                requesting skills. Unused by this source.
 
         Returns:
             A list of discovered :class:`MCPSkill` instances.

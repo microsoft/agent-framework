@@ -204,6 +204,7 @@ from ._skills import (
     SkillScriptRunner,
     SkillsProvider,
     SkillsSource,
+    SkillsSourceContext,
 )
 from ._telemetry import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -520,6 +521,7 @@ __all__ = [
     "SkillScriptRunner",
     "SkillsProvider",
     "SkillsSource",
+    "SkillsSourceContext",
     "SlidingWindowStrategy",
     "StepWrapper",
     "SubWorkflowRequestMessage",

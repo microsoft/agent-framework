@@ -33,6 +33,7 @@ from agent_framework import (
     SkillScriptRunner,
     SkillsProvider,
     SkillsSource,
+    SkillsSourceContext,
 )
 from agent_framework._skills import (
     DEFAULT_RESOURCE_EXTENSIONS,
@@ -51,6 +52,23 @@ pytestmark = pytest.mark.filterwarnings(r"ignore:\[SKILLS\].*:FutureWarning")
 _ABS = "C:\\skills" if os.name == "nt" else "/skills"
 
 
+class _StubAgent:
+    """Minimal stand-in for a ``SupportsAgentRun`` used to build a source context."""
+
+    name = "test-agent"
+
+
+def _make_source_context(agent_name: str = "test-agent") -> SkillsSourceContext:
+    """Build a :class:`SkillsSourceContext` for exercising skill sources in tests."""
+    agent = _StubAgent()
+    agent.name = agent_name
+    return SkillsSourceContext(agent=agent)  # type: ignore[arg-type]
+
+
+# Shared context for the common case where the agent/session are irrelevant.
+_SOURCE_CTX = _make_source_context()
+
+
 async def _noop_script_runner(skill: Any, script: Any, args: Any = None) -> None:
     """No-op script runner for tests that need a SkillScriptRunner."""
     return
@@ -63,7 +81,7 @@ class _CountingSkillsSource(SkillsSource):
         self._skills = list(skills)
         self.call_count = 0
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         self.call_count += 1
         return list(self._skills)
 
@@ -76,7 +94,7 @@ async def _init_provider(provider: SkillsProvider) -> SkillsProvider:
     skills list itself is cached by the source pipeline (see
     ``CachingSkillsSource``); this helper just captures one built context.
     """
-    provider._test_context = await provider._create_context()  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]  # ty: ignore[unresolved-attribute]
+    provider._test_context = await provider._create_context(_SOURCE_CTX)  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]  # ty: ignore[unresolved-attribute]
     return provider
 
 
@@ -187,7 +205,7 @@ async def _discover_file_skills_for_test(
         kwargs["script_runner"] = script_runner
 
     source = FileSkillsSource(skill_paths, **kwargs)
-    skills = await source.get_skills()
+    skills = await source.get_skills(_SOURCE_CTX)
     result: dict[str, FileSkill] = {}
     for s in skills:
         assert isinstance(s, FileSkill), f"Expected FileSkill, got {type(s).__name__}"
@@ -1722,14 +1740,14 @@ class TestFileSkillsSourceSearchDepthAndFilters:
 
         # depth=1: only root
         source1 = FileSkillsSource(str(tmp_path), search_depth=1)
-        skills1 = await source1.get_skills()
+        skills1 = await source1.get_skills(_SOURCE_CTX)
         names1 = [r.name for r in skills1[0]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "root.md" in names1
         assert "a/level1.md" not in names1
 
         # depth=2 (default): root + one level
         source2 = FileSkillsSource(str(tmp_path))
-        skills2 = await source2.get_skills()
+        skills2 = await source2.get_skills(_SOURCE_CTX)
         names2 = [r.name for r in skills2[0]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "root.md" in names2
         assert "a/level1.md" in names2
@@ -1737,7 +1755,7 @@ class TestFileSkillsSourceSearchDepthAndFilters:
 
         # depth=3: finds all
         source3 = FileSkillsSource(str(tmp_path), search_depth=3)
-        skills3 = await source3.get_skills()
+        skills3 = await source3.get_skills(_SOURCE_CTX)
         names3 = [r.name for r in skills3[0]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "a/b/level2.md" in names3
 
@@ -1757,7 +1775,7 @@ class TestFileSkillsSourceSearchDepthAndFilters:
             str(tmp_path),
             resource_filter=lambda name, path: "secret" not in path,
         )
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         resource_names = [r.name for r in skills[0]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "references/keep.md" in resource_names
         assert "references/secret.md" not in resource_names
@@ -1777,7 +1795,7 @@ class TestFileSkillsSourceSearchDepthAndFilters:
             str(tmp_path),
             script_filter=lambda name, path: not path.startswith("test_"),
         )
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         script_names = [s.name for s in skills[0]._scripts]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "run.py" in script_names
         assert "test_run.py" not in script_names
@@ -1841,7 +1859,7 @@ class TestFileSkillsSourceSearchDepthAndFilters:
         (child_dir / "child-script.py").write_text("print('child')", encoding="utf-8")
 
         source = FileSkillsSource(str(tmp_path), search_depth=3)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         skills_dict = {s.frontmatter.name: s for s in skills}
 
         # Only the parent skill is discovered; the nested SKILL.md is not its own skill.
@@ -2635,7 +2653,7 @@ class TestExtractFrontmatterSpecFields:
             encoding="utf-8",
         )
         source = FileSkillsSource(str(tmp_path))
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert len(skills) == 1
         skill = skills[0]
         assert isinstance(skill, FileSkill)
@@ -4267,7 +4285,7 @@ class TestClassSkill:
     async def test_in_memory_source_with_class_skill(self) -> None:
         skill = _MinimalClassSkill()
         source = InMemorySkillsSource([skill])
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert len(skills) == 1
         assert skills[0].frontmatter.name == "minimal-skill"
 
@@ -5189,7 +5207,7 @@ class TestLoadSkillsMerging:
                 InMemorySkillsSource([code_skill]),
             ])
         )
-        result = await source.get_skills()
+        result = await source.get_skills(_SOURCE_CTX)
         skills_by_name = {s.frontmatter.name: s for s in result}
         assert "my-skill" in skills_by_name
         assert skills_by_name["my-skill"].path is not None  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]  # file-based skill has path set
@@ -5213,7 +5231,7 @@ class TestSkillsSource:
         )
 
         source = FileSkillsSource(str(tmp_path))
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert len(skills) == 1
         assert skills[0].frontmatter.name == "my-skill"
         assert skills[0].path is not None  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
@@ -5232,7 +5250,7 @@ class TestSkillsSource:
 
         # Only allow .json resources
         source = FileSkillsSource(str(tmp_path), resource_extensions=(".json",))
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert len(skills) == 1
         resource_names = [r.name for r in skills[0]._resources]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "references/data.json" in resource_names
@@ -5246,7 +5264,7 @@ class TestSkillsSource:
         s2 = InlineSkill(frontmatter=SkillFrontmatter(name="skill-b", description="B"), instructions="body")
 
         source = InMemorySkillsSource([s1, s2])
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert len(skills) == 2
         assert skills[0].frontmatter.name == "skill-a"
         assert skills[1].frontmatter.name == "skill-b"
@@ -5262,7 +5280,7 @@ class TestSkillsSource:
             InMemorySkillsSource([s1]),
             InMemorySkillsSource([s2]),
         ])
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         names = [s.frontmatter.name for s in skills]
         assert names == ["skill-a", "skill-b"]
 
@@ -5275,9 +5293,9 @@ class TestSkillsSource:
 
         source = FilteringSkillsSource(
             InMemorySkillsSource([s1, s2]),
-            predicate=lambda s: s.frontmatter.name.startswith("keep"),
+            predicate=lambda s, _ctx: s.frontmatter.name.startswith("keep"),
         )
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert len(skills) == 1
         assert skills[0].frontmatter.name == "keep-me"
 
@@ -5290,7 +5308,7 @@ class TestSkillsSource:
         s3 = InlineSkill(frontmatter=SkillFrontmatter(name="other", description="other"), instructions="body3")
 
         source = DeduplicatingSkillsSource(InMemorySkillsSource([s1, s2, s3]))
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert len(skills) == 2
         names = {s.frontmatter.name for s in skills}
         assert names == {"my-skill", "other"}
@@ -5310,7 +5328,7 @@ class TestSkillsSource:
 
         source = PassthroughSource(inner)
         assert source.inner_source is inner
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert len(skills) == 1
         assert skills[0].frontmatter.name == "test-skill"
 
@@ -5320,8 +5338,8 @@ class TestSkillsSource:
         inner = _CountingSkillsSource([skill])
 
         cached = CachingSkillsSource(inner)
-        first = await cached.get_skills()
-        second = await cached.get_skills()
+        first = await cached.get_skills(_SOURCE_CTX)
+        second = await cached.get_skills(_SOURCE_CTX)
 
         assert inner.call_count == 1
         assert first is second
@@ -5344,7 +5362,7 @@ class TestSkillsSource:
             def __init__(self) -> None:
                 self.call_count = 0
 
-            async def get_skills(self) -> list[Skill]:
+            async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
                 self.call_count += 1
                 if self.call_count == 1:
                     raise RuntimeError("transient failure")
@@ -5359,9 +5377,9 @@ class TestSkillsSource:
         cached = CachingSkillsSource(inner)
 
         with pytest.raises(RuntimeError, match="transient failure"):
-            await cached.get_skills()
+            await cached.get_skills(_SOURCE_CTX)
 
-        skills = await cached.get_skills()
+        skills = await cached.get_skills(_SOURCE_CTX)
         assert inner.call_count == 2
         assert [s.frontmatter.name for s in skills] == ["test-skill"]
 
@@ -5376,7 +5394,7 @@ class TestSkillsSource:
             def __init__(self) -> None:
                 self.call_count = 0
 
-            async def get_skills(self) -> list[Skill]:
+            async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
                 self.call_count += 1
                 started.set()
                 await release.wait()
@@ -5390,9 +5408,9 @@ class TestSkillsSource:
         inner = SlowSource()
         cached = CachingSkillsSource(inner)
 
-        first = asyncio.ensure_future(cached.get_skills())
+        first = asyncio.ensure_future(cached.get_skills(_SOURCE_CTX))
         await started.wait()
-        second = asyncio.ensure_future(cached.get_skills())
+        second = asyncio.ensure_future(cached.get_skills(_SOURCE_CTX))
         release.set()
 
         results = await asyncio.gather(first, second)
@@ -5459,10 +5477,10 @@ class TestSkillsSource:
                     InMemorySkillsSource([code_skill, internal]),
                 ])
             ),
-            predicate=lambda s: s.frontmatter.name != "internal",
+            predicate=lambda s, _ctx: s.frontmatter.name != "internal",
         )
 
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         names = {s.frontmatter.name for s in skills}
         assert names == {"file-skill", "code-skill"}
         assert "internal" not in names
@@ -5471,6 +5489,108 @@ class TestSkillsSource:
 # ---------------------------------------------------------------------------
 # Tests: Source composition (replaces SkillsProviderBuilder)
 # ---------------------------------------------------------------------------
+
+
+class TestSkillsSourceContext:
+    """Tests for SkillsSourceContext propagation and context-aware sources."""
+
+    async def test_context_exposes_agent_and_session(self) -> None:
+        """SkillsSourceContext carries the agent and optional session."""
+        agent = _StubAgent()
+        ctx = SkillsSourceContext(agent=agent)  # type: ignore[arg-type]
+        assert ctx.agent is agent
+        assert ctx.session is None
+
+        session = object()
+        ctx_with_session = SkillsSourceContext(agent=agent, session=session)  # type: ignore[arg-type]
+        assert ctx_with_session.session is session
+
+    async def test_context_flows_through_decorator_pipeline(self) -> None:
+        """The context passed to get_skills reaches the innermost source."""
+        received: list[SkillsSourceContext] = []
+
+        class _RecordingSource(SkillsSource):
+            async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
+                received.append(context)
+                return [
+                    InlineSkill(
+                        frontmatter=SkillFrontmatter(name="skill-a", description="A"),
+                        instructions="body",
+                    )
+                ]
+
+        source = DeduplicatingSkillsSource(CachingSkillsSource(_RecordingSource()))
+        ctx = _make_source_context("agent-x")
+
+        skills = await source.get_skills(ctx)
+        assert [s.frontmatter.name for s in skills] == ["skill-a"]
+        assert received == [ctx]
+        assert received[0].agent.name == "agent-x"  # type: ignore[attr-defined]
+
+    async def test_filtering_predicate_receives_context(self) -> None:
+        """FilteringSkillsSource passes the context to the predicate."""
+        from agent_framework import FilteringSkillsSource
+
+        seen: list[SkillsSourceContext] = []
+
+        def _predicate(skill: Skill, context: SkillsSourceContext) -> bool:
+            seen.append(context)
+            # Keep only skills whose name matches the invoking agent's name.
+            return skill.frontmatter.name == context.agent.name  # type: ignore[attr-defined]
+
+        s1 = InlineSkill(frontmatter=SkillFrontmatter(name="agent-x", description="A"), instructions="body")
+        s2 = InlineSkill(frontmatter=SkillFrontmatter(name="agent-y", description="B"), instructions="body")
+
+        source = FilteringSkillsSource(InMemorySkillsSource([s1, s2]), predicate=_predicate)
+        ctx = _make_source_context("agent-x")
+
+        skills = await source.get_skills(ctx)
+        assert [s.frontmatter.name for s in skills] == ["agent-x"]
+        assert all(c is ctx for c in seen)
+
+    async def test_caching_shared_bucket_by_default(self) -> None:
+        """Without an isolation key selector, all contexts share one cache entry."""
+        inner = _CountingSkillsSource([
+            InlineSkill(frontmatter=SkillFrontmatter(name="skill-a", description="A"), instructions="body")
+        ])
+        cached = CachingSkillsSource(inner)
+
+        first = await cached.get_skills(_make_source_context("agent-x"))
+        second = await cached.get_skills(_make_source_context("agent-y"))
+
+        assert inner.call_count == 1
+        assert first is second
+
+    async def test_caching_isolation_key_separates_buckets(self) -> None:
+        """An isolation key selector caches skills separately per key."""
+        inner = _CountingSkillsSource([
+            InlineSkill(frontmatter=SkillFrontmatter(name="skill-a", description="A"), instructions="body")
+        ])
+        cached = CachingSkillsSource(
+            inner,
+            cache_isolation_key_selector=lambda context: context.agent.name,  # type: ignore[attr-defined]
+        )
+
+        first_x = await cached.get_skills(_make_source_context("agent-x"))
+        first_y = await cached.get_skills(_make_source_context("agent-y"))
+        second_x = await cached.get_skills(_make_source_context("agent-x"))
+
+        # One fetch per distinct key; repeated keys are served from cache.
+        assert inner.call_count == 2
+        assert first_x is second_x
+        assert first_x is not first_y
+
+    async def test_caching_isolation_key_none_uses_shared_bucket(self) -> None:
+        """A selector returning None falls back to the shared cache bucket."""
+        inner = _CountingSkillsSource([
+            InlineSkill(frontmatter=SkillFrontmatter(name="skill-a", description="A"), instructions="body")
+        ])
+        cached = CachingSkillsSource(inner, cache_isolation_key_selector=lambda context: None)
+
+        await cached.get_skills(_make_source_context("agent-x"))
+        await cached.get_skills(_make_source_context("agent-y"))
+
+        assert inner.call_count == 1
 
 
 class TestSourceComposition:
@@ -5523,7 +5643,7 @@ class TestSourceComposition:
         source = DeduplicatingSkillsSource(
             FilteringSkillsSource(
                 InMemorySkillsSource([s1, s2]),
-                predicate=lambda s: s.frontmatter.name.startswith("keep"),
+                predicate=lambda s, _ctx: s.frontmatter.name.startswith("keep"),
             )
         )
         provider = SkillsProvider(source)
@@ -5725,8 +5845,8 @@ class TestDisableCaching:
         inner = _CountingSkillsSource([skill])
         provider = SkillsProvider(inner)
 
-        await provider._create_context()  # pyright: ignore[reportPrivateUsage]
-        await provider._create_context()  # pyright: ignore[reportPrivateUsage]
+        await provider._create_context(_SOURCE_CTX)  # pyright: ignore[reportPrivateUsage]
+        await provider._create_context(_SOURCE_CTX)  # pyright: ignore[reportPrivateUsage]
         assert inner.call_count == 1
 
     async def test_disable_caching_does_not_wrap_source(self) -> None:
@@ -5743,8 +5863,8 @@ class TestDisableCaching:
         inner = _CountingSkillsSource([skill])
         provider = SkillsProvider(inner, disable_caching=True)
 
-        await provider._create_context()  # pyright: ignore[reportPrivateUsage]
-        await provider._create_context()  # pyright: ignore[reportPrivateUsage]
+        await provider._create_context(_SOURCE_CTX)  # pyright: ignore[reportPrivateUsage]
+        await provider._create_context(_SOURCE_CTX)  # pyright: ignore[reportPrivateUsage]
         assert inner.call_count == 2
 
     async def test_disable_caching_via_constructor(self) -> None:
