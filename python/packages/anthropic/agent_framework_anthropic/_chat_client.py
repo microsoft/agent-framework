@@ -28,7 +28,7 @@ from agent_framework import (
 )
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent
-from agent_framework._tools import SHELL_TOOL_KIND_VALUE
+from agent_framework._tools import SHELL_TOOL_KIND_VALUE, normalize_tools
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import AsyncAnthropic, AsyncAnthropicFoundry
@@ -950,7 +950,7 @@ class RawAnthropicClient(
             tool_list: list[Any] = []
             mcp_server_list: list[Any] = []
             tool_name_aliases: dict[str, str] = {}
-            for tool in tools:
+            for tool in normalize_tools(tools):
                 if isinstance(tool, FunctionTool) and tool.kind == SHELL_TOOL_KIND_VALUE:
                     api_type = (tool.additional_properties or {}).get("type", "bash_20250124")
                     tool_name_aliases["bash"] = tool.name

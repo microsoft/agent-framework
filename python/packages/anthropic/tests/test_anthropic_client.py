@@ -745,6 +745,27 @@ def test_prepare_tools_for_anthropic_tool(mock_anthropic_client: MagicMock) -> N
     assert "Get weather for a location" in result["tools"][0]["description"]
 
 
+def test_prepare_tools_for_anthropic_single_tool(mock_anthropic_client: MagicMock) -> None:
+    """Test converting a single FunctionTool to Anthropic format."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    @tool(approval_mode="never_require")
+    def get_weather(
+        location: Annotated[str, Field(description="Location to get weather for")],
+    ) -> str:
+        """Get weather for a location."""
+        return f"Weather for {location}"
+
+    chat_options = ChatOptions(tools=get_weather)  # type: ignore[arg-type]
+    result = client._prepare_tools_for_anthropic(chat_options)
+
+    assert result is not None
+    assert "tools" in result
+    assert len(result["tools"]) == 1
+    assert result["tools"][0]["type"] == "custom"
+    assert result["tools"][0]["name"] == "get_weather"
+
+
 def test_prepare_tools_for_anthropic_web_search(
     mock_anthropic_client: MagicMock,
 ) -> None:
@@ -909,6 +930,21 @@ def test_prepare_tools_for_anthropic_dict_tool(
     """Test converting dict tool to Anthropic format."""
     client = create_test_anthropic_client(mock_anthropic_client)
     chat_options = ChatOptions(tools=[{"type": "custom", "name": "custom_tool", "description": "A custom tool"}])
+
+    result = client._prepare_tools_for_anthropic(chat_options)
+
+    assert result is not None
+    assert "tools" in result
+    assert len(result["tools"]) == 1
+    assert result["tools"][0]["name"] == "custom_tool"
+
+
+def test_prepare_tools_for_anthropic_single_dict_tool(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Test passing through a single dict tool."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    chat_options = ChatOptions(tools={"type": "custom", "name": "custom_tool", "description": "A custom tool"})  # type: ignore[arg-type]
 
     result = client._prepare_tools_for_anthropic(chat_options)
 
