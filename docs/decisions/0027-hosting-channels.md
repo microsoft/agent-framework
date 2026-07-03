@@ -73,7 +73,7 @@ Protocol packages own:
 - parsing protocol-native input into Agent Framework run input and options;
 - rendering `AgentResponse`, `AgentResponseUpdate`, workflow results, or workflow updates back into protocol-native
   response/event payloads;
-- protocol-specific isolation/session id helper functions when useful, such as `telegram_chat_session_id(update)`;
+- protocol-specific isolation/session id helper functions when useful, such as `telegram_session_id(update)`;
 - protocol-specific typing/update event helpers where the protocol has a native concept.
 
 Application or web-framework code owns:
@@ -102,18 +102,41 @@ object has both the store and the resolved target.
 These objects are **not** app objects, channel registries, or route owners. They do not own FastAPI/Starlette setup,
 route contribution, protocol dispatch, command projection, or native SDK calls.
 
-### Helper naming
+### Helper naming and families
 
-Helpers should be protocol-specific, not generic. Prefer:
+Helpers should be protocol-specific, not generic. Avoid a generic `protocol_to_run(...)` name in public samples because it
+hides the protocol-specific contract behind a second abstraction.
 
-- `responses_to_run(...)`
-- `responses_from_run(...)`
-- `responses_stream_event_from_run(...)` if streaming needs a separate event helper
-- `telegram_to_run(...)`
-- `telegram_from_run(...)`
+Protocol packages should consider these helper families. Not every protocol needs every helper, but when a protocol has
+the concept the naming should stay consistent:
 
-Avoid a generic `protocol_to_run(...)` name in public samples because it hides the protocol-specific contract behind a
-second abstraction.
+| Helper family | Shape | Purpose |
+| --- | --- | --- |
+| Run conversion | `<protocol>_to_run(...)` | Convert one protocol-native call/update/request into `Agent.run` or `Workflow.run` values. |
+| Final rendering | `<protocol>_from_run(...)` | Convert a final `AgentResponse` / workflow result into protocol-native response payloads or operations. |
+| Stream rendering | `<protocol>_stream_events_from_run(...)` or `<protocol>_stream_ops_from_run(...)` | Convert `ResponseStream` / workflow updates into protocol-native events or operations. |
+| Session id extraction | `<protocol>_session_id(...)` | Extract the protocol's natural continuation/partition key from the call, if present. |
+| Command/action parsing | `<protocol>_command(...)` | Parse a protocol-native command/action/operation name without deciding app policy. |
+
+Examples:
+
+- `responses_to_run(...)`, `responses_from_run(...)`, `responses_stream_events_from_run(...)`,
+  `responses_session_id(...)`;
+- `telegram_to_run(...)`, `telegram_from_run(...)`, `telegram_stream_ops_from_run(...)`,
+  `telegram_session_id(...)`, `telegram_command(...)`;
+- `activity_to_run(...)`, `activity_from_run(...)`, `activity_session_id(...)`, `activity_command(...)`;
+- `discord_to_run(...)`, `discord_from_run(...)`, `discord_session_id(...)`, `discord_command(...)`.
+
+The app still owns what a parsed command means. For example, a Telegram `/new`, Discord slash command, Bot Framework
+command activity, or A2A cancellation/request action may parse through a command/action helper, but the route or SDK
+handler decides whether that command clears a session, cancels a task, calls an agent, or is ignored.
+
+Additional helper functions can be protocol-specific when the concept is not broadly shared. Examples include
+`telegram_chat_id(...)`, `telegram_callback_query_id(...)`, `telegram_media_file_id(...)`,
+`discord_interaction_id(...)`, `activity_conversation_id(...)`, `a2a_task_id(...)`, `a2a_context_id(...)`, and MCP
+tool/prompt/resource helpers. These helpers should still stay side-effect-free: they extract, normalize, or describe
+protocol data, while app/native SDK code performs acknowledgements, sends/edits messages, resolves protected file URLs,
+applies rate limits, and registers handlers.
 
 ### Session continuity
 
@@ -128,7 +151,10 @@ The app chooses which helper to call for that route and deployment. For example:
 
 - `responses_session_id(body)` from `agent-framework-hosting-responses`, which can return either a `resp_*` previous
   response id or a `conv_*` conversation id when present;
-- `telegram_chat_session_id(update)` from `agent-framework-hosting-telegram`;
+- `telegram_session_id(update)` from `agent-framework-hosting-telegram`, which can choose the chat, user, thread, or
+  other Telegram-native partitioning logic for that helper;
+- `activity_session_id(activity)`, `discord_session_id(interaction_or_message)`, or
+  `a2a_session_id(request_context)` from their respective protocol packages;
 - `foundry_user_isolation_key()` or `foundry_chat_isolation_key()` from `agent-framework-foundry-hosting`.
 
 Keep these helpers outside `responses_to_run(...)`, `telegram_to_run(...)`, and other run-input parsers. That makes the
@@ -237,9 +263,10 @@ Before this ADR is considered implemented:
 
 - A Responses sample uses normal FastAPI route code plus `responses_to_run(...)`, `responses_from_run(...)`, and
   `AgentState` / `SessionStore`; it does not use `ResponsesChannel` or `ChannelRunHook`.
-- Protocol helper tests cover Responses input parsing, option policy, response rendering, and streaming event rendering.
-- Protocol helper tests cover Telegram message parsing, typing events, streaming update events, final response rendering,
-  and session-key derivation.
+- Protocol helper tests cover Responses input parsing, option policy, response rendering, session-id extraction, and
+  streaming event rendering.
+- Protocol helper tests cover Telegram message parsing, command parsing, session-id extraction, typing/operation helpers,
+  streaming update operations, and final response rendering.
 - `SessionStore` tests prove plain get/set/delete behavior, and `AgentState` tests prove get-or-create behavior.
 - `WorkflowState` tests prove workflow factory, `WorkflowBuilder`, orchestration-style builder, and checkpoint-store
   behavior.
