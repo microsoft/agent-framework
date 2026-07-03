@@ -756,7 +756,7 @@ def test_prepare_tools_for_anthropic_single_tool(mock_anthropic_client: MagicMoc
         """Get weather for a location."""
         return f"Weather for {location}"
 
-    chat_options = ChatOptions(tools=get_weather)  # type: ignore[arg-type]
+    chat_options = ChatOptions(tools=get_weather)
     result = client._prepare_tools_for_anthropic(chat_options)
 
     assert result is not None
