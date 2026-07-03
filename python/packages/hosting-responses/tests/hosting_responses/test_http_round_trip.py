@@ -127,13 +127,10 @@ def _build_app(agent: _StubAgent) -> FastAPI:
         response_id = create_response_id()
 
         target = await state.get_target()
-        store = await state.get_session_store()
         lookup_id = session_id or response_id
-        session = await store.get(lookup_id)
-        if response_id != lookup_id:
-            # Alias the newly minted response id to this turn's session, same
-            # as the sample, so the next `previous_response_id` still resolves.
-            await store.put(response_id, session)
+        # Alias the newly minted response id to this turn's session, same as
+        # the sample, so a later `previous_response_id` still resolves.
+        session = await state.get_session(lookup_id, alias=response_id)
 
         if run["stream"]:
             stream = target.run(run["messages"], stream=True, session=session)

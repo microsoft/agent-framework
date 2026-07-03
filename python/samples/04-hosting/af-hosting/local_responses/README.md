@@ -22,9 +22,11 @@ What the route demonstrates:
 - Produces the AF messages, options, and session id that the route passes to
   `agent.run(...)`.
 - **Aliases** each newly minted response id to the session it was just
-  resolved from. OpenAI's `previous_response_id` rotates every turn, so
-  without this alias step turn 3+ of a conversation would silently resolve to
-  a brand-new, empty session instead of the one from earlier turns.
+  resolved from, via `state.get_session(lookup_id, alias=response_id)`.
+  OpenAI's `previous_response_id` rotates every turn *by design* — it lets a
+  caller continue from any earlier response, not just the latest one — so
+  every response id needs to stay independently resolvable, not just the
+  most recent.
 
 `app:app` is a module-level FastAPI ASGI app; recommended local launch is
 Hypercorn.

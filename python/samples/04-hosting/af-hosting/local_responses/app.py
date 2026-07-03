@@ -111,16 +111,12 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
     options_for_run = cast(Any, options)
 
     target = cast(Agent[Any], await state.get_target())
-    store = await state.get_session_store()
     lookup_id = session_id or response_id
-    session = await store.get(lookup_id)
-    if response_id != lookup_id:
-        # `previous_response_id` chaining rotates its id every turn. Alias the
-        # newly minted response id to this turn's session so the next
-        # request (which will send this response's id back as its
-        # `previous_response_id`) still resolves to the same conversation
-        # instead of silently starting a new one.
-        await store.put(response_id, session)
+    # `previous_response_id` chaining rotates its id every turn, and OpenAI's
+    # Responses API deliberately lets a caller continue from *any* earlier
+    # response, not just the latest one -- so the newly minted response id
+    # also needs to resolve back to this session on a later request.
+    session = await state.get_session(lookup_id, alias=response_id)
     if run["stream"]:
         stream = target.run(
             run["messages"],

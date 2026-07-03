@@ -135,18 +135,27 @@ class TestSessionStore:
         store = SessionStore(agent)
 
         session = await store.get("resp_1")
-        await store.put("resp_2", session)
+        aliased = await store.get("resp_1", alias="resp_2")
 
+        assert aliased is session
         assert await store.get("resp_2") is session
         # Aliasing did not create a second session via the agent.
         assert len(agent.created_sessions) == 1
 
+    async def test_alias_equal_to_session_id_is_a_no_op(self) -> None:
+        agent = _FakeAgent()
+        store = SessionStore(agent)
+
+        session = await store.get("resp_1", alias="resp_1")
+
+        assert session.session_id == "resp_1"
+        assert len(agent.created_sessions) == 1
+
     async def test_put_empty_session_id_raises(self) -> None:
         store = SessionStore(_FakeAgent())
-        session = await store.get("resp_1")
 
         with pytest.raises(ValueError, match="session_id"):
-            await store.put("", session)
+            await store.get("", alias="resp_2")
 
 
 class TestAgentFrameworkState:

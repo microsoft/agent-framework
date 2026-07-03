@@ -16,6 +16,16 @@ class SessionStore:
     instances. The id is an opaque partition key; callers are responsible for
     deciding whether it came from a trusted request field, platform context, or
     other route-local state.
+
+    This reference implementation is a plain ``dict`` with no eviction: every
+    id ever seen stays resolvable for the life of the process. That is
+    intentional here (protocols such as OpenAI Responses'
+    ``previous_response_id`` let a caller continue from *any* earlier point in
+    a conversation, not just the latest turn, so every id needs to stay
+    independently addressable -- see :meth:`get`'s ``alias`` argument).
+    A storage-backed replacement (Redis, a database, ...) should apply its own
+    TTL/eviction policy for these ids; this in-memory store does not model
+    that concern.
     """
 
     def __init__(self, agent: SupportsAgentRun) -> None:
@@ -28,11 +38,20 @@ class SessionStore:
         self.agent = agent
         self._sessions: dict[str, AgentSession] = {}
 
-    async def get(self, session_id: str) -> AgentSession:
+    async def get(self, session_id: str, *, alias: str | None = None) -> AgentSession:
         """Return the session for ``session_id``, creating it when needed.
 
         Args:
             session_id: Opaque app-selected session id.
+
+        Keyword Args:
+            alias: Optional additional id to register for the same session in
+                one call, for example a freshly minted id that the next
+                request will present instead of ``session_id``. A no-op when
+                ``alias`` is ``None`` or equal to ``session_id``. Callers that
+                want a single stable key for a whole conversation instead of
+                per-turn aliases should use a stable id (such as a
+                ``conversation_id``) as ``session_id`` and skip ``alias``.
 
         Returns:
             The cached or newly created ``AgentSession``.
@@ -44,7 +63,10 @@ class SessionStore:
             raise ValueError("session_id must be a non-empty string")
         if session_id not in self._sessions:
             self._sessions[session_id] = self.agent.create_session(session_id=session_id)
-        return self._sessions[session_id]
+        session = self._sessions[session_id]
+        if alias and alias != session_id:
+            self._sessions[alias] = session
+        return session
 
     async def reset(self, session_id: str) -> None:
         """Forget the current session for ``session_id``.
@@ -58,27 +80,6 @@ class SessionStore:
         if not session_id:
             raise ValueError("session_id must be a non-empty string")
         self._sessions.pop(session_id, None)
-
-    async def put(self, session_id: str, session: AgentSession) -> None:
-        """Associate an existing ``session`` with an additional ``session_id``.
-
-        Use this to alias a rotating protocol id (for example, a freshly
-        minted response id) to a session that was already looked up under a
-        different, prior id. Protocols whose continuation id changes every
-        turn (such as OpenAI Responses' ``previous_response_id`` chaining)
-        need this so a later request referencing the new id still resolves
-        to the same conversation instead of starting a fresh session.
-
-        Args:
-            session_id: Opaque app-selected session id to associate.
-            session: The session to associate with ``session_id``.
-
-        Raises:
-            ValueError: If ``session_id`` is empty.
-        """
-        if not session_id:
-            raise ValueError("session_id must be a non-empty string")
-        self._sessions[session_id] = session
 
 
 TargetT = TypeVar("TargetT", bound="SupportsAgentRun | Workflow")
@@ -228,17 +229,21 @@ class AgentFrameworkState(Generic[TargetT]):
             self._cached_session_store = store
         return store
 
-    async def get_session(self, session_id: str) -> AgentSession:
+    async def get_session(self, session_id: str, *, alias: str | None = None) -> AgentSession:
         """Return the session for ``session_id`` from the current store.
 
         Args:
             session_id: Opaque app-selected session id.
 
+        Keyword Args:
+            alias: Optional additional id to register for the same session in
+                one call. See :meth:`SessionStore.get`.
+
         Returns:
             The cached or newly created ``AgentSession``.
         """
         store = await self.get_session_store()
-        return await store.get(session_id)
+        return await store.get(session_id, alias=alias)
 
     async def reset_session(self, session_id: str) -> None:
         """Forget the current session for ``session_id``.
