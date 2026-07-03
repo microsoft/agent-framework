@@ -51,7 +51,7 @@ the post-run object:
 ```python
 session = await state.get_or_create_session(previous_response_id)
 result = await (await state.get_target()).run("Hello", session=session)
-await state.session_store.set(response_id, session)
+await state.set_session(response_id, session)
 ```
 
 Targets can be direct instances, synchronous factories, asynchronous factories,

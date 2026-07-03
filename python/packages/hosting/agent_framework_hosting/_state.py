@@ -288,6 +288,15 @@ class AgentState(Generic[AgentT]):
             await self._session_store.set(session_id, session)
         return session
 
+    async def set_session(self, session_id: str, session: AgentSession) -> None:
+        """Store ``session`` under ``session_id`` in this state's session store.
+
+        Args:
+            session_id: Opaque app-selected session id.
+            session: Session to store.
+        """
+        await self._session_store.set(session_id, session)
+
 
 class WorkflowState(Generic[WorkflowT]):
     """Shared execution state for app-owned workflow hosting routes.
@@ -402,3 +411,12 @@ class WorkflowState(Generic[WorkflowT]):
             storage = InMemoryCheckpointStorage()
             await self._checkpoint_store.set(session_id, storage)
         return storage
+
+    async def set_checkpoint_storage(self, session_id: str, storage: CheckpointStorage) -> None:
+        """Store ``storage`` under ``session_id`` in this state's checkpoint store.
+
+        Args:
+            session_id: Opaque app-selected session id.
+            storage: Checkpoint storage to store.
+        """
+        await self._checkpoint_store.set(session_id, storage)

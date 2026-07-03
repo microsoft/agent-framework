@@ -142,7 +142,7 @@ def _build_app(agent: _StubAgent) -> FastAPI:
                     session_id=session_id,
                 ):
                     yield event
-                await state.session_store.set(response_id, session)
+                await state.set_session(response_id, session)
 
             return StreamingResponse(
                 stream_events(),
@@ -150,7 +150,7 @@ def _build_app(agent: _StubAgent) -> FastAPI:
             )
 
         result = await target.run(run["messages"], session=session)
-        await state.session_store.set(response_id, session)
+        await state.set_session(response_id, session)
         return JSONResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
 
     return app

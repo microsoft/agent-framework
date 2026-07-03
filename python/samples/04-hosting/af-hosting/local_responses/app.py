@@ -135,7 +135,7 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
             # is consumed/finalized. Store it under the newly minted response id
             # after finalization so a later `previous_response_id` can restore
             # this exact continuation point.
-            await state.session_store.set(response_id, session)
+            await state.set_session(response_id, session)
 
         return StreamingResponse(
             stream_events(),
@@ -150,7 +150,7 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
     # `agent.run(...)` updates the session. Store it under the newly minted
     # response id after the run so `previous_response_id=response_id` continues
     # from this exact point.
-    await state.session_store.set(response_id, session)
+    await state.set_session(response_id, session)
     return JSONResponse(
         responses_from_run(
             result,

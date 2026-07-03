@@ -269,11 +269,11 @@ class TestAgentState:
         assert first.session_id == "session-1"
         assert len(agent.created_sessions) == 1
 
-    async def test_get_or_create_session_reuses_a_session_set_directly_on_the_store(self) -> None:
+    async def test_get_or_create_session_reuses_a_session_set_on_the_state(self) -> None:
         agent = _FakeAgent()
         state = AgentState(agent)
         pre_existing = AgentSession(session_id="session-1")
-        await state.session_store.set("session-1", pre_existing)
+        await state.set_session("session-1", pre_existing)
 
         session = await state.get_or_create_session("session-1")
 
@@ -348,11 +348,11 @@ class TestWorkflowState:
         assert first is second
         assert isinstance(first, InMemoryCheckpointStorage)
 
-    async def test_get_or_create_checkpoint_storage_reuses_storage_set_directly_on_the_store(self) -> None:
+    async def test_get_or_create_checkpoint_storage_reuses_storage_set_on_the_state(self) -> None:
         workflow = _workflow_fixture("build_echo_workflow")()
         state: WorkflowState[Workflow] = WorkflowState(workflow)
         pre_existing = InMemoryCheckpointStorage()
-        await state.checkpoint_store.set("session-1", pre_existing)
+        await state.set_checkpoint_storage("session-1", pre_existing)
 
         storage = await state.get_or_create_checkpoint_storage("session-1")
 

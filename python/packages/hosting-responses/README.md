@@ -43,7 +43,7 @@ async def responses(body: dict = Body(...)) -> JSONResponse:
         session=session,
         options=run["options"],
     )
-    await state.session_store.set(response_id, session)
+    await state.set_session(response_id, session)
     return JSONResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
 ```
 
