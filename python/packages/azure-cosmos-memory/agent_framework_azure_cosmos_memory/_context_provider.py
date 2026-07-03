@@ -100,6 +100,7 @@ class CosmosMemoryContextProvider(ContextProvider):
         context_prompt: str = DEFAULT_CONTEXT_PROMPT,
         auto_extract: bool = True,
         processor_config: ProcessorConfig | None = None,
+        prompts_dir: str | None = None,
     ) -> None:
         """Initialize the Cosmos Memory context provider.
 
@@ -127,6 +128,12 @@ class CosmosMemoryContextProvider(ContextProvider):
                 turn writes. When ``False`` the cadence thresholds are zeroed so nothing runs
                 automatically and callers drive processing via ``memory_client.process_now()``.
             processor_config: Optional processor cadence configuration.
+            prompts_dir: Optional directory of Prompty templates for the memory pipeline. When
+                set, the extraction and summarization steps read their templates (including
+                ``extract_memories.prompty``) from this directory instead of the toolkit's
+                bundled defaults, letting you customize what the extraction LLM produces. The
+                directory must contain the full template set. Applies whether the client is built
+                by the provider or supplied via ``memory_client``.
 
         Raises:
             ImportError: If azure-cosmos-agent-memory is not installed.
@@ -146,6 +153,7 @@ class CosmosMemoryContextProvider(ContextProvider):
         self.memory_types: list[MemoryType] = list(memory_types) if memory_types else ["fact", "procedural"]
         self.context_prompt = context_prompt
         self.auto_extract = auto_extract
+        self._prompts_dir = prompts_dir
 
         # Apply the cadence configuration to the environment BEFORE creating the memory client.
         # The Agent Memory Toolkit reads these thresholds from ``os.environ`` (see the toolkit's
@@ -249,6 +257,22 @@ class CosmosMemoryContextProvider(ContextProvider):
         if pending:
             await asyncio.wait(pending, timeout=timeout)
 
+    def _apply_custom_prompts_dir(self, prompts_dir: str) -> None:
+        """Point the memory pipeline's Prompty loader at a custom templates directory.
+
+        The toolkit client builds its pipeline internally without forwarding a prompts
+        directory, so once the store is connected we build the pipeline and swap in a loader
+        rooted at ``prompts_dir``. The extraction and summarization steps then read their
+        templates (e.g. ``extract_memories.prompty``) from there instead of the bundled defaults.
+        """
+        from azure.cosmos.agent_memory.services._pipeline_helpers import PromptyLoader
+
+        # The toolkit exposes no public prompts-directory seam, so reach into the pipeline it
+        # builds internally and swap its template loader. Contained here so callers never touch
+        # toolkit internals themselves.
+        pipeline = self.memory_client._get_pipeline()  # pyright: ignore[reportPrivateUsage]
+        pipeline._prompty = PromptyLoader(prompts_dir)  # pyright: ignore[reportPrivateUsage]
+
     async def __aenter__(self) -> Self:
         """Async context manager entry."""
         if self.memory_client and isinstance(self.memory_client, AbstractAsyncContextManager):
@@ -258,6 +282,10 @@ class CosmosMemoryContextProvider(ContextProvider):
         # connected here. create_memory_store() is idempotent (create-if-not-exists), so it is
         # safe to call for both provider-created and caller-provided clients.
         await self.memory_client.create_memory_store()
+        # If a custom prompts directory was supplied, redirect the pipeline's template loader now
+        # that the store (and thus the pipeline) can be built.
+        if self._prompts_dir is not None:
+            self._apply_custom_prompts_dir(self._prompts_dir)
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:

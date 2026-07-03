@@ -20,8 +20,10 @@ Run with: pytest -m "integration and not azure" tests/test_emulator.py
 from __future__ import annotations
 
 import os
+import shutil
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -291,4 +293,85 @@ class TestEmulatorTransparentExtraction:
         # left no pending background tasks behind.
         assert chat.calls, "background extraction did not run transparently after the turn"
         assert all(task.done() for task in client._background_tasks)
+        await client.close()
+
+
+def _make_custom_prompts_dir(dest: Path, marker: str) -> Path:
+    """Build a complete prompts directory whose ``extract_memories.prompty`` carries a marker.
+
+    Copies the toolkit's bundled templates into ``dest`` (the loader needs the full set), then
+    injects ``marker`` into the extraction template's system prompt. Deriving from the installed
+    template keeps the output schema valid regardless of toolkit version.
+    """
+    import azure.cosmos.agent_memory as toolkit
+
+    bundled = Path(toolkit.__file__).parent / "prompts"
+    dest.mkdir(parents=True, exist_ok=True)
+    for template in bundled.glob("*.prompty"):
+        shutil.copy2(template, dest / template.name)
+
+    extract = dest / "extract_memories.prompty"
+    text = extract.read_text(encoding="utf-8")
+    section = "\nsystem:\n"
+    idx = text.find(section)
+    assert idx != -1, "unexpected extract_memories.prompty format (no 'system:' section)"
+    insert_at = idx + len(section)
+    extract.write_text(text[:insert_at] + f"\n{marker}\n" + text[insert_at:], encoding="utf-8")
+    return dest
+
+
+class TestEmulatorCustomExtractionPrompt:
+    """A custom ``prompts_dir`` must change the prompt the extraction pipeline actually sends.
+
+    Overriding ``extract_memories.prompty`` is how callers customize what the LLM extracts. This
+    proves the provider's ``prompts_dir`` seam is wired through to the toolkit pipeline: a unique
+    marker placed in the custom template shows up in the messages the pipeline sends to the chat
+    client during extraction.
+    """
+
+    async def test_prompts_dir_overrides_extraction_prompt(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The provider routes extraction through the caller-supplied ``prompts_dir``."""
+        marker = f"AF_CUSTOM_RUBRIC_{uuid.uuid4().hex}"
+        custom_dir = _make_custom_prompts_dir(tmp_path / "prompts", marker)
+
+        chat = _FakeChat()
+        client = _build_emulator_client(monkeypatch, chat)
+        provider = CosmosMemoryContextProvider(
+            memory_client=client,
+            top_k=5,
+            min_confidence=0.0,
+            memory_types=["fact"],
+            prompts_dir=str(custom_dir),
+        )
+        try:
+            await provider.__aenter__()
+        except Exception as exc:  # noqa: BLE001 - clear skip on any connectivity/setup failure
+            await client.close()
+            pytest.skip(f"Cosmos DB emulator not reachable or vector search unavailable at {_EMULATOR_ENDPOINT}: {exc}")
+
+        try:
+            user_id = f"user-{uuid.uuid4().hex[:8]}"
+            thread_id = f"thread-{uuid.uuid4().hex[:8]}"
+            session = AgentSession(session_id=thread_id)
+            session.state.setdefault(provider.source_id, {})["user_id"] = user_id
+            ctx = SessionContext(
+                input_messages=[Message(role="user", contents=["We chose the repository pattern for data access."])],
+                session_id=session.session_id,
+            )
+            await provider.after_run(
+                agent=_STUB_AGENT,
+                session=session,
+                context=ctx,
+                state=session.state.setdefault(provider.source_id, {}),
+            )
+        finally:
+            # Draining runs the extraction pipeline, which loads the (custom) extract template.
+            await provider.__aexit__(None, None, None)
+
+        # The extraction step sent our custom prompt to the chat client: the marker only exists
+        # in the overridden template, so its presence proves prompts_dir was honored end to end.
+        sent = "\n".join(str(msg.get("content", "")) for call in chat.calls for msg in call)
+        assert marker in sent, "custom extract_memories.prompty was not used by the extraction pipeline"
         await client.close()

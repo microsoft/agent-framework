@@ -674,3 +674,36 @@ class TestFlush:
 
             mock_client.__aenter__.assert_awaited_once()
             mock_client.__aexit__.assert_awaited_once()
+
+
+class TestCustomPromptsDir:
+    """The ``prompts_dir`` option redirects the toolkit pipeline's Prompty template loader."""
+
+    async def test_prompts_dir_redirects_pipeline_loader(self, mock_memory_client: AsyncMock) -> None:
+        """Entering the provider points the pipeline's Prompty loader at the custom directory."""
+        mock_pipeline = MagicMock()
+        # _get_pipeline is synchronous on the toolkit client; return our stand-in pipeline.
+        mock_memory_client._get_pipeline = MagicMock(return_value=mock_pipeline)
+
+        provider = CosmosMemoryContextProvider(
+            memory_client=mock_memory_client,
+            prompts_dir="/custom/prompts",
+        )
+        async with provider:
+            pass
+
+        from azure.cosmos.agent_memory.services._pipeline_helpers import PromptyLoader
+
+        mock_memory_client._get_pipeline.assert_called_once()
+        assert isinstance(mock_pipeline._prompty, PromptyLoader)
+        assert mock_pipeline._prompty.prompts_dir == "/custom/prompts"
+
+    async def test_no_prompts_dir_leaves_pipeline_untouched(self, mock_memory_client: AsyncMock) -> None:
+        """Without ``prompts_dir`` the provider never builds or touches the pipeline loader."""
+        mock_memory_client._get_pipeline = MagicMock()
+
+        provider = CosmosMemoryContextProvider(memory_client=mock_memory_client)
+        async with provider:
+            pass
+
+        mock_memory_client._get_pipeline.assert_not_called()
