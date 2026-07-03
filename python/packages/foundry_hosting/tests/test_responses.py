@@ -813,6 +813,8 @@ class TestOutputItemToMessage:
         msg = await _output_item_to_message(item)
         assert msg.role == "assistant"
         assert len(msg.contents) == 1
+        assert msg.contents[0].type == "text_reasoning"
+        assert msg.contents[0].id == "r-1"
         assert msg.contents[0].text == "thinking hard"
 
     async def test_reasoning_no_summary(self) -> None:
@@ -1298,6 +1300,8 @@ class TestItemToMessage:
         assert msg is not None
         assert msg.role == "assistant"
         assert len(msg.contents) == 1
+        assert msg.contents[0].type == "text_reasoning"
+        assert msg.contents[0].id == "r-1"
         assert msg.contents[0].text == "thinking hard"
 
     async def test_reasoning_no_summary(self) -> None:

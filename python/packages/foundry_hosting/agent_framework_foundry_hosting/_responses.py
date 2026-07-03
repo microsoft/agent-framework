@@ -1110,7 +1110,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         reason_contents: list[Content] = []
         if reasoning.summary:
             for summary in reasoning.summary:
-                reason_contents.append(Content.from_text(summary.text))
+                reason_contents.append(Content.from_text_reasoning(id=reasoning.id, text=summary.text))
         return Message(role="assistant", contents=reason_contents)
 
     if item.type == "mcp_call":
@@ -1383,7 +1383,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         contents: list[Content] = []
         if reasoning.summary:
             for summary in reasoning.summary:
-                contents.append(Content.from_text(summary.text))
+                contents.append(Content.from_text_reasoning(id=reasoning.id, text=summary.text))
         return Message(role="assistant", contents=contents)
 
     if item.type == "mcp_call":

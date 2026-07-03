@@ -45,6 +45,20 @@ def _assistant_function_call(call_id: str) -> Message:
     )
 
 
+def _assistant_mcp_call(call_id: str) -> Message:
+    return Message(
+        role="assistant",
+        contents=[
+            Content.from_mcp_server_tool_call(
+                call_id=call_id,
+                tool_name="search",
+                server_name="test_server",
+                arguments='{"query":"x"}',
+            )
+        ],
+    )
+
+
 def _assistant_reasoning_and_function_calls(*call_ids: str) -> Message:
     contents: list[Content] = [Content.from_text_reasoning(text="thinking")]
     for call_id in call_ids:
@@ -152,6 +166,23 @@ def test_group_annotations_handle_same_message_reasoning_and_function_calls() ->
     assert _group_id(messages[3]) == call_group
     assert _group_kind(messages[1]) == "tool_call"
     assert _group_has_reasoning(messages[1]) is True
+
+
+async def test_sliding_window_keeps_reasoning_and_mcp_call_atomic() -> None:
+    messages = [
+        Message(role="system", contents=["system"]),
+        Message(role="assistant", contents=[Content.from_text_reasoning(id="rs_1", text="thinking")]),
+        _assistant_mcp_call("mcp_1"),
+        Message(role="assistant", contents=["answer"]),
+        Message(role="user", contents=["follow up"]),
+    ]
+    annotate_message_groups(messages)
+
+    await SlidingWindowStrategy(keep_last_groups=3)(messages)
+
+    assert messages[1].additional_properties[EXCLUDED_KEY] is False
+    assert messages[2].additional_properties[EXCLUDED_KEY] is False
+    assert _group_id(messages[1]) == _group_id(messages[2])
 
 
 def test_annotate_message_groups_with_tokenizer_adds_token_counts() -> None:

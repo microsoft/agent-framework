@@ -74,8 +74,8 @@ def _has_content_type(message: Message, content_type: str) -> bool:
     return any(content.type == content_type for content in message.contents)
 
 
-def _has_function_call(message: Message) -> bool:
-    return _has_content_type(message, "function_call")
+def _has_tool_call(message: Message) -> bool:
+    return any(content.type in {"function_call", "mcp_server_tool_call"} for content in message.contents)
 
 
 def _has_reasoning(message: Message) -> bool:
@@ -83,7 +83,7 @@ def _has_reasoning(message: Message) -> bool:
 
 
 def _is_tool_call_assistant(message: Message) -> bool:
-    return message.role == "assistant" and _has_function_call(message)
+    return message.role == "assistant" and _has_tool_call(message)
 
 
 def _is_reasoning_only_assistant(message: Message) -> bool:
