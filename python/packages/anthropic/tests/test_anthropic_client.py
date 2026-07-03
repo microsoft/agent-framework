@@ -944,7 +944,7 @@ def test_prepare_tools_for_anthropic_single_dict_tool(
 ) -> None:
     """Test passing through a single dict tool."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    chat_options = ChatOptions(tools={"type": "custom", "name": "custom_tool", "description": "A custom tool"})  # type: ignore[arg-type]
+    chat_options = ChatOptions(tools={"type": "custom", "name": "custom_tool", "description": "A custom tool"})
 
     result = client._prepare_tools_for_anthropic(chat_options)
 
