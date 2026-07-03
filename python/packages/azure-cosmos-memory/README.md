@@ -132,7 +132,7 @@ uv run python samples/interactive_chat.py
 
 **Important:** Before running samples, complete the [Development Setup](#development-setup) above to create a virtual environment and install the package.
 
-This package includes two samples demonstrating different usage patterns:
+This package includes three samples demonstrating different usage patterns:
 
 #### 1. **Basic Usage (`samples/basic_usage.py`)** - API Demonstration
 This sample shows the **raw ContextProvider API** by manually calling `before_run()` and `after_run()`. It demonstrates:
@@ -247,16 +247,27 @@ This sample shows **real-world usage** with Agent Framework. It demonstrates:
 - Use `/quit` to exit
 
 The interactive sample demonstrates:
-- **Example 1**: Real agent with memory integration
-- **Example 2**: Custom memory extraction rubric injection
-- **Example 3**: Multi-user and multi-thread memory scoping
+- Real agent with memory integration
+- Multi-turn conversations with memory persisting across threads
+- Multi-user and multi-thread memory scoping
+
+#### 3. **Interactive Chat with Custom Extraction (`samples/interactive_chat_custom_extraction.py`)**
+
+The same interactive chat as above, but wired with a **custom memory-extraction prompt** so you can control *what* the pipeline extracts. It uses a coding-assistant rubric that classifies architectural and technical decisions as durable facts. See [Custom Memory Extraction Rubric](#custom-memory-extraction-rubric) below for how the `prompts_dir` seam works.
+
+Run it the same way as the interactive chat (same prerequisites and environment variables):
+
+```bash
+python samples/interactive_chat_custom_extraction.py
+```
 
 ### Custom Memory Extraction Rubric
 
-The Agent Memory Toolkit's `AsyncCosmosMemoryClient` accepts a custom `processor` parameter to control **what** gets extracted and **how**. There are two approaches:
+You can control both **how often** memories are extracted and **what** gets extracted.
 
-#### Approach 1: Configure via Environment Variables (Simplest)
-Use `processor_config` to control extraction frequency:
+#### Control extraction cadence (`processor_config`)
+
+`processor_config` sets how many turns pass between each pipeline step (these map to the toolkit's environment thresholds):
 
 ```python
 memory_provider = CosmosMemoryContextProvider(
@@ -267,38 +278,23 @@ memory_provider = CosmosMemoryContextProvider(
         "DEDUP_EVERY_N": 3,              # Deduplicate every 3 extractions
         "USER_SUMMARY_EVERY_N": 5,       # Update user profile every 5 turns
         "THREAD_SUMMARY_EVERY_N": 10,    # Summarize thread every 10 turns
-    }
+    },
 )
 ```
 
-#### Approach 2: Custom Processor (Advanced)
-Inject your own extraction logic with a custom rubric:
+#### Customize the extraction prompt (`prompts_dir`)
+
+To change *what* the LLM extracts and how it classifies memories, supply your own Prompty templates via `prompts_dir`. When set, the toolkit's extraction and summarization steps read their templates (including `extract_memories.prompty`) from that directory instead of the bundled defaults:
 
 ```python
-class CustomMemoryProcessor:
-    def __init__(self, extraction_rubric: str):
-        self.extraction_rubric = extraction_rubric  # Your custom prompt
-
-    async def extract_memories(self, user_id, thread_id, messages):
-        # Your extraction logic here using self.extraction_rubric
-        # Return list of memory records
-        pass
-
-# Create client with custom processor
-memory_client = AsyncCosmosMemoryClient(
-    cosmos_endpoint=cosmos_endpoint,
-    ai_foundry_endpoint=ai_foundry_endpoint,
-    use_default_credential=True,
-    processor=CustomMemoryProcessor(YOUR_RUBRIC),  # <-- Inject here
+memory_provider = CosmosMemoryContextProvider(
+    cosmos_endpoint=...,
+    foundry_endpoint=...,
+    prompts_dir="./my_prompts",
 )
-
-# Pass to provider
-memory_provider = CosmosMemoryContextProvider(memory_client=memory_client)
 ```
 
-See the [Agent Memory Toolkit docs](https://github.com/AzureCosmosDB/AgentMemoryToolkit) for details on
-custom processors and extraction rubrics (what to extract, what to ignore, how to classify memories,
-and confidence scoring).
+The directory must contain the complete template set, since the loader resolves each template by name with no fallback to the bundled copies. The simplest way to customize just the extraction rubric is to copy the toolkit's bundled templates and edit `extract_memories.prompty` (keeping its inputs and JSON output schema intact). See `samples/interactive_chat_custom_extraction.py` for a working example that builds this directory at runtime, so the custom prompt stays compatible with the installed toolkit's schema.
 
 ### Configuration
 
