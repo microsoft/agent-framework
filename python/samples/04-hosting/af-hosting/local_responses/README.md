@@ -21,8 +21,9 @@ What the route demonstrates:
   turn.
 - Produces the AF messages, options, and session id that the route passes to
   `agent.run(...)`.
-- **Aliases** each newly minted response id to the session it was just
-  resolved from, via `state.get_session(lookup_id, alias=response_id)`.
+- **Stores** each newly minted response id for the session it was just
+  resolved from, via `state.session_store.set(response_id, session)` after
+  `agent.run(...)` has updated the session.
   OpenAI's `previous_response_id` rotates every turn *by design* — it lets a
   caller continue from any earlier response, not just the latest one — so
   every response id needs to stay independently resolvable, not just the

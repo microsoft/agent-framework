@@ -4,7 +4,7 @@
 
 These exercise the same wiring as the `local_responses` sample: helpers from
 `agent_framework_hosting_responses` convert between the Responses protocol and
-Agent Framework run values, `agent_framework_hosting`'s `AgentFrameworkState` /
+Agent Framework run values, `agent_framework_hosting`'s `AgentState` /
 `SessionStore` hold shared execution state, and a small FastAPI route owns
 everything else (parsing, policy, response construction). Requests go through
 `httpx.AsyncClient` with `ASGITransport` -- no real server process or live
@@ -27,7 +27,7 @@ from agent_framework import (
     Message,
     ResponseStream,
 )
-from agent_framework_hosting import AgentFrameworkState, SessionStore
+from agent_framework_hosting import AgentState
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -115,7 +115,7 @@ class _StubAgent:
 def _build_app(agent: _StubAgent) -> FastAPI:
     """Build a minimal FastAPI app mirroring the `local_responses` sample's route."""
     app = FastAPI()
-    state = AgentFrameworkState(agent, session_store=SessionStore)
+    state = AgentState(agent)
 
     @app.post("/responses", response_model=None)
     async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | StreamingResponse:  # noqa: B008
@@ -128,20 +128,29 @@ def _build_app(agent: _StubAgent) -> FastAPI:
 
         target = await state.get_target()
         lookup_id = session_id or response_id
-        # Alias the newly minted response id to this turn's session, same as
-        # the sample, so a later `previous_response_id` still resolves.
-        session = await state.get_session(lookup_id, alias=response_id)
+        session = await state.get_or_create_session(lookup_id)
 
         if run["stream"]:
             stream = target.run(run["messages"], stream=True, session=session)
             if not isinstance(stream, ResponseStream):
                 raise HTTPException(status_code=500, detail="agent did not return a response stream")
+
+            async def stream_events() -> AsyncIterator[str]:
+                async for event in responses_stream_events_from_run(
+                    stream,
+                    response_id=response_id,
+                    session_id=session_id,
+                ):
+                    yield event
+                await state.session_store.set(response_id, session)
+
             return StreamingResponse(
-                responses_stream_events_from_run(stream, response_id=response_id, session_id=session_id),
+                stream_events(),
                 media_type="text/event-stream",
             )
 
         result = await target.run(run["messages"], session=session)
+        await state.session_store.set(response_id, session)
         return JSONResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
 
     return app

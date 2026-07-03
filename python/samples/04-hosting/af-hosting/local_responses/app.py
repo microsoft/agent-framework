@@ -7,7 +7,7 @@ This sample demonstrates the helper-first hosting shape:
 1. ``agent-framework-hosting-responses`` converts Responses request/response
    payloads to and from Agent Framework run values.
 2. ``agent-framework-hosting`` owns shared execution state via
-   ``AgentFrameworkState`` and ``SessionStore``.
+   ``AgentState`` and ``SessionStore``.
 3. FastAPI owns the route, request parsing, policy decisions, and response
    object.
 
@@ -35,12 +35,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Annotated, Any, cast
 
 from agent_framework import Agent, FileHistoryProvider, ResponseStream, tool
 from agent_framework_foundry import FoundryChatClient
-from agent_framework_hosting import AgentFrameworkState, SessionStore
+from agent_framework_hosting import AgentState
 from agent_framework_hosting_responses import (
     create_response_id,
     responses_from_run,
@@ -88,7 +89,7 @@ def create_agent() -> Agent:
 
 
 app = FastAPI()
-state = AgentFrameworkState(create_agent, session_store=SessionStore)
+state = AgentState(create_agent)
 
 
 @app.post("/responses", response_model=None)
@@ -110,13 +111,9 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
     options["reasoning"] = {"effort": "medium", "summary": "auto"}
     options_for_run = cast(Any, options)
 
-    target = cast(Agent[Any], await state.get_target())
+    target = await state.get_target()
     lookup_id = session_id or response_id
-    # `previous_response_id` chaining rotates its id every turn, and OpenAI's
-    # Responses API deliberately lets a caller continue from *any* earlier
-    # response, not just the latest one -- so the newly minted response id
-    # also needs to resolve back to this session on a later request.
-    session = await state.get_session(lookup_id, alias=response_id)
+    session = await state.get_or_create_session(lookup_id)
     if run["stream"]:
         stream = target.run(
             run["messages"],
@@ -126,12 +123,22 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
         )
         if not isinstance(stream, ResponseStream):
             raise HTTPException(status_code=500, detail="agent did not return a response stream")
-        return StreamingResponse(
-            responses_stream_events_from_run(
+
+        async def stream_events() -> AsyncIterator[str]:
+            async for event in responses_stream_events_from_run(
                 stream,
                 response_id=response_id,
                 session_id=session_id,
-            ),
+            ):
+                yield event
+            # `agent.run(..., stream=True)` updates the session while the stream
+            # is consumed/finalized. Store it under the newly minted response id
+            # after finalization so a later `previous_response_id` can restore
+            # this exact continuation point.
+            await state.session_store.set(response_id, session)
+
+        return StreamingResponse(
+            stream_events(),
             media_type="text/event-stream",
         )
 
@@ -140,6 +147,10 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
         session=session,
         options=options_for_run,
     )
+    # `agent.run(...)` updates the session. Store it under the newly minted
+    # response id after the run so `previous_response_id=response_id` continues
+    # from this exact point.
+    await state.session_store.set(response_id, session)
     return JSONResponse(
         responses_from_run(
             result,

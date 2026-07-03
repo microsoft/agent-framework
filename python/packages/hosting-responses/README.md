@@ -18,7 +18,7 @@ FastAPI/Starlette/Django/Azure Functions code owns route registration,
 authentication, status codes, response construction, and background work.
 
 ```python
-from agent_framework_hosting import AgentFrameworkState, SessionStore
+from agent_framework_hosting import AgentState
 from agent_framework_hosting_responses import (
     create_response_id,
     responses_from_run,
@@ -29,7 +29,7 @@ from fastapi import Body, FastAPI
 from fastapi.responses import JSONResponse
 
 app = FastAPI()
-state = AgentFrameworkState(agent, session_store=SessionStore)
+state = AgentState(agent)
 
 
 @app.post("/responses")
@@ -37,11 +37,13 @@ async def responses(body: dict = Body(...)) -> JSONResponse:
     run = responses_to_run(body)
     session_id = responses_session_id(body)
     response_id = create_response_id()
+    session = await state.get_or_create_session(session_id or response_id)
     result = await (await state.get_target()).run(
         run["messages"],
-        session=await state.get_session(session_id or response_id),
+        session=session,
         options=run["options"],
     )
+    await state.session_store.set(response_id, session)
     return JSONResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
 ```
 
