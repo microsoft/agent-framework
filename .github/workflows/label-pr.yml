@@ -6,16 +6,34 @@
 # https://github.com/actions/labeler
 
 name: Label pull request
-on: [pull_request_target]
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
 
 jobs:
   add_label:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: write
       pull-requests: write
 
     steps:
-      - uses: actions/labeler@v6
+      - uses: actions/labeler@f27b608878404679385c85cfa523b85ccb86e213 # v6
         with:
           repo-token: "${{ secrets.GH_ACTIONS_PR_WRITE }}"
+
+      - name: Checkout scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          sparse-checkout: .github/scripts
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: "PR: add breaking change label from title"
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          github-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+          script: |
+            const { syncBreakingChangeLabelFromTitle } = require('./.github/scripts/title_prefix.js');
+            await syncBreakingChangeLabelFromTitle({ github, context, core });

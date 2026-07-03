@@ -10,13 +10,12 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 public class HostedFoundryMemoryProviderScopesTests
 {
     private const string TestUserId = "user-isolation-key-1";
-    private const string TestChatId = "chat-isolation-key-1";
 
     [Fact]
     public void PerUser_UsesUserIdAsScope()
     {
         // Arrange
-        var session = CreateTaggedSession(TestUserId, TestChatId);
+        var session = CreateTaggedSession(TestUserId);
         var initializer = HostedFoundryMemoryProviderScopes.PerUser();
 
         // Act
@@ -25,36 +24,6 @@ public class HostedFoundryMemoryProviderScopesTests
         // Assert
         Assert.NotNull(state);
         Assert.Equal(TestUserId, state.Scope.Scope);
-    }
-
-    [Fact]
-    public void PerChat_UsesChatIdAsScope()
-    {
-        // Arrange
-        var session = CreateTaggedSession(TestUserId, TestChatId);
-        var initializer = HostedFoundryMemoryProviderScopes.PerChat();
-
-        // Act
-        var state = initializer(session);
-
-        // Assert
-        Assert.NotNull(state);
-        Assert.Equal(TestChatId, state.Scope.Scope);
-    }
-
-    [Fact]
-    public void PerUserAndChat_ComposesUserAndChatWithColon()
-    {
-        // Arrange
-        var session = CreateTaggedSession(TestUserId, TestChatId);
-        var initializer = HostedFoundryMemoryProviderScopes.PerUserAndChat();
-
-        // Act
-        var state = initializer(session);
-
-        // Assert
-        Assert.NotNull(state);
-        Assert.Equal($"{TestUserId}:{TestChatId}", state.Scope.Scope);
     }
 
     [Fact]
@@ -69,26 +38,6 @@ public class HostedFoundryMemoryProviderScopesTests
     }
 
     [Fact]
-    public void PerChat_NullSession_Throws()
-    {
-        // Arrange
-        var initializer = HostedFoundryMemoryProviderScopes.PerChat();
-
-        // Act & Assert
-        Assert.Throws<InvalidOperationException>(() => initializer(null));
-    }
-
-    [Fact]
-    public void PerUserAndChat_NullSession_Throws()
-    {
-        // Arrange
-        var initializer = HostedFoundryMemoryProviderScopes.PerUserAndChat();
-
-        // Act & Assert
-        Assert.Throws<InvalidOperationException>(() => initializer(null));
-    }
-
-    [Fact]
     public void PerUser_SessionWithoutHostedContext_Throws()
     {
         // Arrange
@@ -100,10 +49,10 @@ public class HostedFoundryMemoryProviderScopesTests
         Assert.Contains(nameof(HostedFoundryMemoryProviderScopes), ex.Message);
     }
 
-    private static BareAgentSession CreateTaggedSession(string userId, string chatId)
+    private static BareAgentSession CreateTaggedSession(string userId)
     {
         var session = new BareAgentSession();
-        session.SetHostedContext(new HostedSessionContext(userId, chatId));
+        session.SetHostedContext(new HostedSessionContext(userId));
         return session;
     }
 

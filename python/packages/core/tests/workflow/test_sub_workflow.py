@@ -148,7 +148,7 @@ class EmailDomainValidator(Executor):
         self,
         original_request: DomainCheckRequest,
         is_approved: bool,
-        ctx: WorkflowContext[Never, ValidationResult],
+        ctx: WorkflowContext[Never, ValidationResult],  # type: ignore[valid-type]
     ) -> None:
         """Handle domain check response with correlation."""
         # Use the original email from the correlated response
@@ -495,7 +495,7 @@ class TwoStepSubWorkflowExecutor(Executor):
         self,
         original_request: CheckpointRequest,
         response: str,
-        ctx: WorkflowContext[Never, bool],
+        ctx: WorkflowContext[Never, bool],  # type: ignore[valid-type]
     ) -> None:
         self._responses.append(response)
         if len(self._responses) == 1:
@@ -643,7 +643,7 @@ async def test_sub_workflow_intermediate_outputs_propagate_to_parent() -> None:
             super().__init__(id="finalizer")
 
         @handler
-        async def run(self, message: str, ctx: WorkflowContext[Never, str]) -> None:
+        async def run(self, message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
             await ctx.yield_output(f"final: {message}")
 
     progress = _ProgressEmitter()
@@ -666,7 +666,7 @@ async def test_sub_workflow_intermediate_outputs_propagate_to_parent() -> None:
             self.received: list[str] = []
 
         @handler
-        async def run(self, message: str, ctx: WorkflowContext[Never, str]) -> None:
+        async def run(self, message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
             self.received.append(message)
             await ctx.yield_output(message)
 

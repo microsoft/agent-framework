@@ -2,10 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -19,10 +15,41 @@ public static partial class AgentWorkflowBuilder
     /// <summary>
     /// Builds a <see cref="Workflow"/> composed of a pipeline of agents where the output of one agent is the input to the next.
     /// </summary>
+    /// <param name="chainOnlyAgentResponses">
+    /// <see langword="true"/> to pass only each agent's output messages to the next agent in the sequence;
+    /// <see langword="false"/> to pass the full accumulated conversation.
+    /// When enabled, the workflow output also reflects only the final agent's messages,
+    /// because the sequential builder stops forwarding the incoming messages to the
+    /// terminal output executor.
+    /// </param>
+    /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
+    /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
+    public static Workflow BuildSequential(bool chainOnlyAgentResponses, params IEnumerable<AIAgent> agents)
+        => BuildSequentialCore(workflowName: null, chainOnlyAgentResponses, agents);
+
+    /// <summary>
+    /// Builds a <see cref="Workflow"/> composed of a pipeline of agents where the output of one agent is the input to the next.
+    /// </summary>
     /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
     /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
     public static Workflow BuildSequential(params IEnumerable<AIAgent> agents)
-        => BuildSequentialCore(workflowName: null, agents);
+        => BuildSequentialCore(workflowName: null, chainOnlyAgentResponses: false, agents);
+
+    /// <summary>
+    /// Builds a <see cref="Workflow"/> composed of a pipeline of agents where the output of one agent is the input to the next.
+    /// </summary>
+    /// <param name="workflowName">The name of workflow.</param>
+    /// <param name="chainOnlyAgentResponses">
+    /// <see langword="true"/> to pass only each agent's output messages to the next agent in the sequence;
+    /// <see langword="false"/> to pass the full accumulated conversation.
+    /// When enabled, the workflow output also reflects only the final agent's messages,
+    /// because the sequential builder stops forwarding the incoming messages to the
+    /// terminal output executor.
+    /// </param>
+    /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
+    /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
+    public static Workflow BuildSequential(string workflowName, bool chainOnlyAgentResponses, params IEnumerable<AIAgent> agents)
+        => BuildSequentialCore(workflowName, chainOnlyAgentResponses, agents);
 
     /// <summary>
     /// Builds a <see cref="Workflow"/> composed of a pipeline of agents where the output of one agent is the input to the next.
@@ -31,37 +58,17 @@ public static partial class AgentWorkflowBuilder
     /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
     /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
     public static Workflow BuildSequential(string workflowName, params IEnumerable<AIAgent> agents)
-        => BuildSequentialCore(workflowName, agents);
+        => BuildSequentialCore(workflowName, chainOnlyAgentResponses: false, agents);
 
-    private static Workflow BuildSequentialCore(string? workflowName, params IEnumerable<AIAgent> agents)
+    private static Workflow BuildSequentialCore(string? workflowName, bool chainOnlyAgentResponses, params IEnumerable<AIAgent> agents)
     {
         Throw.IfNullOrEmpty(agents);
 
-        // Create a builder that chains the agents together in sequence. The workflow simply begins
-        // with the first agent in the sequence.
-
-        AIAgentHostOptions options = new()
-        {
-            ReassignOtherAgentsAsUsers = true,
-            ForwardIncomingMessages = true,
-        };
-
-        List<ExecutorBinding> agentExecutors = agents.Select(agent => agent.BindAsExecutor(options)).ToList();
-
-        ExecutorBinding previous = agentExecutors[0];
-        WorkflowBuilder builder = new(previous);
-
-        foreach (ExecutorBinding next in agentExecutors.Skip(1))
-        {
-            builder.AddEdge(previous, next);
-            previous = next;
-        }
-
-        OutputMessagesExecutor end = new();
-        builder = builder.AddEdge(previous, end).WithOutputFrom(end);
+        SequentialWorkflowBuilder builder = new SequentialWorkflowBuilder(agents)
+            .WithChainOnlyAgentResponses(chainOnlyAgentResponses);
         if (workflowName is not null)
         {
-            builder = builder.WithName(workflowName);
+            builder.WithName(workflowName);
         }
         return builder.Build();
     }
@@ -107,41 +114,14 @@ public static partial class AgentWorkflowBuilder
     {
         Throw.IfNull(agents);
 
-        // A workflow needs a starting executor, so we create one that forwards everything to each agent.
-        ChatForwardingExecutor start = new("Start");
-        WorkflowBuilder builder = new(start);
-
-        // For each agent, we create an executor to host it and an accumulator to batch up its output messages,
-        // so that the final accumulator receives a single list of messages from each agent. Otherwise, the
-        // accumulator would not be able to determine what came from what agent, as there's currently no
-        // provenance tracking exposed in the workflow context passed to a handler.
-
-        ExecutorBinding[] agentExecutors = (from agent in agents
-                                            select agent.BindAsExecutor(new AIAgentHostOptions() { ReassignOtherAgentsAsUsers = true })).ToArray();
-        ExecutorBinding[] accumulators = [.. from agent in agentExecutors select (ExecutorBinding)new AggregateTurnMessagesExecutor($"Batcher/{agent.Id}")];
-        builder.AddFanOutEdge(start, agentExecutors);
-
-        for (int i = 0; i < agentExecutors.Length; i++)
-        {
-            builder.AddEdge(agentExecutors[i], accumulators[i]);
-        }
-
-        // Create the accumulating executor that will gather the results from each agent, and connect
-        // each agent's accumulator to it. If no aggregation function was provided, we default to returning
-        // the last message from each agent
-        aggregator ??= static lists => (from list in lists where list.Count > 0 select list.Last()).ToList();
-
-        Func<string, string, ValueTask<ConcurrentEndExecutor>> endFactory =
-            (_, __) => new(new ConcurrentEndExecutor(agentExecutors.Length, aggregator));
-
-        ExecutorBinding end = endFactory.BindExecutor(ConcurrentEndExecutor.ExecutorId);
-
-        builder.AddFanInBarrierEdge(accumulators, end);
-
-        builder = builder.WithOutputFrom(end);
+        ConcurrentWorkflowBuilder builder = new(agents);
         if (workflowName is not null)
         {
-            builder = builder.WithName(workflowName);
+            builder.WithName(workflowName);
+        }
+        if (aggregator is not null)
+        {
+            builder.WithAggregator(aggregator);
         }
         return builder.Build();
     }
@@ -155,7 +135,6 @@ public static partial class AgentWorkflowBuilder
     /// The <see cref="AIAgent"/> must be capable of understanding those <see cref="AgentRunOptions"/> provided. If the agent
     /// ignores the tools or is otherwise unable to advertize them to the underlying provider, handoffs will not occur.
     /// </remarks>
-    [Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
     public static HandoffWorkflowBuilder CreateHandoffBuilderWith(AIAgent initialAgent)
     {
         Throw.IfNull(initialAgent);
@@ -178,5 +157,32 @@ public static partial class AgentWorkflowBuilder
     {
         Throw.IfNull(managerFactory);
         return new GroupChatWorkflowBuilder(managerFactory);
+    }
+
+    /// <summary>Creates a new <see cref="SequentialWorkflowBuilder"/> with the given pipeline of <paramref name="agents"/>.</summary>
+    /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
+    /// <returns>The builder for creating a sequential workflow.</returns>
+    public static SequentialWorkflowBuilder CreateSequentialBuilderWith(params IEnumerable<AIAgent> agents)
+    {
+        Throw.IfNull(agents);
+        return new SequentialWorkflowBuilder(agents);
+    }
+
+    /// <summary>Creates a new <see cref="ConcurrentWorkflowBuilder"/> with the given participating <paramref name="agents"/>.</summary>
+    /// <param name="agents">The set of agents to compose into a concurrent workflow.</param>
+    /// <returns>The builder for creating a concurrent workflow.</returns>
+    public static ConcurrentWorkflowBuilder CreateConcurrentBuilderWith(params IEnumerable<AIAgent> agents)
+    {
+        Throw.IfNull(agents);
+        return new ConcurrentWorkflowBuilder(agents);
+    }
+
+    /// <summary>Creates a new <see cref="MagenticWorkflowBuilder"/> with the given <paramref name="managerAgent"/>.</summary>
+    /// <param name="managerAgent">The LLM-powered manager agent that coordinates the team.</param>
+    /// <returns>The builder for creating a Magentic workflow.</returns>
+    public static MagenticWorkflowBuilder CreateMagenticBuilderWith(AIAgent managerAgent)
+    {
+        Throw.IfNull(managerAgent);
+        return new MagenticWorkflowBuilder(managerAgent);
     }
 }

@@ -2,8 +2,6 @@
 
 using System;
 using System.ComponentModel;
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -26,7 +24,7 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// This attribute is compatible with Native AOT when used with <see cref="AgentClassSkill{TSelf}"/>.
-/// Alternatively, override the <see cref="AgentSkill.Scripts"/> property and use
+/// Alternatively, override <see cref="AgentClassSkill{TSelf}.Scripts"/> and use
 /// <see cref="AgentClassSkill{TSelf}.CreateScript"/> instead.
 /// </para>
 /// </remarks>
@@ -44,7 +42,6 @@ namespace Microsoft.Agents.AI;
 /// </code>
 /// </example>
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = false)]
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentSkillScriptAttribute : Attribute
 {
     /// <summary>

@@ -5,7 +5,7 @@
 # pyright: reportGeneralTypeIssues=false
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -141,7 +141,7 @@ class TestDeclarativeWorkflowStateExtended:
 
         # Set via direct state data manipulation to create custom namespace
         state_data = state.get_state_data()
-        state_data["Custom"] = {"myns": {"value": 42}}
+        cast(dict[str, Any], state_data)["Custom"] = {"myns": {"value": 42}}
         state.set_state_data(state_data)
 
         result = state.get("myns.value")
@@ -253,10 +253,10 @@ class TestDeclarativeWorkflowStateExtended:
         state.initialize()
 
         # Cast to Any to test the runtime behavior with non-string inputs
-        result = state.eval(42)  # type: ignore[arg-type]
+        result = state.eval(42)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         assert result == 42
 
-        result = state.eval([1, 2, 3])  # type: ignore[arg-type]
+        result = state.eval([1, 2, 3])  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         assert result == [1, 2, 3]
 
     @_requires_powerfx
@@ -515,27 +515,6 @@ class TestBasicExecutorsCoverage:
         assert state.get("Local.b") == 2
         assert state.get("Local.c") == 3
 
-    async def test_append_value_executor(self, mock_context, mock_state):
-        """Test AppendValueExecutor."""
-        from agent_framework_declarative._workflows._executors_basic import (
-            AppendValueExecutor,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-        state.set("Local.items", ["a"])
-
-        action_def = {
-            "kind": "AppendValue",
-            "path": "Local.items",
-            "value": "b",
-        }
-        executor = AppendValueExecutor(action_def)
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        result = state.get("Local.items")
-        assert result == ["a", "b"]
-
     async def test_reset_variable_executor(self, mock_context, mock_state):
         """Test ResetVariableExecutor."""
         from agent_framework_declarative._workflows._executors_basic import (
@@ -631,52 +610,6 @@ class TestBasicExecutorsCoverage:
         await executor.handle_action(ActionTrigger(), mock_context)
 
         mock_context.yield_output.assert_called_once_with("Dynamic message")
-
-    async def test_emit_event_executor_graph_mode(self, mock_context, mock_state):
-        """Test EmitEventExecutor with graph-mode schema (eventName/eventValue)."""
-        from agent_framework_declarative._workflows._executors_basic import (
-            EmitEventExecutor,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "EmitEvent",
-            "eventName": "myEvent",
-            "eventValue": {"key": "value"},
-        }
-        executor = EmitEventExecutor(action_def)
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        mock_context.yield_output.assert_called_once()
-        event_data = mock_context.yield_output.call_args[0][0]
-        assert event_data["eventName"] == "myEvent"
-        assert event_data["eventValue"] == {"key": "value"}
-
-    async def test_emit_event_executor_interpreter_mode(self, mock_context, mock_state):
-        """Test EmitEventExecutor with interpreter-mode schema (event.name/event.data)."""
-        from agent_framework_declarative._workflows._executors_basic import (
-            EmitEventExecutor,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "EmitEvent",
-            "event": {
-                "name": "interpreterEvent",
-                "data": {"payload": "test"},
-            },
-        }
-        executor = EmitEventExecutor(action_def)
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        mock_context.yield_output.assert_called_once()
-        event_data = mock_context.yield_output.call_args[0][0]
-        assert event_data["eventName"] == "interpreterEvent"
-        assert event_data["eventValue"] == {"payload": "test"}
 
 
 # ---------------------------------------------------------------------------
@@ -1155,8 +1088,8 @@ class TestControlFlowCoverage:
     """Tests for control flow executors covering uncovered code paths."""
 
     @_requires_powerfx
-    async def test_foreach_with_source_alias(self, mock_context, mock_state):
-        """Test ForeachInitExecutor with 'source' alias (interpreter mode)."""
+    async def test_foreach_with_source(self, mock_context, mock_state):
+        """Test ForeachInitExecutor with the 'source' field."""
         from agent_framework_declarative._workflows._executors_control_flow import (
             ForeachInitExecutor,
         )
@@ -1194,7 +1127,7 @@ class TestControlFlowCoverage:
 
         # Set up loop state as ForeachInitExecutor would
         state_data = state.get_state_data()
-        state_data[LOOP_STATE_KEY] = {
+        cast(dict[str, Any], state_data)[LOOP_STATE_KEY] = {
             "foreach_init": {
                 "items": ["a", "b", "c"],
                 "index": 0,
@@ -1205,8 +1138,8 @@ class TestControlFlowCoverage:
 
         action_def = {
             "kind": "Foreach",
-            "itemsSource": "=Local.data",
-            "iteratorVariable": "Local.item",
+            "source": "=Local.data",
+            "itemName": "item",
         }
         executor = ForeachNextExecutor(action_def, init_executor_id="foreach_init")
 
@@ -1216,81 +1149,6 @@ class TestControlFlowCoverage:
         assert isinstance(msg, LoopIterationResult)
         assert msg.current_index == 1
         assert msg.current_item == "b"
-
-    @_requires_powerfx
-    async def test_switch_evaluator_with_value_cases(self, mock_context, mock_state):
-        """Test SwitchEvaluatorExecutor with value/cases schema."""
-        from agent_framework_declarative._workflows._executors_control_flow import (
-            SwitchEvaluatorExecutor,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-        state.set("Local.status", "pending")
-
-        action_def = {
-            "kind": "Switch",
-            "value": "=Local.status",
-        }
-        cases = [
-            {"match": "active"},
-            {"match": "pending"},
-        ]
-        executor = SwitchEvaluatorExecutor(action_def, cases=cases)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        msg = mock_context.send_message.call_args[0][0]
-        assert isinstance(msg, ConditionResult)
-        assert msg.matched is True
-        assert msg.branch_index == 1  # Second case matched
-
-    @_requires_powerfx
-    async def test_switch_evaluator_default_case(self, mock_context, mock_state):
-        """Test SwitchEvaluatorExecutor falls through to default."""
-        from agent_framework_declarative._workflows._executors_control_flow import (
-            SwitchEvaluatorExecutor,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-        state.set("Local.status", "unknown")
-
-        action_def = {
-            "kind": "Switch",
-            "value": "=Local.status",
-        }
-        cases = [
-            {"match": "active"},
-            {"match": "pending"},
-        ]
-        executor = SwitchEvaluatorExecutor(action_def, cases=cases)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        msg = mock_context.send_message.call_args[0][0]
-        assert isinstance(msg, ConditionResult)
-        assert msg.matched is False
-        assert msg.branch_index == -1  # Default case
-
-    async def test_switch_evaluator_no_value(self, mock_context, mock_state):
-        """Test SwitchEvaluatorExecutor with no value defaults to else."""
-        from agent_framework_declarative._workflows._executors_control_flow import (
-            SwitchEvaluatorExecutor,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {"kind": "Switch"}  # No value
-        cases = [{"match": "x"}]
-        executor = SwitchEvaluatorExecutor(action_def, cases=cases)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        msg = mock_context.send_message.call_args[0][0]
-        assert isinstance(msg, ConditionResult)
-        assert msg.branch_index == -1
 
     async def test_join_executor_accepts_condition_result(self, mock_context, mock_state):
         """Test JoinExecutor accepts ConditionResult as trigger."""
@@ -1357,8 +1215,8 @@ class TestControlFlowCoverage:
 
         action_def = {
             "kind": "Foreach",
-            "itemsSource": "=Local.data",
-            "iteratorVariable": "Local.item",
+            "source": "=Local.data",
+            "itemName": "item",
         }
         executor = ForeachNextExecutor(action_def, init_executor_id="missing_loop")
 
@@ -1380,7 +1238,7 @@ class TestControlFlowCoverage:
 
         # Set up loop state at last item
         state_data = state.get_state_data()
-        state_data[LOOP_STATE_KEY] = {
+        cast(dict[str, Any], state_data)[LOOP_STATE_KEY] = {
             "loop_id": {
                 "items": ["a", "b"],
                 "index": 1,  # Already at last item
@@ -1391,8 +1249,8 @@ class TestControlFlowCoverage:
 
         action_def = {
             "kind": "Foreach",
-            "itemsSource": "=Local.data",
-            "iteratorVariable": "Local.item",
+            "source": "=Local.data",
+            "itemName": "item",
         }
         executor = ForeachNextExecutor(action_def, init_executor_id="loop_id")
 
@@ -1414,7 +1272,7 @@ class TestControlFlowCoverage:
 
         # Set up loop state
         state_data = state.get_state_data()
-        state_data[LOOP_STATE_KEY] = {
+        cast(dict[str, Any], state_data)[LOOP_STATE_KEY] = {
             "loop_id": {
                 "items": ["a", "b", "c"],
                 "index": 0,
@@ -1425,8 +1283,8 @@ class TestControlFlowCoverage:
 
         action_def = {
             "kind": "Foreach",
-            "itemsSource": "=Local.data",
-            "iteratorVariable": "Local.item",
+            "source": "=Local.data",
+            "itemName": "item",
         }
         executor = ForeachNextExecutor(action_def, init_executor_id="loop_id")
 
@@ -1448,7 +1306,7 @@ class TestControlFlowCoverage:
 
         # Set up loop state
         state_data = state.get_state_data()
-        state_data[LOOP_STATE_KEY] = {
+        cast(dict[str, Any], state_data)[LOOP_STATE_KEY] = {
             "loop_id": {
                 "items": ["a", "b", "c"],
                 "index": 0,
@@ -1459,8 +1317,8 @@ class TestControlFlowCoverage:
 
         action_def = {
             "kind": "Foreach",
-            "itemsSource": "=Local.data",
-            "iteratorVariable": "Local.item",
+            "source": "=Local.data",
+            "itemName": "item",
         }
         executor = ForeachNextExecutor(action_def, init_executor_id="loop_id")
 
@@ -1719,60 +1577,6 @@ class TestDeclarativeActionExecutorBase:
 class TestHumanInputExecutorsCoverage:
     """Tests for human input executors covering uncovered code paths."""
 
-    async def test_wait_for_input_executor_with_prompt(self, mock_context, mock_state):
-        """Test WaitForInputExecutor with prompt."""
-        from agent_framework_declarative._workflows._executors_external_input import (
-            ExternalInputRequest,
-            WaitForInputExecutor,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "WaitForInput",
-            "prompt": "Please enter your name:",
-            "property": "Local.userName",
-            "timeout": 30,
-        }
-        executor = WaitForInputExecutor(action_def)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        # Should yield prompt first, then call request_info
-        assert mock_context.yield_output.call_count == 1
-        assert mock_context.yield_output.call_args_list[0][0][0] == "Please enter your name:"
-        # request_info call for ExternalInputRequest
-        mock_context.request_info.assert_called_once()
-        request = mock_context.request_info.call_args[0][0]
-        assert isinstance(request, ExternalInputRequest)
-        assert request.request_type == "user_input"
-
-    async def test_wait_for_input_executor_no_prompt(self, mock_context, mock_state):
-        """Test WaitForInputExecutor without prompt."""
-        from agent_framework_declarative._workflows._executors_external_input import (
-            ExternalInputRequest,
-            WaitForInputExecutor,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "WaitForInput",
-            "property": "Local.input",
-        }
-        executor = WaitForInputExecutor(action_def)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        # Should not yield output (no prompt), just call request_info
-        assert mock_context.yield_output.call_count == 0
-        mock_context.request_info.assert_called_once()
-        request = mock_context.request_info.call_args[0][0]
-        assert isinstance(request, ExternalInputRequest)
-        assert request.request_type == "user_input"
-
     async def test_request_external_input_executor(self, mock_context, mock_state):
         """Test RequestExternalInputExecutor."""
         from agent_framework_declarative._workflows._executors_external_input import (
@@ -1786,8 +1590,8 @@ class TestHumanInputExecutorsCoverage:
         action_def = {
             "kind": "RequestExternalInput",
             "requestType": "approval",
-            "message": "Please approve this request",
-            "property": "Local.approvalResult",
+            "prompt": {"text": "Please approve this request"},
+            "variable": "Local.approvalResult",
             "timeout": 3600,
             "requiredFields": ["approver", "notes"],
             "metadata": {"priority": "high"},
@@ -1817,8 +1621,8 @@ class TestHumanInputExecutorsCoverage:
 
         action_def = {
             "kind": "Question",
-            "question": "Select an option:",
-            "property": "Local.selection",
+            "question": {"text": "Select an option:"},
+            "variable": "Local.selection",
             "choices": [
                 {"value": "a", "label": "Option A"},
                 {"value": "b"},  # No label, should use value
@@ -1840,6 +1644,111 @@ class TestHumanInputExecutorsCoverage:
         assert choices[1] == {"value": "b", "label": "b"}
         assert choices[2] == {"value": "c", "label": "c"}
         assert request.metadata["allow_free_text"] is False
+
+    async def test_question_executor_reads_nested_question_text(self, mock_context, mock_state):
+        """QuestionExecutor reads ``question.text``/``variable``/``default`` into the request."""
+        from agent_framework_declarative._workflows._executors_external_input import (
+            ExternalInputRequest,
+            QuestionExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        action_def = {
+            "kind": "Question",
+            "question": {"text": "What is your name?"},
+            "variable": "Local.userName",
+            "default": "Guest",
+        }
+        executor = QuestionExecutor(action_def)
+
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        mock_context.request_info.assert_called_once()
+        request = mock_context.request_info.call_args[0][0]
+        assert isinstance(request, ExternalInputRequest)
+        # Canonical text comes through as a plain string, not the stringified dict.
+        assert request.message == "What is your name?"
+        # Canonical `variable` overrides the legacy default of Local.answer.
+        assert request.metadata["output_property"] == "Local.userName"
+        assert request.metadata["default_value"] == "Guest"
+
+    async def test_question_executor_reads_top_level_alternates(self, mock_context, mock_state):
+        """Top-level ``text``/``property``/``defaultValue`` are accepted as alternates."""
+        from agent_framework_declarative._workflows._executors_external_input import (
+            ExternalInputRequest,
+            QuestionExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        action_def = {
+            "kind": "Question",
+            "text": "Legacy question",
+            "property": "Local.legacyAnswer",
+            "defaultValue": "legacy-default",
+        }
+        executor = QuestionExecutor(action_def)
+
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        request = mock_context.request_info.call_args[0][0]
+        assert isinstance(request, ExternalInputRequest)
+        assert request.message == "Legacy question"
+        assert request.metadata["output_property"] == "Local.legacyAnswer"
+        assert request.metadata["default_value"] == "legacy-default"
+
+    async def test_request_external_input_reads_nested_prompt_text(self, mock_context, mock_state):
+        """RequestExternalInputExecutor reads ``prompt.text``/``variable``/``default``."""
+        from agent_framework_declarative._workflows._executors_external_input import (
+            ExternalInputRequest,
+            RequestExternalInputExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        action_def = {
+            "kind": "RequestExternalInput",
+            "prompt": {"text": "Please approve"},
+            "variable": "Local.approved",
+            "default": "pending",
+        }
+        executor = RequestExternalInputExecutor(action_def)
+
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        request = mock_context.request_info.call_args[0][0]
+        assert isinstance(request, ExternalInputRequest)
+        assert request.message == "Please approve"
+        assert request.metadata["output_property"] == "Local.approved"
+        assert request.metadata["default_value"] == "pending"
+
+    async def test_request_external_input_reads_top_level_alternates(self, mock_context, mock_state):
+        """Top-level ``message``/``property`` are accepted as alternates."""
+        from agent_framework_declarative._workflows._executors_external_input import (
+            ExternalInputRequest,
+            RequestExternalInputExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        action_def = {
+            "kind": "RequestExternalInput",
+            "message": "Legacy message",
+            "property": "Local.legacyApproval",
+        }
+        executor = RequestExternalInputExecutor(action_def)
+
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        request = mock_context.request_info.call_args[0][0]
+        assert isinstance(request, ExternalInputRequest)
+        assert request.message == "Legacy message"
+        assert request.metadata["output_property"] == "Local.legacyApproval"
 
 
 # ---------------------------------------------------------------------------
@@ -2122,7 +2031,7 @@ class TestBuilderControlFlowCreation:
 
         # Create a mock loop_next executor
         loop_next = ForeachNextExecutor(
-            {"kind": "Foreach", "itemsProperty": "items"},
+            {"kind": "Foreach", "source": "=Local.items"},
             init_executor_id="foreach_init",
             id="foreach_next",
         )
@@ -2181,7 +2090,7 @@ class TestBuilderControlFlowCreation:
 
         # Create a mock loop_next executor
         loop_next = ForeachNextExecutor(
-            {"kind": "Foreach", "itemsProperty": "items"},
+            {"kind": "Foreach", "source": "=Local.items"},
             init_executor_id="foreach_init",
             id="foreach_next",
         )
@@ -2223,6 +2132,101 @@ class TestBuilderControlFlowCreation:
 
 class TestBuilderEdgeWiring:
     """Tests for builder edge wiring methods."""
+
+    def test_foreach_advance_edge_wired_from_last_body_action(self):
+        """Advance edge must come from the last body action."""
+        from agent_framework_declarative._workflows import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "foreach_seq",
+            "actions": [
+                {"kind": "SetValue", "id": "set_items", "path": "Local.items", "value": ["A", "B"]},
+                {
+                    "kind": "Foreach",
+                    "id": "loop",
+                    "source": "=Local.items",
+                    "itemName": "item",
+                    "actions": [
+                        {"kind": "SendActivity", "id": "step_1", "activity": {"text": "one"}},
+                        {"kind": "SendActivity", "id": "step_2", "activity": {"text": "two"}},
+                        {"kind": "SendActivity", "id": "step_3", "activity": {"text": "three"}},
+                    ],
+                },
+            ],
+        }
+
+        workflow = DeclarativeWorkflowBuilder(yaml_def).build()
+        edges = {(e.source_id, e.target_id) for group in workflow.edge_groups for e in group.edges}
+
+        assert ("step_3", "loop_next") in edges
+        assert ("step_1", "loop_next") not in edges
+        assert ("step_2", "loop_next") not in edges
+        assert ("step_1", "step_2") in edges
+        assert ("step_2", "step_3") in edges
+
+    def test_foreach_advance_edge_skipped_for_terminator_body(self):
+        """BreakLoop at end of body wires itself to loop_next; no duplicate edge."""
+        from agent_framework_declarative._workflows import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "foreach_terminator",
+            "actions": [
+                {"kind": "SetValue", "id": "set_items", "path": "Local.items", "value": ["A"]},
+                {
+                    "kind": "Foreach",
+                    "id": "loop",
+                    "source": "=Local.items",
+                    "itemName": "item",
+                    "actions": [
+                        {"kind": "SendActivity", "id": "step_1", "activity": {"text": "one"}},
+                        {"kind": "BreakLoop", "id": "stop"},
+                    ],
+                },
+            ],
+        }
+
+        workflow = DeclarativeWorkflowBuilder(yaml_def).build()
+        all_edges = [(e.source_id, e.target_id) for group in workflow.edge_groups for e in group.edges]
+        assert all_edges.count(("stop", "loop_next")) == 1
+        assert ("step_1", "loop_next") not in all_edges
+
+    def test_foreach_advance_edge_with_if_as_last_body_action(self):
+        """Trailing If in a Foreach body wires every branch exit to loop_next."""
+        from agent_framework_declarative._workflows import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "foreach_if_last",
+            "actions": [
+                {"kind": "SetValue", "id": "set_items", "path": "Local.items", "value": ["A", "B"]},
+                {
+                    "kind": "Foreach",
+                    "id": "loop",
+                    "source": "=Local.items",
+                    "itemName": "item",
+                    "actions": [
+                        {"kind": "SendActivity", "id": "step_1", "activity": {"text": "one"}},
+                        {
+                            "kind": "If",
+                            "id": "check",
+                            "condition": '=Local.item = "A"',
+                            "then": [
+                                {"kind": "SendActivity", "id": "then_action", "activity": {"text": "then"}},
+                            ],
+                            "else": [
+                                {"kind": "SendActivity", "id": "else_action", "activity": {"text": "else"}},
+                            ],
+                        },
+                    ],
+                },
+            ],
+        }
+
+        workflow = DeclarativeWorkflowBuilder(yaml_def).build()
+        edges = {(e.source_id, e.target_id) for group in workflow.edge_groups for e in group.edges}
+
+        assert ("then_action", "loop_next") in edges
+        assert ("else_action", "loop_next") in edges
+        assert ("step_1", "loop_next") not in edges
 
     def test_wire_to_target_with_if_structure(self):
         """Test wiring to an If structure routes to evaluator."""
@@ -2336,7 +2340,7 @@ class TestBuilderEdgeWiring:
         exec3 = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "3"}}, id="e3")
 
         # Simulate a chain by dynamically setting attribute
-        exec1._chain_executors = [exec1, exec2, exec3]  # type: ignore[attr-defined]
+        exec1._chain_executors = [exec1, exec2, exec3]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         exit_exec = graph_builder._get_branch_exit(exec1)
 
@@ -2374,7 +2378,7 @@ class TestBuilderEdgeWiring:
         )
 
         # Simulate a single-action branch chain
-        goto_executor._chain_executors = [goto_executor]  # type: ignore[attr-defined]
+        goto_executor._chain_executors = [goto_executor]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         exit_exec = graph_builder._get_branch_exit(goto_executor)
         assert exit_exec is None
@@ -2391,7 +2395,7 @@ class TestBuilderEdgeWiring:
             {"kind": "EndWorkflow", "id": "end"},
             id="end",
         )
-        end_executor._chain_executors = [end_executor]  # type: ignore[attr-defined]
+        end_executor._chain_executors = [end_executor]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         exit_exec = graph_builder._get_branch_exit(end_executor)
         assert exit_exec is None
@@ -2415,7 +2419,7 @@ class TestBuilderEdgeWiring:
             {"kind": "GotoAction", "id": "goto_target", "actionId": "some_target"},
             id="goto_target",
         )
-        activity._chain_executors = [activity, goto]  # type: ignore[attr-defined]
+        activity._chain_executors = [activity, goto]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         exit_exec = graph_builder._get_branch_exit(activity)
         assert exit_exec is None
@@ -2430,7 +2434,7 @@ class TestBuilderEdgeWiring:
 
         exec1 = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "1"}}, id="e1")
         exec2 = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "2"}}, id="e2")
-        exec1._chain_executors = [exec1, exec2]  # type: ignore[attr-defined]
+        exec1._chain_executors = [exec1, exec2]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         exit_exec = graph_builder._get_branch_exit(exec1)
         assert exit_exec == exec2
@@ -2609,7 +2613,7 @@ class TestBuilderValidation:
         assert workflow is not None
 
     def test_missing_required_field_foreach(self):
-        """Test Foreach without items raises error."""
+        """Test Foreach without source raises error."""
         from agent_framework_declarative._workflows._declarative_builder import DeclarativeWorkflowBuilder
 
         yaml_def = {
@@ -2622,7 +2626,7 @@ class TestBuilderValidation:
             builder.build()
 
         assert "Foreach" in str(exc_info.value)
-        assert "items" in str(exc_info.value)
+        assert "source" in str(exc_info.value)
 
     def test_self_referencing_goto_raises_error(self):
         """Test that a goto referencing itself is detected."""
@@ -2630,7 +2634,7 @@ class TestBuilderValidation:
 
         yaml_def = {
             "name": "test_workflow",
-            "actions": [{"id": "loop", "kind": "Goto", "target": "loop"}],
+            "actions": [{"id": "loop", "kind": "GotoAction", "actionId": "loop"}],
         }
 
         builder = DeclarativeWorkflowBuilder(yaml_def)
@@ -2662,23 +2666,22 @@ class TestBuilderValidation:
         workflow = builder.build()
         assert workflow is not None
 
-    def test_validation_in_switch_branches(self):
-        """Test validation catches issues in Switch branches."""
+    def test_validation_in_condition_group_branches(self):
+        """Test validation catches issues in ConditionGroup branches."""
         from agent_framework_declarative._workflows._declarative_builder import DeclarativeWorkflowBuilder
 
         yaml_def = {
             "name": "test_workflow",
             "actions": [
                 {
-                    "kind": "Switch",
-                    "value": "=Local.choice",
-                    "cases": [
+                    "kind": "ConditionGroup",
+                    "conditions": [
                         {
-                            "match": "a",
+                            "condition": '=Local.choice = "a"',
                             "actions": [{"id": "dup", "kind": "SendActivity", "activity": {"text": "A"}}],
                         },
                         {
-                            "match": "b",
+                            "condition": '=Local.choice = "b"',
                             "actions": [{"id": "dup", "kind": "SendActivity", "activity": {"text": "B"}}],
                         },
                     ],
@@ -2701,7 +2704,7 @@ class TestBuilderValidation:
             "actions": [
                 {
                     "kind": "Foreach",
-                    "items": "=Local.items",
+                    "source": "=Local.items",
                     "actions": [{"kind": "SendActivity"}],  # Missing 'activity'
                 }
             ],
@@ -2762,7 +2765,7 @@ class TestLongMessageTextHandling:
         assert temp_var is None
 
     async def test_long_message_text_stored_in_temp_variable(self, mock_state):
-        """Test that long MessageText results are stored in temp variables."""
+        """Long MessageText results round-trip and the temp key is removed after eval."""
         state = DeclarativeWorkflowState(mock_state)
         state.initialize()
 
@@ -2774,9 +2777,9 @@ class TestLongMessageTextHandling:
         result = state.eval("=Upper(MessageText(Local.Messages))")
         assert result == "A" * 600  # Upper on 'A' is still 'A'
 
-        # A temp variable should have been created
-        temp_var = state.get("Local._TempMessageText0")
-        assert temp_var == long_text
+        local = state.get_state_data().get("Local", {})
+        remaining = sorted(k for k in local if k.startswith("_TempMessageText"))
+        assert not remaining, f"Temporary keys remain in Local: {remaining}"
 
     async def test_find_with_long_message_text(self, mock_state):
         """Test Find function works with long MessageText stored in temp variable."""

@@ -1,8 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -10,7 +11,6 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// An <see cref="AgentSkill"/> discovered from a filesystem directory backed by a SKILL.md file.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentFileSkill : AgentSkill
 {
     private readonly IReadOnlyList<AgentSkillResource> _resources;
@@ -45,16 +45,19 @@ public sealed class AgentFileSkill : AgentSkill
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Returns the raw SKILL.md content. When the skill has scripts, a
-    /// <c>&lt;scripts&gt;&lt;script name="..."&gt;&lt;parameters_schema&gt;...&lt;/parameters_schema&gt;&lt;/script&gt;&lt;/scripts&gt;</c>
-    /// block is appended with a per-script entry describing the expected argument format.
-    /// The result is cached after the first access.
+    /// Returns the raw SKILL.md content with an <c>&lt;available_resources&gt;</c> and an
+    /// <c>&lt;available_scripts&gt;</c> block appended, so the model gets an authoritative list for each
+    /// category. A category with no entries is appended as a self-closing element (e.g.
+    /// <c>&lt;available_scripts /&gt;</c>) so the model knows none are available and does not hallucinate
+    /// their names. The result is cached after the first access.
     /// </remarks>
-    public override string Content
+    public override ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)
     {
-        get => this._content ??= this._scripts is { Count: > 0 }
-            ? this._originalContent + AgentInlineSkillContentBuilder.BuildScriptsBlock(this._scripts)
-            : this._originalContent;
+        this._content ??=
+            this._originalContent
+            + "\n" + AgentInlineSkillContentBuilder.BuildAvailableResourcesBlock(this._resources)
+            + "\n" + AgentInlineSkillContentBuilder.BuildAvailableScriptsBlock(this._scripts);
+        return new(this._content);
     }
 
     /// <summary>
@@ -63,8 +66,16 @@ public sealed class AgentFileSkill : AgentSkill
     public string Path { get; }
 
     /// <inheritdoc/>
-    public override IReadOnlyList<AgentSkillResource> Resources => this._resources;
+    public override ValueTask<AgentSkillResource?> GetResourceAsync(string name, CancellationToken cancellationToken = default)
+    {
+        var resource = this._resources.FirstOrDefault(r => r.Name == name);
+        return new(resource);
+    }
 
     /// <inheritdoc/>
-    public override IReadOnlyList<AgentSkillScript> Scripts => this._scripts;
+    public override ValueTask<AgentSkillScript?> GetScriptAsync(string name, CancellationToken cancellationToken = default)
+    {
+        var script = this._scripts.FirstOrDefault(s => s.Name == name);
+        return new(script);
+    }
 }

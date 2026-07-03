@@ -19,7 +19,7 @@ jobs:
     steps:
       - name: Wait for required checks
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           TIMEOUT_SECONDS: "3600"
           INTERVAL_SECONDS: "30"
@@ -27,7 +27,7 @@ jobs:
           # "Cleanup artifacts", "Agent", "Prepare", and "Upload results" are check runs
           # created by an org-level GitHub App (MSDO), not by any workflow in this repo.
           # They are outside our control and their transient failures should not block merges.
-          IGNORED_NAMES: "CodeQL,CodeQL analysis (csharp),Cleanup artifacts,Agent,Prepare,Upload results"
+          IGNORED_NAMES: "CodeQL,CodeQL analysis (csharp),Cleanup artifacts,Agent,Prepare,Upload results,review"
         with:
           script: |
             const timeoutSeconds = Number(process.env.TIMEOUT_SECONDS);

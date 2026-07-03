@@ -19,7 +19,7 @@ from typing_extensions import Never
 
 from ._orchestration_request_info import AgentApprovalExecutor
 from ._participant_output_config import (
-    _MISSING,  # pyright: ignore[reportPrivateUsage]
+    UNSET,
     _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
     _coerce_intermediate_output_from,  # pyright: ignore[reportPrivateUsage]
     _ParticipantIntermediateOutputSelection,  # pyright: ignore[reportPrivateUsage]
@@ -160,12 +160,12 @@ class _CallbackAggregator(Executor):
         # Call according to provided signature, always non-blocking for sync callbacks
         if self._param_count >= 2:
             if inspect.iscoroutinefunction(self._callback):
-                ret = await self._callback(results, ctx)  # type: ignore[misc]
+                ret = await self._callback(results, ctx)
             else:
                 ret = await asyncio.to_thread(self._callback, results, ctx)
         else:
             if inspect.iscoroutinefunction(self._callback):
-                ret = await self._callback(results)  # type: ignore[misc]
+                ret = await self._callback(results)
             else:
                 ret = await asyncio.to_thread(self._callback, results)
 
@@ -213,7 +213,7 @@ class ConcurrentBuilder:
         *,
         participants: Sequence[SupportsAgentRun | Executor],
         checkpoint_storage: CheckpointStorage | None = None,
-        output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, _MISSING),
+        output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, UNSET),
         intermediate_output_from: _ParticipantIntermediateOutputSelection = None,
     ) -> None:
         """Initialize the ConcurrentBuilder.

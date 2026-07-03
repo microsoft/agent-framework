@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -260,8 +261,8 @@ class TestHITL:
         """ctx is injected by parameter name even without a RunContext annotation."""
 
         @workflow  # pyright: ignore[reportUnknownArgumentType]
-        async def review_wf(doc: str, ctx) -> str:  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
-            feedback: str = await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        async def review_wf(doc: str, ctx) -> str:  # pyright: ignore[reportMissingParameterType, reportUnknownParameterType]
+            feedback: str = await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
             return f"Final: {feedback}"
 
         result1 = await review_wf.run("my doc")
@@ -411,7 +412,7 @@ class TestStreaming:
         @workflow
         async def wf(x: int, ctx: RunContext) -> int:
             nonlocal streaming_flag
-            streaming_flag = ctx.is_streaming()
+            streaming_flag = ctx.is_streaming()  # type: ignore[assignment]
             return x
 
         stream = wf.run(1, stream=True)
@@ -983,7 +984,7 @@ class TestRecoveryAfterErrors:
     async def test_step_sync_function_raises(self):
         with pytest.raises(TypeError, match="async functions"):
 
-            @step  # pyright: ignore[reportArgumentType]
+            @step  # type: ignore[arg-type, call-overload]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]  # pyright: ignore[reportArgumentType]
             def not_async(x: int) -> int:  # pyright: ignore[reportUnusedFunction]
                 return x
 
@@ -1184,7 +1185,7 @@ class TestRequestInfoInStep:
         @step
         async def capture_ctx(x: int) -> int:
             nonlocal captured_ctx
-            captured_ctx = get_run_context()
+            captured_ctx = get_run_context()  # type: ignore[assignment]
             return x
 
         @workflow
@@ -1642,6 +1643,37 @@ class TestFunctionalWorkflowAgentHITL:
                     break
         assert approval_found, "expected FunctionApprovalRequestContent in agent response"
 
+    async def test_request_info_dataclass_arguments_are_serialized_for_agent(self):
+        @dataclass
+        class HandoffRequest:
+            target_agent: str
+            reason: str
+
+        @workflow
+        async def wf(x: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info(
+                HandoffRequest(target_agent=x, reason="overflow"),
+                response_type=str,
+                request_id="rid-1",
+            )
+            return f"got:{answer}"
+
+        agent = wf.as_agent()
+        response = await agent.run("helper")
+
+        function_call_arguments = None
+        for message in response.messages:
+            for content in message.contents:
+                if getattr(content, "type", None) == "function_approval_request" and content.function_call is not None:
+                    function_call_arguments = content.function_call.arguments
+                    break
+
+        assert function_call_arguments == {
+            "request_id": "rid-1",
+            "data": {"target_agent": "helper", "reason": "overflow"},
+        }
+        assert json.loads(json.dumps(function_call_arguments)) == function_call_arguments
+
     async def test_resume_via_agent_responses_kwarg(self):
         @workflow
         async def wf(x: str, ctx: RunContext) -> str:
@@ -1687,7 +1719,7 @@ class TestFunctionalWorkflowExperimentalStage:
         ]
 
         for symbol in symbols:
-            assert symbol.__feature_stage__ == "experimental"
-            assert symbol.__feature_id__ == ExperimentalFeature.FUNCTIONAL_WORKFLOWS.value
+            assert symbol.__feature_stage__ == "experimental"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            assert symbol.__feature_id__ == ExperimentalFeature.FUNCTIONAL_WORKFLOWS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             assert symbol.__doc__ is not None
             assert ".. warning:: Experimental" in symbol.__doc__

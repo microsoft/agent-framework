@@ -8,17 +8,22 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging" />
     <PackageReference Include="Azure.AI.Projects" />
+    <PackageReference Include="Azure.Core" />
+    <PackageReference Include="System.ClientModel" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
   </ItemGroup>
 
-  <!-- FoundryEval tests require net8.0+ (MEAI.Evaluation does not support legacy TFMs) -->
+  <!-- Tests requiring net8.0+ (MEAI.Evaluation and some SCM pipeline APIs do not support legacy TFMs) -->
   <ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
     <Compile Remove="FoundryEvalConverterTests.cs" />
     <Compile Remove="FoundryEvalsTests.cs" />
     <Compile Remove="ClientHeadersExtensionsTests.cs" />
+    <Compile Remove="ServedModelTestHelpers.cs" />
+    <Compile Remove="ServedModelScopeTests.cs" />
+    <Compile Remove="ServedModelPolicyTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

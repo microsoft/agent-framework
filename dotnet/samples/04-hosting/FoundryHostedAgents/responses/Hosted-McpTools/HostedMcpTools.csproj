@@ -13,7 +13,7 @@
   <ItemGroup>
     <PackageReference Include="Azure.AI.Projects" />
     <PackageReference Include="Azure.Identity" />
-    <PackageReference Include="ModelContextProtocol" VersionOverride="1.2.0" />
+    <PackageReference Include="ModelContextProtocol" />
     <PackageReference Include="DotNetEnv" />
   </ItemGroup>
 
@@ -26,8 +26,8 @@
 
   <!-- For end-users: uncomment the PackageReference below and remove the ProjectReference above
   <ItemGroup>
-    <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="1.0.0" />
-    <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="1.0.0" />
+    <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="1.6.1-preview.260514.1" />
+    <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="1.6.1-preview.260514.1" />
   </ItemGroup>
   -->
 

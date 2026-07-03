@@ -12,6 +12,10 @@ import asyncio
 from agent_framework import Agent, workflow
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file (e.g., FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_MODEL)
+load_dotenv()
 
 # <create_agents>
 client = FoundryChatClient(credential=AzureCliCredential())

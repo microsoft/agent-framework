@@ -24,13 +24,17 @@ jobs:
     outputs:
       pythonChanges: ${{ steps.filter.outputs.python}}
     steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
         id: filter
         with:
           filters: |
             python:
               - 'python/**'
+              - '!python/AGENTS.md'
+              - '!python/**/AGENTS.md'
+              - '!python/.github/skills/*'
+              - '!python/.github/skills/**'
       # run only if 'python' files were changed
       - name: python tests
         if: steps.filter.outputs.python == 'true'
@@ -59,7 +63,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Set up python and install the project
         id: python-setup
@@ -88,13 +92,10 @@ jobs:
       - name: Run lab type checking
         run: cd packages/lab && uv run poe pyright
 
-      - name: Run lab mypy
-        run: cd packages/lab && uv run poe mypy
-
       # Surface failing tests
       - name: Surface failing tests
         if: always()
-        uses: pmeier/pytest-results-action@v0.7.2
+        uses: pmeier/pytest-results-action@20b595761ba9bf89e115e875f8bc863f913bc8ad # v0.7.2
         with:
           path: ./python/packages/lab/**.xml
           summary: true

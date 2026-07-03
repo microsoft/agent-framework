@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -297,12 +298,14 @@ internal sealed class WorkflowSession : AgentSession
     /// interface assignment succeeds.
     /// </summary>
     [UnconditionalSuppressMessage("Trimming", "IL2057:Unrecognized value passed to the parameter of method", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2073:Members annotated with 'DynamicallyAccessedMembersAttribute' require dynamic access", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
     private static bool TryGetRequestEnvelope(ExternalRequest request, [NotNullWhen(true)] out IExternalRequestEnvelope? envelope)
     {
         envelope = null;
 
         TypeId requestType = request.PortInfo.RequestType;
-        Type? concreteType = Type.GetType($"{requestType.TypeName}, {requestType.AssemblyName}", throwOnError: false);
+        Type? concreteType = ResolveTypeLenient(requestType);
         if (concreteType is null || !typeof(IExternalRequestEnvelope).IsAssignableFrom(concreteType))
         {
             return false;
@@ -316,6 +319,20 @@ internal sealed class WorkflowSession : AgentSession
         envelope = env;
         return true;
     }
+
+    /// <summary>Caches <see cref="ResolveTypeLenient"/> results keyed by <see cref="TypeId"/>.</summary>
+    private static readonly ConcurrentDictionary<TypeId, Type?> s_envelopeTypeCache = new();
+
+    /// <summary>
+    /// Resolves a <see cref="TypeId"/> to a loaded <see cref="Type"/> using partial-name binding,
+    /// which matches any loaded assembly with the same simple name regardless of version. Results
+    /// are cached.
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2057:Unrecognized value passed to the parameter of method", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
+    internal static Type? ResolveTypeLenient(TypeId typeId)
+        => s_envelopeTypeCache.GetOrAdd(typeId, static id =>
+            Type.GetType($"{id.NormalizedTypeName}, {id.SimpleAssemblyName}", throwOnError: false));
 
     /// <summary>
     /// Creates the workflow-facing request content surfaced in response updates.
@@ -520,11 +537,20 @@ internal sealed class WorkflowSession : AgentSession
                     goto default;
 
                 case AgentResponseEvent agentResponse:
-                    if (!this._includeWorkflowOutputsInResponse)
+                    // Under Futures.EnableAgentResponseOutputTaggingAndFiltering=true, mirror
+                    // AgentResponseUpdateEvent's behavior: always forward, regardless of the
+                    // _includeWorkflowOutputsInResponse host flag / "intermediate" tag. Under
+                    // the legacy default, keep today's behavior — gated by the include flag.
+                    if (!Futures.EnableAgentResponseOutputTaggingAndFiltering && !this._includeWorkflowOutputsInResponse)
                     {
                         goto default;
                     }
 
+                    // Either EnableAgentResponseOutputTaggingAndFiltering -- so yield the Response
+                    // regardless of whether it is tagged "intermediate" or whether the
+                    // _includeWorkflowOutputInResponse flag is set. Reason being: The user specifies
+                    // exclusion of an event by enabling filtering and then _not_ marking an Executor
+                    // as an output executor.
                     foreach (ChatMessage message in agentResponse.Response.Messages)
                     {
                         yield return this.CreateUpdate(this.LastResponseId, evt, message);
@@ -539,7 +565,11 @@ internal sealed class WorkflowSession : AgentSession
                         _ => null
                     };
 
-                    if (!this._includeWorkflowOutputsInResponse || updateMessages == null)
+                    // Same assymetry as with AgentResponseEvent, but there is no EnableFiltering flag
+                    // to consider. If this made it here (and since it is not an AgentResponse[Update]),
+                    // it means it is already been selected as an Output() from the user. Intermediate
+                    // is irrelevant here.
+                    if (updateMessages == null || !this._includeWorkflowOutputsInResponse)
                     {
                         goto default;
                     }

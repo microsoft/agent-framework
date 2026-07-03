@@ -37,15 +37,19 @@ class StubAGUIChatClient(AGUIChatClient):
         """Expose message conversion helper."""
         return self._convert_messages_to_agui_format(messages)
 
-    def get_thread_id(self, options: dict[str, Any]) -> str:
+    def get_thread_id(self, options: ChatOptions[Any] | dict[str, Any] | None) -> str:
         """Expose thread id helper."""
-        return self._get_thread_id(options)
+        return self._get_thread_id(options)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     def inner_get_response(
-        self, *, messages: MutableSequence[Message], options: dict[str, Any], stream: bool = False
+        self,
+        *,
+        messages: MutableSequence[Message],
+        options: ChatOptions[Any] | dict[str, Any] | None,
+        stream: bool = False,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Proxy to protected response call."""
-        return self._inner_get_response(messages=messages, options=options, stream=stream)
+        return self._inner_get_response(messages=messages, options=options, stream=stream)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
 
 class TestAGUIChatClient:
@@ -177,7 +181,9 @@ class TestAGUIChatClient:
         chat_options = ChatOptions()
 
         updates: list[ChatResponseUpdate] = []
-        async for update in client._inner_get_response(messages=messages, stream=True, options=chat_options):
+        stream = client.inner_get_response(messages=messages, stream=True, options=chat_options)
+        assert isinstance(stream, ResponseStream)
+        async for update in stream:
             updates.append(update)
 
         assert len(updates) == 4
@@ -207,7 +213,7 @@ class TestAGUIChatClient:
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         messages = [Message(role="user", contents=["Test message"])]
-        chat_options = {}
+        chat_options: dict[str, Any] = {}
 
         response = await client.inner_get_response(messages=messages, options=chat_options)
 
@@ -418,7 +424,9 @@ class TestAGUIChatClient:
 
         messages = [Message(role="user", contents=["Test"])]
         updates: list[ChatResponseUpdate] = []
-        async for update in client._inner_get_response(messages=messages, stream=True, options={"tools": [my_tool]}):
+        stream = client.inner_get_response(messages=messages, stream=True, options={"tools": [my_tool]})
+        assert isinstance(stream, ResponseStream)
+        async for update in stream:
             updates.append(update)
 
         # Find the function_call content - it should have agui_thread_id

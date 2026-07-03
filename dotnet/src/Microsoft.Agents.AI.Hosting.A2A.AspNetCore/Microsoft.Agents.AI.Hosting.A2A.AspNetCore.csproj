@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.AI.Hosting.A2A\Microsoft.Agents.AI.Hosting.A2A.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.AI.Hosting.AspNetCore\Microsoft.Agents.AI.Hosting.AspNetCore.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

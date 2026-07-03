@@ -2,7 +2,7 @@
 
 """Tests for the graph-based declarative workflow executors."""
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -207,16 +207,16 @@ class TestDeclarativeActionExecutor:
     # Note: ConditionEvaluatorExecutor tests removed - conditions are now evaluated on edges
 
     @_requires_powerfx
-    async def test_foreach_init_with_items(self, mock_context, mock_state):
-        """Test ForeachInitExecutor with items."""
+    async def test_foreach_init_with_source(self, mock_context, mock_state):
+        """Test ForeachInitExecutor with the 'source' field."""
         state = DeclarativeWorkflowState(mock_state)
         state.initialize()
         state.set("Local.items", ["a", "b", "c"])
 
         action_def = {
             "kind": "Foreach",
-            "itemsSource": "=Local.items",
-            "iteratorVariable": "Local.item",
+            "source": "=Local.items",
+            "itemName": "item",
         }
         executor = ForeachInitExecutor(action_def)
 
@@ -240,8 +240,8 @@ class TestDeclarativeActionExecutor:
         # Use a literal empty list - no expression evaluation needed
         action_def = {
             "kind": "Foreach",
-            "itemsSource": [],  # Direct empty list, not an expression
-            "iteratorVariable": "Local.item",
+            "source": [],  # Direct empty list, not an expression
+            "itemName": "item",
         }
         executor = ForeachInitExecutor(action_def)
 
@@ -264,7 +264,6 @@ class TestDeclarativeWorkflowBuilder:
             "SetValue",
             "SetVariable",
             "SendActivity",
-            "EmitEvent",
             "EndWorkflow",
             "InvokeAzureAgent",
             "Question",
@@ -335,8 +334,8 @@ class TestDeclarativeWorkflowBuilder:
                 {
                     "kind": "Foreach",
                     "id": "process_items",
-                    "itemsSource": "=Local.items",
-                    "iteratorVariable": "Local.item",
+                    "source": "=Local.items",
+                    "itemName": "item",
                     "actions": [
                         {"kind": "SendActivity", "id": "show_item", "activity": {"text": "=Local.item"}},
                     ],
@@ -353,13 +352,13 @@ class TestDeclarativeWorkflowBuilder:
         assert "process_items_exit" in builder._executors
         assert "show_item" in builder._executors
 
-    def test_build_workflow_with_switch(self):
-        """Test building a workflow with Switch control flow."""
+    def test_build_workflow_with_condition_group(self):
+        """Test building a workflow with ConditionGroup control flow."""
         yaml_def = {
-            "name": "switch_workflow",
+            "name": "condition_group_workflow",
             "actions": [
                 {
-                    "kind": "Switch",
+                    "kind": "ConditionGroup",
                     "id": "check_status",
                     "conditions": [
                         {
@@ -375,7 +374,7 @@ class TestDeclarativeWorkflowBuilder:
                             ],
                         },
                     ],
-                    "else": [
+                    "elseActions": [
                         {"kind": "SendActivity", "id": "say_unknown", "activity": {"text": "Unknown"}},
                     ],
                 },
@@ -385,12 +384,12 @@ class TestDeclarativeWorkflowBuilder:
         workflow = builder.build()
 
         assert workflow is not None
-        # Verify switch executors were created
+        # Verify ConditionGroup branch executors were created
         # Note: No join executors - branches wire directly to successor
         assert "say_active" in builder._executors
         assert "say_pending" in builder._executors
         assert "say_unknown" in builder._executors
-        # Entry node is created when Switch is first action
+        # Entry node is created when ConditionGroup is first action
         assert "_workflow_entry" in builder._executors
 
 
@@ -493,9 +492,9 @@ class TestHumanInputExecutors:
 
         action_def = {
             "kind": "Question",
-            "text": "What is your name?",
-            "property": "Local.name",
-            "defaultValue": "Anonymous",
+            "question": {"text": "What is your name?"},
+            "variable": "Local.name",
+            "default": "Anonymous",
         }
         executor = QuestionExecutor(action_def)
 
@@ -508,36 +507,6 @@ class TestHumanInputExecutors:
         assert isinstance(request, ExternalInputRequest)
         assert request.request_type == "question"
         assert "What is your name?" in request.message
-
-    @pytest.mark.asyncio
-    async def test_confirmation_executor(self, mock_context, mock_state):
-        """Test ConfirmationExecutor."""
-        from agent_framework_declarative._workflows import (
-            ConfirmationExecutor,
-            ExternalInputRequest,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "Confirmation",
-            "text": "Do you want to continue?",
-            "property": "Local.confirmed",
-            "yesLabel": "Yes, continue",
-            "noLabel": "No, stop",
-        }
-        executor = ConfirmationExecutor(action_def)
-
-        # Execute
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        # Verify request_info was called with ExternalInputRequest
-        mock_context.request_info.assert_called_once()
-        request = mock_context.request_info.call_args[0][0]
-        assert isinstance(request, ExternalInputRequest)
-        assert request.request_type == "confirmation"
-        assert "continue" in request.message.lower()
 
 
 @_requires_powerfx
@@ -1330,16 +1299,17 @@ class TestPowerFxConditionalImport:
         import agent_framework_declarative._workflows._declarative_base as base_mod
 
         mock_state = MagicMock()
-        mock_state._data: dict[str, Any] = {}
-        mock_state.get = MagicMock(side_effect=lambda k, d=None: mock_state._data.get(k, d))
-        mock_state.set = MagicMock(side_effect=lambda k, v: mock_state._data.__setitem__(k, v))
+        data: dict[str, Any] = {}
+        mock_state._data = data
+        mock_state.get = MagicMock(side_effect=lambda k, d=None: data.get(k, d))
+        mock_state.set = MagicMock(side_effect=lambda k, v: data.__setitem__(k, v))
 
         state = DeclarativeWorkflowState(mock_state)
         state.initialize({"name": "test"})
 
         original_engine = base_mod.Engine
         try:
-            base_mod.Engine = None
+            base_mod.Engine = cast(Any, None)
             with pytest.raises(RuntimeError, match="PowerFx is not available"):
                 state.eval("=Local.counter + 1")
         finally:
@@ -1350,19 +1320,20 @@ class TestPowerFxConditionalImport:
         import agent_framework_declarative._workflows._declarative_base as base_mod
 
         mock_state = MagicMock()
-        mock_state._data: dict[str, Any] = {}
-        mock_state.get = MagicMock(side_effect=lambda k, d=None: mock_state._data.get(k, d))
-        mock_state.set = MagicMock(side_effect=lambda k, v: mock_state._data.__setitem__(k, v))
+        data: dict[str, Any] = {}
+        mock_state._data = data
+        mock_state.get = MagicMock(side_effect=lambda k, d=None: data.get(k, d))
+        mock_state.set = MagicMock(side_effect=lambda k, v: data.__setitem__(k, v))
 
         state = DeclarativeWorkflowState(mock_state)
         state.initialize()
 
         original_engine = base_mod.Engine
         try:
-            base_mod.Engine = None
+            base_mod.Engine = cast(Any, None)
             assert state.eval("hello world") == "hello world"
             assert state.eval("") == ""
-            assert state.eval(42) == 42
+            assert state.eval(cast("str", 42)) == 42
         finally:
             base_mod.Engine = original_engine
 

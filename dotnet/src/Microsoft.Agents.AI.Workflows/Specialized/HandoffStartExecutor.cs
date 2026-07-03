@@ -25,21 +25,32 @@ internal static class HandoffConstants
 internal sealed class HandoffSharedState
 {
     [JsonConstructor]
-    internal HandoffSharedState(MultiPartyConversation conversation, string? previousAgentId)
+    internal HandoffSharedState(MultiPartyConversation conversation, string? previousAgentId, Dictionary<string, int>? autonomousTurnsByAgent)
     {
         this.Conversation = conversation;
         this.PreviousAgentId = previousAgentId;
+        this.AutonomousTurnsByAgent = autonomousTurnsByAgent ?? [];
     }
 
     public HandoffSharedState()
     {
         this.Conversation = new([]);
+        this.AutonomousTurnsByAgent = [];
     }
 
     [JsonInclude]
     public MultiPartyConversation Conversation { get; internal set; }
 
     public string? PreviousAgentId { get; set; }
+
+    /// <summary>
+    /// Tracks the number of autonomous-mode continuation iterations consumed by each agent in the current
+    /// "active" autonomous run. The counter is incremented by <see cref="HandoffEndExecutor"/> each time
+    /// the End executor loops control back to the source agent in autonomous mode, and reset to 0 once
+    /// the autonomous loop terminates (limit reached or termination condition fired).
+    /// </summary>
+    [JsonInclude]
+    public Dictionary<string, int> AutonomousTurnsByAgent { get; internal set; }
 }
 
 /// <summary>Executor used at the start of a handoffs workflow to accumulate messages and emit them as HandoffState upon receiving a turn token.</summary>
@@ -63,6 +74,10 @@ internal sealed class HandoffStartExecutor(bool returnToPrevious) : ChatProtocol
             {
                 sharedState ??= new HandoffSharedState();
                 sharedState.Conversation.AddMessages(messages);
+
+                // Reset all autonomous-mode counters at the start of every fresh user turn so that a
+                // prior turn's counters cannot prematurely terminate the new turn's autonomous loop.
+                sharedState.AutonomousTurnsByAgent.Clear();
 
                 string? previousAgentId = sharedState.PreviousAgentId;
 

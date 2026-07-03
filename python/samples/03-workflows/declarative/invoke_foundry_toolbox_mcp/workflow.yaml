@@ -1,0 +1,44 @@
+#
+# Calls the Microsoft Learn Docs MCP server through a Foundry toolbox
+# proxy from a declarative workflow, then asks a Foundry agent to
+# summarise the result. The toolbox surfaces MCP-server-backed tools
+# as ``<server_label>___<tool_name>``.
+#
+# Workflow inputs:
+#   text: The user's question (required).
+#
+kind: Workflow
+trigger:
+  kind: OnConversationStart
+  id: workflow_invoke_foundry_toolbox_mcp
+  actions:
+    - kind: SetVariable
+      id: set_search_query
+      variable: Local.SearchQuery
+      value: =Workflow.Inputs.text
+
+    # ``autoSend: false`` so the raw JSON tool result is not echoed to
+    # the host's output stream; ``conversationId`` still appends it to
+    # the conversation so the summarising agent can read it.
+    - kind: InvokeMcpTool
+      id: search_docs_with_toolbox
+      serverUrl: =Env.FOUNDRY_TOOLBOX_MCP_SERVER_URL
+      serverLabel: foundry_toolbox
+      toolName: =Env.FOUNDRY_TOOLBOX_DOCS_SERVER_LABEL & "___microsoft_docs_search"
+      conversationId: =System.ConversationId
+      arguments:
+        query: =Local.SearchQuery
+      output:
+        autoSend: false
+        result: Local.SearchResult
+
+    - kind: InvokeAzureAgent
+      id: summarize_toolbox_result
+      agent:
+        name: FoundryToolboxMcpAgent
+      conversationId: =System.ConversationId
+      input:
+        messages: '=Concat("Answer the query using the Microsoft Learn docs result already in the conversation: ", Local.SearchQuery)'
+      output:
+        autoSend: true
+        messages: Local.Summary

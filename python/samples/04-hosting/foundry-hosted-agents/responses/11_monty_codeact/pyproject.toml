@@ -1,0 +1,17 @@
+[project]
+name = "agent-framework-agent-monty-codeact-responses"
+version = "0.1.0"
+description = "Foundry-hosted Agent Framework agent with a Monty-backed CodeAct context provider."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "agent-framework-foundry",
+    "agent-framework-foundry-hosting>=1.0.0a260630",
+    # agent-framework-monty is an alpha (1.0.0a*) release on PyPI.
+    "agent-framework-monty",
+]
+
+[tool.uv]
+# `agent-framework-monty` is an alpha package; allow the prerelease resolver
+# to pick up 1.0.0a* releases from PyPI.
+prerelease = "allow"
+
