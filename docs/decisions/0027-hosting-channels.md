@@ -178,7 +178,7 @@ If the protocol mints a new continuation id as part of the response being create
 session = await state.get_or_create_session(previous_response_id)
 target = await state.get_target()
 result = await target.run(messages, session=session, options=options)
-await state.session_store.set(response_id, session)
+await state.set_session(response_id, session)
 ```
 
 `agent.run(...)` may update the session object (for example, with service continuation state), so the explicit store call
@@ -200,6 +200,7 @@ workflow through the state object's target:
 storage = await state.get_or_create_checkpoint_storage(session_id)
 target = await state.get_target()
 result = await target.run(message=workflow_input, checkpoint_storage=storage)
+await state.set_checkpoint_storage(session_id, storage)
 ```
 
 If a route wants to resume from a prior checkpoint, it explicitly chooses the checkpoint and passes it to
@@ -214,6 +215,7 @@ result = await target.run(
     checkpoint_id=latest.checkpoint_id if latest else None,
     checkpoint_storage=storage,
 )
+await state.set_checkpoint_storage(session_id, storage)
 ```
 
 `workflow.run(...)` writes checkpoints to the provided storage, so storage selection must be explicit at the route layer.
@@ -257,24 +259,6 @@ Negative:
 - Apps that want a batteries-included ASGI app must write or depend on an app-specific wrapper.
 - Existing unreleased code and docs that mention channels, contribution, or hooks must be revised before release.
 
-## Validation Gates
-
-Before this ADR is considered implemented:
-
-- A Responses sample uses normal FastAPI route code plus `responses_to_run(...)`, `responses_from_run(...)`, and
-  `AgentState` / `SessionStore`; it does not use `ResponsesChannel` or `ChannelRunHook`.
-- Protocol helper tests cover Responses input parsing, option policy, response rendering, session-id extraction, and
-  streaming event rendering.
-- Protocol helper tests cover Telegram message parsing, command parsing, session-id extraction, typing/operation helpers,
-  streaming update operations, and final response rendering.
-- `SessionStore` tests prove plain get/set/delete behavior, and `AgentState` tests prove get-or-create behavior.
-- `WorkflowState` tests prove workflow factory, `WorkflowBuilder`, orchestration-style builder, and checkpoint-store
-  behavior.
-- The same helper functions can be used without FastAPI in at least one direct unit test or sample.
-- The v1 public package docs do not advertise `Channel`, contribution, command, or hook APIs as the intended released
-  surface.
-- The Python spec is updated to match this revised contract.
-
 ## More Information
 
 - Follow-up linking and multicast ADR: [ADR-0028](0028-hosting-linking-multicast-enhancements.md). That ADR still uses
@@ -312,12 +296,14 @@ class AgentState:
     def __init__(self, target: SupportsAgentRun, *, session_store: SessionStore | None = None) -> None: ...
     async def get_target(self) -> SupportsAgentRun: ...
     async def get_or_create_session(self, session_id: str) -> AgentSession: ...
+    async def set_session(self, session_id: str, session: AgentSession) -> None: ...
 
 
 class WorkflowState:
     def __init__(self, target: Workflow | SupportsBuild, *, checkpoint_store: CheckpointStore | None = None) -> None: ...
     async def get_target(self) -> Workflow: ...
     async def get_or_create_checkpoint_storage(self, session_id: str) -> CheckpointStorage: ...
+    async def set_checkpoint_storage(self, session_id: str, storage: CheckpointStorage) -> None: ...
 ```
 
 `WorkflowState` accepts direct `Workflow` instances, workflow factories, and builder-shaped objects with
@@ -363,21 +349,21 @@ async def responses(body: dict = Body(...), x_api_key: str | None = Header(defau
     response_id = create_response_id()
 
     # in this space, the developer can make any adjustments to the request, i.e.:
-    options = dict(run["options"])
-    options["store"] = False
-    options.pop("model", None)
+    run["options"]["store"] = False
+    run["options"].pop("model", None)
 
-    # load the session (or create a new one)
+    # load the session (or create a new one) - this is optional
     session = await state.get_or_create_session(session_id or response_id)
     # call the agent
     target = await state.get_target()
     result = await target.run(
         run["messages"],
         session=session,
-        options=options,
+        options=run["options"],
     )
     # agent.run may update the session, so store the post-run session explicitly under the response id
-    await state.session_store.set(response_id, session)
+    # this might also be skipped, if the app chooses to respect `store=False` policy
+    await state.set_session(response_id, session)
     return JSONResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
 
 ```
@@ -431,6 +417,6 @@ class ResponsesView(View):
             session=session,
             options=options,
         )
-        async_to_sync(state.session_store.set)(response_id, session)
+        async_to_sync(state.set_session)(response_id, session)
         return JsonResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
 ```
