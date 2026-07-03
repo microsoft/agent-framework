@@ -35,7 +35,7 @@ from agent_framework_hosting_responses import (
     create_response_id,
     responses_from_run,
     responses_session_id,
-    responses_stream_events_from_run,
+    responses_stream_from_run,
     responses_to_run,
 )
 
@@ -136,7 +136,7 @@ def _build_app(agent: _StubAgent) -> FastAPI:
                 raise HTTPException(status_code=500, detail="agent did not return a response stream")
 
             async def stream_events() -> AsyncIterator[str]:
-                async for event in responses_stream_events_from_run(
+                async for event in responses_stream_from_run(
                     stream,
                     response_id=response_id,
                     session_id=session_id,

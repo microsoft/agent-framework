@@ -12,7 +12,7 @@ from ._parsing import (
     parse_responses_request,
     responses_from_run,
     responses_session_id,
-    responses_stream_events_from_run,
+    responses_stream_from_run,
     responses_to_run,
 )
 
@@ -30,6 +30,6 @@ __all__ = [
     "parse_responses_request",
     "responses_from_run",
     "responses_session_id",
-    "responses_stream_events_from_run",
+    "responses_stream_from_run",
     "responses_to_run",
 ]

@@ -884,7 +884,7 @@ def _json_dumps(payload: Mapping[str, Any]) -> str:
     return json.dumps(payload, separators=(",", ":"))
 
 
-async def responses_stream_events_from_run(
+async def responses_stream_from_run(
     stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]],
     *,
     response_id: str,
@@ -954,6 +954,6 @@ __all__ = [
     "parse_responses_request",
     "responses_from_run",
     "responses_session_id",
-    "responses_stream_events_from_run",
+    "responses_stream_from_run",
     "responses_to_run",
 ]

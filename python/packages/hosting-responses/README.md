@@ -11,7 +11,7 @@ This package provides the Responses-specific conversion layer:
 - `create_response_id(...)` — mint a Responses-shaped response id.
 - `responses_from_run(...)` — convert an `AgentResponse` into a
   Responses-compatible JSON payload.
-- `responses_stream_events_from_run(...)` — convert an Agent Framework
+- `responses_stream_from_run(...)` — convert an Agent Framework
   `ResponseStream` into Responses-compatible SSE events.
 
 FastAPI/Starlette/Django/Azure Functions code owns route registration,
