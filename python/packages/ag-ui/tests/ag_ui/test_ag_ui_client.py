@@ -149,6 +149,22 @@ class TestAGUIChatClient:
         assert result_messages == messages
         assert state is None
 
+    async def test_extract_state_invalid_base64(self) -> None:
+        """Test state extraction with invalid base64."""
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+
+        messages = [
+            Message(
+                role="user",
+                contents=[Content.from_uri(uri="data:application/json;base64,not-valid-base64!")],
+            ),
+        ]
+
+        result_messages, state = client.extract_state_from_messages(messages)
+
+        assert result_messages == messages
+        assert state is None
+
     async def test_convert_messages_to_agui_format(self) -> None:
         """Test message conversion to AG-UI format."""
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
