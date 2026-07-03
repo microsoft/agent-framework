@@ -27,8 +27,8 @@ calls. Agent Framework should not duplicate those surfaces unless a specific hos
 - Provide reusable Agent Framework run translation that works with FastAPI and other web frameworks.
 - Let app/framework code own route declaration, auth, middleware, native SDK clients, command handling, and background
   work.
-- Keep stateful execution support explicit: session lookup, session reset, and workflow checkpointing may still need a
-  small AF-owned home.
+- Keep stateful execution support explicit: session lookup/storage and workflow checkpoint lookup/storage may still need
+  a small AF-owned home.
 - Avoid approving cross-channel identity and delivery semantics before their safety model is reviewed.
 
 ## Considered Options
@@ -58,8 +58,8 @@ calls. Agent Framework should not duplicate those surfaces unless a specific hos
   `<protocol>_from_run(...)` style helpers.
 - Good: apps keep native FastAPI, Starlette, Azure Functions, Django, Bot Framework, or Telegram SDK code.
 - Good: helper functions can be tested without an ASGI app or host pipeline.
-- Good: a small state object can still own target-coupled state such as an agent/workflow target, a `SessionStore`, and
-  future workflow checkpoint coordination.
+- Good: small state objects can still own target-coupled state: `AgentState` pairs an agent target with a `SessionStore`,
+  and `WorkflowState` pairs a workflow target with a `CheckpointStore`.
 - Good: provides maximum configurability in handling input and outputs (outside of the conversions)
 - Bad: building a first iteration of a new Host is more verbose.
 - Bad: samples show more explicit route/client code than a fully assembled channel host.
@@ -88,14 +88,19 @@ Application or web-framework code owns:
 - request/response status codes and framework-specific error handling;
 - choosing the isolation/session id source for the current deployment and route.
 
-`AgentFrameworkState`, if provided, is limited to shared execution state:
+The optional execution-state helpers, if provided, are limited to shared execution state:
 
-- one first-class hostable target: either a `SupportsAgentRun` agent-compatible object or a `Workflow`;
-- a `SessionStore` instance or factory;
-- optional workflow checkpoint execution state.
+- `AgentState`: one `SupportsAgentRun`-compatible target plus a `SessionStore`;
+- `WorkflowState`: one `Workflow`, `WorkflowBuilder`-shaped builder, orchestration builder, or workflow factory plus a
+  `CheckpointStore`;
+- `SessionStore` and `CheckpointStore`: plain async storage (`get` / `set` / `delete`) by an app-selected id.
 
-It is **not** an app object, channel registry, or route owner. It does not own FastAPI/Starlette setup, route
-contribution, protocol dispatch, command projection, or native SDK calls.
+The stores do not create sessions or checkpoint storage. State objects provide the target-aware helpers
+(`AgentState.get_or_create_session(...)`, `WorkflowState.get_or_create_checkpoint_storage(...)`) because only the state
+object has both the store and the resolved target.
+
+These objects are **not** app objects, channel registries, or route owners. They do not own FastAPI/Starlette setup,
+route contribution, protocol dispatch, command projection, or native SDK calls.
 
 ### Helper naming
 
@@ -129,33 +134,64 @@ The app chooses which helper to call for that route and deployment. For example:
 Keep these helpers outside `responses_to_run(...)`, `telegram_to_run(...)`, and other run-input parsers. That makes the
 trust boundary visible: using a request-derived key is a different decision than using a platform-provided isolation key.
 
-A `SessionStore` resolves that key into an `AgentSession`:
+A `SessionStore` stores `session_id -> AgentSession`, but it does not create sessions. `AgentState` resolves the agent
+target and creates the session on first use:
 
 For agent targets:
 
 ```python
-session = await state.session_store.get(session_id)
-result = await state.target.run(messages, session=session, options=options)
+session = await state.get_or_create_session(session_id)
+target = await state.get_target()
+result = await target.run(messages, session=session, options=options)
 ```
 
-For workflow targets, app code adapts the protocol helper output into the workflow's expected input and invokes the
-workflow through the state object's target:
+If the protocol mints a new continuation id as part of the response being created (for example, OpenAI Responses
+`resp_*` ids), store the **post-run** session explicitly under that new id:
 
 ```python
-result = await state.target.run(message=workflow_input)
+session = await state.get_or_create_session(previous_response_id)
+target = await state.get_target()
+result = await target.run(messages, session=session, options=options)
+await state.session_store.set(response_id, session)
 ```
 
-`SessionStore.reset(session_id)` rotates or clears the current session for non-persisted servers. Persisted stores can
-implement the same async interface later.
+`agent.run(...)` may update the session object (for example, with service continuation state), so the explicit store call
+belongs after the run, not before it.
 
 The session id is a partition key, not proof of identity. App or platform code must authenticate and authorize any
 externally supplied key before using it.
 
 ### Workflow checkpoints
 
-Workflow checkpointing is execution state, not protocol state. A small state object may help coordinate checkpoint
-storage for workflow targets, but protocol helper packages should not own checkpoint layout, route lifecycle, or durable
-execution.
+Workflow checkpointing is execution state, not protocol state. `WorkflowState` pairs a workflow target with a
+`CheckpointStore` (`session_id -> CheckpointStorage`) and provides `get_or_create_checkpoint_storage(...)` for first use.
+The store itself remains plain storage and does not decide which checkpoint to resume.
+
+For workflow targets, app code adapts the protocol helper output into the workflow's expected input and invokes the
+workflow through the state object's target:
+
+```python
+storage = await state.get_or_create_checkpoint_storage(session_id)
+target = await state.get_target()
+result = await target.run(message=workflow_input, checkpoint_storage=storage)
+```
+
+If a route wants to resume from a prior checkpoint, it explicitly chooses the checkpoint and passes it to
+`workflow.run(...)`:
+
+```python
+storage = await state.get_or_create_checkpoint_storage(session_id)
+target = await state.get_target()
+latest = await storage.get_latest(workflow_name=target.name)
+result = await target.run(
+    message=workflow_input,
+    checkpoint_id=latest.checkpoint_id if latest else None,
+    checkpoint_storage=storage,
+)
+```
+
+`workflow.run(...)` writes checkpoints to the provided storage, so storage selection must be explicit at the route layer.
+Protocol helper packages should not own checkpoint layout, route lifecycle, or durable execution.
 
 ## Non-goals for v1
 
@@ -200,11 +236,13 @@ Negative:
 Before this ADR is considered implemented:
 
 - A Responses sample uses normal FastAPI route code plus `responses_to_run(...)`, `responses_from_run(...)`, and
-  `SessionStore`; it does not use `ResponsesChannel` or `ChannelRunHook`.
+  `AgentState` / `SessionStore`; it does not use `ResponsesChannel` or `ChannelRunHook`.
 - Protocol helper tests cover Responses input parsing, option policy, response rendering, and streaming event rendering.
 - Protocol helper tests cover Telegram message parsing, typing events, streaming update events, final response rendering,
   and session-key derivation.
-- `SessionStore` tests prove session reuse and reset behavior.
+- `SessionStore` tests prove plain get/set/delete behavior, and `AgentState` tests prove get-or-create behavior.
+- `WorkflowState` tests prove workflow factory, `WorkflowBuilder`, orchestration-style builder, and checkpoint-store
+  behavior.
 - The same helper functions can be used without FastAPI in at least one direct unit test or sample.
 - The v1 public package docs do not advertise `Channel`, contribution, command, or hook APIs as the intended released
   surface.
@@ -219,18 +257,45 @@ Before this ADR is considered implemented:
 
 ### Optional execution state
 
-`AgentFrameworkState` stays small: it is only the target/session/checkpoint state holder. The target can be an agent or
-a workflow. It is shown here for shape, but the Responses route below imports it from `agent_framework_hosting`.
+`AgentState` and `WorkflowState` stay small: they are target-specific state holders, not app hosts.
 
 ```python
-from agent_framework import SupportsAgentRun, Workflow
+from typing import Protocol
+
+from agent_framework import AgentSession, CheckpointStorage, SupportsAgentRun, Workflow
 
 
-class AgentFrameworkState:
-    def __init__(self, target: SupportsAgentRun | Workflow, *, session_store: SessionStore | type[SessionStore]) -> None:
-        self.target = target
-        self.session_store = session_store(target) if isinstance(session_store, type) else session_store
+class SupportsBuild(Protocol):
+    def build(self) -> Workflow: ...
+
+
+class SessionStore:
+    async def get(self, session_id: str) -> AgentSession | None: ...
+    async def set(self, session_id: str, session: AgentSession) -> None: ...
+    async def delete(self, session_id: str) -> None: ...
+
+
+class CheckpointStore:
+    async def get(self, session_id: str) -> CheckpointStorage | None: ...
+    async def set(self, session_id: str, storage: CheckpointStorage) -> None: ...
+    async def delete(self, session_id: str) -> None: ...
+
+
+class AgentState:
+    def __init__(self, target: SupportsAgentRun, *, session_store: SessionStore | None = None) -> None: ...
+    async def get_target(self) -> SupportsAgentRun: ...
+    async def get_or_create_session(self, session_id: str) -> AgentSession: ...
+
+
+class WorkflowState:
+    def __init__(self, target: Workflow | SupportsBuild, *, checkpoint_store: CheckpointStore | None = None) -> None: ...
+    async def get_target(self) -> Workflow: ...
+    async def get_or_create_checkpoint_storage(self, session_id: str) -> CheckpointStorage: ...
 ```
+
+`WorkflowState` accepts direct `Workflow` instances, workflow factories, and builder-shaped objects with
+`build() -> Workflow`. That structurally covers `WorkflowBuilder` and the builders in `agent_framework_orchestrations`
+without making `agent-framework-hosting` depend on the orchestration package.
 
 ### Responses-only route
 
@@ -242,13 +307,8 @@ import os
 
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_hosting import AgentFrameworkState, SessionStore
-from agent_framework_hosting_responses import (
-    create_response_id,
-    responses_from_run,
-    responses_session_id,
-    responses_to_run,
-)
+from agent_framework_hosting import AgentState  # pyright: ignore[reportAttributeAccessIssue]
+from agent_framework_hosting_responses import create_response_id, responses_from_run, responses_session_id, responses_to_run  # pyright: ignore[reportAttributeAccessIssue]
 from fastapi import Body, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 
@@ -259,7 +319,7 @@ agent = Agent(
     name="Assistant",
     instructions="Be concise and helpful.",
 )
-state = AgentFrameworkState(agent, session_store=SessionStore)
+state = AgentState(agent)
 
 
 @app.post("/responses")
@@ -280,15 +340,17 @@ async def responses(body: dict = Body(...), x_api_key: str | None = Header(defau
     options["store"] = False
     options.pop("model", None)
 
-    # load the session (or a new one)
-    session = await state.session_store.get(session_id or response_id)
+    # load the session (or create a new one)
+    session = await state.get_or_create_session(session_id or response_id)
     # call the agent
-    result = await state.target.run(
+    target = await state.get_target()
+    result = await target.run(
         run["messages"],
         session=session,
         options=options,
     )
-    # any post-processing steps the developer wants to do can be done here
+    # agent.run may update the session, so store the post-run session explicitly under the response id
+    await state.session_store.set(response_id, session)
     return JSONResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
 
 ```
@@ -306,13 +368,8 @@ import os
 
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_hosting import AgentFrameworkState, SessionStore
-from agent_framework_hosting_responses import (
-    create_response_id,
-    responses_from_run,
-    responses_session_id,
-    responses_to_run,
-)
+from agent_framework_hosting import AgentState  # pyright: ignore[reportAttributeAccessIssue]
+from agent_framework_hosting_responses import create_response_id, responses_from_run, responses_session_id, responses_to_run  # pyright: ignore[reportAttributeAccessIssue]
 from asgiref.sync import async_to_sync
 from django.http import HttpRequest, HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
 from django.views import View
@@ -323,7 +380,7 @@ agent = Agent(
     name="Assistant",
     instructions="Be concise and helpful.",
 )
-state = AgentFrameworkState(agent, session_store=SessionStore)
+state = AgentState(agent)
 
 
 class ResponsesView(View):
@@ -340,10 +397,13 @@ class ResponsesView(View):
         session_id = responses_session_id(body)
         response_id = create_response_id()
         options = run["options"]
-        result = async_to_sync(state.target.run)(
+        session = async_to_sync(state.get_or_create_session)(session_id or response_id)
+        target = async_to_sync(state.get_target)()
+        result = async_to_sync(target.run)(
             run["messages"],
-            session=async_to_sync(state.session_store.get)(session_id or response_id),
+            session=session,
             options=options,
         )
+        async_to_sync(state.session_store.set)(response_id, session)
         return JsonResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
 ```
