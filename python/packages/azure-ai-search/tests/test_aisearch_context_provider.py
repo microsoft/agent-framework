@@ -1351,6 +1351,39 @@ class TestAgenticSearch:
         assert len(results) == 1
         assert results[0].text == "Answer text"
         assert results[0].role == "assistant"
+        assert "x_ms_query_source_authorization" not in mock_retrieval.retrieve.await_args.kwargs
+
+    async def test_query_source_credential_forwards_authorization_token(self) -> None:
+        query_source_credential = AsyncMock()
+        query_source_credential.get_token = AsyncMock(return_value=SimpleNamespace(token="user-token"))
+        provider = _make_provider(query_source_credential=query_source_credential)
+        provider._knowledge_base_initialized = True
+        provider.knowledge_base_name = "kb"
+        provider.retrieval_reasoning_effort = "minimal"
+
+        mock_content = Mock()
+        mock_content.text = "Answer text"
+        mock_message = Mock()
+        mock_message.role = "assistant"
+        mock_message.content = [mock_content]
+        mock_result = Mock()
+        mock_result.response = [mock_message]
+        mock_result.references = None
+
+        mock_retrieval = AsyncMock()
+        mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
+        provider._retrieval_client = mock_retrieval
+
+        with patch(
+            "agent_framework_azure_ai_search._context_provider.KnowledgeBaseMessageTextContent",
+            type(mock_content),
+        ):
+            results = await provider._agentic_search([Message(role="user", contents=["test query"])])
+
+        assert len(results) == 1
+        assert results[0].text == "Answer text"
+        query_source_credential.get_token.assert_awaited_once_with("https://search.azure.com/.default")
+        assert mock_retrieval.retrieve.await_args.kwargs["x_ms_query_source_authorization"] == "user-token"
 
     async def test_non_minimal_reasoning_uses_messages(self) -> None:
         provider = _make_provider()

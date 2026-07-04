@@ -31,6 +31,23 @@ ship only in the preview build. When a stable build is installed, the provider u
 output with minimal reasoning effort and raises an actionable error if a preview-only option is
 explicitly requested. Switching channels is a single change — the install — with no code edits.
 
+### Query-time user identity
+
+Agentic retrieval can forward a caller-specific Azure AI Search authorization token when the
+index uses permission fields for document-level access control. Pass an async credential for the
+caller via `query_source_credential`; the provider requests the Azure AI Search resource scope and
+forwards the token on each Knowledge Base retrieval request.
+
+```python
+context_provider = AzureAISearchContextProvider(
+    endpoint=search_endpoint,
+    credential=application_credential,
+    mode="agentic",
+    knowledge_base_name=knowledge_base_name,
+    query_source_credential=user_credential,
+)
+```
+
 ### Basic Usage Example
 
 See the [Azure AI Search context provider examples](../../samples/02-agents/context_providers/azure_ai_search/) which demonstrate:
