@@ -1385,6 +1385,23 @@ class TestAgenticSearch:
         query_source_credential.get_token.assert_awaited_once_with("https://search.azure.com/.default")
         assert mock_retrieval.retrieve.await_args.kwargs["x_ms_query_source_authorization"] == "user-token"
 
+    async def test_query_source_credential_requires_async_credential(self) -> None:
+        query_source_credential = Mock()
+        query_source_credential.get_token = Mock(return_value=SimpleNamespace(token="user-token"))
+        provider = _make_provider(query_source_credential=query_source_credential)
+        provider._knowledge_base_initialized = True
+        provider.knowledge_base_name = "kb"
+        provider.retrieval_reasoning_effort = "minimal"
+
+        mock_retrieval = AsyncMock()
+        provider._retrieval_client = mock_retrieval
+
+        with pytest.raises(TypeError, match="query_source_credential must be an async Azure credential"):
+            await provider._agentic_search([Message(role="user", contents=["test query"])])
+
+        query_source_credential.get_token.assert_called_once_with("https://search.azure.com/.default")
+        mock_retrieval.retrieve.assert_not_awaited()
+
     async def test_non_minimal_reasoning_uses_messages(self) -> None:
         provider = _make_provider()
         provider._knowledge_base_initialized = True

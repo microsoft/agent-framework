@@ -9,6 +9,7 @@ This module provides ``AzureAISearchContextProvider``, built on the new
 from __future__ import annotations
 
 import importlib.metadata
+import inspect
 import logging
 import sys
 from collections.abc import Awaitable, Callable
@@ -278,7 +279,7 @@ class AzureAISearchContextProvider(ContextProvider):
             azure_openai_api_key: Optional Azure OpenAI API key for Knowledge Base creation.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
             retrieval_reasoning_effort: Reasoning effort for query planning.
-            query_source_credential: Optional Azure credential for per-query user identity forwarding.
+            query_source_credential: Optional async Azure credential for per-query user identity forwarding.
             agentic_message_history_count: Number of recent messages included in retrieval.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -333,7 +334,7 @@ class AzureAISearchContextProvider(ContextProvider):
             azure_openai_api_key: Unused when connecting to an existing Knowledge Base.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
             retrieval_reasoning_effort: Reasoning effort for query planning.
-            query_source_credential: Optional Azure credential for per-query user identity forwarding.
+            query_source_credential: Optional async Azure credential for per-query user identity forwarding.
             agentic_message_history_count: Number of recent messages included in retrieval.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -392,7 +393,7 @@ class AzureAISearchContextProvider(ContextProvider):
             azure_openai_api_key: Optional Azure OpenAI API key for Knowledge Base creation.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
             retrieval_reasoning_effort: Reasoning effort for query planning.
-            query_source_credential: Optional Azure credential for per-query user identity forwarding.
+            query_source_credential: Optional async Azure credential for per-query user identity forwarding.
             agentic_message_history_count: Number of recent messages included in retrieval.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -449,7 +450,7 @@ class AzureAISearchContextProvider(ContextProvider):
             azure_openai_api_key: Azure OpenAI API key.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
             retrieval_reasoning_effort: Reasoning effort for Knowledge Base query planning.
-            query_source_credential: Optional Azure credential for per-query user identity forwarding.
+            query_source_credential: Optional async Azure credential for per-query user identity forwarding.
             agentic_message_history_count: Number of recent messages for agentic mode.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
@@ -909,7 +910,13 @@ class AzureAISearchContextProvider(ContextProvider):
         """Return a per-query Azure AI Search authorization token, when configured."""
         if self.query_source_credential is None:
             return None
-        access_token = await self.query_source_credential.get_token(_AZURE_SEARCH_RESOURCE_SCOPE)
+        access_token_result = self.query_source_credential.get_token(_AZURE_SEARCH_RESOURCE_SCOPE)
+        if not inspect.isawaitable(access_token_result):
+            raise TypeError(
+                "query_source_credential must be an async Azure credential. "
+                "Pass an azure.core.credentials_async.AsyncTokenCredential."
+            )
+        access_token = await access_token_result
         return access_token.token
 
     @staticmethod
