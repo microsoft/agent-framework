@@ -318,7 +318,11 @@ public sealed partial class AgentSkillsProvider : AIContextProvider, IDisposable
         string promptTemplate = this._options?.SkillsInstructionPrompt ?? DefaultSkillsInstructionPrompt;
 
         var sb = new StringBuilder();
-        foreach (var skill in skills.OrderBy(s => s.Frontmatter.Name, StringComparer.Ordinal))
+
+        // Skills with Advertise = false are omitted from the listing but remain loadable by name via the skill tools.
+        foreach (var skill in skills
+                     .Where(s => s.Frontmatter.Advertise)
+                     .OrderBy(s => s.Frontmatter.Name, StringComparer.Ordinal))
         {
             sb.AppendLine("  <skill>");
             sb.AppendLine($"    <name>{SecurityElement.Escape(skill.Frontmatter.Name)}</name>");

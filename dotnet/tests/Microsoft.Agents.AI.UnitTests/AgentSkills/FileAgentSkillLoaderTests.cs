@@ -857,6 +857,42 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     }
 
     [Fact]
+    public async Task GetSkillsAsync_AdvertiseFalse_ParsedCorrectlyAsync()
+    {
+        // Arrange
+        _ = this.CreateSkillDirectoryWithRawContent(
+            "unadvertised-skill",
+            "---\nname: unadvertised-skill\ndescription: A skill that is not advertised\nadvertise: false\n---\nBody.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Single(skills);
+        Assert.False(skills[0].Frontmatter.Advertise);
+    }
+
+    [Theory]
+    [InlineData("advertise: true")]
+    [InlineData("advertise: not-a-boolean")]
+    public async Task GetSkillsAsync_AdvertiseTrueOrInvalid_DefaultsToTrueAsync(string advertiseLine)
+    {
+        // Arrange
+        _ = this.CreateSkillDirectoryWithRawContent(
+            "advertised-skill",
+            $"---\nname: advertised-skill\ndescription: An advertised skill\n{advertiseLine}\n---\nBody.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Single(skills);
+        Assert.True(skills[0].Frontmatter.Advertise);
+    }
+
+    [Fact]
     public async Task GetSkillsAsync_MetadataField_ParsedCorrectlyAsync()
     {
         // Arrange
@@ -906,6 +942,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
             "license: Apache-2.0",
             "compatibility: Requires Python 3.10+",
             "allowed-tools: grep glob view",
+            "advertise: false",
             "metadata:",
             "  org: contoso",
             "  tier: premium",
@@ -925,6 +962,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Equal("Apache-2.0", fm.License);
         Assert.Equal("Requires Python 3.10+", fm.Compatibility);
         Assert.Equal("grep glob view", fm.AllowedTools);
+        Assert.False(fm.Advertise);
         Assert.NotNull(fm.Metadata);
         Assert.Equal("contoso", fm.Metadata!["org"]?.ToString());
         Assert.Equal("premium", fm.Metadata!["tier"]?.ToString());
@@ -946,6 +984,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Null(fm.License);
         Assert.Null(fm.Compatibility);
         Assert.Null(fm.AllowedTools);
+        Assert.True(fm.Advertise);
         Assert.Null(fm.Metadata);
     }
 

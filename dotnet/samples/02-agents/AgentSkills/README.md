@@ -4,7 +4,7 @@ Samples demonstrating Agent Skills capabilities. Each sample shows a different w
 
 | Sample | Description |
 |--------|-------------|
-| [Agent_Step01_FileBasedSkills](Agent_Step01_FileBasedSkills/) | Define skills as `SKILL.md` files on disk with reference documents. Uses a unit-converter skill. |
+| [Agent_Step01_FileBasedSkills](Agent_Step01_FileBasedSkills/) | Define skills as `SKILL.md` files on disk with reference documents. Uses a unit-converter skill, plus an unadvertised (`advertise: false`) temperature-converter skill. |
 | [Agent_Step02_CodeDefinedSkills](Agent_Step02_CodeDefinedSkills/) | Define skills entirely in C# code using `AgentInlineSkill`, with static/dynamic resources and scripts. |
 | [Agent_Step03_ClassBasedSkills](Agent_Step03_ClassBasedSkills/) | Define skills as C# classes using `AgentClassSkill`. |
 | [Agent_Step04_MixedSkills](Agent_Step04_MixedSkills/) | **(Advanced)** Combine file-based, code-defined, and class-based skills using `AgentSkillsProviderBuilder`. |
@@ -24,6 +24,15 @@ Samples demonstrating Agent Skills capabilities. Each sample shows a different w
 | Dynamic content | No (static files only) | Yes (factory delegates) | Yes (factory delegates) |
 | Sharing pattern | Copy skill directory | Inline or shared instances | Package in shared assemblies/NuGet |
 | DI support | No | Yes (via `IServiceProvider` parameter) | Yes (via `IServiceProvider` parameter) |
+
+### Controlling skill advertisement
+
+By default, every skill's name and description are listed in the system prompt so the model can
+discover it. Set `advertise: false` in a skill's frontmatter (or `Advertise = false` on
+`AgentSkillFrontmatter` for code-defined skills) to exclude it from that listing while keeping it
+loadable by name via the `load_skill` tool. This is useful for skills that should only be used when
+referenced explicitly — e.g. from the agent's instructions or from another skill. To remove a skill
+entirely (tools included), use skill filtering instead (see below).
 
 ### `AgentSkillsProvider` vs `AgentSkillsProviderBuilder`
 

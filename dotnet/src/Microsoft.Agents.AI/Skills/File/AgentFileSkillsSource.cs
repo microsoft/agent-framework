@@ -221,6 +221,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         string? license = null;
         string? compatibility = null;
         string? allowedTools = null;
+        string? advertise = null;
 
         foreach (Match kvMatch in s_yamlKeyValueRegex.Matches(yamlContent))
         {
@@ -249,6 +250,10 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
             {
                 allowedTools = value;
             }
+            else if (string.Equals(key, "advertise", StringComparison.OrdinalIgnoreCase))
+            {
+                advertise = value;
+            }
         }
 
         // Parse metadata block (indented key-value pairs under "metadata:").
@@ -274,6 +279,8 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         {
             License = license,
             AllowedTools = allowedTools,
+            // Anything other than an explicit boolean "false" keeps the default of true.
+            Advertise = !bool.TryParse(advertise, out bool advertiseValue) || advertiseValue,
             Metadata = metadata,
         };
 

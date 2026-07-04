@@ -110,6 +110,18 @@ public sealed class AgentSkillFrontmatter
     public string? AllowedTools { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether the skill's name and description are automatically
+    /// advertised in the system prompt. Defaults to <see langword="true"/>.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="false"/>, the skill is omitted from the generated skills listing but remains
+    /// fully functional: it can still be loaded by name via the skill tools. Use this for skills that
+    /// should only be used when referenced explicitly (for example, from the agent's own instructions).
+    /// Corresponds to the <c>advertise</c> frontmatter key in SKILL.md files.
+    /// </remarks>
+    public bool Advertise { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets the arbitrary key-value metadata for this skill.
     /// </summary>
     public AdditionalPropertiesDictionary? Metadata { get; set; }
