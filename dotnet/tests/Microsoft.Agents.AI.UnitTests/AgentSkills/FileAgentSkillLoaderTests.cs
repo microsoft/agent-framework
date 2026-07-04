@@ -969,7 +969,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     }
 
     [Fact]
-    public async Task GetSkillsAsync_NoOptionalFields_DefaultsToNullAsync()
+    public async Task GetSkillsAsync_NoOptionalFields_UsesDefaultValuesAsync()
     {
         // Arrange
         _ = this.CreateSkillDirectory("basic-skill", "A basic skill", "Body.");
