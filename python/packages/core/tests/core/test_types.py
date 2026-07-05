@@ -208,6 +208,20 @@ def test_data_content_detect_image_format_from_base64():
         detect_media_type_from_base64(data_str="data", data_uri="data:application/octet-stream;base64,AAA")
 
 
+@pytest.mark.parametrize(
+    "data_uri",
+    [
+        "data:text/plain,hello",
+        "data:image/png;base64",
+        "not-a-data-uri",
+    ],
+)
+def test_detect_media_type_from_base64_rejects_malformed_data_uri(data_uri: str):
+    """Test malformed data URI inputs raise the documented ValueError."""
+    with pytest.raises(ValueError, match="Invalid data URI format."):
+        detect_media_type_from_base64(data_uri=data_uri)
+
+
 def test_data_content_create_data_uri_from_base64():
     """Test the create_data_uri_from_base64 class method."""
     # Test with PNG data
