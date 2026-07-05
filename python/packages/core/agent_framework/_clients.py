@@ -581,9 +581,9 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: Mapping[str, Any] | None = None,
     ) -> Agent[OptionsCoT]:
-        """Create a Agent with this client.
+        """Create an Agent with this client.
 
-        This is a convenience method that creates a Agent instance with this
+        This is a convenience method that creates an Agent instance with this
         chat client already configured.
 
         Keyword Args:
@@ -614,7 +614,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             additional_properties: Additional properties stored on the created agent.
 
         Returns:
-            A Agent instance configured with this chat client.
+            An Agent instance configured with this chat client.
 
         Examples:
             .. code-block:: python
@@ -675,7 +675,7 @@ class SupportsCodeInterpreterTool(Protocol):
 
             if isinstance(client, SupportsCodeInterpreterTool):
                 tool = client.get_code_interpreter_tool()
-                agent = ChatAgent(client, tools=[tool])
+                agent = Agent(client, tools=[tool])
     """
 
     @staticmethod
@@ -686,7 +686,7 @@ class SupportsCodeInterpreterTool(Protocol):
             **kwargs: Provider-specific configuration options.
 
         Returns:
-            A tool configuration ready to pass to ChatAgent.
+            A tool configuration ready to pass to Agent.
         """
         ...
 
@@ -705,7 +705,7 @@ class SupportsWebSearchTool(Protocol):
 
             if isinstance(client, SupportsWebSearchTool):
                 tool = client.get_web_search_tool()
-                agent = ChatAgent(client, tools=[tool])
+                agent = Agent(client, tools=[tool])
     """
 
     @staticmethod
@@ -716,7 +716,7 @@ class SupportsWebSearchTool(Protocol):
             **kwargs: Provider-specific configuration options.
 
         Returns:
-            A tool configuration ready to pass to ChatAgent.
+            A tool configuration ready to pass to Agent.
         """
         ...
 
@@ -735,7 +735,7 @@ class SupportsImageGenerationTool(Protocol):
 
             if isinstance(client, SupportsImageGenerationTool):
                 tool = client.get_image_generation_tool()
-                agent = ChatAgent(client, tools=[tool])
+                agent = Agent(client, tools=[tool])
     """
 
     @staticmethod
@@ -746,7 +746,7 @@ class SupportsImageGenerationTool(Protocol):
             **kwargs: Provider-specific configuration options.
 
         Returns:
-            A tool configuration ready to pass to ChatAgent.
+            A tool configuration ready to pass to Agent.
         """
         ...
 
@@ -765,7 +765,7 @@ class SupportsMCPTool(Protocol):
 
             if isinstance(client, SupportsMCPTool):
                 tool = client.get_mcp_tool(name="my_mcp", url="https://...")
-                agent = ChatAgent(client, tools=[tool])
+                agent = Agent(client, tools=[tool])
     """
 
     @staticmethod
@@ -777,7 +777,7 @@ class SupportsMCPTool(Protocol):
                 name and url for the MCP server.
 
         Returns:
-            A tool configuration ready to pass to ChatAgent.
+            A tool configuration ready to pass to Agent.
         """
         ...
 
@@ -796,7 +796,7 @@ class SupportsFileSearchTool(Protocol):
 
             if isinstance(client, SupportsFileSearchTool):
                 tool = client.get_file_search_tool(vector_store_ids=["vs_123"])
-                agent = ChatAgent(client, tools=[tool])
+                agent = Agent(client, tools=[tool])
     """
 
     @staticmethod
@@ -807,7 +807,7 @@ class SupportsFileSearchTool(Protocol):
             **kwargs: Provider-specific configuration options.
 
         Returns:
-            A tool configuration ready to pass to ChatAgent.
+            A tool configuration ready to pass to Agent.
         """
         ...
 
@@ -826,7 +826,7 @@ class SupportsShellTool(Protocol):
 
             if isinstance(client, SupportsShellTool):
                 tool = client.get_shell_tool(func=shell.as_function())
-                agent = ChatAgent(client, tools=[tool])
+                agent = Agent(client, tools=[tool])
     """
 
     @staticmethod
@@ -837,7 +837,7 @@ class SupportsShellTool(Protocol):
             **kwargs: Provider-specific configuration options.
 
         Returns:
-            A tool configuration ready to pass to ChatAgent.
+            A tool configuration ready to pass to Agent.
         """
         ...
 
