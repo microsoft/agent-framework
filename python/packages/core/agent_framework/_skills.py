@@ -2008,7 +2008,16 @@ class SkillsProvider(ContextProvider):
 
         Accepts a :class:`SkillsSource`, a single :class:`Skill`, or a
         sequence of :class:`Skill` instances.  When skills are passed
-        directly, they are automatically deduplicated.
+        directly, they are automatically deduplicated and cached.
+
+        A caller-supplied :class:`SkillsSource` is used as-is: it is **not**
+        automatically deduplicated or wrapped in a
+        :class:`CachingSkillsSource`. This keeps context-aware sources safe —
+        auto-caching a caller source in a single shared cache could replay one
+        agent's/tenant's skills for another. Compose
+        :class:`DeduplicatingSkillsSource` / :class:`CachingSkillsSource`
+        (optionally with a ``cache_isolation_key_selector``) yourself when you
+        need them.
 
         For file-based skills, use :meth:`from_paths` or compose sources
         directly using :class:`FileSkillsSource` and other source classes.
@@ -2027,9 +2036,13 @@ class SkillsProvider(ContextProvider):
                 When omitted, those instructions are simply not included in the
                 rendered prompt (the corresponding tools are still registered).
                 Uses a built-in template when ``None``.
-            disable_caching: When ``True``, rebuilds tools and instructions
-                from the source on every invocation instead of caching
-                after the first build.  Defaults to ``False``.
+            disable_caching: When ``True``, the built-in file/in-memory source
+                is not wrapped in a :class:`CachingSkillsSource`, so skills are
+                rebuilt on every invocation. This only affects the sources the
+                provider builds internally (from a :class:`Skill`, a sequence of
+                skills, or :meth:`from_paths`); a caller-supplied
+                :class:`SkillsSource` is never auto-cached regardless of this
+                flag. Defaults to ``False``.
             source_id: Unique identifier for this provider instance.
 
         .. note::
@@ -2052,18 +2065,24 @@ class SkillsProvider(ContextProvider):
             )
 
         if isinstance(source, Skill):
-            source = DeduplicatingSkillsSource(InMemorySkillsSource([source]))
+            leaf: SkillsSource = InMemorySkillsSource([source])
+            source = DeduplicatingSkillsSource(leaf if disable_caching else CachingSkillsSource(leaf))
         elif isinstance(source, SkillsSource):
+            # Caller-supplied source: the caller owns the whole pipeline, so it
+            # is used as-is with no automatic caching (or deduplication).
+            # Auto-wrapping a caller source in a single shared, unkeyed
+            # CachingSkillsSource would be unsafe: if the source is
+            # context-aware (e.g. filters skills per agent/tenant via the
+            # SkillsSourceContext), the first invocation's skills would be
+            # cached and replayed for every later context, leaking skills
+            # across agents/tenants. Callers who want caching should compose
+            # CachingSkillsSource themselves (optionally with a
+            # cache_isolation_key_selector). Only the built-in, context-
+            # independent leaf sources above/below are auto-cached.
             pass
         else:
-            source = DeduplicatingSkillsSource(InMemorySkillsSource(list(source)))
-
-        # Caching is a composable pipeline layer: wrap the resolved source in a
-        # CachingSkillsSource so the (potentially expensive) skills discovery
-        # runs once and is reused on subsequent runs. Pass disable_caching=True
-        # to re-query the source on every invocation instead.
-        if not disable_caching:
-            source = CachingSkillsSource(source)
+            leaf = InMemorySkillsSource(list(source))
+            source = DeduplicatingSkillsSource(leaf if disable_caching else CachingSkillsSource(leaf))
 
         self._source = source
         self._instruction_template = instruction_template
@@ -2116,9 +2135,9 @@ class SkillsProvider(ContextProvider):
             instruction_template: Custom system-prompt template for
                 advertising skills.  Must contain a ``{skills}`` placeholder.
                 Uses a built-in template when ``None``.
-            disable_caching: When ``True``, rebuilds tools and instructions
-                from the source on every invocation instead of caching
-                after the first build.
+            disable_caching: When ``True``, the file-discovery source is not
+                wrapped in a :class:`CachingSkillsSource`, so skills are
+                re-discovered on every invocation. Defaults to ``False``.
             source_id: Unique identifier for this provider instance.
 
         Returns:
@@ -2131,17 +2150,21 @@ class SkillsProvider(ContextProvider):
             :meth:`all_tools_auto_approval_rule` to
             :class:`~agent_framework.ToolApprovalMiddleware`.
         """
-        source = DeduplicatingSkillsSource(
-            FileSkillsSource(
-                skill_paths,
-                script_runner=script_runner,
-                resource_extensions=resource_extensions,
-                script_extensions=script_extensions,
-                search_depth=search_depth,
-                script_filter=script_filter,
-                resource_filter=resource_filter,
-            )
+        file_source: SkillsSource = FileSkillsSource(
+            skill_paths,
+            script_runner=script_runner,
+            resource_extensions=resource_extensions,
+            script_extensions=script_extensions,
+            search_depth=search_depth,
+            script_filter=script_filter,
+            resource_filter=resource_filter,
         )
+        # Cache the (potentially expensive) file-discovery leaf directly, then
+        # deduplicate. The composed pipeline is handed to __init__ as a
+        # caller-supplied source, which is intentionally left un-wrapped, so
+        # caching is applied here. The file source is context-independent, so a
+        # single shared cache is safe.
+        source = DeduplicatingSkillsSource(file_source if disable_caching else CachingSkillsSource(file_source))
         return cls(
             source,
             instruction_template=instruction_template,
@@ -2260,11 +2283,12 @@ class SkillsProvider(ContextProvider):
         """Inject skill instructions and tools into the session context.
 
         Called by the framework before the agent runs.  Loads skills from the
-        configured source (the skills list is cached by the source pipeline
-        unless ``disable_caching=True``) and builds the instruction prompt and
-        tool definitions.  When at least one skill is registered, appends the
-        skill-list system prompt and the ``load_skill`` /
-        ``read_skill_resource`` tools to *context*.
+        configured source (built-in file/in-memory sources are cached by the
+        source pipeline unless ``disable_caching=True``; a caller-supplied
+        source is queried as its own pipeline dictates) and builds the
+        instruction prompt and tool definitions.  When at least one skill is
+        registered, appends the skill-list system prompt and the ``load_skill``
+        / ``read_skill_resource`` tools to *context*.
 
         When any registered skill defines one or more scripts (file-based or
         code-based), the system prompt also includes script-runner
@@ -2720,7 +2744,8 @@ class FileSkillsSource(SkillsSource):
 
         Args:
             context: Contextual information about the agent and session
-                requesting skills. Unused by this source.
+                requesting skills. Accepted for the source contract; this
+                source discovers the same skills regardless of context.
 
         Returns:
             A list of discovered file-based skills.
@@ -3424,7 +3449,8 @@ class InMemorySkillsSource(SkillsSource):
 
         Args:
             context: Contextual information about the agent and session
-                requesting skills. Unused by this source.
+                requesting skills. Accepted for the source contract; this
+                source returns the same stored skills regardless of context.
 
         Returns:
             A list of :class:`Skill` instances.
@@ -4067,7 +4093,9 @@ class MCPSkillsSource(SkillsSource):
 
         Args:
             context: Contextual information about the agent and session
-                requesting skills. Unused by this source.
+                requesting skills. Accepted for the source contract; this
+                source returns the same server-provided skills regardless of
+                context.
 
         Returns:
             A list of discovered :class:`MCPSkill` instances.

@@ -5836,34 +5836,62 @@ class TestSkillsProviderFactoryMethods:
 class TestDisableCaching:
     """Tests for the disable_caching option (now backed by CachingSkillsSource)."""
 
-    async def test_default_wraps_source_in_caching(self) -> None:
-        """By default, the resolved source is wrapped in a CachingSkillsSource."""
-        from agent_framework import CachingSkillsSource
+    async def test_default_wraps_builtin_source_in_caching(self) -> None:
+        """By default, a built-in in-memory source is cached (dedup wraps caching)."""
+        from agent_framework import CachingSkillsSource, DeduplicatingSkillsSource
 
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
         provider = SkillsProvider([skill])
-        assert isinstance(provider._source, CachingSkillsSource)  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(provider._source, DeduplicatingSkillsSource)  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(provider._source.inner_source, CachingSkillsSource)  # pyright: ignore[reportPrivateUsage]
 
-    async def test_default_caching_queries_source_once(self) -> None:
-        """By default, the inner source is queried only once across calls."""
+    async def test_custom_source_not_auto_cached(self) -> None:
+        """A caller-supplied source is not auto-cached; it is queried on every call.
+
+        Auto-caching a caller source in a single shared cache would be unsafe for
+        context-aware sources, so the provider leaves caller pipelines un-wrapped.
+        """
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
         inner = _CountingSkillsSource([skill])
         provider = SkillsProvider(inner)
+        assert provider._source is inner  # pyright: ignore[reportPrivateUsage]
 
         await provider._create_context(_SOURCE_CTX)  # pyright: ignore[reportPrivateUsage]
         await provider._create_context(_SOURCE_CTX)  # pyright: ignore[reportPrivateUsage]
-        assert inner.call_count == 1
+        assert inner.call_count == 2
 
-    async def test_disable_caching_does_not_wrap_source(self) -> None:
-        """With disable_caching=True, the source is not wrapped in CachingSkillsSource."""
-        from agent_framework import CachingSkillsSource
+    async def test_context_aware_custom_source_not_leaked_across_contexts(self) -> None:
+        """A context-aware caller source is re-evaluated per context (no cross-agent leak)."""
+
+        class _PerAgentSource(SkillsSource):
+            async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
+                agent_name = context.agent.name or "unknown"
+                return [
+                    InlineSkill(
+                        frontmatter=SkillFrontmatter(name=f"{agent_name}-skill", description="d"),
+                        instructions="body",
+                    )
+                ]
+
+        provider = SkillsProvider(_PerAgentSource())
+
+        skills_a, _, _ = await provider._create_context(_make_source_context("agent-a"))  # pyright: ignore[reportPrivateUsage]
+        skills_b, _, _ = await provider._create_context(_make_source_context("agent-b"))  # pyright: ignore[reportPrivateUsage]
+
+        assert [s.frontmatter.name for s in skills_a] == ["agent-a-skill"]
+        assert [s.frontmatter.name for s in skills_b] == ["agent-b-skill"]
+
+    async def test_disable_caching_does_not_wrap_builtin_source(self) -> None:
+        """With disable_caching=True, the built-in source is not wrapped in CachingSkillsSource."""
+        from agent_framework import CachingSkillsSource, DeduplicatingSkillsSource
 
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
         provider = SkillsProvider([skill], disable_caching=True)
-        assert not isinstance(provider._source, CachingSkillsSource)  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(provider._source, DeduplicatingSkillsSource)  # pyright: ignore[reportPrivateUsage]
+        assert not isinstance(provider._source.inner_source, CachingSkillsSource)  # pyright: ignore[reportPrivateUsage]
 
     async def test_disable_caching_rebuilds_on_every_call(self) -> None:
-        """With disable_caching=True, the inner source is queried on every call."""
+        """A caller source is queried on every call (it is never auto-cached)."""
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
         inner = _CountingSkillsSource([skill])
         provider = SkillsProvider(inner, disable_caching=True)
