@@ -113,7 +113,7 @@ What to look for:
 
 ### `workiq-email-example.py`
 
-This sample connects to WorkIQ email and teams MCP servers through a local
+This sample connects to the WorkIQ email MCP server through a local
 Fides Gateway proxy. The gateway evaluates IFC policy via its `eval_policy` tool
 before each tool call, returning `allow`, `deny`, or `ask` decisions. When a
 policy violation is detected, the DevUI prompts the user for approval.
@@ -138,26 +138,20 @@ The gateway must be running before starting the sample.
 #### Running
 
 ```bash
-uv run samples/02-agents/security/workiq-email-example.py --cli --gateway-port 9090
-uv run samples/02-agents/security/workiq-email-example.py --cli --gateway-port 9090 --auto-approve
-uv run samples/02-agents/security/workiq-email-example.py --devui --gateway-port 9090
-uv run samples/02-agents/security/workiq-email-example.py --devui --gateway-port 9090 --debug
+uv run samples/02-agents/security/workiq-email-example.py --gateway-port 9090
+uv run samples/02-agents/security/workiq-email-example.py --gateway-port 9090 --debug
 ```
 
 The `--gateway-port` flag specifies the port where the Fides Gateway is
 listening (default: `9090`).
 
-In CLI mode, gateway `ask`/`deny` decisions prompt you interactively to approve
-or reject each flagged tool call. Pass `--auto-approve` to approve them
-automatically (useful for non-interactive runs); avoid this for real workloads.
-
-When you run the DevUI variant, the sample prints the active DevUI bearer token
-before starting the server.
+The sample prints the active DevUI bearer token before starting the server.
+Gateway `ask`/`deny` decisions surface as approval prompts in the DevUI.
 
 What to look for:
 
 - Gateway `eval_policy` decisions control whether tool calls proceed
-- `ask` decisions surface as approval prompts (interactive in CLI, in the DevUI otherwise)
+- `ask` decisions surface as approval prompts in the DevUI
 - Parallel tool calls that all require approval can be approved/rejected individually
 - Readers lattice tracks which identities are authorized to see data
 

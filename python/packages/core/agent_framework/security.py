@@ -21,11 +21,11 @@ import logging
 import re
 import threading
 import uuid
-from collections.abc import Awaitable, Callable, MutableMapping
+from collections.abc import Awaitable, Callable, MutableMapping, Sequence
 from copy import deepcopy
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 from pydantic import BaseModel, Field
 
@@ -129,26 +129,28 @@ class ConfidentialityLabel:
     PUBLIC: ConfidentialityLabel  # set after class body
     PRIVATE: ConfidentialityLabel  # set after class body
 
-    def __init__(self, value: str | list[str] = "public", *, readers: frozenset[str] | None = None) -> None:
+    def __init__(
+        self, value: Literal["public", "private"] | Sequence[str] = "public", *, readers: frozenset[str] | None = None
+    ) -> None:
         """Initialize a ConfidentialityLabel.
 
         Args:
-            value: Either ``"public"``, ``"private"``, or a list of reader
-                identities. A list implies ``"private"`` restricted to those readers.
+            value: Either ``"public"``, ``"private"``, or a sequence of reader
+                identities. A sequence implies ``"private"`` restricted to those readers.
             readers: Optional frozenset of reader identities. Only applied when
                 ``value`` is ``"private"``; ignored for ``"public"``.
 
         Raises:
-            ValueError: If ``value`` is not ``"public"``, ``"private"``, or a list.
+            ValueError: If ``value`` is not ``"public"``, ``"private"``, or a sequence.
         """
-        if isinstance(value, list):
-            self._level = "private"
-            self._readers: frozenset[str] | None = frozenset(value)
-        elif value in ("public", "private"):
-            self._level: str = value
-            self._readers = readers if value == "private" else None
+        if isinstance(value, str):
+            if value not in ("public", "private"):
+                raise ValueError(f"Invalid confidentiality value: {value!r}")
+            self._level: Literal["public", "private"] = "private" if value == "private" else "public"
+            self._readers: frozenset[str] | None = readers if value == "private" else None
         else:
-            raise ValueError(f"Invalid confidentiality value: {value!r}")
+            self._level = "private"
+            self._readers = frozenset(value)
 
     # -- properties ----------------------------------------------------------
 
