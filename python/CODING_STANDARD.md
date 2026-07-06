@@ -105,7 +105,12 @@ Use typing as a helper first and suppressions as a last resort:
   (`# pyright: ignore[reportGeneralTypeIssues]`), file-level is allowed if there is a compelling reason for it, that should be documented right beneath the ignore.
   Never change the global suppression flags unless the dev team okays it.
 - **Private usage boundary**: Accessing private members across `agent_framework*` packages can be acceptable for this
-  codebase, but private member usage for non-Agent Framework dependencies should remain flagged.
+  codebase, but private member usage for non-Agent Framework dependencies should remain flagged. Do not make an
+  internal helper public merely to satisfy pyright private-usage checks inside the package; use a targeted
+  `# pyright: ignore[reportPrivateUsage]` when the internal dependency is intentional.
+- **Avoid typing-only wrappers**: Do not introduce trivial pass-through functions solely to satisfy typing or private
+  usage checks. Prefer a targeted ignore, cast, or clearer annotation over an extra one-line function that adds runtime
+  overhead without improving the design.
 
 ## Function Parameter Guidelines
 
