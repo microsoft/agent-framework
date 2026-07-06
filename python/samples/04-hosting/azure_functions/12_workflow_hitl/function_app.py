@@ -23,7 +23,6 @@ Prerequisites:
 - Authentication via Azure CLI (az login)
 """
 
-import json
 import logging
 import os
 from dataclasses import dataclass
@@ -333,19 +332,14 @@ class InputRouterExecutor(Executor):
     @handler
     async def route_input(
         self,
-        input_json: str,
+        submission: ContentSubmission,
         ctx: WorkflowContext[AgentExecutorRequest],
     ) -> None:
-        """Parse input and create agent request."""
-        data = json.loads(input_json) if isinstance(input_json, str) else input_json
+        """Create the agent request from the submitted content.
 
-        submission = ContentSubmission(
-            content_id=data.get("content_id", "unknown"),
-            title=data.get("title", "Untitled"),
-            body=data.get("body", ""),
-            author=data.get("author", "Anonymous"),
-        )
-
+        The durable engine reconstructs this ``ContentSubmission`` from the
+        client's JSON payload before delivery, mirroring in-process execution.
+        """
         # Store submission in shared state for later retrieval
         ctx.set_state("current_submission", submission)
 

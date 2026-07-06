@@ -660,9 +660,64 @@ def test_prepare_messages_for_anthropic_without_system(
 
     result = client._prepare_messages_for_anthropic(messages)
 
-    assert len(result) == 2
+    assert len(result) == 3
     assert result[0]["role"] == "user"
     assert result[1]["role"] == "assistant"
+    assert result[2]["role"] == "user"
+    assert result[2]["content"] == "Continue"
+
+
+def test_prepare_messages_for_anthropic_does_not_append_after_tool_use(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Do not append plain user text after assistant tool_use blocks."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [
+        Message(role="user", contents=["What's the weather?"]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="call_123",
+                    name="get_weather",
+                    arguments={"location": "Seattle"},
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_anthropic(messages)
+
+    assert len(result) == 2
+    assert result[1]["role"] == "assistant"
+    assert result[1]["content"][0]["type"] == "tool_use"
+
+
+def test_prepare_messages_for_anthropic_splits_assistant_embedded_tool_results(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Assistant-embedded tool_result blocks must move to user-role Anthropic messages."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="call_1", name="first", arguments={}),
+                Content.from_function_result(call_id="call_1", result="ok"),
+                Content.from_function_call(call_id="call_2", name="second", arguments={}),
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_anthropic(messages)
+
+    assert [message["role"] for message in result] == ["assistant", "user", "assistant"]
+    assert [[block["type"] for block in message["content"]] for message in result] == [
+        ["tool_use"],
+        ["tool_result"],
+        ["tool_use"],
+    ]
+    assert result[1]["content"][0]["tool_use_id"] == "call_1"
 
 
 # Tool Conversion Tests
@@ -907,6 +962,84 @@ async def test_prepare_options_with_system_message(
 
     assert run_options["system"] == "You are helpful."
     assert len(run_options["messages"]) == 1  # System message not in messages list
+
+
+async def test_prepare_options_with_text_instructions_and_system_message(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Text instructions should preserve an existing leading system message."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    messages = [
+        Message(role="system", contents=["You are helpful."]),
+        Message(role="user", contents=["Hello"]),
+    ]
+
+    run_options = client._prepare_options(messages, {"instructions": "Be concise."})
+
+    assert run_options["system"] == "Be concise.\n\nYou are helpful."
+    assert len(run_options["messages"]) == 1
+
+
+async def test_prepare_options_with_structured_system_blocks(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Structured Anthropic instructions should populate the system request parameter."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [Message(role="user", contents=["Hello"])]
+    system_blocks = [
+        {
+            "type": "text",
+            "text": "Stable instructions",
+            "cache_control": {"type": "ephemeral", "ttl": "1h"},
+        }
+    ]
+
+    run_options = client._prepare_options(messages, {"instructions": system_blocks})
+
+    assert run_options["system"] == system_blocks
+    assert run_options["messages"][0]["role"] == "user"
+
+
+async def test_prepare_options_structured_system_blocks_reject_conflicts(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Structured system blocks should not silently merge with other system instruction sources."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [Message(role="system", contents=["Generic system"]), Message(role="user", contents=["Hello"])]
+    options = {"instructions": [{"type": "text", "text": "Structured"}]}
+
+    with pytest.raises(ValueError, match="structured Anthropic instructions"):
+        client._prepare_options(messages, options)
+
+
+async def test_prepare_options_splits_assistant_embedded_tool_results(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Final Anthropic request kwargs should contain Anthropic-valid tool_result role groups."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [
+        Message(role="user", contents=["Run both tools."]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="call_1", name="first", arguments={}),
+                Content.from_function_result(call_id="call_1", result="ok"),
+                Content.from_function_call(call_id="call_2", name="second", arguments={}),
+            ],
+        ),
+    ]
+    chat_options = ChatOptions()
+
+    run_options = client._prepare_options(messages, chat_options)
+
+    prepared_messages = run_options["messages"]
+    assert [message["role"] for message in prepared_messages] == ["user", "assistant", "user", "assistant"]
+    assert [[block["type"] for block in message["content"]] for message in prepared_messages[1:]] == [
+        ["tool_use"],
+        ["tool_result"],
+        ["tool_use"],
+    ]
 
 
 async def test_anthropic_shell_tool_is_invoked_in_function_loop(
@@ -2254,6 +2387,8 @@ def test_prepare_options_with_instructions(mock_anthropic_client: MagicMock) -> 
     # Instructions should be prepended as system message
     assert result["model"] == "claude-3-5-sonnet-20241022"
     assert result["max_tokens"] == 1024
+    assert result["system"] == "You are a helpful assistant"
+    assert result["messages"] == [{"role": "user", "content": [{"type": "text", "text": "Hello"}]}]
 
 
 def test_prepare_options_missing_model(mock_anthropic_client: MagicMock) -> None:

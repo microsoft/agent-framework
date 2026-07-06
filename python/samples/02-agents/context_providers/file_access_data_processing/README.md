@@ -10,11 +10,11 @@ that exercises every tool the provider exposes:
 
 | Step | Prompt | Tool(s) used |
 |---|---|---|
-| 1 | "What files do you have access to?" | `file_access_list_files` |
-| 2 | "Read sales.csv and summarize…" | `file_access_read_file` |
+| 1 | "What files do you have access to?" | `file_access_ls` |
+| 2 | "Read sales.csv and summarize…" | `file_access_read` |
 | 3 | "Calculate the total revenue per region…" | (uses previously read data) |
-| 4 | "Save a markdown report named `region_totals.md`…" | `file_access_save_file` |
-| 5 | "List the files again so I can confirm…" | `file_access_list_files` |
+| 4 | "Save a markdown report named `region_totals.md`…" | `file_access_write` |
+| 5 | "List the files again so I can confirm…" | `file_access_ls` |
 
 After the run, the sample prints the final contents of `working/` so the
 written file is easy to spot.

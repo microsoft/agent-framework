@@ -80,32 +80,33 @@ dotnet/samples/
 
 ## Default provider
 
-All canonical samples (01-get-started) use **Azure OpenAI** via `AzureOpenAIClient`
-with `DefaultAzureCredential`:
+All canonical samples (01-get-started) use **Microsoft Foundry** via `AIProjectClient.AsAIAgent()` with `DefaultAzureCredential`:
 
 ```csharp
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI.Chat;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
-    .AsAIAgent(instructions: "...", name: "...");
+AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+    .AsAIAgent(model: model, instructions: "...", name: "...");
 ```
 
 Environment variables:
-- `AZURE_OPENAI_ENDPOINT` — Your Azure OpenAI endpoint
-- `AZURE_OPENAI_DEPLOYMENT_NAME` — Model deployment name (defaults to `gpt-5.4-mini`)
+- `FOUNDRY_PROJECT_ENDPOINT` — Your Foundry project endpoint
+- `FOUNDRY_MODEL` — Model name (defaults to `gpt-5.4-mini`)
 
 For authentication, run `az login` before running samples.
+
+**Note:** Use `FoundryAgent` only when demonstrating Foundry-managed (prompt) agents specifically — see `02-agents/AgentsWithFoundry/`. For all other samples, use `AIProjectClient.AsAIAgent()`.
+
+**Note:** For samples demonstrating other providers (Azure OpenAI, OpenAI, Anthropic, etc.), see `02-agents/AgentProviders/`.
 
 ## Snippet tags for docs integration
 
@@ -131,8 +132,6 @@ dotnet run
 - `AIAgent` is the primary agent abstraction (created via `ChatClient.AsAIAgent(...)`)
 - `AgentSession` manages multi-turn conversation state
 - `AIContextProvider` injects memory and context
-- Prefer `client.GetChatClient(deployment).AsAIAgent(...)` extension method pattern
+- Prefer `AIProjectClient.AsAIAgent(...)` for Foundry-backed canonical samples
 - Azure Functions hosting uses `ConfigureDurableAgents(options => options.AddAIAgent(agent))`
 - Workflows use `WorkflowBuilder` with `Executor<TIn, TOut>` and edge connections
-
-

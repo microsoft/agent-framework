@@ -8,19 +8,7 @@ end-to-end without manual steps. ``main.py`` owns the workflow
 execution path.
 """
 
-from collections.abc import Mapping
-
 from azure.identity import AzureCliCredential
-
-# Toolbox admin and MCP runtime traffic are both gated by a preview
-# feature flag. The Python ``AIProjectClient`` does not add it
-# automatically, so we attach it to every admin call here AND to the
-# ``httpx.AsyncClient`` in ``main.py`` so the MCP ``initialize``
-# handshake carries it too. Without the flag on admin calls,
-# provisioning succeeds at the HTTP layer but the toolbox is never
-# wired to the MCP endpoint — surfacing later as "MCP server failed to
-# initialize: Session terminated" on the first ``InvokeMcpTool`` call.
-FOUNDRY_FEATURES_HEADERS: Mapping[str, str] = {"Foundry-Features": "Toolboxes=V1Preview"}
 
 
 def create_sample_toolbox(*, name: str, docs_server_label: str, project_endpoint: str) -> None:
@@ -40,7 +28,7 @@ def create_sample_toolbox(*, name: str, docs_server_label: str, project_endpoint
         AIProjectClient(credential=credential, endpoint=project_endpoint) as project_client,
     ):
         try:
-            project_client.beta.toolboxes.delete(name, headers=FOUNDRY_FEATURES_HEADERS)
+            project_client.beta.toolboxes.delete(name)
             print(f"Toolbox '{name}' deleted (replacing with a fresh version).")
         except ResourceNotFoundError:
             pass
@@ -57,6 +45,5 @@ def create_sample_toolbox(*, name: str, docs_server_label: str, project_endpoint
             name=name,
             description="Sample toolbox exposing the Microsoft Learn Docs MCP server.",
             tools=tools,
-            headers=FOUNDRY_FEATURES_HEADERS,
         )
         print(f"Created toolbox {created.name}@{created.version} ({len(created.tools)} tool(s)).")

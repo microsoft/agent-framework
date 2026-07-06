@@ -5,7 +5,7 @@ This sample shows how to use OpenAPI tools with a `ChatClientAgent` using the Re
 ## What this sample demonstrates
 
 - Defining an OpenAPI specification inline
-- Creating an `OpenAPIFunctionDefinition` for the REST Countries API
+- Creating an `OpenAPIFunctionDefinition` for the Frankfurter exchange rate API
 - Using `FoundryAITool.CreateOpenApiTool()` with `ChatClientAgent`
 - Server-side execution of OpenAPI tool calls
 

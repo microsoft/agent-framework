@@ -11,6 +11,7 @@ from agent_framework import (
     FileSkillsSource,
     FilteringSkillsSource,
     SkillsProvider,
+    ToolApprovalMiddleware,
 )
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
@@ -81,15 +82,20 @@ async def main() -> None:
 
     skills_provider = SkillsProvider(source)
 
-    # 3. Run the agent — it can only see the volume-converter skill
+    # 3. Run the agent — it can only see the volume-converter skill. All skill
+    #    tools require approval by default; auto-approve them so the sample runs
+    #    unattended. See the script_approval / skills_auto_approval samples for
+    #    approval handling.
     async with Agent(
         client=client,
         instructions="You are a helpful assistant that can convert units.",
         context_providers=[skills_provider],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[SkillsProvider.all_tools_auto_approval_rule])],
     ) as agent:
         print("Skill filtering demo")
         print("-" * 60)
-        response = await agent.run("How many liters is a 5-gallon bucket?")
+        session = agent.create_session()
+        response = await agent.run("How many liters is a 5-gallon bucket?", session=session)
         print(f"Agent: {response}\n")
 
 
