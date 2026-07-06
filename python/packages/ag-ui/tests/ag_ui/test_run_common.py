@@ -17,6 +17,7 @@ from agent_framework_ag_ui._run_common import (
     _extract_tool_result_state,
     _normalize_resume_interrupts,
     _reconstruct_messages_from_thread_snapshot,
+    _strict_resume_entries,
 )
 from agent_framework_ag_ui._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
 
@@ -83,6 +84,23 @@ class TestNormalizeResumeInterrupts:
             [{"interrupt_id": "req_1", "status": "resolved", "payload": {"approved": True}}]
         )
         assert result == [{"id": "req_1", "value": {"approved": True}, "status": "resolved"}]
+
+
+class TestStrictResumeEntries:
+    """Tests for strict canonical resume-entry parsing."""
+
+    def test_tool_call_id_key_used_as_interrupt_id(self) -> None:
+        """toolCallId is accepted as a legacy identifier alias and excluded from payload."""
+        entries, error = _strict_resume_entries([{"toolCallId": "call_1", "approved": True}])
+
+        assert error is None
+        assert entries == [
+            {
+                "interrupt_id": "call_1",
+                "status": "resolved",
+                "payload": {"approved": True},
+            }
+        ]
 
 
 class TestExtractResumePayload:

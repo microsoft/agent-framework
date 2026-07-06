@@ -29,6 +29,7 @@ from agent_framework_ag_ui._workflow_run import (
     _coerce_message_content,
     _coerce_response_for_request,
     _coerce_responses_for_pending_requests,
+    _coerce_responses_for_pending_requests_strict,
     _custom_event_value,
     _details_code,
     _details_message,
@@ -1006,6 +1007,23 @@ class TestCoerceResponsesForPendingRequests:
         """Empty responses dict returns responses unchanged."""
         result = _coerce_responses_for_pending_requests({}, {"r1": SimpleNamespace()})
         assert result == {}
+
+
+class TestCoerceResponsesForPendingRequestsStrict:
+    """Tests for strict pending request response coercion."""
+
+    def test_event_request_id_alias_is_validated(self) -> None:
+        """Responses addressed to event.request_id are type-checked even when dict keys differ."""
+        event = SimpleNamespace(request_id="canonical-request", response_type=bool)
+
+        responses, error = _coerce_responses_for_pending_requests_strict(
+            {"canonical-request": "not-a-bool"},
+            {"runner-context-key": event},
+        )
+
+        assert responses == {}
+        assert error is not None
+        assert error.code == "WORKFLOW_RESUME_INVALID_RESPONSE"
 
 
 class TestMessageRoleValue:

@@ -160,14 +160,21 @@ Interrupted terminal event shape:
         "responseSchema": {
           "type": "object",
           "properties": {
-            "approved": { "type": "boolean" },
+            "accepted": { "type": "boolean" },
             "arguments": { "type": "object" }
           },
-          "required": ["approved"]
+          "required": ["accepted"]
         },
         "metadata": {
-          "agentFramework": {
-            "kind": "function_approval"
+          "agent_framework": {
+            "type": "function_approval_request",
+            "function_call": {
+              "call_id": "tool_call_1",
+              "name": "get_weather",
+              "arguments": {
+                "city": "Seattle"
+              }
+            }
           }
         }
       }

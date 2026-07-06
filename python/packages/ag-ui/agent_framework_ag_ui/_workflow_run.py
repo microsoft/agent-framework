@@ -546,7 +546,12 @@ def _coerce_responses_for_pending_requests_strict(
         return responses, None
 
     normalized: dict[str, Any] = {}
-    pending_by_id = {str(request_id): event for request_id, event in pending_events.items()}
+    pending_by_id: dict[str, Any] = {}
+    for request_id, event in pending_events.items():
+        pending_by_id[str(request_id)] = event
+        event_request_id = getattr(event, "request_id", None)
+        if event_request_id:
+            pending_by_id[str(event_request_id)] = event
 
     for request_id, value in responses.items():
         request_key = str(request_id)

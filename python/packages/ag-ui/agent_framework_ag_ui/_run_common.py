@@ -155,7 +155,12 @@ def _strict_resume_entries(resume_payload: Any) -> tuple[list[dict[str, Any]], s
             return [], "Each resume entry must be an object."
 
         item_dict = cast(dict[str, Any], item)
-        interrupt_id = item_dict.get("interruptId") or item_dict.get("interrupt_id") or item_dict.get("id")
+        interrupt_id = (
+            item_dict.get("interruptId")
+            or item_dict.get("interrupt_id")
+            or item_dict.get("id")
+            or item_dict.get("toolCallId")
+        )
         if not interrupt_id:
             return [], "Each resume entry must include interruptId."
 
@@ -173,7 +178,7 @@ def _strict_resume_entries(resume_payload: Any) -> tuple[list[dict[str, Any]], s
             payload = {
                 key: value
                 for key, value in item_dict.items()
-                if key not in {"id", "interruptId", "interrupt_id", "type", "status"}
+                if key not in {"id", "interruptId", "interrupt_id", "toolCallId", "type", "status"}
             }
 
         entries.append({"interrupt_id": str(interrupt_id), "status": str(status), "payload": payload})
