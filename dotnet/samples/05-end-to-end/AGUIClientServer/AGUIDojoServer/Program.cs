@@ -47,6 +47,14 @@ app.MapAGUI("/shared_state", ChatClientAgentFactory.CreateSharedState(jsonOption
 
 app.MapAGUI("/predictive_state_updates", ChatClientAgentFactory.CreatePredictiveStateUpdates(jsonOptions.Value.SerializerOptions));
 
+app.MapAGUI("/a2ui_fixed_schema", ChatClientAgentFactory.CreateA2UIFixedSchema());
+
+app.MapAGUI("/a2ui_dynamic_schema", ChatClientAgentFactory.CreateA2UIDynamicSchema());
+
+app.MapAGUI("/a2ui_recovery", ChatClientAgentFactory.CreateA2UIRecovery());
+
+app.MapAGUI("/a2ui_chat", ChatClientAgentFactory.CreateA2UIChat());
+
 await app.RunAsync();
 
 public partial class Program;

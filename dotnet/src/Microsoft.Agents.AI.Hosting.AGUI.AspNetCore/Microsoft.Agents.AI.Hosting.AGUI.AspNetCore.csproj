@@ -27,6 +27,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Raw-representation tap for progressive tool-call argument streaming. -->
+    <PackageReference Include="OpenAI" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Compile Include="..\Microsoft.Agents.AI.AGUI\Shared\**\*.cs" LinkBase="Shared" />
     <Compile Remove="ServerSentEventsResult.cs" Condition="'$(TargetFrameworkIdentifier)' == '.NETCoreApp' AND $([MSBuild]::VersionGreaterThanOrEquals($(TargetFrameworkVersion), '10.0'))" />
   </ItemGroup>
