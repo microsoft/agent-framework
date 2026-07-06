@@ -274,7 +274,9 @@ public sealed class HarnessAgent : DelegatingAIAgent
         if (options?.ShellExecutor is ShellExecutor shellExecutor)
         {
             result.Tools ??= [];
-            result.Tools.Add(shellExecutor.AsAIFunction());
+            result.Tools.Add(options.ShellToolName is { } shellToolName
+                ? shellExecutor.AsAIFunction(shellToolName, options.ShellToolDescription, !options.DisableShellToolApproval)
+                : shellExecutor.AsAIFunction(description: options.ShellToolDescription, requireApproval: !options.DisableShellToolApproval));
         }
 #endif
 

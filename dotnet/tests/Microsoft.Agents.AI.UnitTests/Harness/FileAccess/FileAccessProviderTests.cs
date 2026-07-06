@@ -59,6 +59,59 @@ public class FileAccessProviderTests
         Assert.All(tools, tool => Assert.IsType<ApprovalRequiredAIFunction>(tool));
     }
 
+    [Fact]
+    public async Task DisableReadOnlyToolApproval_ReadOnlyToolsNotWrappedAsync()
+    {
+        // Arrange
+        var tools = (await CreateToolsAsync(new FileAccessProviderOptions { DisableReadOnlyToolApproval = true })).ToList();
+
+        // Assert — read-only tools are bare functions; store-modifying tools still require approval.
+        AssertRequiresApproval(tools, FileAccessProvider.ReadFileToolName, expected: false);
+        AssertRequiresApproval(tools, FileAccessProvider.LsToolName, expected: false);
+        AssertRequiresApproval(tools, FileAccessProvider.GrepToolName, expected: false);
+        AssertRequiresApproval(tools, FileAccessProvider.WriteToolName, expected: true);
+        AssertRequiresApproval(tools, FileAccessProvider.DeleteFileToolName, expected: true);
+        AssertRequiresApproval(tools, FileAccessProvider.ReplaceToolName, expected: true);
+        AssertRequiresApproval(tools, FileAccessProvider.ReplaceLinesToolName, expected: true);
+    }
+
+    [Fact]
+    public async Task DisableWriteToolApproval_WriteToolsNotWrappedAsync()
+    {
+        // Arrange
+        var tools = (await CreateToolsAsync(new FileAccessProviderOptions { DisableWriteToolApproval = true })).ToList();
+
+        // Assert — store-modifying tools are bare functions; read-only tools still require approval.
+        AssertRequiresApproval(tools, FileAccessProvider.ReadFileToolName, expected: true);
+        AssertRequiresApproval(tools, FileAccessProvider.LsToolName, expected: true);
+        AssertRequiresApproval(tools, FileAccessProvider.GrepToolName, expected: true);
+        AssertRequiresApproval(tools, FileAccessProvider.WriteToolName, expected: false);
+        AssertRequiresApproval(tools, FileAccessProvider.DeleteFileToolName, expected: false);
+        AssertRequiresApproval(tools, FileAccessProvider.ReplaceToolName, expected: false);
+        AssertRequiresApproval(tools, FileAccessProvider.ReplaceLinesToolName, expected: false);
+    }
+
+    [Fact]
+    public async Task DisableBothToolApprovals_NoToolsWrappedAsync()
+    {
+        // Arrange
+        var tools = (await CreateToolsAsync(new FileAccessProviderOptions
+        {
+            DisableReadOnlyToolApproval = true,
+            DisableWriteToolApproval = true,
+        })).ToList();
+
+        // Assert — no tool requires approval.
+        Assert.Equal(7, tools.Count);
+        Assert.DoesNotContain(tools, tool => tool is ApprovalRequiredAIFunction);
+    }
+
+    private static void AssertRequiresApproval(IEnumerable<AITool> tools, string toolName, bool expected)
+    {
+        var tool = tools.OfType<AIFunction>().First(t => t.Name == toolName);
+        Assert.Equal(expected, tool is ApprovalRequiredAIFunction);
+    }
+
     [Theory]
     [InlineData(FileAccessProvider.ReadFileToolName, true)]
     [InlineData(FileAccessProvider.LsToolName, true)]
@@ -998,8 +1051,11 @@ public class FileAccessProviderTests
     #region Helper Methods
 
     private static async Task<IEnumerable<AITool>> CreateToolsAsync(InMemoryAgentFileStore? store = null)
+        => await CreateToolsAsync(null, store);
+
+    private static async Task<IEnumerable<AITool>> CreateToolsAsync(FileAccessProviderOptions? options, InMemoryAgentFileStore? store = null)
     {
-        var provider = new FileAccessProvider(store ?? new InMemoryAgentFileStore());
+        var provider = new FileAccessProvider(store ?? new InMemoryAgentFileStore(), options);
         var agent = new Mock<AIAgent>().Object;
         var session = new ChatClientAgentSession();
 #pragma warning disable MAAI001
