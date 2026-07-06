@@ -133,10 +133,10 @@ handler decides whether that command clears a session, cancels a task, calls an 
 
 Additional helper functions can be protocol-specific when the concept is not broadly shared. Examples include
 `telegram_chat_id(...)`, `telegram_callback_query_id(...)`, `telegram_media_file_id(...)`,
-`discord_interaction_id(...)`, `activity_conversation_id(...)`, `a2a_task_id(...)`, `a2a_context_id(...)`, and MCP
-tool/prompt/resource helpers. These helpers should still stay side-effect-free: they extract, normalize, or describe
-protocol data, while app/native SDK code performs acknowledgements, sends/edits messages, resolves protected file URLs,
-applies rate limits, and registers handlers.
+`discord_interaction_id(...)`, `a2a_task_id(...)`, `a2a_context_id(...)`, and MCP tool/prompt/resource helpers. These
+helpers should still stay side-effect-free: they extract, normalize, or describe protocol data, while app/native SDK code
+performs acknowledgements, sends/edits messages, resolves protected file URLs, applies rate limits, and registers
+handlers.
 
 ### Session continuity
 
@@ -159,6 +159,10 @@ The app chooses which helper to call for that route and deployment. For example:
 
 Keep these helpers outside `responses_to_run(...)`, `telegram_to_run(...)`, and other run-input parsers. That makes the
 trust boundary visible: using a request-derived key is a different decision than using a platform-provided isolation key.
+Platform-provided isolation helpers must fail closed outside their trusted hosting environment. For example,
+Foundry-specific helpers may read values established by Foundry hosting middleware, but must not treat raw request
+headers as trusted Foundry isolation when the app is running outside Foundry. Implementations must test that non-Foundry
+requests do not accept spoofable isolation headers as platform-provided keys.
 
 A `SessionStore` stores `session_id -> AgentSession`, but it does not create sessions. `AgentState` resolves the agent
 target and creates the session on first use:
@@ -189,9 +193,17 @@ externally supplied key before using it.
 
 ### Workflow checkpoints
 
-Workflow checkpointing is execution state, not protocol state. `WorkflowState` pairs a workflow target with a
-`CheckpointStore` (`session_id -> CheckpointStorage`) and provides `get_or_create_checkpoint_storage(...)` for first use.
-The store itself remains plain storage and does not decide which checkpoint to resume.
+Workflow checkpointing is execution state, not protocol state. `WorkflowState` pairs a workflow target with checkpoint
+state, but durable stores should not persist live `CheckpointStorage` client instances by value. Two shapes are useful:
+
+- local/in-memory state may map `session_id -> CheckpointStorage` when the storage object is process-local;
+- durable or multi-replica state should map `session_id -> checkpoint_id` (or an equivalent cursor/config) and use a
+  workflow-owned or app-owned `CheckpointStorage` to load that checkpoint.
+
+Workflow runs do not currently emit a checkpoint id on `WorkflowRunResult` or normal workflow events by default. The
+runner receives checkpoint ids internally from `CheckpointStorage.save(...)`. App/state code that owns the storage can
+observe the latest id by querying the storage after a run, for example
+`await storage.get_latest(workflow_name=target.name)`.
 
 For workflow targets, app code adapts the protocol helper output into the workflow's expected input and invokes the
 workflow through the state object's target:
@@ -200,7 +212,9 @@ workflow through the state object's target:
 storage = await state.get_or_create_checkpoint_storage(session_id)
 target = await state.get_target()
 result = await target.run(message=workflow_input, checkpoint_storage=storage)
-await state.set_checkpoint_storage(session_id, storage)
+latest = await storage.get_latest(workflow_name=target.name)
+if latest is not None:
+    await state.set_checkpoint_id(session_id, latest.checkpoint_id)
 ```
 
 If a route wants to resume from a prior checkpoint, it explicitly chooses the checkpoint and passes it to
@@ -209,13 +223,14 @@ If a route wants to resume from a prior checkpoint, it explicitly chooses the ch
 ```python
 storage = await state.get_or_create_checkpoint_storage(session_id)
 target = await state.get_target()
+checkpoint_id = await state.get_checkpoint_id(session_id)
+if checkpoint_id is None:
+    result = await target.run(message=workflow_input, checkpoint_storage=storage)
+else:
+    result = await target.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
 latest = await storage.get_latest(workflow_name=target.name)
-result = await target.run(
-    message=workflow_input,
-    checkpoint_id=latest.checkpoint_id if latest else None,
-    checkpoint_storage=storage,
-)
-await state.set_checkpoint_storage(session_id, storage)
+if latest is not None:
+    await state.set_checkpoint_id(session_id, latest.checkpoint_id)
 ```
 
 `workflow.run(...)` writes checkpoints to the provided storage, so storage selection must be explicit at the route layer.
@@ -287,8 +302,8 @@ class SessionStore:
 
 
 class CheckpointStore:
-    async def get(self, session_id: str) -> CheckpointStorage | None: ...
-    async def set(self, session_id: str, storage: CheckpointStorage) -> None: ...
+    async def get(self, session_id: str) -> str | None: ...
+    async def set(self, session_id: str, checkpoint_id: str) -> None: ...
     async def delete(self, session_id: str) -> None: ...
 
 
@@ -300,10 +315,17 @@ class AgentState:
 
 
 class WorkflowState:
-    def __init__(self, target: Workflow | SupportsBuild, *, checkpoint_store: CheckpointStore | None = None) -> None: ...
+    def __init__(
+        self,
+        target: Workflow | SupportsBuild,
+        *,
+        checkpoint_storage: CheckpointStorage | None = None,
+        checkpoint_store: CheckpointStore | None = None,
+    ) -> None: ...
     async def get_target(self) -> Workflow: ...
     async def get_or_create_checkpoint_storage(self, session_id: str) -> CheckpointStorage: ...
-    async def set_checkpoint_storage(self, session_id: str, storage: CheckpointStorage) -> None: ...
+    async def get_checkpoint_id(self, session_id: str) -> str | None: ...
+    async def set_checkpoint_id(self, session_id: str, checkpoint_id: str) -> None: ...
 ```
 
 `WorkflowState` accepts direct `Workflow` instances, workflow factories, and builder-shaped objects with
@@ -353,6 +375,8 @@ async def responses(body: dict = Body(...), x_api_key: str | None = Header(defau
     run["options"].pop("model", None)
 
     # load the session (or create a new one) - this is optional
+    # verify this caller owns session_id before loading it; API-key auth alone
+    # does not prove ownership of a caller-supplied resp_* or conv_* id
     session = await state.get_or_create_session(session_id or response_id)
     # call the agent
     target = await state.get_target()
@@ -383,7 +407,6 @@ from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 from agent_framework_hosting import AgentState  # pyright: ignore[reportAttributeAccessIssue]
 from agent_framework_hosting_responses import create_response_id, responses_from_run, responses_session_id, responses_to_run  # pyright: ignore[reportAttributeAccessIssue]
-from asgiref.sync import async_to_sync
 from django.http import HttpRequest, HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
 from django.views import View
 
@@ -397,7 +420,7 @@ state = AgentState(agent)
 
 
 class ResponsesView(View):
-    def post(self, request: HttpRequest) -> JsonResponse:
+    async def post(self, request: HttpRequest) -> JsonResponse:
         if request.headers.get("x-api-key") != os.environ["RESPONSES_API_KEY"]:
             return HttpResponseForbidden("bad api key")
 
@@ -410,13 +433,15 @@ class ResponsesView(View):
         session_id = responses_session_id(body)
         response_id = create_response_id()
         options = run["options"]
-        session = async_to_sync(state.get_or_create_session)(session_id or response_id)
-        target = async_to_sync(state.get_target)()
-        result = async_to_sync(target.run)(
+        # verify this caller owns session_id before loading it; API-key auth alone
+        # does not prove ownership of a caller-supplied resp_* or conv_* id
+        session = await state.get_or_create_session(session_id or response_id)
+        target = await state.get_target()
+        result = await target.run(
             run["messages"],
             session=session,
             options=options,
         )
-        async_to_sync(state.set_session)(response_id, session)
+        await state.set_session(response_id, session)
         return JsonResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
 ```
