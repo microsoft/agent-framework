@@ -206,6 +206,18 @@ class GitHubCopilotOptions(TypedDict, total=False):
     files beyond the default locations.
     """
 
+    skill_directories: list[str]
+    """Directories containing SKILL.md files to load into the Copilot CLI session.
+    These are loaded natively by the Copilot CLI process, letting applications point
+    the CLI at project-specific or team-shared skills beyond the default locations.
+    """
+
+    disabled_skills: list[str]
+    """Names of skills to disable for the session.
+    Lets applications opt out of specific skills that would otherwise be discovered
+    from ``skill_directories`` or the default locations.
+    """
+
     base_directory: str
     """Directory where the CLI stores session state, configuration, and other persistent data."""
 
@@ -346,6 +358,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         mcp_servers: dict[str, MCPServerConfig] | None = opts.pop("mcp_servers", None)
         provider: ProviderConfig | None = opts.pop("provider", None)
         instruction_directories: list[str] | None = opts.pop("instruction_directories", None)
+        skill_directories: list[str] | None = opts.pop("skill_directories", None)
+        disabled_skills: list[str] | None = opts.pop("disabled_skills", None)
         on_pre_tool_use: PreToolUseHandler | None = opts.pop("on_pre_tool_use", None)
         on_function_approval: FunctionApprovalCallback | None = opts.pop("on_function_approval", None)
         base_directory = opts.pop("base_directory", None)
@@ -386,6 +400,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self._mcp_servers = mcp_servers
         self._provider = provider
         self._instruction_directories = instruction_directories
+        self._skill_directories = skill_directories
+        self._disabled_skills = disabled_skills
         self._default_options = opts
         self._started = False
 
@@ -1043,6 +1059,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
         provider = opts.get("provider") or self._provider or None
         instruction_directories = opts.get("instruction_directories", self._instruction_directories)
+        skill_directories = opts.get("skill_directories", self._skill_directories)
+        disabled_skills = opts.get("disabled_skills", self._disabled_skills)
         all_tools = list(self._tools or []) + list(opts.get("tools") or [])
         tools = self._prepare_tools(all_tools) if all_tools else None
         hooks = self._build_session_hooks(all_tools, opts)
@@ -1056,6 +1074,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             mcp_servers=mcp_servers or None,
             provider=provider or None,
             instruction_directories=instruction_directories,
+            skill_directories=skill_directories,
+            disabled_skills=disabled_skills,
             hooks=hooks,
         )
 
@@ -1084,6 +1104,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
         provider = opts.get("provider") or self._provider or None
         instruction_directories = opts.get("instruction_directories", self._instruction_directories)
+        skill_directories = opts.get("skill_directories", self._skill_directories)
+        disabled_skills = opts.get("disabled_skills", self._disabled_skills)
         all_tools = list(self._tools or []) + list(opts.get("tools") or [])
         tools = self._prepare_tools(all_tools) if all_tools else None
         hooks = self._build_session_hooks(all_tools, opts)
@@ -1098,6 +1120,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             mcp_servers=mcp_servers or None,
             provider=provider or None,
             instruction_directories=instruction_directories,
+            skill_directories=skill_directories,
+            disabled_skills=disabled_skills,
             hooks=hooks,
         )
 
