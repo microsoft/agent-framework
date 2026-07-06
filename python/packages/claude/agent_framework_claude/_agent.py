@@ -92,10 +92,10 @@ def _parse_claude_usage_details(usage: dict[str, Any]) -> UsageDetails:
         details["input_token_count"] = input_tokens
     if output_tokens is not None:
         details["output_token_count"] = output_tokens
-    input_count = details.get("input_token_count") or 0
-    output_count = details.get("output_token_count") or 0
-    if input_count or output_count:
-        details["total_token_count"] = input_count + output_count
+    # Always set total when at least one component count is present, even when
+    # both are zero, so downstream code can rely on total = input + output.
+    if input_tokens is not None or output_tokens is not None:
+        details["total_token_count"] = (input_tokens or 0) + (output_tokens or 0)
     cache_creation: int | None = usage.get("cache_creation_input_tokens")
     if cache_creation:
         details["cache_creation_input_token_count"] = cache_creation
