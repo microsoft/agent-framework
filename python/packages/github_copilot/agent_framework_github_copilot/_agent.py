@@ -29,6 +29,7 @@ from agent_framework import (
     Message,
     ResponseStream,
     SessionContext,
+    UsageDetails,
     normalize_messages,
 )
 from agent_framework._settings import load_settings
@@ -129,6 +130,51 @@ def _deny_all_permissions(
 ) -> PermissionRequestResult:
     """Default permission handler that denies all requests."""
     return PermissionDecisionUserNotAvailable()
+
+
+def _parse_copilot_usage(data: Any) -> UsageDetails | None:
+    """Convert the data payload of an ``ASSISTANT_USAGE`` event to :class:`UsageDetails`.
+
+    The Copilot SDK emits an ``assistant.usage`` event after every model turn.
+    In SDK v1.0.2 the payload is a single ``Data`` object whose optional fields
+    include ``input_tokens``, ``output_tokens``, ``cache_read_tokens``, and
+    ``cache_write_tokens``.  Newer SDK releases use a dedicated
+    ``AssistantUsageData`` dataclass with the same attribute names, so this
+    helper accesses all fields via :func:`getattr` for forward compatibility.
+
+    Returns ``None`` when the payload carries no token counts at all so callers
+    can skip emitting an empty usage update.
+
+    Args:
+        data: The ``.data`` attribute of a ``SessionEvent`` whose type is
+            ``SessionEventType.ASSISTANT_USAGE``.
+
+    Returns:
+        A :class:`UsageDetails` dict if any token data is present, else ``None``.
+    """
+    input_tokens = getattr(data, "input_tokens", None)
+    output_tokens = getattr(data, "output_tokens", None)
+    if input_tokens is None and output_tokens is None:
+        return None
+    details = UsageDetails()
+    if input_tokens is not None:
+        details["input_token_count"] = int(input_tokens)
+    if output_tokens is not None:
+        details["output_token_count"] = int(output_tokens)
+    input_count = details.get("input_token_count") or 0
+    output_count = details.get("output_token_count") or 0
+    if input_count or output_count:
+        details["total_token_count"] = input_count + output_count
+    cache_read = getattr(data, "cache_read_tokens", None)
+    if cache_read is not None:
+        details["cache_read_input_token_count"] = int(cache_read)
+    cache_write = getattr(data, "cache_write_tokens", None)
+    if cache_write is not None:
+        details["cache_creation_input_token_count"] = int(cache_write)
+    reasoning = getattr(data, "reasoning_tokens", None)
+    if reasoning is not None:
+        details["reasoning_output_token_count"] = int(reasoning)
+    return details
 
 
 class GitHubCopilotSettings(TypedDict, total=False):
@@ -594,10 +640,25 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         if session_context.instructions:
             prompt = "\n".join(session_context.instructions) + "\n" + prompt
 
+        # Subscribe to events before send_and_wait so we can capture the
+        # ASSISTANT_USAGE event, which carries full input+output token counts.
+        # The handler coexists with send_and_wait's internal handler; both
+        # receive every event that the session emits.
+        usage_event_data: Any = None
+
+        def _collect_usage(event: SessionEvent) -> None:
+            nonlocal usage_event_data
+            if event.type == SessionEventType.ASSISTANT_USAGE:
+                usage_event_data = event.data
+
+        unsubscribe_usage = copilot_session.on(_collect_usage)
         try:
-            response_event = await copilot_session.send_and_wait(prompt, timeout=timeout)
-        except Exception as ex:
-            raise AgentException(f"GitHub Copilot request failed: {ex}") from ex
+            try:
+                response_event = await copilot_session.send_and_wait(prompt, timeout=timeout)
+            except Exception as ex:
+                raise AgentException(f"GitHub Copilot request failed: {ex}") from ex
+        finally:
+            unsubscribe_usage()
 
         response_messages: list[Message] = []
         response_id: str | None = None
@@ -619,7 +680,30 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 )
             response_id = message_id
 
-        response = AgentResponse(messages=response_messages, response_id=response_id)
+        # Build usage_details and finish_reason from the captured ASSISTANT_USAGE
+        # event.  Fall back to output_tokens on the ASSISTANT_MESSAGE data when no
+        # dedicated usage event arrived (older CLI versions).
+        response_usage: UsageDetails | None = None
+        response_finish_reason: str | None = None
+        response_model: str | None = None
+        if usage_event_data is not None:
+            response_usage = _parse_copilot_usage(usage_event_data)
+            response_finish_reason = getattr(usage_event_data, "reason", None) or getattr(
+                usage_event_data, "finish_reason", None
+            )
+            response_model = getattr(usage_event_data, "model", None)
+        elif response_event and response_event.type == SessionEventType.ASSISTANT_MESSAGE:
+            output_tokens = getattr(response_event.data, "output_tokens", None)
+            if output_tokens is not None:
+                response_usage = UsageDetails(output_token_count=int(output_tokens))
+
+        response = AgentResponse(
+            messages=response_messages,
+            response_id=response_id,
+            usage_details=response_usage,
+            finish_reason=response_finish_reason,
+            additional_properties={"model": response_model} if response_model else None,
+        )
         session_context._response = response  # type: ignore[assignment]
         await self._run_after_providers(session=session, context=session_context)
         return response
@@ -742,6 +826,23 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     raw_representation=event,
                 )
                 queue.put_nowait(update)
+            elif event.type == SessionEventType.ASSISTANT_USAGE:
+                # Capture per-turn token usage and emit it as a usage update so that
+                # AgentResponse.usage_details and AgentResponse.finish_reason are
+                # populated by the standard _process_update() aggregation path.
+                usage_data: Any = event.data
+                streamed_usage = _parse_copilot_usage(usage_data)
+                if streamed_usage:
+                    finish_reason: str | None = getattr(
+                        usage_data, "reason", None
+                    ) or getattr(usage_data, "finish_reason", None)
+                    usage_update = AgentResponseUpdate(
+                        role="assistant",
+                        contents=[Content.from_usage(usage_details=streamed_usage, raw_representation=event)],
+                        raw_representation=event,
+                        finish_reason=finish_reason,
+                    )
+                    queue.put_nowait(usage_update)
             elif event.type == SessionEventType.SESSION_IDLE:
                 queue.put_nowait(None)
             elif event.type == SessionEventType.SESSION_ERROR:

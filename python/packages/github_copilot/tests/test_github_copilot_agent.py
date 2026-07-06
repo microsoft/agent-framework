@@ -937,6 +937,255 @@ class TestGitHubCopilotAgentRunStreaming:
         assert responses[3].contents[0].type == "text"
 
 
+class TestGitHubCopilotAgentUsageMetadata:
+    """Test cases for usage/response-metadata propagation."""
+
+    async def test_run_propagates_usage_details_from_assistant_usage_event(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Non-streaming run captures usage from ASSISTANT_USAGE event."""
+        usage_event = SessionEvent(
+            data=Data(
+                input_tokens=120,
+                output_tokens=40,
+                model="claude-sonnet-4-5",
+                reason="stop",
+            ),
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.ASSISTANT_USAGE,
+        )
+
+        # on() is called once (for _collect_usage). Emit usage event immediately.
+        def mock_on(handler: Any) -> Any:
+            handler(usage_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        response = await agent.run("Hello")
+
+        assert response.usage_details is not None
+        assert response.usage_details["input_token_count"] == 120
+        assert response.usage_details["output_token_count"] == 40
+        assert response.usage_details["total_token_count"] == 160
+
+    async def test_run_propagates_finish_reason_from_assistant_usage_event(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Non-streaming run captures finish_reason from ASSISTANT_USAGE event."""
+        usage_event = SessionEvent(
+            data=Data(
+                input_tokens=10,
+                output_tokens=5,
+                reason="stop",
+            ),
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.ASSISTANT_USAGE,
+        )
+
+        def mock_on(handler: Any) -> Any:
+            handler(usage_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        response = await agent.run("Hello")
+
+        assert response.finish_reason == "stop"
+
+    async def test_run_fallback_to_output_tokens_when_no_usage_event(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Non-streaming run falls back to output_tokens in ASSISTANT_MESSAGE data."""
+        # Create an ASSISTANT_MESSAGE event with output_tokens
+        msg_data = Data(
+            content="Response",
+            message_id="msg-1",
+            output_tokens=25,
+        )
+        msg_event = SessionEvent(
+            data=msg_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.ASSISTANT_MESSAGE,
+        )
+        # on() is called but no usage event is emitted
+        mock_session.on = MagicMock(return_value=lambda: None)
+        mock_session.send_and_wait.return_value = msg_event
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        response = await agent.run("Hello")
+
+        assert response.usage_details is not None
+        assert response.usage_details["output_token_count"] == 25
+
+    async def test_run_no_usage_when_no_usage_event_and_no_output_tokens(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Non-streaming run sets no usage_details when no usage data is available."""
+        mock_session.on = MagicMock(return_value=lambda: None)
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        response = await agent.run("Hello")
+
+        # The assistant_message_event fixture uses Data with no output_tokens, so
+        # usage_details should be None.
+        assert response.usage_details is None
+
+    async def test_run_propagates_model_name_in_additional_properties(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Non-streaming run stores model name in additional_properties."""
+        usage_event = SessionEvent(
+            data=Data(
+                input_tokens=10,
+                output_tokens=5,
+                model="gpt-5",
+            ),
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.ASSISTANT_USAGE,
+        )
+
+        def mock_on(handler: Any) -> Any:
+            handler(usage_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        response = await agent.run("Hello")
+
+        assert response.additional_properties.get("model") == "gpt-5"
+
+    async def test_run_streaming_propagates_usage_details(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Streaming run yields a usage update from ASSISTANT_USAGE event."""
+        usage_event = SessionEvent(
+            data=Data(
+                input_tokens=80,
+                output_tokens=30,
+                cache_read_tokens=5,
+                reason="stop",
+            ),
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.ASSISTANT_USAGE,
+        )
+
+        events = [assistant_delta_event, usage_event, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        updates: list[AgentResponseUpdate] = []
+        async for update in agent.run("Hello", stream=True):
+            updates.append(update)
+
+        # There should be a text update and a usage update
+        usage_updates = [u for u in updates if any(c.type == "usage" for c in u.contents)]
+        assert len(usage_updates) == 1
+        usage_content = next(c for c in usage_updates[0].contents if c.type == "usage")
+        assert usage_content.usage_details is not None
+        assert usage_content.usage_details["input_token_count"] == 80
+        assert usage_content.usage_details["output_token_count"] == 30
+        assert usage_content.usage_details["total_token_count"] == 110
+        assert usage_content.usage_details.get("cache_read_input_token_count") == 5
+
+    async def test_run_streaming_propagates_finish_reason(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Streaming run propagates finish_reason from ASSISTANT_USAGE into the final response."""
+        usage_event = SessionEvent(
+            data=Data(
+                input_tokens=10,
+                output_tokens=5,
+                reason="stop",
+            ),
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.ASSISTANT_USAGE,
+        )
+
+        events = [assistant_delta_event, usage_event, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        response = await agent.run(  # type: ignore[misc]
+            "Hello",
+            stream=True,  # type: ignore[call-overload]
+        ).get_final_response()  # type: ignore[union-attr]
+
+        assert response.finish_reason == "stop"
+
+    async def test_run_streaming_no_usage_event_no_crash(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Streaming run without ASSISTANT_USAGE event doesn't crash and yields no usage update."""
+        events = [assistant_delta_event, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        updates: list[AgentResponseUpdate] = []
+        async for update in agent.run("Hello", stream=True):
+            updates.append(update)
+
+        usage_updates = [u for u in updates if any(c.type == "usage" for c in u.contents)]
+        assert len(usage_updates) == 0
+
+
 class TestGitHubCopilotAgentSessionManagement:
     """Test cases for session management."""
 
