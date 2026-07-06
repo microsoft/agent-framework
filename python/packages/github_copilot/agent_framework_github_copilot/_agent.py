@@ -691,7 +691,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         # Fall back to output_tokens on the ASSISTANT_MESSAGE data when no
         # dedicated usage event arrived (older CLI versions).
         response_usage: UsageDetails | None = None
-        response_finish_reason: str | None = None
+        response_finish_reason: FinishReason | None = None
         response_model: str | None = None
         if usage_events:
             for evt_data in usage_events:
