@@ -757,7 +757,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         session = session or self.create_session()
 
         # Ensure we're connected to the right session
-        await self._ensure_session(session.service_session_id)
+        await self._ensure_session(self._get_chat_conversation_id(session))
 
         if not self._client:
             raise RuntimeError("Claude SDK client not initialized.")

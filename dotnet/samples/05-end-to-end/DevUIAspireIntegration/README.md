@@ -7,6 +7,8 @@ The solution contains two agent services:
 - **WriterAgent** — a simple agent that writes short stories (≤ 300 words) about a given topic.
 - **EditorAgent** — an agent that edits stories for grammar and style, selects a title, and formats the result for publishing. It also demonstrates tool use via `AIFunctionFactory`.
 
+The WriterAgent is configured with HTTPS redirection so the Aspire DevUI integration can be tested against an agent service that exposes both HTTP and HTTPS endpoints.
+
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0)

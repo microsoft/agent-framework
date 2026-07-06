@@ -164,5 +164,62 @@ class TestDurableAIAgentWorkerLifecycle:
         assert len(agent_worker.registered_agent_names) == 2
 
 
+class TestDurableAIAgentWorkerWorkflow:
+    """Test workflow registration, including the agent-executor identity fix."""
+
+    def test_add_agent_with_entity_id_registers_under_override(
+        self, agent_worker: DurableAIAgentWorker, mock_agent: Mock
+    ) -> None:
+        """An explicit entity_id overrides the agent name as the entity identity."""
+        agent_worker.add_agent(mock_agent, entity_id="node-7")
+
+        assert "node-7" in agent_worker.registered_agent_names
+        assert "test_agent" not in agent_worker.registered_agent_names
+
+    def test_configure_workflow_registers_agent_entity_by_executor_id(
+        self, agent_worker: DurableAIAgentWorker, mock_grpc_worker: Mock
+    ) -> None:
+        """Workflow agent executors register entities keyed by executor id.
+
+        The orchestrator dispatches by executor id, so an
+        ``AgentExecutor(agent, id=...)`` whose id differs from the agent name must
+        still be reachable.
+        """
+        from agent_framework import AgentExecutor
+
+        agent = Mock()
+        agent.name = "Reviewer"
+        agent_executor = Mock(spec=AgentExecutor)
+        agent_executor.id = "custom-executor-id"
+        agent_executor.agent = agent
+
+        workflow = Mock()
+        workflow.executors = {"custom-executor-id": agent_executor}
+
+        agent_worker.configure_workflow(workflow)
+
+        assert "custom-executor-id" in agent_worker.registered_agent_names
+        assert "Reviewer" not in agent_worker.registered_agent_names
+        mock_grpc_worker.add_orchestrator.assert_called_once()
+
+    def test_configure_workflow_registers_non_agent_executor_as_activity(
+        self, agent_worker: DurableAIAgentWorker, mock_grpc_worker: Mock
+    ) -> None:
+        """Non-agent executors are registered as activities, not entities."""
+        from agent_framework import Executor
+
+        activity_executor = Mock(spec=Executor)
+        activity_executor.id = "router-node"
+
+        workflow = Mock()
+        workflow.executors = {"router-node": activity_executor}
+
+        agent_worker.configure_workflow(workflow)
+
+        assert agent_worker.registered_agent_names == []
+        mock_grpc_worker.add_activity.assert_called_once()
+        mock_grpc_worker.add_orchestrator.assert_called_once()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

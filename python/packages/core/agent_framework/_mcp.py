@@ -74,6 +74,11 @@ _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
 # Reserved key in an ``additional_tool_argument_names`` mapping that applies its
 # values to every tool on the server rather than a single named tool.
 _MCP_GLOBAL_EXTRA_ARGS_KEY = "*"
+_MCP_META_LABEL_PATTERN = r"[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+_MCP_META_KEY_PATTERN = re.compile(
+    rf"^(?:(?:{_MCP_META_LABEL_PATTERN})(?:\.{_MCP_META_LABEL_PATTERN})*/)?"
+    r"[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?$"
+)
 # Framework kwargs that flow through the function-invocation pipeline (via
 # ``FunctionInvocationContext.kwargs``) but must never be forwarded to an MCP
 # server: they are internal objects that the MCP SDK cannot serialize. They are
@@ -205,7 +210,42 @@ def _normalize_additional_tool_argument_names(
     return set(additional_tool_argument_names), {}
 
 
-def _inject_otel_into_mcp_meta(meta: dict[str, Any] | None = None) -> dict[str, Any] | None:
+def _mcp_config_candidate_names(*, local_name: str, normalized_name: str, remote_name: str) -> tuple[str, ...]:
+    """Return safe configuration names for MCP allow/approval matching."""
+    names = [remote_name]
+    if normalized_name == remote_name and local_name != remote_name:
+        names.append(local_name)
+    return tuple(names)
+
+
+def _validate_mcp_meta_key(key: str) -> None:
+    """Validate an MCP ``_meta`` key against the 2025-06-18 key-name format."""
+    if not _MCP_META_KEY_PATTERN.fullmatch(key):
+        raise ToolExecutionException(f"Invalid MCP _meta key name: {key!r}.")
+
+
+def _validate_mcp_meta(raw_meta: object | None) -> dict[str, Any] | None:
+    """Validate and copy MCP request metadata."""
+    if raw_meta is None:
+        return None
+    if not isinstance(raw_meta, dict):
+        raise ToolExecutionException("MCP tool metadata provided via _meta must be a dict.")
+
+    raw_meta_dict = cast(Mapping[object, Any], raw_meta)
+    meta: dict[str, Any] = {}
+    for key, value in raw_meta_dict.items():
+        if not isinstance(key, str):
+            raise ToolExecutionException("MCP tool metadata provided via _meta must use string keys.")
+        _validate_mcp_meta_key(key)
+        meta[key] = value
+    return meta
+
+
+def _inject_otel_into_mcp_meta(
+    meta: dict[str, Any] | None = None,
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any] | None:
     """Inject OpenTelemetry trace context into MCP request _meta via the global propagator(s)."""
     carrier: dict[str, str] = {}
     propagate.inject(carrier)
@@ -215,7 +255,8 @@ def _inject_otel_into_mcp_meta(meta: dict[str, Any] | None = None) -> dict[str, 
     if meta is None:
         meta = {}
     for key, value in carrier.items():
-        if key not in meta:
+        _validate_mcp_meta_key(key)
+        if overwrite or key not in meta:
             meta[key] = value
 
     return meta
@@ -381,7 +422,9 @@ class MCPTool:
             approval_mode: Whether approval is required to run tools.
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
-                A non-empty collection exposes only the tools whose names appear in it.
+                A non-empty collection exposes only the raw remote tools whose names appear in it. For
+                compatibility, the prefixed local function name is also accepted when the raw remote name already
+                matches its normalized form; normalized aliases do not authorize a different raw remote tool.
                 An empty collection (``[]``) exposes no tools — if you simply want to
                 disable tool execution, prefer ``load_tools=False`` instead. ``[]`` is
                 useful as a runtime guard or when you want to load tool metadata for
@@ -542,20 +585,37 @@ class MCPTool:
         self,
         mcp_type: types.CallToolResult,
     ) -> list[Content]:
-        """Parse an MCP CallToolResult into a list of Content items."""
+        """Parse an MCP CallToolResult into a list of Content items.
+
+        If the server attached a ``_meta`` payload to the tool result (e.g. for
+        Information Flow Control labels under the ``ifc`` key), a copy of that
+        payload is stamped onto each produced :class:`Content` instance under
+        ``additional_properties["_meta"]``.  Downstream layers (such as
+        :class:`agent_framework.security.SecureMCPToolProxy`) consume this key
+        to derive per-item security labels.
+        The sentinel is intentionally generic so any MCP server's ``_meta``
+        keys (current or future) can be interpreted by higher-level code.
+        """
         from mcp import types
+
+        raw_meta = mcp_type.meta
+        meta: dict[str, Any] | None = dict(raw_meta) if isinstance(raw_meta, Mapping) else None
+        # Stamp the server ``_meta`` payload directly via additional_properties on
+        # each newly constructed Content; empty when the server provided no meta.
+        additional_kwargs: dict[str, Any] = {"additional_properties": {"_meta": meta}} if meta else {}
 
         result: list[Content] = []
         for item in mcp_type.content:
             match item:
                 case types.TextContent():
-                    result.append(Content.from_text(item.text))
+                    result.append(Content.from_text(item.text, **additional_kwargs))
                 case types.ImageContent() | types.AudioContent():
                     decoded = base64.b64decode(item.data)
                     result.append(
                         Content.from_data(
                             data=decoded,
                             media_type=item.mimeType,
+                            **additional_kwargs,
                         )
                     )
                 case types.ResourceLink():
@@ -563,12 +623,13 @@ class MCPTool:
                         Content.from_uri(
                             uri=str(item.uri),
                             media_type=item.mimeType,
+                            **additional_kwargs,
                         )
                     )
                 case types.EmbeddedResource():
                     match item.resource:
                         case types.TextResourceContents():
-                            result.append(Content.from_text(item.resource.text))
+                            result.append(Content.from_text(item.resource.text, **additional_kwargs))
                         case types.BlobResourceContents():
                             blob = item.resource.blob
                             mime = item.resource.mimeType or "application/octet-stream"
@@ -578,16 +639,17 @@ class MCPTool:
                                 Content.from_uri(
                                     uri=blob,
                                     media_type=mime,
+                                    **additional_kwargs,
                                 )
                             )
                 case _:
-                    result.append(Content.from_text(str(item)))
+                    result.append(Content.from_text(str(item), **additional_kwargs))
 
         if mcp_type.structuredContent is not None:
             result.append(Content.from_text(json.dumps(mcp_type.structuredContent, default=str)))
 
         if not result:
-            result.append(Content.from_text("null"))
+            result.append(Content.from_text("null", **additional_kwargs))
         return result
 
     def _parse_content_from_mcp(
@@ -753,11 +815,14 @@ class MCPTool:
             additional_properties = func.additional_properties or {}
             normalized_name = additional_properties.get(_MCP_NORMALIZED_NAME_KEY)
             remote_name = additional_properties.get(_MCP_REMOTE_NAME_KEY)
-            if (
-                func.name in allowed_names
-                or (isinstance(normalized_name, str) and normalized_name in allowed_names)
-                or (isinstance(remote_name, str) and remote_name in allowed_names)
-            ):
+            if not isinstance(normalized_name, str) or not isinstance(remote_name, str):
+                continue
+            candidate_names = _mcp_config_candidate_names(
+                local_name=func.name,
+                normalized_name=normalized_name,
+                remote_name=remote_name,
+            )
+            if any(name in allowed_names for name in candidate_names):
                 filtered_functions.append(func)
         return filtered_functions
 
@@ -1381,7 +1446,13 @@ class MCPTool:
                     continue
 
                 input_model = _get_input_model_from_mcp_prompt(prompt)
-                approval_mode = self._determine_approval_mode(local_name, normalized_name, prompt.name)
+                approval_mode = self._determine_approval_mode(
+                    *_mcp_config_candidate_names(
+                        local_name=local_name,
+                        normalized_name=normalized_name,
+                        remote_name=prompt.name,
+                    )
+                )
                 func: FunctionTool = FunctionTool(
                     func=partial(self.get_prompt, prompt.name),
                     name=local_name,
@@ -1422,7 +1493,11 @@ class MCPTool:
             return
 
         # Track existing function names to prevent duplicates
-        existing_names = {func.name for func in self._functions}
+        existing_remote_by_local: dict[str, str] = {}
+        for func in self._functions:
+            remote_name = (func.additional_properties or {}).get(_MCP_REMOTE_NAME_KEY)
+            if isinstance(remote_name, str):
+                existing_remote_by_local[func.name] = remote_name
         tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
         tool_task_support_by_name: dict[str, str] = {}
         tool_param_names_by_name: dict[str, set[str]] = {}
@@ -1462,7 +1537,7 @@ class MCPTool:
 
             for tool in tool_list.tools:
                 if tool.meta is not None:
-                    tool_call_meta_by_name[tool.name] = dict(tool.meta)
+                    tool_call_meta_by_name[tool.name] = _validate_mcp_meta(tool.meta) or {}
 
                 task_support = getattr(getattr(tool, "execution", None), "taskSupport", None)
                 if task_support is not None:
@@ -1490,10 +1565,24 @@ class MCPTool:
                 local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
 
                 # Skip if already loaded
-                if local_name in existing_names:
+                if local_name in existing_remote_by_local:
+                    if existing_remote_by_local.get(local_name) != tool.name:
+                        raise ToolExecutionException(
+                            "MCP server advertised multiple tools that map to the same local function name: "
+                            f"{existing_remote_by_local[local_name]!r} and {tool.name!r} both map to "
+                            f"{local_name!r}."
+                        )
                     continue
 
-                approval_mode = self._determine_approval_mode(local_name, normalized_name, tool.name)
+                existing_remote_by_local[local_name] = tool.name
+
+                approval_mode = self._determine_approval_mode(
+                    *_mcp_config_candidate_names(
+                        local_name=local_name,
+                        normalized_name=normalized_name,
+                        remote_name=tool.name,
+                    )
+                )
 
                 async def _call_tool_with_runtime_kwargs(
                     ctx: FunctionInvocationContext,
@@ -1501,8 +1590,13 @@ class MCPTool:
                     _remote_tool_name: str = tool.name,
                     **kwargs: Any,
                 ) -> str | list[Content]:
+                    trusted_meta = ctx.kwargs.get("_meta")
                     call_kwargs = dict(ctx.kwargs)
                     call_kwargs.update(kwargs)
+                    if trusted_meta is not None:
+                        call_kwargs["_meta"] = trusted_meta
+                    else:
+                        call_kwargs.pop("_meta", None)
                     return await self.call_tool(_remote_tool_name, **call_kwargs)
 
                 # Create FunctionTools out of each tool
@@ -1518,7 +1612,6 @@ class MCPTool:
                     },
                 )
                 self._functions.append(func)
-                existing_names.add(local_name)
 
             # Check if there are more pages
             if not tool_list.nextCursor:
@@ -1636,8 +1729,8 @@ class MCPTool:
         Keyword Args:
             _meta: Optional ``dict[str, Any]`` of MCP request metadata. This reserved key is passed as the
                 ``meta`` parameter of the underlying ``session.call_tool`` call rather than as a tool argument.
-                User-supplied keys override metadata from ``tools/list``; OpenTelemetry propagation fills in
-                non-conflicting keys.
+                OpenTelemetry propagation overrides caller-supplied keys, and metadata from ``tools/list``
+                overrides both.
             kwargs: Remaining arguments to pass to the tool.
 
         Returns:
@@ -1746,17 +1839,7 @@ class MCPTool:
         self, tool_name: str, kwargs: dict[str, Any]
     ) -> tuple[dict[str, Any], dict[str, Any] | None]:
         """Filter kwargs down to the tool's arguments and build the merged MCP request metadata."""
-        raw_user_meta: object | None = kwargs.get("_meta")
-        user_meta: dict[str, Any] | None = None
-        if raw_user_meta is not None and not isinstance(raw_user_meta, dict):
-            raise ToolExecutionException("MCP tool metadata provided via _meta must be a dict.")
-        if isinstance(raw_user_meta, dict):
-            raw_user_meta_dict = cast(Mapping[object, object], raw_user_meta)
-            user_meta = {}
-            for key, value in raw_user_meta_dict.items():
-                if not isinstance(key, str):
-                    raise ToolExecutionException("MCP tool metadata provided via _meta must use string keys.")
-                user_meta[key] = value
+        user_meta = _validate_mcp_meta(kwargs.get("_meta"))
 
         # Allowlist: forward only the tool's declared parameters (from inputSchema.properties)
         # plus any user-configured extra argument names. Everything else - notably the
@@ -1783,12 +1866,12 @@ class MCPTool:
         }
 
         # Some MCP proxies require their tools/list metadata to be echoed on tools/call.
-        tool_meta = self._tool_call_meta_by_name.get(tool_name)
-        request_meta = dict(tool_meta) if tool_meta is not None else None
-        if user_meta is not None:
-            request_meta = {**(request_meta or {}), **user_meta}
-        meta = _inject_otel_into_mcp_meta(request_meta)
-        return filtered_kwargs, meta
+        request_meta = dict(user_meta) if user_meta is not None else None
+        request_meta = _inject_otel_into_mcp_meta(request_meta, overwrite=True)
+        tool_meta = _validate_mcp_meta(self._tool_call_meta_by_name.get(tool_name))
+        if tool_meta is not None:
+            request_meta = {**(request_meta or {}), **tool_meta}
+        return filtered_kwargs, request_meta
 
     async def call_tool_as_task(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call an MCP tool via the long-running task lifecycle (SEP-2663).
@@ -2898,7 +2981,7 @@ class MCPWebsocketTool(MCPTool):
             An async context manager for the WebSocket client transport.
         """
         try:
-            from mcp.client.websocket import websocket_client
+            from mcp.client.websocket import websocket_client  # pyright: ignore[reportDeprecated]
         except ModuleNotFoundError as ex:
             missing_name = ex.name or "mcp/websocket dependencies"
             if missing_name == "mcp" or missing_name.startswith("mcp."):
@@ -2917,4 +3000,4 @@ class MCPWebsocketTool(MCPTool):
         }
         if self._client_kwargs:
             args.update(self._client_kwargs)
-        return websocket_client(**args)
+        return websocket_client(**args)  # pyright: ignore[reportDeprecated]

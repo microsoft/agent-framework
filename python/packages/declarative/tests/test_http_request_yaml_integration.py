@@ -73,7 +73,7 @@ async def test_http_request_yaml_roundtrip() -> None:
     workflow = factory.create_workflow_from_yaml_path(FIXTURE_PATH)
     await workflow.run({})
 
-    decl: dict[str, Any] = workflow._state.get(DECLARATIVE_STATE_KEY) or {}
+    decl: dict[str, Any] = workflow._runner.state.get(DECLARATIVE_STATE_KEY) or {}
     local: dict[str, Any] = decl.get("Local") or {}
 
     assert local.get("RepoOwner") == "dotnet"

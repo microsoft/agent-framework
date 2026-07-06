@@ -2983,6 +2983,8 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._inner_stream_source: ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]] | None = None
         self._wrap_inner: bool = False
         self._map_update: Callable[[Any], UpdateT | Awaitable[UpdateT]] | None = None
+        self._flat_map_update: Callable[[Any], Iterable[UpdateT] | Awaitable[Iterable[UpdateT]]] | None = None
+        self._pending_mapped_updates: list[UpdateT] = []
         self._pull_context_manager_factories: list[Callable[[], contextlib.AbstractContextManager[Any]]] = []
 
     def map(
@@ -3027,6 +3029,23 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         stream._inner_stream_source = self
         stream._wrap_inner = True
         stream._map_update = transform
+        return stream
+
+    def flat_map(
+        self,
+        transform: Callable[[UpdateT], Iterable[OuterUpdateT] | Awaitable[Iterable[OuterUpdateT]]],
+        finalizer: Callable[[Sequence[OuterUpdateT]], OuterFinalT | Awaitable[OuterFinalT]],
+    ) -> ResponseStream[OuterUpdateT, OuterFinalT]:
+        """Create a new stream that transforms each update into zero or more updates.
+
+        Like :meth:`map`, the returned stream delegates iteration to this stream,
+        preserving single consumption and inner finalization/result hooks. Use this
+        when one upstream update naturally expands into multiple wire-protocol events.
+        """
+        stream: ResponseStream[OuterUpdateT, OuterFinalT] = ResponseStream(self, finalizer=finalizer)
+        stream._inner_stream_source = self
+        stream._wrap_inner = True
+        stream._flat_map_update = transform
         return stream
 
     def with_finalizer(
@@ -3101,35 +3120,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
     def __aiter__(self) -> ResponseStream[UpdateT, FinalT]:
         return self
 
-    async def __anext__(self) -> UpdateT:
-        try:
-            with contextlib.ExitStack() as stack:
-                for factory in self._pull_context_manager_factories:
-                    stack.enter_context(factory())
-                # Resolve the underlying stream inside the pull contexts so that any
-                # spans/contexts created during stream resolution (e.g. inner chat
-                # completion spans created on the first pull of a wrapped agent stream)
-                # inherit the active context (e.g. an outer agent invoke span).
-                if self._iterator is None:
-                    stream = await self._get_stream()
-                    self._iterator = stream.__aiter__()
-                update: UpdateT = await self._iterator.__anext__()
-        except StopAsyncIteration:
-            self._consumed = True
-            await self._run_cleanup_hooks()
-            await self.get_final_response()
-            raise
-        except Exception as exc:
-            self._stream_error = exc
-            try:
-                await self._run_cleanup_hooks()
-            finally:
-                self._stream_error = None
-            raise
-        if self._map_update is not None:
-            update = self._map_update(update)  # type: ignore[assignment]
-            if isawaitable(update):
-                update = await update
+    async def _record_update(self, update: UpdateT) -> UpdateT:
         self._updates.append(update)
         for hook in self._transform_hooks:
             hooked = hook(update)
@@ -3138,6 +3129,47 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             if hooked is not None:
                 update = cast(UpdateT, hooked)
         return update
+
+    async def __anext__(self) -> UpdateT:
+        while True:
+            if self._pending_mapped_updates:
+                return await self._record_update(self._pending_mapped_updates.pop(0))
+
+            try:
+                with contextlib.ExitStack() as stack:
+                    for factory in self._pull_context_manager_factories:
+                        stack.enter_context(factory())
+                    # Resolve the underlying stream inside the pull contexts so that any
+                    # spans/contexts created during stream resolution (e.g. inner chat
+                    # completion spans created on the first pull of a wrapped agent stream)
+                    # inherit the active context (e.g. an outer agent invoke span).
+                    if self._iterator is None:
+                        stream = await self._get_stream()
+                        self._iterator = stream.__aiter__()
+                    update: UpdateT = await self._iterator.__anext__()
+            except StopAsyncIteration:
+                self._consumed = True
+                await self._run_cleanup_hooks()
+                await self.get_final_response()
+                raise
+            except Exception as exc:
+                self._stream_error = exc
+                try:
+                    await self._run_cleanup_hooks()
+                finally:
+                    self._stream_error = None
+                raise
+            if self._flat_map_update is not None:
+                mapped_updates = self._flat_map_update(update)
+                if isawaitable(mapped_updates):
+                    mapped_updates = await mapped_updates
+                self._pending_mapped_updates.extend(mapped_updates)
+                continue
+            if self._map_update is not None:
+                update = self._map_update(update)  # type: ignore[assignment]
+                if isawaitable(update):
+                    update = await update
+            return await self._record_update(update)
 
     async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:
         """Resolve the underlying stream while activating any registered pull context managers.
