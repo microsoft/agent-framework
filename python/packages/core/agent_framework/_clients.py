@@ -825,10 +825,12 @@ class SupportsShellTool(Protocol):
             from agent_framework import Agent, SupportsShellTool
             from agent_framework_tools.shell import LocalShellTool
 
-            if isinstance(client, SupportsShellTool):
-                async with LocalShellTool() as shell:
-                    tool = client.get_shell_tool(func=shell.as_function())
-                    agent = Agent(client, tools=[tool])
+
+            async def build_agent(client):
+                if isinstance(client, SupportsShellTool):
+                    async with LocalShellTool() as shell:
+                        tool = client.get_shell_tool(func=shell.as_function())
+                        return Agent(client, tools=[tool])
     """
 
     @staticmethod
