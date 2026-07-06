@@ -83,7 +83,7 @@ async def test_add_endpoint_with_workflow_protocol():
 
     @executor(id="start")
     async def start(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
-        await ctx.yield_output("Workflow response")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        await ctx.yield_output("Workflow response")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
 
     app = FastAPI()
     workflow = WorkflowBuilder(start_executor=start).build()
