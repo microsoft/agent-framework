@@ -33,10 +33,10 @@ def _serialize_available_interrupts(available_interrupts: Sequence[Any] | None) 
         return None
     serialized: list[dict[str, Any]] = []
     for interrupt in available_interrupts:
-        if isinstance(interrupt, Mapping) and "reason" not in interrupt and "type" in interrupt:
+        if isinstance(interrupt, Mapping) and "reason" not in interrupt:
             interrupt = dict(interrupt)
-            interrupt_type = interrupt.pop("type")
-            if interrupt_type == "request_info":
+            interrupt_type = interrupt.pop("type", None)
+            if interrupt_type == "request_info" or interrupt_type is None:
                 interrupt["reason"] = "input_required"
             elif isinstance(interrupt_type, str):
                 interrupt["reason"] = interrupt_type
@@ -46,17 +46,64 @@ def _serialize_available_interrupts(available_interrupts: Sequence[Any] | None) 
     return serialized
 
 
+def _serialize_resume_entry(entry: Any) -> dict[str, Any]:
+    """Serialize one typed or legacy resume entry to canonical AG-UI JSON."""
+    model_dump = getattr(entry, "model_dump", None)
+    if callable(model_dump):
+        entry = model_dump(by_alias=True, exclude_none=True)
+
+    if not isinstance(entry, Mapping):
+        raise ValueError("Each resume entry must be an object.")
+
+    entry_dict = cast(Mapping[str, Any], entry)
+    interrupt_id = (
+        entry_dict.get("interruptId")
+        or entry_dict.get("interrupt_id")
+        or entry_dict.get("id")
+        or entry_dict.get("toolCallId")
+    )
+    if not interrupt_id:
+        raise ValueError("Each resume entry must include interruptId.")
+
+    status = entry_dict.get("status") or "resolved"
+    payload = (
+        entry_dict.get("payload")
+        if "payload" in entry_dict
+        else entry_dict.get("value")
+        if "value" in entry_dict
+        else entry_dict.get("response")
+        if "response" in entry_dict
+        else {
+            key: value
+            for key, value in entry_dict.items()
+            if key not in {"id", "interruptId", "interrupt_id", "toolCallId", "type", "status"}
+        }
+    )
+
+    serialized: dict[str, Any] = {"interruptId": str(interrupt_id), "status": str(status)}
+    if status != "cancelled" or payload:
+        serialized["payload"] = _json_safe_protocol_value(payload)
+    return cast(dict[str, Any], ResumeEntry.model_validate(serialized).model_dump(by_alias=True, exclude_none=True))
+
+
 def _serialize_resume(resume: Any) -> Any:  # noqa: ANN401
-    """Serialize typed or compatible resume inputs while preserving legacy shapes."""
+    """Serialize typed or compatible resume inputs to canonical AG-UI JSON."""
     if resume is None:
         return None
     if isinstance(resume, Sequence) and not isinstance(resume, (str, bytes, bytearray)):
-        return [
-            cast(dict[str, Any], ResumeEntry.model_validate(entry).model_dump(by_alias=True, exclude_none=True))
-            for entry in resume
-        ]
-    if isinstance(resume, Mapping) and ("interruptId" in resume or "interrupt_id" in resume):
-        return cast(dict[str, Any], ResumeEntry.model_validate(resume).model_dump(by_alias=True, exclude_none=True))
+        return [_serialize_resume_entry(entry) for entry in resume]
+    if isinstance(resume, Mapping):
+        resume_dict = cast(Mapping[str, Any], resume)
+        if isinstance(resume_dict.get("interrupts"), Sequence) and not isinstance(
+            resume_dict.get("interrupts"), (str, bytes, bytearray)
+        ):
+            return [_serialize_resume_entry(entry) for entry in cast(Sequence[Any], resume_dict["interrupts"])]
+        if isinstance(resume_dict.get("interrupt"), Sequence) and not isinstance(
+            resume_dict.get("interrupt"), (str, bytes, bytearray)
+        ):
+            return [_serialize_resume_entry(entry) for entry in cast(Sequence[Any], resume_dict["interrupt"])]
+        if any(key in resume_dict for key in ("interruptId", "interrupt_id", "id", "toolCallId")):
+            return [_serialize_resume_entry(resume_dict)]
     return _json_safe_protocol_value(resume)
 
 

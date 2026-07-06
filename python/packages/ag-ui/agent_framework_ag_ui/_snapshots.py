@@ -209,13 +209,22 @@ async def _clear_thread_snapshot_interrupt(
     snapshot_store: AGUIThreadSnapshotStore,
     scope: SnapshotScope,
     thread_id: AGUIThreadID,
+    interrupt_ids: set[str] | None = None,
 ) -> None:
-    """Clear a completed interruption from the latest replayable thread snapshot."""
+    """Clear completed interruption state from the latest replayable thread snapshot."""
     try:
         snapshot = await snapshot_store.get(scope=scope, thread_id=thread_id)
         if snapshot is None or snapshot.interrupt is None:
             return
-        snapshot.interrupt = None
+        if interrupt_ids is None:
+            snapshot.interrupt = None
+        else:
+            remaining_interrupts = [
+                interrupt
+                for interrupt in snapshot.interrupt
+                if str(interrupt.get("id") or interrupt.get("interruptId")) not in interrupt_ids
+            ]
+            snapshot.interrupt = remaining_interrupts or None
         await snapshot_store.save(scope=scope, thread_id=thread_id, snapshot=snapshot)
     except Exception:
         logger.exception(

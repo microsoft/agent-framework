@@ -91,9 +91,9 @@ class AGUIRequest(BaseModel):
         validation_alias=AliasChoices("availableInterrupts", "available_interrupts"),
         description="Canonical AG-UI interrupts that can be resumed by the server",
     )
-    resume: list[ResumeEntry] | None = Field(
+    resume: Any | None = Field(
         None,
-        description="Canonical AG-UI resume entries for continuing interrupted runs",
+        description="Resume payload for continuing interrupted runs",
     )
 
 

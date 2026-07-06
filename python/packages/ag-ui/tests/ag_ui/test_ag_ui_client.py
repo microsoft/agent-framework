@@ -446,6 +446,7 @@ class TestAGUIChatClient:
         available_interrupts = [{"id": "req_1", "type": "request_info"}]
         expected_available_interrupts = [{"id": "req_1", "reason": "input_required"}]
         resume_payload = {"interrupts": [{"id": "req_1", "value": "approved"}]}
+        expected_resume_payload = [{"interruptId": "req_1", "status": "resolved", "payload": "approved"}]
 
         mock_events = [
             {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
@@ -454,7 +455,7 @@ class TestAGUIChatClient:
 
         async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
             assert kwargs.get("available_interrupts") == expected_available_interrupts
-            assert kwargs.get("resume") == resume_payload
+            assert kwargs.get("resume") == expected_resume_payload
             for event in mock_events:
                 yield event
 

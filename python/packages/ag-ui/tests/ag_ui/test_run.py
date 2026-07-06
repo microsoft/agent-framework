@@ -24,10 +24,15 @@ from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ign
 
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import (
+    PendingApprovalEntry,
+    PendingApprovalKey,
     _build_safe_metadata,
+    _canonical_approval_resume_messages,
     _create_state_context_message,
     _inject_state_context,
+    _make_pending_approval_entry,
     _normalize_response_stream,
+    _pending_approval_key,
     _resume_to_tool_messages,
     _should_suppress_intermediate_snapshot,
     run_agent_stream,
@@ -659,6 +664,72 @@ def test_resume_to_tool_messages_from_interrupts_payload():
     assert messages[0]["toolCallId"] == "req_1"
     assert '"accepted": true' in messages[0]["content"]
     assert messages[1]["content"] == "plain value"
+
+
+def test_resume_to_tool_messages_skips_cancelled_entries():
+    """Cancelled generic resume entries must not become fabricated tool messages."""
+    resume = [
+        {"interruptId": "req_1", "status": "cancelled"},
+        {"interruptId": "req_2", "status": "resolved", "payload": "plain value"},
+    ]
+
+    messages = _resume_to_tool_messages(resume)
+
+    assert messages == [{"role": "tool", "toolCallId": "req_2", "content": "plain value"}]
+
+
+def test_canonical_approval_resume_does_not_mutate_arguments_until_batch_validates():
+    """Edited approval arguments are committed only after every resume entry validates."""
+    pending_entry = _make_pending_approval_entry(
+        "get_weather",
+        '{"city":"Seattle"}',
+        request_id="call_a",
+        interrupt_id="call_a",
+    )
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
+        _pending_approval_key("thread-weather", "call_a"): pending_entry,
+        _pending_approval_key("thread-weather", "call_b"): _make_pending_approval_entry(
+            "get_weather",
+            '{"city":"Portland"}',
+            request_id="call_b",
+            interrupt_id="call_b",
+        ),
+    }
+
+    messages, handled_ids, cancelled_ids, error = _canonical_approval_resume_messages(
+        [
+            {"interruptId": "call_a", "status": "resolved", "payload": {"accepted": True, "city": "Portland"}},
+            {"interruptId": "call_b", "status": "resolved", "payload": "not an object"},
+        ],
+        pending_approvals,
+        "thread-weather",
+    )
+
+    assert messages == []
+    assert handled_ids == {"call_a", "call_b"}
+    assert cancelled_ids == set()
+    assert error is not None
+    assert error.code == "APPROVAL_RESUME_INVALID"
+    assert pending_entry["arguments"] == '{"city":"Seattle"}'
+
+
+def test_pending_approval_registry_scans_exact_thread_keys_with_colons():
+    """A thread id that prefixes another thread id must not inherit its pending approval contract."""
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
+        _pending_approval_key("tenant:thread", "call_1"): _make_pending_approval_entry(
+            "get_weather",
+            '{"city":"Seattle"}',
+            request_id="call_1",
+            interrupt_id="call_1",
+        )
+    }
+
+    _, _, _, unrelated_error = _canonical_approval_resume_messages(None, pending_approvals, "tenant")
+    _, _, _, owning_error = _canonical_approval_resume_messages(None, pending_approvals, "tenant:thread")
+
+    assert unrelated_error is None
+    assert owning_error is not None
+    assert owning_error.code == "APPROVAL_RESUME_REQUIRED"
 
 
 def test_extract_resume_payload_prefers_top_level_resume():

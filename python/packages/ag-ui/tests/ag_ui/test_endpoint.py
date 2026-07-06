@@ -480,6 +480,94 @@ async def test_endpoint_agent_approval_unknown_resume_entry_emits_run_error():
     assert not [event for event in events if event.get("type") == "TOOL_CALL_RESULT"]
 
 
+async def test_endpoint_agent_approval_resume_with_lost_registry_emits_run_error():
+    """A stored approval interrupt cannot resume if the server-side validation registry was lost."""
+    executed_cities: list[str] = []
+
+    def get_weather(city: str) -> str:
+        executed_cities.append(city)
+        return f"Sunny in {city}"
+
+    weather_tool = FunctionTool(
+        name="get_weather",
+        description="Get the weather for a city",
+        func=get_weather,
+        approval_mode="always_require",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="call_get_weather",
+        function_call=Content.from_function_call(
+            call_id="call_get_weather",
+            name="get_weather",
+            arguments={"city": "Seattle"},
+        ),
+    )
+    agent = StubAgent(
+        updates=[
+            AgentResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_get_weather",
+                        name="get_weather",
+                        arguments={"city": "Seattle"},
+                    )
+                ],
+                role="assistant",
+            ),
+            AgentResponseUpdate(contents=[approval_request], role="assistant"),
+        ],
+        default_options={"tools": [weather_tool]},
+    )
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        wrapped_agent,
+        path="/approval-snapshots",
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+    )
+    client = TestClient(app)
+
+    pause_response = client.post(
+        "/approval-snapshots",
+        json={
+            "thread_id": "thread-weather",
+            "messages": [{"role": "user", "content": "What is the weather?"}],
+        },
+    )
+    assert pause_response.status_code == 200
+    pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
+    assert _run_finished_interrupts(pause_finished[-1])[0]["id"] == "call_get_weather"
+
+    wrapped_agent._pending_approvals.clear()
+
+    agent.updates = [AgentResponseUpdate(contents=[Content.from_text(text="Should not run")], role="assistant")]
+    response = client.post(
+        "/approval-snapshots",
+        json={
+            "runId": "run-lost-registry",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [
+                {
+                    "interruptId": "call_get_weather",
+                    "status": "resolved",
+                    "payload": {"accepted": True},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    run_errors = [event for event in events if event.get("type") == "RUN_ERROR"]
+    assert len(run_errors) == 1
+    assert run_errors[0]["code"] == "APPROVAL_RESUME_NOT_FOUND"
+    assert executed_cities == []
+    assert not [event for event in events if event.get("type") == "TOOL_CALL_RESULT"]
+
+
 async def test_endpoint_agent_approval_new_input_with_pending_interrupt_emits_run_error():
     """New non-resume input on an approval-interrupted thread must fail with RUN_ERROR."""
     client, agent, executed_cities = _build_weather_approval_endpoint()
@@ -596,6 +684,114 @@ async def test_endpoint_agent_approval_resume_omitting_pending_interrupt_emits_r
     assert executed == []
 
 
+async def test_endpoint_agent_approval_cancelled_resume_preserves_uncancelled_interrupt():
+    """Cancelling one approval clears only that interrupt and leaves others resumable."""
+    executed: list[str] = []
+
+    def record_city(city: str) -> str:
+        executed.append(city)
+        return f"Recorded {city}"
+
+    tool = FunctionTool(
+        name="record_city",
+        description="Record a city",
+        func=record_city,
+        approval_mode="always_require",
+    )
+    approval_requests = [
+        Content.from_function_approval_request(
+            id="call_seattle",
+            function_call=Content.from_function_call(
+                call_id="call_seattle",
+                name="record_city",
+                arguments={"city": "Seattle"},
+            ),
+        ),
+        Content.from_function_approval_request(
+            id="call_portland",
+            function_call=Content.from_function_call(
+                call_id="call_portland",
+                name="record_city",
+                arguments={"city": "Portland"},
+            ),
+        ),
+    ]
+    agent = StubAgent(
+        updates=[AgentResponseUpdate(contents=approval_requests, role="assistant")],
+        default_options={"tools": [tool]},
+    )
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        wrapped_agent,
+        path="/approval-snapshots",
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+    )
+    client = TestClient(app)
+    pause_response = client.post(
+        "/approval-snapshots",
+        json={
+            "runId": "run-pause",
+            "threadId": "thread-two-approvals",
+            "messages": [{"role": "user", "content": "Record two cities"}],
+        },
+    )
+    assert pause_response.status_code == 200
+    pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
+    assert {interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])} == {
+        "call_seattle",
+        "call_portland",
+    }
+
+    cancel_response = client.post(
+        "/approval-snapshots",
+        json={
+            "runId": "run-cancel-one",
+            "threadId": "thread-two-approvals",
+            "messages": [],
+            "resume": [
+                {"interruptId": "call_seattle", "status": "cancelled"},
+                {"interruptId": "call_portland", "status": "resolved", "payload": {"accepted": True}},
+            ],
+        },
+    )
+
+    assert cancel_response.status_code == 200
+    cancel_events = _decode_sse_events(cancel_response)
+    run_errors = [event for event in cancel_events if event.get("type") == "RUN_ERROR"]
+    assert len(run_errors) == 1
+    assert run_errors[0]["code"] == "APPROVAL_RESUME_CANCELLED"
+    assert executed == []
+    assert not any("call_seattle" in key for key in wrapped_agent._pending_approvals)
+    assert any("call_portland" in key for key in wrapped_agent._pending_approvals)
+
+    hydrate_response = client.post(
+        "/approval-snapshots",
+        json={"threadId": "thread-two-approvals", "messages": []},
+    )
+    assert hydrate_response.status_code == 200
+    hydrate_events = _decode_sse_events(hydrate_response)
+    assert [interrupt["id"] for interrupt in _run_finished_interrupts(hydrate_events[-1])] == ["call_portland"]
+
+    agent.updates = [AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")]
+    resume_response = client.post(
+        "/approval-snapshots",
+        json={
+            "runId": "run-resume-remaining",
+            "threadId": "thread-two-approvals",
+            "messages": [],
+            "resume": [{"interruptId": "call_portland", "status": "resolved", "payload": {"accepted": True}}],
+        },
+    )
+
+    assert resume_response.status_code == 200
+    assert executed == ["Portland"]
+    resume_events = _decode_sse_events(resume_response)
+    assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
+
+
 def _build_workflow_request_info_app() -> FastAPI:
     class FlightChoiceExecutor(Executor):
         def __init__(self) -> None:
@@ -674,7 +870,7 @@ async def test_endpoint_workflow_request_info_emits_canonical_interrupt_and_resu
 
 
 async def test_endpoint_workflow_request_info_cancelled_resume_emits_run_error():
-    """Cancelled workflow resumes fail explicitly instead of silently continuing."""
+    """Cancelled workflow resumes fail explicitly and do not wedge the next turn."""
     app = _build_workflow_request_info_app()
 
     with TestClient(app) as client:
@@ -704,6 +900,21 @@ async def test_endpoint_workflow_request_info_cancelled_resume_emits_run_error()
         assert len(run_errors) == 1
         assert run_errors[0]["code"] == "WORKFLOW_RESUME_CANCELLED"
         assert not [event for event in events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+
+        next_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-after-cancel",
+                "threadId": "thread-flights",
+                "messages": [{"role": "user", "content": "Book a different flight"}],
+            },
+        )
+
+        assert next_response.status_code == 200
+        next_events = _decode_sse_events(next_response)
+        assert not [event for event in next_events if event.get("type") == "RUN_ERROR"]
+        next_finished = [event for event in next_events if event.get("type") == "RUN_FINISHED"]
+        assert _run_finished_interrupts(next_finished[-1])[0]["id"] == "flight-choice"
 
 
 async def test_endpoint_workflow_request_info_new_input_with_pending_interrupt_emits_run_error():
@@ -2190,6 +2401,7 @@ async def test_agent_endpoint_resume_preserves_persisted_history(streaming_chat_
     )
     assert resume_response.status_code == 200
     assert call_count == 2
+    assert "TEXT_MESSAGE_CONTENT" in [event.get("type") for event in _decode_sse_events(resume_response)]
 
     hydrate_response = client.post("/snapshots", json={"thread_id": "agent-thread", "messages": []})
 
@@ -2202,8 +2414,94 @@ async def test_agent_endpoint_resume_preserves_persisted_history(streaming_chat_
     assert "Resumed reply" in contents
 
 
+async def test_agent_endpoint_approval_resume_seeds_provider_history_from_snapshot():
+    """Snapshot-backed approval resume sends stored assistant tool call history before synthesized tool results."""
+    executed_cities: list[str] = []
+
+    def get_weather(city: str) -> str:
+        executed_cities.append(city)
+        return f"Sunny in {city}"
+
+    weather_tool = FunctionTool(
+        name="get_weather",
+        description="Get the weather for a city",
+        func=get_weather,
+        approval_mode="always_require",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="call_get_weather",
+        function_call=Content.from_function_call(
+            call_id="call_get_weather",
+            name="get_weather",
+            arguments={"city": "Seattle"},
+        ),
+    )
+    agent = StubAgent(
+        updates=[
+            AgentResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_get_weather",
+                        name="get_weather",
+                        arguments={"city": "Seattle"},
+                    )
+                ],
+                role="assistant",
+            ),
+            AgentResponseUpdate(contents=[approval_request], role="assistant"),
+        ],
+        default_options={"tools": [weather_tool]},
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        AgentFrameworkAgent(agent=agent, require_confirmation=False),
+        path="/approval-snapshots",
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+    )
+    client = TestClient(app)
+
+    pause_response = client.post(
+        "/approval-snapshots",
+        json={
+            "thread_id": "agent-approval-thread",
+            "messages": [{"role": "user", "content": "What is the weather?"}],
+        },
+    )
+    assert pause_response.status_code == 200
+    pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
+    assert _run_finished_interrupts(pause_finished[-1])[0]["id"] == "call_get_weather"
+
+    agent.updates = [AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")]
+    resume_response = client.post(
+        "/approval-snapshots",
+        json={
+            "thread_id": "agent-approval-thread",
+            "messages": [],
+            "resume": [{"interruptId": "call_get_weather", "status": "resolved", "payload": {"accepted": True}}],
+        },
+    )
+
+    assert resume_response.status_code == 200
+    assert executed_cities == ["Seattle"]
+    received = [
+        (
+            message.role,
+            content.type,
+            getattr(content, "call_id", None),
+            getattr(content, "name", None),
+        )
+        for message in agent.messages_received
+        for content in message.contents
+    ]
+    assert ("user", "text", None, None) in received
+    assert ("assistant", "function_call", "call_get_weather", "get_weather") in received
+    assert ("tool", "function_result", "call_get_weather", None) in received
+
+
 async def test_agent_endpoint_cancelled_approval_resume_clears_persisted_interrupt():
-    """A cancelled approval resume completes the pause and clears the stored interrupt prompt."""
+    """Cancelling an approval resume cancels the whole approval set and clears the stored interrupt prompt."""
     executed_cities: list[str] = []
 
     def get_weather(city: str) -> str:
@@ -2230,9 +2528,10 @@ async def test_agent_endpoint_cancelled_approval_resume_clears_persisted_interru
     )
     app = FastAPI()
     store = InMemoryAGUIThreadSnapshotStore()
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     add_agent_framework_fastapi_endpoint(
         app,
-        AgentFrameworkAgent(agent=agent, require_confirmation=False),
+        wrapped_agent,
         path="/approval-snapshots",
         snapshot_store=store,
         snapshot_scope_resolver=lambda _request: "tenant-a",
@@ -2264,6 +2563,7 @@ async def test_agent_endpoint_cancelled_approval_resume_clears_persisted_interru
         "code"
     ] == "APPROVAL_RESUME_CANCELLED"
     assert executed_cities == []
+    assert not wrapped_agent._pending_approvals
 
     hydrate_response = client.post(
         "/approval-snapshots",
@@ -2398,7 +2698,7 @@ async def test_workflow_resume_preserves_persisted_history(monkeypatch):
 
 
 async def test_workflow_endpoint_cancelled_resume_clears_persisted_interrupt():
-    """A cancelled workflow resume completes the pause and clears the stored interrupt prompt."""
+    """A cancelled workflow resume consumes the pending request and clears the stored interrupt prompt."""
     app = FastAPI()
     call_count = 0
 

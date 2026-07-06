@@ -131,6 +131,7 @@ async def test_post_run_with_state_tools_and_interrupts(mock_http_client):
     available_interrupts = [{"id": "req_1", "type": "request_info"}]
     expected_available_interrupts = [{"id": "req_1", "reason": "input_required"}]
     resume = {"interrupts": [{"id": "req_1", "value": "approved"}]}
+    expected_resume = [{"interruptId": "req_1", "status": "resolved", "payload": "approved"}]
 
     async for _ in service.post_run(
         thread_id="thread_123",
@@ -149,7 +150,7 @@ async def test_post_run_with_state_tools_and_interrupts(mock_http_client):
     assert request_data["state"] == state
     assert request_data["tools"] == tools
     assert request_data["availableInterrupts"] == expected_available_interrupts
-    assert request_data["resume"] == resume
+    assert request_data["resume"] == expected_resume
 
 
 async def test_post_run_serializes_typed_interrupts_and_resume_with_protocol_aliases(mock_http_client):
@@ -198,6 +199,69 @@ async def test_post_run_serializes_typed_interrupts_and_resume_with_protocol_ali
     assert request_data["resume"] == [
         {"interruptId": "approval_1", "status": "resolved", "payload": {"approved": True}}
     ]
+
+
+async def test_post_run_serializes_legacy_single_resume_mapping_as_canonical_list(mock_http_client):
+    """Legacy single-entry resume mappings are sent as canonical ResumeEntry arrays."""
+
+    async def mock_aiter_lines():
+        return
+        yield  # Make it an async generator
+
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.aiter_lines = mock_aiter_lines
+
+    mock_stream_context = AsyncMock()
+    mock_stream_context.__aenter__.return_value = mock_response
+    mock_stream_context.__aexit__.return_value = None
+    mock_http_client.stream.return_value = mock_stream_context
+
+    service = AGUIHttpService("http://localhost:8888/", http_client=mock_http_client)
+
+    async for _ in service.post_run(
+        thread_id="thread_123",
+        run_id="run_456",
+        messages=[],
+        resume={"id": "approval_1", "value": {"approved": True}},
+    ):
+        pass
+
+    request_data = mock_http_client.stream.call_args.kwargs["json"]
+    assert request_data["resume"] == [
+        {"interruptId": "approval_1", "status": "resolved", "payload": {"approved": True}}
+    ]
+
+
+async def test_post_run_serializes_legacy_interrupt_without_type(mock_http_client):
+    """Legacy interrupt metadata without reason/type does not crash client serialization."""
+
+    async def mock_aiter_lines():
+        return
+        yield  # Make it an async generator
+
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.aiter_lines = mock_aiter_lines
+
+    mock_stream_context = AsyncMock()
+    mock_stream_context.__aenter__.return_value = mock_response
+    mock_stream_context.__aexit__.return_value = None
+    mock_http_client.stream.return_value = mock_stream_context
+
+    service = AGUIHttpService("http://localhost:8888/", http_client=mock_http_client)
+
+    async for _ in service.post_run(
+        thread_id="thread_123",
+        run_id="run_456",
+        messages=[],
+        available_interrupts=[{"id": "req_1", "value": {"prompt": "Choose"}}],
+    ):
+        pass
+
+    request_data = mock_http_client.stream.call_args.kwargs["json"]
+    assert request_data["availableInterrupts"][0]["id"] == "req_1"
+    assert request_data["availableInterrupts"][0]["reason"] == "input_required"
 
 
 async def test_post_run_http_error(mock_http_client):

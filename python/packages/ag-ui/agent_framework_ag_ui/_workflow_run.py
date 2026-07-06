@@ -265,6 +265,21 @@ def _resume_error_for_pending_workflow_requests(
     return None
 
 
+def _consume_cancelled_workflow_requests(workflow: Workflow, resume_entries: list[dict[str, Any]]) -> None:
+    """Remove cancelled workflow request_info events from the runner context."""
+    cancelled_ids = {str(entry["interrupt_id"]) for entry in resume_entries if entry.get("status") == "cancelled"}
+    if not cancelled_ids:
+        return
+
+    runner_context = getattr(workflow, "_runner_context", None)
+    pending_events = getattr(runner_context, "_pending_request_info_events", None)
+    if not isinstance(pending_events, dict):
+        return
+
+    for interrupt_id in cancelled_ids:
+        pending_events.pop(interrupt_id, None)
+
+
 def _coerce_json_value(value: Any) -> Any:
     """Parse JSON strings when possible; otherwise return the original value."""
     if not isinstance(value, str):
@@ -747,6 +762,8 @@ async def run_workflow_stream(
             return
         resume_error = _resume_error_for_pending_workflow_requests(resume_entries)
         if resume_error is not None:
+            if getattr(resume_error, "code", None) == "WORKFLOW_RESUME_CANCELLED":
+                _consume_cancelled_workflow_requests(workflow, resume_entries)
             yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
             yield resume_error
             return

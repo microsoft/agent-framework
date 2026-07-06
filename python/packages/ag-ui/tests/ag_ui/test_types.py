@@ -264,7 +264,7 @@ class TestAGUIRequest:
         assert "availableInterrupts" not in dumped
 
     def test_agui_request_resume_accepts_canonical_entries(self) -> None:
-        """resume should deserialize AG-UI ResumeEntry arrays."""
+        """resume should preserve AG-UI resume arrays at the HTTP trust boundary."""
         request = AGUIRequest.model_validate(
             {
                 "messages": [{"role": "user", "content": "Hello"}],
@@ -273,6 +273,17 @@ class TestAGUIRequest:
         )
 
         assert request.resume is not None
-        assert request.resume[0].interrupt_id == "req_1"
-        assert request.resume[0].status == "resolved"
-        assert request.resume[0].payload == {"approved": True}
+        assert request.resume[0]["interruptId"] == "req_1"
+        assert request.resume[0]["status"] == "resolved"
+        assert request.resume[0]["payload"] == {"approved": True}
+
+    def test_agui_request_resume_accepts_legacy_object_shapes(self) -> None:
+        """resume stays permissive so endpoint validation does not reject supported legacy containers."""
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "resume": {"interrupts": [{"id": "req_1", "value": {"approved": True}}]},
+            }
+        )
+
+        assert request.resume == {"interrupts": [{"id": "req_1", "value": {"approved": True}}]}
