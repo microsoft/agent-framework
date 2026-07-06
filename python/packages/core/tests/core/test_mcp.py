@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+import warnings
 from contextlib import _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
 from typing import Any, cast
@@ -27,6 +28,7 @@ from agent_framework import (
     MCPWebsocketTool,
     Message,
 )
+from agent_framework._feature_stage import ExperimentalWarning
 from agent_framework._mcp import (
     MCPTool,
     _build_prefixed_mcp_name,
@@ -1709,24 +1711,27 @@ async def test_mcp_tool_allowed_tools(allowed_tools, expected_count, expected_na
 
 
 def test_mcp_transport_subclasses_accept_progressive_disclosure_options() -> None:
-    stdio = MCPStdioTool(
-        name="stdio",
-        command="python",
-        use_progressive_disclosure=True,
-        always_load=["search"],
-    )
-    http = MCPStreamableHTTPTool(
-        name="http",
-        url="https://example.com/mcp",
-        use_progressive_disclosure=True,
-        always_load=["search"],
-    )
-    websocket = MCPWebsocketTool(
-        name="ws",
-        url="wss://example.com/mcp",
-        use_progressive_disclosure=True,
-        always_load=["search"],
-    )
+    with pytest.warns(ExperimentalWarning, match="PROGRESSIVE_TOOLS"):
+        stdio = MCPStdioTool(
+            name="stdio",
+            command="python",
+            use_progressive_disclosure=True,
+            always_load=["search"],
+        )
+    with pytest.warns(ExperimentalWarning, match="PROGRESSIVE_TOOLS"):
+        http = MCPStreamableHTTPTool(
+            name="http",
+            url="https://example.com/mcp",
+            use_progressive_disclosure=True,
+            always_load=["search"],
+        )
+    with pytest.warns(ExperimentalWarning, match="PROGRESSIVE_TOOLS"):
+        websocket = MCPWebsocketTool(
+            name="ws",
+            url="wss://example.com/mcp",
+            use_progressive_disclosure=True,
+            always_load=["search"],
+        )
 
     assert stdio.use_progressive_disclosure is True
     assert http.use_progressive_disclosure is True
@@ -1743,6 +1748,18 @@ def test_mcp_progressive_disclosure_requires_loading_tools() -> None:
             load_tools=False,
             use_progressive_disclosure=True,
         )
+
+
+def test_mcp_progressive_disclosure_warns_on_construction() -> None:
+    with pytest.warns(ExperimentalWarning, match="PROGRESSIVE_TOOLS"):
+        MCPTool(name="test_server", use_progressive_disclosure=True)  # type: ignore[abstract]
+
+
+def test_mcp_tool_base_constructor_preserves_positional_tool_name_prefix() -> None:
+    tool = MCPTool("test_server", "description", None, None, "prefix")  # type: ignore[abstract]
+
+    assert tool.tool_name_prefix == "prefix"
+    assert tool.use_progressive_disclosure is False
 
 
 def _progressive_tool_list_page(*, tools: list[types.Tool] | None = None) -> types.ListToolsResult:
@@ -1788,14 +1805,15 @@ async def _load_progressive_test_server(
     approval_mode: Any = None,
     tools: list[types.Tool] | None = None,
 ) -> MCPTool:
-    server = MCPTool(  # type: ignore[abstract]
-        name="test_server",
-        allowed_tools=allowed_tools,
-        always_load=always_load,
-        tool_name_prefix=tool_name_prefix,
-        approval_mode=approval_mode,
-        use_progressive_disclosure=True,
-    )
+    with pytest.warns(ExperimentalWarning, match="PROGRESSIVE_TOOLS"):
+        server = MCPTool(  # type: ignore[abstract]
+            name="test_server",
+            allowed_tools=allowed_tools,
+            always_load=always_load,
+            tool_name_prefix=tool_name_prefix,
+            approval_mode=approval_mode,
+            use_progressive_disclosure=True,
+        )
     server.session = AsyncMock()
     server.session.list_tools = AsyncMock(return_value=_progressive_tool_list_page(tools=tools))
     server.session.call_tool = AsyncMock(
@@ -1808,7 +1826,7 @@ async def _load_progressive_test_server(
 async def test_mcp_progressive_disclosure_exposes_loaders_and_always_loaded_tools() -> None:
     server = await _load_progressive_test_server(always_load=["tool_one", "missing_tool"])
 
-    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "tool_one"]
+    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "unload_tool", "tool_one"]
 
 
 async def test_mcp_progressive_disclosure_filters_always_loaded_loader_name_collisions() -> None:
@@ -1828,7 +1846,7 @@ async def test_mcp_progressive_disclosure_filters_always_loaded_loader_name_coll
         ],
     )
 
-    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "tool_one"]
+    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "unload_tool", "tool_one"]
 
 
 async def test_mcp_progressive_disclosure_loader_names_honor_tool_name_prefix() -> None:
@@ -1837,6 +1855,7 @@ async def test_mcp_progressive_disclosure_loader_names_honor_tool_name_prefix() 
     assert [func.name for func in server.functions] == [
         "github_list_mcp_tools",
         "github_load_tool",
+        "github_unload_tool",
         "github_tool_one",
     ]
 
@@ -1887,7 +1906,7 @@ async def test_mcp_progressive_list_mcp_tools_treats_empty_allowed_tools_as_no_t
     result = await list_tool.invoke(arguments={}, context=context, skip_parsing=True)
 
     assert result == []
-    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool"]
+    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "unload_tool"]
 
 
 async def test_mcp_progressive_load_tool_adds_hidden_tool_to_live_tools() -> None:
@@ -1906,6 +1925,7 @@ async def test_mcp_progressive_load_tool_adds_hidden_tool_to_live_tools() -> Non
     assert [tool.name for tool in context.tools] == [  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         "list_mcp_tools",
         "load_tool",
+        "unload_tool",
         "tool_two",
     ]
 
@@ -1913,6 +1933,12 @@ async def test_mcp_progressive_load_tool_adds_hidden_tool_to_live_tools() -> Non
     list_result = await list_tool.invoke(arguments={}, context=context, skip_parsing=True)
 
     assert next(item for item in list_result if item["name"] == "tool_two")["loaded"] is True
+    assert [func.name for func in server.functions] == [
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+        "tool_two",
+    ]
 
     result = await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
 
@@ -1920,8 +1946,92 @@ async def test_mcp_progressive_load_tool_adds_hidden_tool_to_live_tools() -> Non
     assert [tool.name for tool in context.tools] == [  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         "list_mcp_tools",
         "load_tool",
+        "unload_tool",
         "tool_two",
     ]
+
+
+async def test_mcp_progressive_unload_tool_removes_dynamically_loaded_tool() -> None:
+    server = await _load_progressive_test_server()
+    load_tool = server.functions[1]
+    unload_tool = server.functions[2]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "tool_two"},
+        tools=list(server.functions),
+    )
+    await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+    unload_context = FunctionInvocationContext(
+        function=unload_tool,
+        arguments={"tool": "tool_two"},
+        tools=context.tools,
+    )
+
+    result = await unload_tool.invoke(arguments={"tool": "tool_two"}, context=unload_context)
+
+    assert result[0].text == "Unloaded MCP tool 'tool_two'. It will be removed on the next model iteration."
+    assert unload_context.tools is not None
+    assert [tool.name for tool in unload_context.tools] == [  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+    ]
+    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "unload_tool"]
+
+
+async def test_mcp_progressive_unload_tool_rejects_always_loaded_tool() -> None:
+    server = await _load_progressive_test_server(always_load=["tool_one"])
+    unload_tool = server.functions[2]
+    context = FunctionInvocationContext(
+        function=unload_tool,
+        arguments={"tool": "tool_one"},
+        tools=list(server.functions),
+    )
+
+    result = await unload_tool.invoke(arguments={"tool": "tool_one"}, context=context)
+
+    assert result[0].text == "MCP tool 'tool_one' is configured in always_load and cannot be unloaded."
+    assert [tool.name for tool in context.tools or []] == [
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+        "tool_one",
+    ]
+
+
+async def test_mcp_progressive_unload_tool_reports_tool_not_loaded() -> None:
+    server = await _load_progressive_test_server()
+    unload_tool = server.functions[2]
+    context = FunctionInvocationContext(
+        function=unload_tool,
+        arguments={"tool": "tool_two"},
+        tools=list(server.functions),
+    )
+
+    result = await unload_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+
+    assert result[0].text == "MCP tool 'tool_two' is not currently loaded."
+
+
+async def test_mcp_progressive_load_and_unload_suppress_experimental_context_warnings() -> None:
+    server = await _load_progressive_test_server()
+    load_tool = server.functions[1]
+    unload_tool = server.functions[2]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "tool_two"},
+        tools=list(server.functions),
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ExperimentalWarning)
+        await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+        unload_context = FunctionInvocationContext(
+            function=unload_tool,
+            arguments={"tool": "tool_two"},
+            tools=context.tools,
+        )
+        await unload_tool.invoke(arguments={"tool": "tool_two"}, context=unload_context)
 
 
 async def test_mcp_progressive_load_tool_rejects_filtered_tool() -> None:
@@ -1933,8 +2043,9 @@ async def test_mcp_progressive_load_tool_rejects_filtered_tool() -> None:
         tools=list(server.functions),
     )
 
-    with pytest.raises(ToolExecutionException, match="not available"):
-        await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+    result = await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+
+    assert result[0].text == "MCP tool 'tool_two' is not available. Available tools: tool_one."
 
 
 async def test_mcp_progressive_load_tool_rejects_missing_live_tool_list() -> None:
@@ -1966,15 +2077,17 @@ async def test_mcp_progressive_load_tool_rejects_loader_name_collision() -> None
         tools=list(server.functions),
     )
 
-    with pytest.raises(ToolExecutionException, match="Set tool_name_prefix"):
-        await load_tool.invoke(arguments={"tool": "load_tool"}, context=context)
+    result = await load_tool.invoke(arguments={"tool": "load_tool"}, context=context)
+
+    assert "Set tool_name_prefix" in result[0].text
 
 
 async def test_mcp_progressive_resolve_rejects_ambiguous_tool_name() -> None:
     def _tool() -> None:
         return None
 
-    server = MCPTool(name="test_server", use_progressive_disclosure=True)  # type: ignore[abstract]
+    with pytest.warns(ExperimentalWarning, match="PROGRESSIVE_TOOLS"):
+        server = MCPTool(name="test_server", use_progressive_disclosure=True)  # type: ignore[abstract]
     server._functions = [
         FunctionTool(
             func=_tool,
@@ -1990,6 +2103,17 @@ async def test_mcp_progressive_resolve_rejects_ambiguous_tool_name() -> None:
 
     with pytest.raises(ToolExecutionException, match="ambiguous"):
         server._resolve_progressive_function("shared")
+
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "shared"},
+        tools=list(server.functions),
+    )
+
+    result = await load_tool.invoke(arguments={"tool": "shared"}, context=context)
+
+    assert result[0].text == "MCP tool name 'shared' is ambiguous."
 
 
 async def test_mcp_progressive_loaded_tool_preserves_remote_approval_mode() -> None:
@@ -2022,12 +2146,13 @@ async def test_mcp_progressive_loaded_http_tool_preserves_runtime_kwargs_for_hea
         provider_received.append(dict(kwargs))
         return {"X-Some-Token": kwargs.get("some_token", "")}
 
-    server = MCPStreamableHTTPTool(
-        name="test",
-        url="http://example.com/mcp",
-        header_provider=provider,
-        use_progressive_disclosure=True,
-    )
+    with pytest.warns(ExperimentalWarning, match="PROGRESSIVE_TOOLS"):
+        server = MCPStreamableHTTPTool(
+            name="test",
+            url="http://example.com/mcp",
+            header_provider=provider,
+            use_progressive_disclosure=True,
+        )
     server.session = AsyncMock()
     server.session.list_tools = AsyncMock(
         return_value=types.ListToolsResult(

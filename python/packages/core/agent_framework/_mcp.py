@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import sys
+import warnings
 from abc import abstractmethod
 from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
@@ -22,7 +23,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 from opentelemetry import propagate
 from opentelemetry import trace as otel_trace
 
-from ._feature_stage import ExperimentalFeature, experimental
+from ._feature_stage import ExperimentalFeature, ExperimentalWarning, experimental
 from ._tools import FunctionTool
 from ._types import (
     ChatOptions,
@@ -73,6 +74,7 @@ _MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
 _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
 _MCP_PROGRESSIVE_LIST_TOOL_NAME = "list_mcp_tools"
 _MCP_PROGRESSIVE_LOAD_TOOL_NAME = "load_tool"
+_MCP_PROGRESSIVE_UNLOAD_TOOL_NAME = "unload_tool"
 # Reserved key in an ``additional_tool_argument_names`` mapping that applies its
 # values to every tool on the server rather than a single named tool.
 _MCP_GLOBAL_EXTRA_ARGS_KEY = "*"
@@ -397,8 +399,6 @@ class MCPTool:
         description: str | None = None,
         approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
-        use_progressive_disclosure: bool = False,
-        always_load: Collection[str] | None = None,
         tool_name_prefix: str | None = None,
         load_tools: bool = True,
         parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
@@ -413,6 +413,8 @@ class MCPTool:
         additional_properties: dict[str, Any] | None = None,
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
+        use_progressive_disclosure: bool = False,
+        always_load: Collection[str] | None = None,
     ) -> None:
         """Initialize the MCP Tool base.
 
@@ -433,11 +435,6 @@ class MCPTool:
                 disable tool execution, prefer ``load_tools=False`` instead. ``[]`` is
                 useful as a runtime guard or when you want to load tool metadata for
                 inspection without exposing the tools for invocation.
-            use_progressive_disclosure: When ``True``, expose discovery and loader tools plus
-                ``always_load`` tools initially, and let the model load other allowed MCP tools on demand.
-            always_load: MCP tool names to keep visible from the start when progressive disclosure
-                is enabled. Names use the same safe matching rules as ``allowed_tools``; unmatched
-                entries are ignored.
             tool_name_prefix: Optional prefix to prepend to exposed MCP function names.
             load_tools: Whether to load tools from the MCP server.
             parse_tool_results: An optional callable with signature
@@ -478,9 +475,21 @@ class MCPTool:
                 in addition to each tool's declared parameters. A ``Sequence[str]`` applies to
                 every tool; a ``Mapping[str, Sequence[str]]`` is keyed by remote tool name with
                 ``"*"`` as a global key. See the transport subclasses for full details.
+            use_progressive_disclosure: When ``True``, expose discovery and loader tools plus
+                ``always_load`` tools initially, and let the model load and unload other allowed MCP tools on demand.
+            always_load: MCP tool names to keep visible from the start when progressive disclosure
+                is enabled. Names use the same safe matching rules as ``allowed_tools``; unmatched
+                entries are ignored.
         """
         if use_progressive_disclosure and not load_tools:
             raise ValueError("use_progressive_disclosure=True requires load_tools=True.")
+        if use_progressive_disclosure:
+            warnings.warn(
+                "[PROGRESSIVE_TOOLS] MCP progressive disclosure is experimental and may change or be removed "
+                "in future versions without notice.",
+                ExperimentalWarning,
+                stacklevel=2,
+            )
         self.name = name
         self.description = description or ""
         self.approval_mode = approval_mode
@@ -513,6 +522,7 @@ class MCPTool:
         self.always_load = always_load
         self._always_load_names = set(always_load or ())
         self._progressive_loader_functions: list[FunctionTool] | None = None
+        self._progressive_loaded_tool_names: set[str] = set()
         self._tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
         self._tool_task_support_by_name: dict[str, str] = {}
         self._tool_param_names_by_name: dict[str, set[str]] = {}
@@ -859,7 +869,10 @@ class MCPTool:
         initial_functions.extend(
             func
             for func in self._filtered_functions()
-            if self._function_matches_names(func, self._always_load_names)
+            if (
+                self._function_matches_names(func, self._always_load_names)
+                or func.name in self._progressive_loaded_tool_names
+            )
             and not self._function_collides_with_progressive_loader(func)
         )
         return initial_functions
@@ -869,6 +882,7 @@ class MCPTool:
         return {
             _build_prefixed_mcp_name(_MCP_PROGRESSIVE_LIST_TOOL_NAME, self.tool_name_prefix),
             _build_prefixed_mcp_name(_MCP_PROGRESSIVE_LOAD_TOOL_NAME, self.tool_name_prefix),
+            _build_prefixed_mcp_name(_MCP_PROGRESSIVE_UNLOAD_TOOL_NAME, self.tool_name_prefix),
         }
 
     def _function_collides_with_progressive_loader(self, func: FunctionTool) -> bool:
@@ -882,6 +896,7 @@ class MCPTool:
 
         list_tool_name = _build_prefixed_mcp_name(_MCP_PROGRESSIVE_LIST_TOOL_NAME, self.tool_name_prefix)
         load_tool_name = _build_prefixed_mcp_name(_MCP_PROGRESSIVE_LOAD_TOOL_NAME, self.tool_name_prefix)
+        unload_tool_name = _build_prefixed_mcp_name(_MCP_PROGRESSIVE_UNLOAD_TOOL_NAME, self.tool_name_prefix)
         self._progressive_loader_functions = [
             FunctionTool(
                 func=self._list_progressive_mcp_tools,
@@ -901,6 +916,22 @@ class MCPTool:
                         "tool": {
                             "type": "string",
                             "description": "The MCP tool name to load.",
+                        },
+                    },
+                    "required": ["tool"],
+                },
+            ),
+            FunctionTool(
+                func=self._unload_progressive_mcp_tool,
+                name=unload_tool_name,
+                description="Unload an MCP tool from this server when it is no longer relevant.",
+                approval_mode="never_require",
+                input_model={
+                    "type": "object",
+                    "properties": {
+                        "tool": {
+                            "type": "string",
+                            "description": "The MCP tool name to unload.",
                         },
                     },
                     "required": ["tool"],
@@ -935,6 +966,8 @@ class MCPTool:
         """Return whether a progressive MCP function is already present in the live tool list."""
         if self._function_matches_names(func, self._always_load_names):
             return True
+        if func.name in self._progressive_loaded_tool_names:
+            return True
         if ctx is None or ctx.tools is None:
             return False
         return any(tool_item is func for tool_item in ctx.tools)
@@ -962,20 +995,58 @@ class MCPTool:
         """Load an allowed MCP tool into the live function-calling tool list."""
         if ctx.tools is None:
             raise ToolExecutionException("load_tool can only be used inside an agent function-calling run.")
-        func = self._resolve_progressive_function(tool)
+        try:
+            func = self._resolve_progressive_function(tool)
+        except ToolExecutionException as ex:
+            return str(ex)
         if self._function_collides_with_progressive_loader(func):
             loader_names = ", ".join(sorted(self._progressive_loader_names()))
-            raise ToolExecutionException(
+            return (
                 f"MCP tool '{func.name}' conflicts with progressive disclosure loader tool name(s): "
                 f"{loader_names}. Set tool_name_prefix or exclude the colliding MCP tool."
             )
         if any(tool_item is func for tool_item in ctx.tools):
+            self._progressive_loaded_tool_names.add(func.name)
             return f"MCP tool '{func.name}' is already available."
         try:
-            ctx.add_tools(func)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", ExperimentalWarning)
+                ctx.add_tools(func)
         except ValueError as ex:
             raise ToolExecutionException(str(ex), inner_exception=ex) from ex
+        self._progressive_loaded_tool_names.add(func.name)
         return f"Loaded MCP tool '{func.name}'. It is available on the next model iteration."
+
+    async def _unload_progressive_mcp_tool(self, ctx: FunctionInvocationContext, tool: str) -> str:
+        """Unload a progressively loaded MCP tool from the live function-calling tool list."""
+        if ctx.tools is None:
+            raise ToolExecutionException("unload_tool can only be used inside an agent function-calling run.")
+        if tool in self._progressive_loader_names():
+            return f"MCP loader tool '{tool}' cannot be unloaded."
+        try:
+            func = self._resolve_progressive_function(tool)
+        except ToolExecutionException as ex:
+            return str(ex)
+        if self._function_collides_with_progressive_loader(func):
+            loader_names = ", ".join(sorted(self._progressive_loader_names()))
+            return (
+                f"MCP tool '{func.name}' conflicts with progressive disclosure loader tool name(s): "
+                f"{loader_names}. Set tool_name_prefix or exclude the colliding MCP tool."
+            )
+        if self._function_matches_names(func, self._always_load_names):
+            return f"MCP tool '{func.name}' is configured in always_load and cannot be unloaded."
+        if func.name not in self._progressive_loaded_tool_names and not any(
+            tool_item is func for tool_item in ctx.tools
+        ):
+            return f"MCP tool '{func.name}' is not currently loaded."
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", ExperimentalWarning)
+                ctx.remove_tools(func.name)
+        except RuntimeError as ex:
+            raise ToolExecutionException(str(ex), inner_exception=ex) from ex
+        self._progressive_loaded_tool_names.discard(func.name)
+        return f"Unloaded MCP tool '{func.name}'. It will be removed on the next model iteration."
 
     async def _ensure_lifecycle_owner(self) -> None:
         async with self._lifecycle_lock:
@@ -2641,7 +2712,7 @@ class MCPStdioTool(MCPTool):
                 useful as a runtime guard or when you want to load tool metadata for
                 inspection without exposing the tools for invocation.
             use_progressive_disclosure: When ``True``, expose discovery and loader tools plus
-                ``always_load`` tools initially, and let the model load other allowed MCP tools on demand.
+                ``always_load`` tools initially, and let the model load and unload other allowed MCP tools on demand.
             always_load: MCP tool names to keep visible from the start when progressive disclosure
                 is enabled. Names use the same safe matching rules as ``allowed_tools``; unmatched
                 entries are ignored.
@@ -2831,7 +2902,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 useful as a runtime guard or when you want to load tool metadata for
                 inspection without exposing the tools for invocation.
             use_progressive_disclosure: When ``True``, expose discovery and loader tools plus
-                ``always_load`` tools initially, and let the model load other allowed MCP tools on demand.
+                ``always_load`` tools initially, and let the model load and unload other allowed MCP tools on demand.
             always_load: MCP tool names to keep visible from the start when progressive disclosure
                 is enabled. Names use the same safe matching rules as ``allowed_tools``; unmatched
                 entries are ignored.
@@ -3075,7 +3146,7 @@ class MCPWebsocketTool(MCPTool):
                 useful as a runtime guard or when you want to load tool metadata for
                 inspection without exposing the tools for invocation.
             use_progressive_disclosure: When ``True``, expose discovery and loader tools plus
-                ``always_load`` tools initially, and let the model load other allowed MCP tools on demand.
+                ``always_load`` tools initially, and let the model load and unload other allowed MCP tools on demand.
             always_load: MCP tool names to keep visible from the start when progressive disclosure
                 is enabled. Names use the same safe matching rules as ``allowed_tools``; unmatched
                 entries are ignored.

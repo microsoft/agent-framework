@@ -14,7 +14,7 @@ The Model Context Protocol (MCP) is an open standard for connecting AI agents to
 | **API Key Authentication** | [`mcp_api_key_auth.py`](mcp_api_key_auth.py) | Demonstrates API key authentication with MCP servers using `header_provider`, runtime invocation kwargs, and a command-line API key argument |
 | **GitHub Integration with PAT** | [`mcp_github_pat.py`](mcp_github_pat.py) | Demonstrates connecting to GitHub's MCP server using Personal Access Token (PAT) authentication |
 | **Long-Running Task** | [`mcp_long_running_task.py`](mcp_long_running_task.py) | Demonstrates transparent SEP-2663 long-running task handling for MCP tools that advertise `taskSupport=required`. Self-spawns a stdio MCP child server |
-| **Progressive Disclosure** | [`mcp_progressive_disclosure.py`](mcp_progressive_disclosure.py) | Demonstrates `use_progressive_disclosure`, `always_load`, `allowed_tools`, and prefixed `list_mcp_tools` / `load_tool` names. Self-spawns a stdio MCP child server |
+| **Progressive Disclosure** | [`mcp_progressive_disclosure.py`](mcp_progressive_disclosure.py) | Demonstrates `use_progressive_disclosure`, `always_load`, `allowed_tools`, and prefixed `list_mcp_tools` / `load_tool` / `unload_tool` names. Self-spawns a stdio MCP child server |
 | **Sampling Approval** | [`mcp_sampling_approval.py`](mcp_sampling_approval.py) | Demonstrates gating server-initiated `sampling/createMessage` requests with a `sampling_approval_callback`, plus the `sampling_max_tokens` and `sampling_max_requests` guardrails. MCP sampling is denied by default |
 
 ## Prerequisites

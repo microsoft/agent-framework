@@ -18,7 +18,8 @@ The sample starts a tiny local MCP stdio server in a child process. The server
 advertises three tools:
 
 1. ``get_server_status`` — always visible to the model.
-2. ``search_docs`` — allowed, but hidden until the model calls ``docs_load_tool``.
+2. ``search_docs`` — allowed, but hidden until the model calls ``docs_load_tool`` and removable with
+   ``docs_unload_tool`` when it is no longer useful.
 3. ``internal_admin_report`` — not listed in ``allowed_tools``, so the model never
    sees it in ``docs_list_mcp_tools`` and cannot load it.
 
@@ -29,11 +30,11 @@ The ``MCPStdioTool`` is configured with:
 3. ``allowed_tools=[...]`` to define the only remote tools the model may discover
    or load.
 4. ``tool_name_prefix="docs"`` so multiple MCP servers can expose their own
-   ``docs_list_mcp_tools`` / ``docs_load_tool`` names without collisions.
+   ``docs_list_mcp_tools`` / ``docs_load_tool`` / ``docs_unload_tool`` names without collisions.
 
 Sample output:
 User: Explain how progressive MCP tool disclosure works. First inspect the MCP
-tools you can load, then load the docs search tool, then use it.
+tools you can load, then load the docs search tool, use it, and unload it.
 Agent: Progressive disclosure starts with a small set of tools. I listed the
 available MCP tools, loaded docs_search_docs, and used it to find that hidden
 MCP tools become available on the next function-calling iteration.
@@ -88,8 +89,8 @@ async def _run_server() -> None:
             query = str(arguments.get("query", "")).strip() or "progressive disclosure"
             text = (
                 f"Search results for '{query}': In progressive MCP disclosure, the agent starts with "
-                "list/load tools and selected always-loaded tools. Calling load_tool adds an allowed "
-                "remote MCP tool to the live tool list for the next model iteration."
+                "list/load/unload tools and selected always-loaded tools. Calling load_tool adds an allowed "
+                "remote MCP tool to the live tool list for the next model iteration, and unload_tool removes it."
             )
         elif name == "internal_admin_report":
             text = "This tool should not be discoverable because it is excluded by allowed_tools."
@@ -104,7 +105,8 @@ async def _run_server() -> None:
 async def _run_client() -> None:
     """Run an agent that progressively discovers and loads MCP tools."""
     # 1. Create the MCP tool. Only get_server_status is visible at first; search_docs
-    #    is discoverable through docs_list_mcp_tools and loadable through docs_load_tool.
+    #    is discoverable through docs_list_mcp_tools, loadable through docs_load_tool,
+    #    and unloadable through docs_unload_tool.
     mcp_tool = MCPStdioTool(
         name="DocsMCP",
         description="Demo MCP server with progressively loaded documentation tools.",
@@ -124,15 +126,15 @@ async def _run_client() -> None:
             "You are a helpful assistant. To answer documentation questions, first call "
             "docs_list_mcp_tools to see which MCP tools are available. If you need a "
             "hidden tool, call docs_load_tool with that tool's remote name, then call "
-            "the newly available prefixed tool on the next iteration. Do not invent "
-            "tools that are not listed."
+            "the newly available prefixed tool on the next iteration. When the hidden "
+            "tool is no longer needed, call docs_unload_tool. Do not invent tools that are not listed."
         ),
         tools=mcp_tool,
     ) as agent:
         # 3. Ask a question that requires loading a hidden MCP tool.
         prompt = (
             "Explain how progressive MCP tool disclosure works. First inspect the MCP "
-            "tools you can load, then load the docs search tool, then use it."
+            "tools you can load, then load the docs search tool, use it, and unload it."
         )
         print(f"User: {prompt}")
         response = await agent.run(prompt)
