@@ -25,6 +25,7 @@ from agent_framework import (
     BaseAgent,
     Content,
     ContextProvider,
+    FinishReason,
     HistoryProvider,
     Message,
     ResponseStream,
@@ -698,7 +699,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 if per_turn:
                     response_usage = add_usage_details(response_usage, per_turn)
             last_evt = usage_events[-1]
-            response_finish_reason = getattr(last_evt, "reason", None) or getattr(last_evt, "finish_reason", None)
+            _raw_reason = getattr(last_evt, "reason", None) or getattr(last_evt, "finish_reason", None)
+            response_finish_reason = FinishReason(_raw_reason) if _raw_reason else None
             response_model = getattr(last_evt, "model", None)
         elif response_event and response_event.type == SessionEventType.ASSISTANT_MESSAGE:
             output_tokens = getattr(response_event.data, "output_tokens", None)
@@ -843,9 +845,10 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 # (e.g. cache-only or reasoning-only turns).
                 usage_data: Any = event.data
                 streamed_usage = _parse_copilot_usage(usage_data)
-                stream_finish_reason: str | None = getattr(usage_data, "reason", None) or getattr(
+                _raw_stream_reason = getattr(usage_data, "reason", None) or getattr(
                     usage_data, "finish_reason", None
                 )
+                stream_finish_reason = FinishReason(_raw_stream_reason) if _raw_stream_reason else None
                 if streamed_usage or stream_finish_reason:
                     usage_contents = (
                         [Content.from_usage(usage_details=streamed_usage, raw_representation=event)]
