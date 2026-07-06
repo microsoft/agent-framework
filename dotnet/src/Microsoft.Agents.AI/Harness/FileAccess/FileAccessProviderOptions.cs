@@ -30,4 +30,38 @@ public sealed class FileAccessProviderOptions
     /// <c>file_access_replace</c>, and <c>file_access_replace_lines</c>) are hidden.
     /// </value>
     public bool DisableWriteTools { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether approval is disabled for the read-only file access tools
+    /// (<see cref="FileAccessProvider.ReadFileToolName"/>, <see cref="FileAccessProvider.LsToolName"/>,
+    /// and <see cref="FileAccessProvider.GrepToolName"/>).
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="false"/> (the default), these tools require approval before invocation.
+    /// When <see langword="true"/>, they can be invoked without approval.
+    /// If any other tool in the same response still requires approval, set
+    /// <see cref="ChatClientAgentOptions.EnableNonApprovalRequiredFunctionBypassing"/>
+    /// to <see langword="true"/> so these tools are not surfaced as approval requests.
+    /// When approval is required, auto-approval rules (e.g. <see cref="FileAccessProvider.ReadOnlyToolsAutoApprovalRule"/>
+    /// or <see cref="FileAccessProvider.AllToolsAutoApprovalRule"/>) can be used to automatically approve calls.
+    /// </remarks>
+    public bool DisableReadOnlyToolApproval { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether approval is disabled for the tools that modify the file store
+    /// (<see cref="FileAccessProvider.WriteToolName"/>, <see cref="FileAccessProvider.DeleteFileToolName"/>,
+    /// <see cref="FileAccessProvider.ReplaceToolName"/>, and <see cref="FileAccessProvider.ReplaceLinesToolName"/>).
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="false"/> (the default), these tools require approval before invocation.
+    /// When <see langword="true"/>, they can be invoked without approval.
+    /// If any other tool in the same response still requires approval, set
+    /// <see cref="ChatClientAgentOptions.EnableNonApprovalRequiredFunctionBypassing"/>
+    /// to <see langword="true"/> so these tools are not surfaced as approval requests.
+    /// When approval is required, the <see cref="FileAccessProvider.AllToolsAutoApprovalRule"/> can be used
+    /// to automatically approve calls.
+    /// This setting has no effect when <see cref="DisableWriteTools"/> is <see langword="true"/>, since the
+    /// tools that modify the store are not exposed in that case.
+    /// </remarks>
+    public bool DisableWriteToolApproval { get; set; }
 }
