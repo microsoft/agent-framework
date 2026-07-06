@@ -7,6 +7,7 @@ These samples demonstrate how to use context providers to enrich agent conversat
 | File / Folder | Description |
 |---------------|-------------|
 | [`simple_context_provider.py`](simple_context_provider.py) | Implement a custom context provider by extending `ContextProvider` to extract and inject structured user information across turns. |
+| [`agentsandbox_codeact/`](agentsandbox_codeact/) | Run LLM-emitted Python via `AgentSandboxCodeActProvider` inside a Kubernetes Pod (kubernetes-sigs/agent-sandbox), with filesystem + `pip install` state persisting across `execute_code` calls. Uses a local Ollama model. See its own [README](agentsandbox_codeact/README.md). |
 | [`azure_ai_foundry_memory.py`](azure_ai_foundry_memory.py) | Use `FoundryMemoryProvider` to add semantic memory — automatically retrieves, searches, and stores memories via Azure AI Foundry. |
 | [`file_access_data_processing/`](file_access_data_processing/) | Use `FileAccessProvider` with `FileSystemAgentFileStore` to give an agent read/write/search access to a folder of CSV data files. See its own [README](file_access_data_processing/README.md). |
 | [`azure_ai_search/`](azure_ai_search/) | Retrieval Augmented Generation (RAG) with Azure AI Search in semantic and agentic modes. See its own [README](azure_ai_search/README.md). |
