@@ -134,6 +134,9 @@ def _assemble_context_providers(
     file_memory_store: AgentFileStore | None,
     disable_file_access: bool,
     file_access_store: AgentFileStore | None,
+    file_access_disable_write_tools: bool,
+    file_access_disable_readonly_tool_approval: bool,
+    file_access_disable_write_tool_approval: bool,
     skills_provider: SkillsProvider | None,
     skills_paths: str | Path | Sequence[str | Path] | None,
     background_agents: Sequence[SupportsAgentRun] | None,
@@ -167,7 +170,14 @@ def _assemble_context_providers(
     # Shared file access (on by default). Default store is rooted at ``{cwd}/working``.
     if not disable_file_access:
         access_store = file_access_store or FileSystemAgentFileStore(Path.cwd() / "working")
-        providers.append(FileAccessProvider(access_store))
+        providers.append(
+            FileAccessProvider(
+                access_store,
+                disable_write_tools=file_access_disable_write_tools,
+                disable_readonly_tool_approval=file_access_disable_readonly_tool_approval,
+                disable_write_tool_approval=file_access_disable_write_tool_approval,
+            )
+        )
 
     # Skills are opt-in: only added when skills_provider or skills_paths is provided.
     if skills_provider:
@@ -262,6 +272,9 @@ def create_harness_agent(
     file_memory_store: AgentFileStore | None = None,
     disable_file_access: bool = False,
     file_access_store: AgentFileStore | None = None,
+    file_access_disable_write_tools: bool = False,
+    file_access_disable_readonly_tool_approval: bool = False,
+    file_access_disable_write_tool_approval: bool = False,
     skills_provider: SkillsProvider | None = None,
     skills_paths: str | Path | Sequence[str | Path] | None = None,
     background_agents: Sequence[SupportsAgentRun] | None = None,
@@ -374,6 +387,18 @@ def create_harness_agent(
         file_access_store: Custom AgentFileStore backing the FileAccessProvider. When None
             (and disable_file_access is False), a FileSystemAgentFileStore rooted at
             ``{cwd}/working`` is created. Ignored when disable_file_access is True.
+        file_access_disable_write_tools: When True, the FileAccessProvider advertises only its
+            read-only tools (read, ls, grep); the write tools (write, delete, replace,
+            replace_lines) are hidden. When False (default), all tools are advertised. Ignored
+            when disable_file_access is True.
+        file_access_disable_readonly_tool_approval: When True, the FileAccessProvider's read-only
+            tools (read, ls, grep) are registered with ``approval_mode="never_require"`` so they
+            run without host approval. When False (default), they require approval. Ignored when
+            disable_file_access is True.
+        file_access_disable_write_tool_approval: When True, the FileAccessProvider's write tools
+            (write, delete, replace, replace_lines) are registered with
+            ``approval_mode="never_require"`` so they run without host approval. When False
+            (default), they require approval. Ignored when disable_file_access is True.
         skills_provider: Custom SkillsProvider instance for code-defined skills.
             Can be combined with ``skills_paths`` to aggregate file and code-based skills.
         skills_paths: Paths for file-based skill discovery (looks for SKILL.md files).
@@ -481,6 +506,9 @@ def create_harness_agent(
         file_memory_store=file_memory_store,
         disable_file_access=disable_file_access,
         file_access_store=file_access_store,
+        file_access_disable_write_tools=file_access_disable_write_tools,
+        file_access_disable_readonly_tool_approval=file_access_disable_readonly_tool_approval,
+        file_access_disable_write_tool_approval=file_access_disable_write_tool_approval,
         skills_provider=skills_provider,
         skills_paths=skills_paths,
         background_agents=background_agents,

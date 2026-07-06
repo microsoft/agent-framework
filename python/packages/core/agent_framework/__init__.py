@@ -99,6 +99,7 @@ from ._harness._file_access import (
     FileAccessProvider,
     FileSearchMatch,
     FileSearchResult,
+    FileStoreEntry,
     FileSystemAgentFileStore,
     InMemoryAgentFileStore,
 )
@@ -168,19 +169,20 @@ from ._middleware import (
     chat_middleware,
     function_middleware,
 )
-
 from ._sessions import (
     AgentSession,
     ContextProvider,
     FileHistoryProvider,
     HistoryProvider,
     InMemoryHistoryProvider,
+    ServiceSessionId,
     SessionContext,
     register_state_type,
 )
 from ._settings import SecretString, load_settings
 from ._skills import (
     AggregatingSkillsSource,
+    CachingSkillsSource,
     ClassSkill,
     DeduplicatingSkillsSource,
     DelegatingSkillsSource,
@@ -199,6 +201,7 @@ from ._skills import (
     SkillFrontmatter,
     SkillResource,
     SkillScript,
+    SkillScriptArgumentParser,
     SkillScriptRunner,
     SkillsProvider,
     SkillsSource,
@@ -396,6 +399,7 @@ __all__ = [
     "BaseAgent",
     "BaseChatClient",
     "BaseEmbeddingClient",
+    "CachingSkillsSource",
     "Case",
     "CharacterEstimatorTokenizer",
     "ChatAndFunctionMiddlewareTypes",
@@ -448,6 +452,7 @@ __all__ = [
     "FileSkill",
     "FileSkillScript",
     "FileSkillsSource",
+    "FileStoreEntry",
     "FileSystemAgentFileStore",
     "FilteringSkillsSource",
     "FinalT",
@@ -506,12 +511,14 @@ __all__ = [
     "SamplingApprovalCallback",
     "SecretString",
     "SelectiveToolCallCompactionStrategy",
+    "ServiceSessionId",
     "SessionContext",
     "SingleEdgeGroup",
     "Skill",
     "SkillFrontmatter",
     "SkillResource",
     "SkillScript",
+    "SkillScriptArgumentParser",
     "SkillScriptRunner",
     "SkillsProvider",
     "SkillsSource",

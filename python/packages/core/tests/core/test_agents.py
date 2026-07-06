@@ -30,6 +30,7 @@ from agent_framework import (
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
+    ServiceSessionId,
     SessionContext,
     SlidingWindowStrategy,
     SupportsAgentRun,
@@ -1132,7 +1133,7 @@ class MockContextProvider(ContextProvider):
         self.before_run_called = False
         self.after_run_called = False
         self.new_messages: list[Message] = []
-        self.last_service_session_id: str | None = None
+        self.last_service_session_id: str | ServiceSessionId | None = None
 
     async def before_run(self, *, agent: Any, session: Any, context: Any, state: Any) -> None:
         self.before_run_called = True
@@ -2316,6 +2317,35 @@ async def test_agent_get_session_with_service_session_id(
     assert session.service_session_id == "test-thread-123"
 
 
+@pytest.mark.asyncio
+async def test_agent_get_session_with_structured_service_session_id(
+    chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool
+):
+    """Test that get_session accepts structured service_session_id."""
+    agent = Agent(client=chat_client_base, tools=[tool_tool])
+    structured_service_session_id = {"context_id": "ctx-123", "task_id": "task-456", "task_state": "working"}
+
+    session = agent.get_session(service_session_id=structured_service_session_id)
+
+    assert session is not None
+    assert session.service_session_id == structured_service_session_id
+
+
+@pytest.mark.asyncio
+async def test_agent_run_rejects_structured_service_session_id_for_generic_chat_clients(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Structured service_session_id must fail before generic chat client calls."""
+    agent = Agent(client=chat_client_base)
+    session = agent.get_session(service_session_id={"context_id": "ctx-123"})
+
+    with pytest.raises(
+        AgentInvalidRequestException,
+        match="expects a string service_session_id",
+    ):
+        await agent.run("Hello", session=session)
+
+
 def test_agent_session_from_dict(chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool):
     """Test AgentSession.from_dict restores a session from serialized state."""
     # Create serialized session state
@@ -2532,6 +2562,63 @@ async def test_stores_by_default_with_store_false_in_default_options_injects_inm
 
     # User explicitly disabled server storage in default_options, so InMemoryHistoryProvider should be injected
     assert any(isinstance(p, InMemoryHistoryProvider) for p in agent.context_providers)
+
+
+async def test_non_history_context_provider_still_injects_inmemory(
+    client: SupportsChatGetResponse,
+) -> None:
+    """A non-history context provider must not suppress local history injection.
+
+    Regression for the case where registering a context provider that is not a
+    HistoryProvider (e.g. SkillsProvider, FileAccessProvider, or a RAG memory
+    provider) prevented the auto-injected InMemoryHistoryProvider. Without local
+    history, multi-turn flows on stateless clients (such as the tool-approval
+    resume turn) drop the prior assistant function_call.
+    """
+    from agent_framework._sessions import InMemoryHistoryProvider
+
+    agent = Agent(client=client, context_providers=[MockContextProvider()])
+    session = agent.create_session()
+
+    await agent.run("Hello", session=session)
+
+    # The non-history provider should not block local-history injection.
+    assert any(isinstance(p, InMemoryHistoryProvider) for p in agent.context_providers)
+
+
+async def test_existing_loading_history_provider_skips_inmemory_injection(
+    client: SupportsChatGetResponse,
+) -> None:
+    """An existing loading HistoryProvider suppresses injection even with other providers."""
+    from agent_framework._sessions import InMemoryHistoryProvider
+
+    existing = InMemoryHistoryProvider("custom", load_messages=True)
+    agent = Agent(client=client, context_providers=[existing, MockContextProvider()])
+    session = agent.create_session()
+
+    await agent.run("Hello", session=session)
+
+    history_providers = [p for p in agent.context_providers if isinstance(p, InMemoryHistoryProvider)]
+    assert history_providers == [existing]
+
+
+async def test_persist_only_history_provider_still_injects_inmemory(
+    client: SupportsChatGetResponse,
+) -> None:
+    """A persist-only (load_messages=False) HistoryProvider does not satisfy the loading need."""
+    from agent_framework._sessions import InMemoryHistoryProvider
+
+    audit = InMemoryHistoryProvider("audit", load_messages=False)
+    agent = Agent(client=client, context_providers=[audit])
+    session = agent.create_session()
+
+    await agent.run("Hello", session=session)
+
+    loading_providers = [
+        p for p in agent.context_providers if isinstance(p, InMemoryHistoryProvider) and p.load_messages
+    ]
+    assert len(loading_providers) == 1
+    assert loading_providers[0] is not audit
 
 
 async def test_shared_local_storage_cross_provider_responses_history_does_not_leak_fc_id() -> None:

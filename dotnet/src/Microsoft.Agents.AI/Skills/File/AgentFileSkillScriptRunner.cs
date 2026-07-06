@@ -1,11 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -23,7 +21,6 @@ namespace Microsoft.Agents.AI;
 /// <param name="serviceProvider">Optional service provider for dependency injection.</param>
 /// <param name="cancellationToken">Cancellation token.</param>
 /// <returns>The script execution result.</returns>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public delegate Task<object?> AgentFileSkillScriptRunner(
     AgentFileSkill skill,
     AgentFileSkillScript script,
