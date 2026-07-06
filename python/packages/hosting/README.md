@@ -6,14 +6,16 @@ This package keeps Agent Framework state separate from web-framework concerns:
 
 - `AgentState` — pairs an agent target with a `SessionStore`
   (`session_id -> AgentSession`).
-- `WorkflowState` — pairs a workflow target with a `CheckpointStore`
-  (`session_id -> CheckpointStorage`).
+- `WorkflowState` — resolves a workflow target, including direct `Workflow`
+  instances, workflow factories, `WorkflowBuilder`, and orchestration builders.
 
-Both stores are plain storage: `get`/`set`/`delete` by an app-selected id,
-nothing more. Neither one knows how to create a new value for an id it
-hasn't seen before — use `AgentState.get_or_create_session(...)` /
-`WorkflowState.get_or_create_checkpoint_storage(...)` for that, since only
-the state object has both the store and the resolved target.
+`SessionStore` is plain storage: `get`/`set`/`delete` by an app-selected id,
+nothing more. It does not know how to create a new value for an id it hasn't
+seen before — use `AgentState.get_or_create_session(...)` for that, since only
+the state object has both the store and the resolved target. Workflow
+checkpointing should use the existing `CheckpointStorage` abstraction directly;
+if an app needs per-session resume, keep a small app-owned cursor such as
+`session_id -> checkpoint_id`.
 
 - Existing experimental channel-hosting types remain available while the package
   is unreleased, but the v1 direction is protocol helpers plus app-owned routes.
@@ -21,15 +23,15 @@ the state object has both the store and the resolved target.
 Use FastAPI, Starlette, Azure Functions, Django, or another framework for route
 registration, auth, middleware, response construction, and background work.
 
-> The built-in `SessionStore` / `CheckpointStore` are in-memory `dict`s with
-> no eviction — every id ever stored stays resolvable for the life of the
-> process. That is intentional: protocols such as OpenAI Responses'
+> The built-in `SessionStore` is an in-memory `dict` with no eviction — every
+> id ever stored stays resolvable for the life of the process. That is
+> intentional: protocols such as OpenAI Responses'
 > `previous_response_id` are designed to let a caller continue from *any*
 > earlier point in a conversation, not just the latest turn, so every id
-> handed out needs to stay independently resolvable. If you back either
-> store with real storage (Redis, a database, ...), you are responsible for
-> that store's own TTL/eviction policy; these in-memory reference
-> implementations do not model that concern.
+> handed out needs to stay independently resolvable. If you back the store
+> with real storage (Redis, a database, ...), you are responsible for that
+> store's own TTL/eviction policy; this in-memory reference implementation
+> does not model that concern.
 
 ## Quickstart
 
@@ -65,11 +67,13 @@ state = AgentState(create_agent, cache_target=False)
 `WorkflowState` mirrors this shape for workflow targets:
 
 ```python
+from agent_framework import InMemoryCheckpointStorage
 from agent_framework_hosting import WorkflowState
 
 state = WorkflowState(create_workflow)
-storage = await state.get_or_create_checkpoint_storage("conversation-1")
+storage = InMemoryCheckpointStorage()
 result = await (await state.get_target()).run("Hello", checkpoint_storage=storage)
+latest = await storage.get_latest(workflow_name=(await state.get_target()).name)
 ```
 
 `WorkflowState` also accepts an unbuilt workflow builder directly:

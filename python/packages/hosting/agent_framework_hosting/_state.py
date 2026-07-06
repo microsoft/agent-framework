@@ -7,13 +7,13 @@ workflows keep different continuation state:
 
 - ``AgentState`` pairs an agent target with a ``SessionStore``
   (``session_id -> AgentSession``).
-- ``WorkflowState`` pairs a workflow target with a ``CheckpointStore``
-  (``session_id -> CheckpointStorage``).
+- ``WorkflowState`` resolves a workflow target. Workflow checkpointing uses
+  the existing ``CheckpointStorage`` abstraction directly; apps can keep their
+  own ``session_id -> checkpoint_id`` cursor when they need per-session resume.
 
-Both stores are plain storage: they only get/set/delete what they are given.
-Neither one knows how to create a new value for a ``session_id`` it hasn't
-seen before -- that is the corresponding state object's job (see
-``AgentState.get_or_create_session`` / ``WorkflowState.get_or_create_checkpoint_storage``),
+``SessionStore`` is plain storage: it only gets/sets/deletes what it is given.
+It does not know how to create a new value for a ``session_id`` it hasn't seen
+before -- that is ``AgentState``'s job (see ``AgentState.get_or_create_session``),
 since only the state object has both the store and the resolved target.
 """
 
@@ -27,8 +27,6 @@ from agent_framework import (
     AgentRunInputs,
     AgentSession,
     ChatOptions,
-    CheckpointStorage,
-    InMemoryCheckpointStorage,
     SupportsAgentRun,
     Workflow,
 )
@@ -96,68 +94,6 @@ class SessionStore:
         if not session_id:
             raise ValueError("session_id must be a non-empty string")
         self._sessions.pop(session_id, None)
-
-
-class CheckpointStore:
-    """Plain in-memory ``session_id -> CheckpointStorage`` lookup.
-
-    Maps an app-selected session id to a :class:`CheckpointStorage` scoped to
-    that conversation. This store only stores and retrieves; it does not
-    decide which checkpoint within that storage to resume from. Use
-    :meth:`WorkflowState.get_or_create_checkpoint_storage` to create a fresh
-    ``CheckpointStorage`` the first time a given ``session_id`` is seen.
-
-    Resuming a prior run is a separate, run-time decision the route makes:
-    call ``storage.get_latest(workflow_name=...)`` yourself and pass its
-    ``checkpoint_id`` into ``workflow.run(checkpoint_id=..., checkpoint_storage=storage)``.
-
-    No eviction, for the same reason as :class:`SessionStore` -- see that
-    class's docstring.
-    """
-
-    def __init__(self) -> None:
-        """Create an empty checkpoint store."""
-        self._storages: dict[str, CheckpointStorage] = {}
-
-    async def get(self, session_id: str) -> CheckpointStorage | None:
-        """Return the stored checkpoint storage for ``session_id``, or ``None`` if absent.
-
-        Args:
-            session_id: Opaque app-selected session id.
-
-        Raises:
-            ValueError: If ``session_id`` is empty.
-        """
-        if not session_id:
-            raise ValueError("session_id must be a non-empty string")
-        return self._storages.get(session_id)
-
-    async def set(self, session_id: str, storage: CheckpointStorage) -> None:
-        """Store ``storage`` under ``session_id``, replacing any existing entry.
-
-        Args:
-            session_id: Opaque app-selected session id.
-            storage: The checkpoint storage to store.
-
-        Raises:
-            ValueError: If ``session_id`` is empty.
-        """
-        if not session_id:
-            raise ValueError("session_id must be a non-empty string")
-        self._storages[session_id] = storage
-
-    async def delete(self, session_id: str) -> None:
-        """Forget the stored checkpoint storage for ``session_id``, if any.
-
-        Args:
-            session_id: Opaque app-selected session id.
-
-        Raises:
-            ValueError: If ``session_id`` is empty.
-        """
-        if not session_id:
-            raise ValueError("session_id must be a non-empty string")
-        self._storages.pop(session_id, None)
 
 
 AgentT = TypeVar("AgentT", bound=SupportsAgentRun)
@@ -301,16 +237,15 @@ class AgentState(Generic[AgentT]):
 class WorkflowState(Generic[WorkflowT]):
     """Shared execution state for app-owned workflow hosting routes.
 
-    Holds the Agent Framework workflow target and a :class:`CheckpointStore`
-    that route code may share. Does not own routes, middleware, protocol
-    dispatch, or native SDK calls -- web frameworks keep those concerns.
+    Holds the Agent Framework workflow target. Does not own routes,
+    middleware, protocol dispatch, native SDK calls, or checkpoint storage --
+    web frameworks and workflow/app code keep those concerns.
     """
 
     def __init__(
         self,
         target: WorkflowT | SupportsBuild | Awaitable[WorkflowT] | Callable[[], WorkflowT | Awaitable[WorkflowT]],
         *,
-        checkpoint_store: CheckpointStore | None = None,
         cache_target: bool = True,
     ) -> None:
         """Create shared state for ``target``.
@@ -323,8 +258,6 @@ class WorkflowState(Generic[WorkflowT]):
                 awaitable target.
 
         Keyword Args:
-            checkpoint_store: Existing store to use. Defaults to a fresh
-                in-memory :class:`CheckpointStore`.
             cache_target: Whether to cache a resolved callable/awaitable/built
                 target. Defaults to ``True`` so expensive target setup
                 happens once.
@@ -348,9 +281,6 @@ class WorkflowState(Generic[WorkflowT]):
         self._cached_target: WorkflowT | None = None
         if not callable(target) and not inspect.isawaitable(target):
             self._cached_target = target
-        self._checkpoint_store: CheckpointStore = (
-            checkpoint_store if checkpoint_store is not None else CheckpointStore()
-        )
 
     async def get_target(self) -> WorkflowT:
         """Return the resolved target.
@@ -382,41 +312,3 @@ class WorkflowState(Generic[WorkflowT]):
         if not callable(self._target_source) and not inspect.isawaitable(self._target_source):
             return self._target_source
         raise RuntimeError("target is resolved asynchronously; use `await state.get_target()`")
-
-    @property
-    def checkpoint_store(self) -> CheckpointStore:
-        """Return the checkpoint store for this state."""
-        return self._checkpoint_store
-
-    async def get_or_create_checkpoint_storage(self, session_id: str) -> CheckpointStorage:
-        """Return the checkpoint storage for ``session_id``, creating and storing one if missing.
-
-        Unlike an agent, a ``Workflow`` has no ``create_session``-style
-        factory method, so "creating" one for a new ``session_id`` means
-        allocating a fresh, empty :class:`InMemoryCheckpointStorage` -- there
-        is nothing to restore yet. Pass the returned storage into
-        ``workflow.run(checkpoint_storage=...)``. To resume a prior run for
-        this ``session_id`` instead of starting fresh, call
-        ``storage.get_latest(workflow_name=...)`` yourself first and pass its
-        ``checkpoint_id`` into ``workflow.run(checkpoint_id=..., checkpoint_storage=...)``.
-
-        Args:
-            session_id: Opaque app-selected session id.
-
-        Returns:
-            The stored or newly created ``CheckpointStorage``.
-        """
-        storage = await self._checkpoint_store.get(session_id)
-        if storage is None:
-            storage = InMemoryCheckpointStorage()
-            await self._checkpoint_store.set(session_id, storage)
-        return storage
-
-    async def set_checkpoint_storage(self, session_id: str, storage: CheckpointStorage) -> None:
-        """Store ``storage`` under ``session_id`` in this state's checkpoint store.
-
-        Args:
-            session_id: Opaque app-selected session id.
-            storage: Checkpoint storage to store.
-        """
-        await self._checkpoint_store.set(session_id, storage)

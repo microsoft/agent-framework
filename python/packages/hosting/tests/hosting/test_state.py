@@ -13,13 +13,12 @@ from agent_framework import (
     AgentRunInputs,
     AgentSession,
     Content,
-    InMemoryCheckpointStorage,
     Message,
     ResponseStream,
     Workflow,
 )
 
-from agent_framework_hosting import AgentState, CheckpointStore, SessionStore, WorkflowState
+from agent_framework_hosting import AgentState, SessionStore, WorkflowState
 
 
 def _workflow_fixture(name: str) -> Any:
@@ -159,40 +158,6 @@ class TestSessionStore:
             await store.delete("")
 
 
-class TestCheckpointStore:
-    async def test_get_returns_none_for_missing_id(self) -> None:
-        store = CheckpointStore()
-
-        assert await store.get("session-1") is None
-
-    async def test_set_then_get_returns_stored_storage(self) -> None:
-        store = CheckpointStore()
-        storage = InMemoryCheckpointStorage()
-
-        await store.set("session-1", storage)
-
-        assert await store.get("session-1") is storage
-
-    async def test_delete_forgets_storage(self) -> None:
-        store = CheckpointStore()
-        await store.set("session-1", InMemoryCheckpointStorage())
-
-        await store.delete("session-1")
-
-        assert await store.get("session-1") is None
-
-    async def test_empty_session_id_raises(self) -> None:
-        store = CheckpointStore()
-        storage = InMemoryCheckpointStorage()
-
-        with pytest.raises(ValueError, match="session_id"):
-            await store.get("")
-        with pytest.raises(ValueError, match="session_id"):
-            await store.set("", storage)
-        with pytest.raises(ValueError, match="session_id"):
-            await store.delete("")
-
-
 class TestAgentState:
     def test_default_session_store_is_fresh_in_memory_store(self) -> None:
         agent = _FakeAgent()
@@ -282,19 +247,11 @@ class TestAgentState:
 
 
 class TestWorkflowState:
-    def test_default_checkpoint_store_is_fresh_in_memory_store(self) -> None:
+    def test_accepts_workflow_target_instance(self) -> None:
         workflow = _workflow_fixture("build_echo_workflow")()
         state: WorkflowState[Workflow] = WorkflowState(workflow)
 
         assert state.target is workflow
-        assert isinstance(state.checkpoint_store, CheckpointStore)
-
-    def test_accepts_checkpoint_store_instance(self) -> None:
-        workflow = _workflow_fixture("build_echo_workflow")()
-        store = CheckpointStore()
-        state: WorkflowState[Workflow] = WorkflowState(workflow, checkpoint_store=store)
-
-        assert state.checkpoint_store is store
 
     async def test_workflow_target_resolved_from_factory(self) -> None:
         build_echo_workflow = _workflow_fixture("build_echo_workflow")
@@ -337,23 +294,3 @@ class TestWorkflowState:
         state: WorkflowState[Workflow] = WorkflowState(_FakeOrchestrationBuilder())
 
         assert await state.get_target() is workflow
-
-    async def test_get_or_create_checkpoint_storage_creates_and_stores_once(self) -> None:
-        workflow = _workflow_fixture("build_echo_workflow")()
-        state: WorkflowState[Workflow] = WorkflowState(workflow)
-
-        first = await state.get_or_create_checkpoint_storage("session-1")
-        second = await state.get_or_create_checkpoint_storage("session-1")
-
-        assert first is second
-        assert isinstance(first, InMemoryCheckpointStorage)
-
-    async def test_get_or_create_checkpoint_storage_reuses_storage_set_on_the_state(self) -> None:
-        workflow = _workflow_fixture("build_echo_workflow")()
-        state: WorkflowState[Workflow] = WorkflowState(workflow)
-        pre_existing = InMemoryCheckpointStorage()
-        await state.set_checkpoint_storage("session-1", pre_existing)
-
-        storage = await state.get_or_create_checkpoint_storage("session-1")
-
-        assert storage is pre_existing

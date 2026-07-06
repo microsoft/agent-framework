@@ -23,7 +23,6 @@ from ._isolation import (
 from ._state import (
     AgentRunArgs,
     AgentState,
-    CheckpointStore,
     SessionStore,
     SupportsBuild,
     WorkflowRunArgs,
@@ -66,7 +65,6 @@ __all__ = [
     "ChannelRunHook",
     "ChannelSession",
     "ChannelStreamUpdateHook",
-    "CheckpointStore",
     "HostStatePaths",
     "HostedRunResult",
     "IsolationKeys",
