@@ -59,7 +59,7 @@ calls. Agent Framework should not duplicate those surfaces unless a specific hos
 - Good: apps keep native FastAPI, Starlette, Azure Functions, Django, Bot Framework, or Telegram SDK code.
 - Good: helper functions can be tested without an ASGI app or host pipeline.
 - Good: small state objects can still own target-coupled state: `AgentState` pairs an agent target with a `SessionStore`,
-  and `WorkflowState` pairs a workflow target with a `CheckpointStore`.
+  and `WorkflowState` resolves a workflow target while reusing the existing `CheckpointStorage` abstraction.
 - Good: provides maximum configurability in handling input and outputs (outside of the conversions)
 - Bad: building a first iteration of a new Host is more verbose.
 - Bad: samples show more explicit route/client code than a fully assembled channel host.
@@ -91,13 +91,13 @@ Application or web-framework code owns:
 The optional execution-state helpers, if provided, are limited to shared execution state:
 
 - `AgentState`: one `SupportsAgentRun`-compatible target plus a `SessionStore`;
-- `WorkflowState`: one `Workflow`, `WorkflowBuilder`-shaped builder, orchestration builder, or workflow factory plus a
-  `CheckpointStore`;
-- `SessionStore` and `CheckpointStore`: plain async storage (`get` / `set` / `delete`) by an app-selected id.
+- `WorkflowState`: one `Workflow`, `WorkflowBuilder`-shaped builder, orchestration builder, or workflow factory;
+- `SessionStore`: plain async storage (`get` / `set` / `delete`) by an app-selected id.
 
-The stores do not create sessions or checkpoint storage. State objects provide the target-aware helpers
-(`AgentState.get_or_create_session(...)`, `WorkflowState.get_or_create_checkpoint_storage(...)`) because only the state
-object has both the store and the resolved target.
+The store does not create sessions. `AgentState` provides the target-aware `get_or_create_session(...)` helper because
+only the state object has both the store and the resolved agent target. Workflow checkpointing should use the existing
+`CheckpointStorage` abstraction directly; app/state code may keep a small cursor (`session_id -> checkpoint_id`) when it
+needs to resume a workflow for a session.
 
 These objects are **not** app objects, channel registries, or route owners. They do not own FastAPI/Starlette setup,
 route contribution, protocol dispatch, command projection, or native SDK calls.
@@ -107,8 +107,8 @@ route contribution, protocol dispatch, command projection, or native SDK calls.
 Helpers should be protocol-specific, not generic. Avoid a generic `protocol_to_run(...)` name in public samples because it
 hides the protocol-specific contract behind a second abstraction.
 
-Protocol packages should consider these helper families. Not every protocol needs every helper, but when a protocol has
-the concept the naming should stay consistent:
+Protocol packages should consider these helper families. This table is a set of examples, not a required protocol or
+checklist. Not every protocol needs every helper, but when a protocol has the concept the naming should stay consistent:
 
 | Helper family | Shape | Purpose |
 | --- | --- | --- |
@@ -138,6 +138,35 @@ helpers should still stay side-effect-free: they extract, normalize, or describe
 performs acknowledgements, sends/edits messages, resolves protected file URLs, applies rate limits, and registers
 handlers.
 
+### Security responsibilities for application builders
+
+The application builder owns the trust boundary. Protocol helper packages can parse native payloads and expose candidate
+ids or operations, but they do not authenticate callers, authorize access to state, or decide which side effects are
+allowed.
+
+Application code that uses these helpers must:
+
+- authenticate the caller through the app's normal mechanism before using protocol-provided ids;
+- authorize any caller-supplied session, checkpoint, task, context, conversation, thread, or response id before loading
+  state for it;
+- bind externally supplied ids to the authenticated user, tenant, workspace, installation, or chat context before using
+  them as `SessionStore` keys or checkpoint cursor keys;
+- treat `<protocol>_session_id(...)` results as untrusted candidate keys until that ownership check has passed;
+- keep platform-provided isolation helpers fail-closed outside their trusted hosting environment;
+- authorize command/action effects such as reset, cancel, approve, submit, or tool invocation after parsing them;
+- opt in explicitly before resolving protected media/resource/file URLs and passing them to a remote model provider;
+- persist post-run session or checkpoint state only after `agent.run(...)`, `workflow.run(...)`, or stream finalization has
+  updated that state.
+
+For Foundry specifically, helpers may read values established by Foundry hosting middleware, but must not treat raw
+request headers as trusted Foundry isolation when the app is running outside Foundry. Implementations must test that
+non-Foundry requests do not accept spoofable isolation headers as platform-provided keys.
+
+For durable workflow checkpointing, the checkpoint boundary must be at least as specific as the authorized session/tenant
+boundary. A shared storage lookup such as "latest checkpoint for workflow name" is safe only when the storage is already
+scoped to the authorized session. In a shared durable store, map the authorized `session_id` to a checkpoint id or other
+cursor and load that specific checkpoint.
+
 ### Session continuity
 
 Session continuity remains explicit. Run parsing and isolation/session id selection are separate operations because
@@ -159,10 +188,6 @@ The app chooses which helper to call for that route and deployment. For example:
 
 Keep these helpers outside `responses_to_run(...)`, `telegram_to_run(...)`, and other run-input parsers. That makes the
 trust boundary visible: using a request-derived key is a different decision than using a platform-provided isolation key.
-Platform-provided isolation helpers must fail closed outside their trusted hosting environment. For example,
-Foundry-specific helpers may read values established by Foundry hosting middleware, but must not treat raw request
-headers as trusted Foundry isolation when the app is running outside Foundry. Implementations must test that non-Foundry
-requests do not accept spoofable isolation headers as platform-provided keys.
 
 A `SessionStore` stores `session_id -> AgentSession`, but it does not create sessions. `AgentState` resolves the agent
 target and creates the session on first use:
@@ -194,11 +219,9 @@ externally supplied key before using it.
 ### Workflow checkpoints
 
 Workflow checkpointing is execution state, not protocol state. `WorkflowState` pairs a workflow target with checkpoint
-state, but durable stores should not persist live `CheckpointStorage` client instances by value. Two shapes are useful:
-
-- local/in-memory state may map `session_id -> CheckpointStorage` when the storage object is process-local;
-- durable or multi-replica state should map `session_id -> checkpoint_id` (or an equivalent cursor/config) and use a
-  workflow-owned or app-owned `CheckpointStorage` to load that checkpoint.
+state, but it should not wrap or replace the existing `CheckpointStorage` abstraction. Apps should pass the actual
+`CheckpointStorage` they want the workflow to use. If an app needs per-session resume, it can keep a small cursor from
+authorized `session_id` to `checkpoint_id` (or an equivalent store-specific resume token).
 
 Workflow runs do not currently emit a checkpoint id on `WorkflowRunResult` or normal workflow events by default. The
 runner receives checkpoint ids internally from `CheckpointStorage.save(...)`. App/state code that owns the storage can
@@ -209,28 +232,28 @@ For workflow targets, app code adapts the protocol helper output into the workfl
 workflow through the state object's target:
 
 ```python
-storage = await state.get_or_create_checkpoint_storage(session_id)
+# session_id must already be authenticated and authorized for this caller
 target = await state.get_target()
-result = await target.run(message=workflow_input, checkpoint_storage=storage)
-latest = await storage.get_latest(workflow_name=target.name)
+result = await target.run(message=workflow_input, checkpoint_storage=checkpoint_storage)
+latest = await checkpoint_storage.get_latest(workflow_name=target.name)
 if latest is not None:
-    await state.set_checkpoint_id(session_id, latest.checkpoint_id)
+    await checkpoint_cursor_store.set(session_id, latest.checkpoint_id)
 ```
 
 If a route wants to resume from a prior checkpoint, it explicitly chooses the checkpoint and passes it to
 `workflow.run(...)`:
 
 ```python
-storage = await state.get_or_create_checkpoint_storage(session_id)
+# session_id must already be authenticated and authorized for this caller
 target = await state.get_target()
-checkpoint_id = await state.get_checkpoint_id(session_id)
+checkpoint_id = await checkpoint_cursor_store.get(session_id)
 if checkpoint_id is None:
-    result = await target.run(message=workflow_input, checkpoint_storage=storage)
+    result = await target.run(message=workflow_input, checkpoint_storage=checkpoint_storage)
 else:
-    result = await target.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
-latest = await storage.get_latest(workflow_name=target.name)
+    result = await target.run(checkpoint_id=checkpoint_id, checkpoint_storage=checkpoint_storage)
+latest = await checkpoint_storage.get_latest(workflow_name=target.name)
 if latest is not None:
-    await state.set_checkpoint_id(session_id, latest.checkpoint_id)
+    await checkpoint_cursor_store.set(session_id, latest.checkpoint_id)
 ```
 
 `workflow.run(...)` writes checkpoints to the provided storage, so storage selection must be explicit at the route layer.
@@ -281,6 +304,10 @@ Negative:
 
 ## Appendix: Developer experience sketch
 
+The examples below are sketches, not runtime-ready sample code. They show the minimum shape a developer would need to
+build: where protocol helpers are called, where app-owned auth/authorization belongs, where state is loaded/stored, and
+where native framework code remains in charge.
+
 ### Optional execution state
 
 `AgentState` and `WorkflowState` stay small: they are target-specific state holders, not app hosts.
@@ -288,7 +315,7 @@ Negative:
 ```python
 from typing import Protocol
 
-from agent_framework import AgentSession, CheckpointStorage, SupportsAgentRun, Workflow
+from agent_framework import AgentSession, SupportsAgentRun, Workflow
 
 
 class SupportsBuild(Protocol):
@@ -301,7 +328,7 @@ class SessionStore:
     async def delete(self, session_id: str) -> None: ...
 
 
-class CheckpointStore:
+class CheckpointCursorStore:
     async def get(self, session_id: str) -> str | None: ...
     async def set(self, session_id: str, checkpoint_id: str) -> None: ...
     async def delete(self, session_id: str) -> None: ...
@@ -315,17 +342,8 @@ class AgentState:
 
 
 class WorkflowState:
-    def __init__(
-        self,
-        target: Workflow | SupportsBuild,
-        *,
-        checkpoint_storage: CheckpointStorage | None = None,
-        checkpoint_store: CheckpointStore | None = None,
-    ) -> None: ...
+    def __init__(self, target: Workflow | SupportsBuild) -> None: ...
     async def get_target(self) -> Workflow: ...
-    async def get_or_create_checkpoint_storage(self, session_id: str) -> CheckpointStorage: ...
-    async def get_checkpoint_id(self, session_id: str) -> str | None: ...
-    async def set_checkpoint_id(self, session_id: str, checkpoint_id: str) -> None: ...
 ```
 
 `WorkflowState` accepts direct `Workflow` instances, workflow factories, and builder-shaped objects with
@@ -364,20 +382,22 @@ async def responses(body: dict = Body(...), x_api_key: str | None = Header(defau
 
     # parse the request body into a set of AF objects
     run = responses_to_run(body)
-    # get the session id from the body
+    # get the candidate session id from the body
     # can be a resp_* for previous_response_id or a conv_* for a conversation
-    session_id = responses_session_id(body)
+    candidate_session_id = responses_session_id(body)
     # create a new response_id for this run
     response_id = create_response_id()
 
-    # in this space, the developer can make any adjustments to the request, i.e.:
+    # the developer can make any adjustments to the request, i.e.:
     run["options"]["store"] = False
     run["options"].pop("model", None)
+    # the options here are of the shape defined by the ChatClient/Agent
 
     # load the session (or create a new one) - this is optional
-    # verify this caller owns session_id before loading it; API-key auth alone
-    # does not prove ownership of a caller-supplied resp_* or conv_* id
-    session = await state.get_or_create_session(session_id or response_id)
+    # verify this caller owns candidate_session_id before loading it; API-key auth
+    # alone does not prove ownership of a caller-supplied resp_* or conv_* id
+    session_id = candidate_session_id or response_id
+    session = await state.get_or_create_session(session_id)
     # call the agent
     target = await state.get_target()
     result = await target.run(
@@ -388,7 +408,7 @@ async def responses(body: dict = Body(...), x_api_key: str | None = Header(defau
     # agent.run may update the session, so store the post-run session explicitly under the response id
     # this might also be skipped, if the app chooses to respect `store=False` policy
     await state.set_session(response_id, session)
-    return JSONResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
+    return JSONResponse(responses_from_run(result, response_id=response_id, session_id=candidate_session_id))
 
 ```
 
@@ -430,12 +450,13 @@ class ResponsesView(View):
             return HttpResponseBadRequest("invalid json")
 
         run = responses_to_run(body)
-        session_id = responses_session_id(body)
+        candidate_session_id = responses_session_id(body)
         response_id = create_response_id()
         options = run["options"]
-        # verify this caller owns session_id before loading it; API-key auth alone
-        # does not prove ownership of a caller-supplied resp_* or conv_* id
-        session = await state.get_or_create_session(session_id or response_id)
+        # verify this caller owns candidate_session_id before loading it; API-key auth
+        # alone does not prove ownership of a caller-supplied resp_* or conv_* id
+        session_id = candidate_session_id or response_id
+        session = await state.get_or_create_session(session_id)
         target = await state.get_target()
         result = await target.run(
             run["messages"],
@@ -443,5 +464,5 @@ class ResponsesView(View):
             options=options,
         )
         await state.set_session(response_id, session)
-        return JsonResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
+        return JsonResponse(responses_from_run(result, response_id=response_id, session_id=candidate_session_id))
 ```
