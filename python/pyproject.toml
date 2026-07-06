@@ -147,9 +147,11 @@ select = [
 ignore = [
     "D100", # allow missing docstring in public module
     "D104", # allow missing docstring in public package
+    "D421", # allow property docstrings that start with a verb
     "D418", # allow overload to have a docstring
     "TD003", # allow missing link to todo issue
     "FIX002", # allow todo
+    "ASYNC119", # allow yielding inside async-generator context managers
     "B027", # allow empty non-abstract method in ABC
     "B905", # `zip()` without an explicit `strict=` parameter
     "RUF067", # allow version detection in __init__.py
