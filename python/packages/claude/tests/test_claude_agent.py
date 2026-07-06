@@ -433,6 +433,176 @@ class TestClaudeAgentRunStream:
                     pass
             assert "Model 'claude-sonnet-4.5' not found" in str(exc_info.value)
 
+    async def test_run_propagates_usage_details_from_result_message(self) -> None:
+        """Test run populates AgentResponse.usage_details from ResultMessage.usage."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Hello!"},
+                },
+                uuid="event-1",
+                session_id="session-123",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Hello!")],
+                model="claude-sonnet-4-5",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=200,
+                duration_api_ms=150,
+                is_error=False,
+                num_turns=1,
+                session_id="session-123",
+                stop_reason="end_turn",
+                usage={
+                    "input_tokens": 42,
+                    "output_tokens": 18,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 5,
+                },
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            response = await agent.run("Hello")
+
+        assert response.usage_details is not None
+        assert response.usage_details["input_token_count"] == 42
+        assert response.usage_details["output_token_count"] == 18
+        assert response.usage_details["total_token_count"] == 60
+        assert response.usage_details.get("cache_read_input_token_count") == 5
+
+    async def test_run_propagates_finish_reason_from_result_message(self) -> None:
+        """Test run populates AgentResponse.finish_reason from ResultMessage.stop_reason."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Done."},
+                },
+                uuid="event-1",
+                session_id="session-123",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Done.")],
+                model="claude-sonnet-4-5",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=80,
+                is_error=False,
+                num_turns=1,
+                session_id="session-123",
+                stop_reason="end_turn",
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            response = await agent.run("Hello")
+
+        assert response.finish_reason == "end_turn"
+
+    async def test_run_stream_propagates_usage_details(self) -> None:
+        """Test streaming run surfaces usage details via AgentResponseUpdate."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Hi"},
+                },
+                uuid="event-1",
+                session_id="session-stream",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Hi")],
+                model="claude-sonnet-4-5",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="session-stream",
+                stop_reason="end_turn",
+                usage={
+                    "input_tokens": 10,
+                    "output_tokens": 3,
+                },
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            updates: list[AgentResponseUpdate] = []
+            async for update in agent.run("Hi", stream=True):
+                updates.append(update)
+
+        # The usage update should be present (it's the update emitted from ResultMessage)
+        usage_updates = [u for u in updates if any(c.type == "usage" for c in u.contents)]
+        assert len(usage_updates) == 1
+        usage_content = next(c for c in usage_updates[0].contents if c.type == "usage")
+        assert usage_content.usage_details is not None
+        assert usage_content.usage_details["input_token_count"] == 10
+        assert usage_content.usage_details["output_token_count"] == 3
+
+    async def test_run_no_usage_no_stop_reason_no_extra_update(self) -> None:
+        """Test that no extra update is emitted when ResultMessage has no usage or stop_reason."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "OK"},
+                },
+                uuid="event-1",
+                session_id="session-nouse",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="OK")],
+                model="claude-sonnet-4-5",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="session-nouse",
+                # No usage, no stop_reason
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            updates: list[AgentResponseUpdate] = []
+            async for update in agent.run("Hello", stream=True):
+                updates.append(update)
+
+        # Only the text delta, no extra usage update
+        assert len(updates) == 1
+        assert updates[0].text == "OK"
+
 
 # region Test ClaudeAgent Session Management
 

@@ -23,6 +23,7 @@ from agent_framework import (
     Message,
     ResponseStream,
     ToolTypes,
+    UsageDetails,
     load_settings,
     normalize_messages,
     normalize_tools,
@@ -66,6 +67,42 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger("agent_framework.claude")
+
+
+def _parse_claude_usage_details(usage: dict[str, Any]) -> UsageDetails:
+    """Convert a Claude API usage dict to a :class:`UsageDetails` mapping.
+
+    The Claude API returns usage as a plain dict with snake_case keys
+    (``input_tokens``, ``output_tokens``, ``cache_creation_input_tokens``,
+    ``cache_read_input_tokens``).  This helper maps them to the standard
+    Agent Framework :class:`UsageDetails` fields.
+
+    Args:
+        usage: Raw usage dict from :class:`claude_agent_sdk.ResultMessage` or
+            :class:`claude_agent_sdk.AssistantMessage`.
+
+    Returns:
+        A populated :class:`UsageDetails` dict (omitting zero-valued optional
+        fields to avoid polluting the output with irrelevant zeros).
+    """
+    details = UsageDetails()
+    input_tokens: int | None = usage.get("input_tokens")
+    output_tokens: int | None = usage.get("output_tokens")
+    if input_tokens is not None:
+        details["input_token_count"] = input_tokens
+    if output_tokens is not None:
+        details["output_token_count"] = output_tokens
+    input_count = details.get("input_token_count") or 0
+    output_count = details.get("output_token_count") or 0
+    if input_count or output_count:
+        details["total_token_count"] = input_count + output_count
+    cache_creation: int | None = usage.get("cache_creation_input_tokens")
+    if cache_creation:
+        details["cache_creation_input_token_count"] = cache_creation
+    cache_read: int | None = usage.get("cache_read_input_tokens")
+    if cache_read:
+        details["cache_read_input_token_count"] = cache_read
+    return details
 
 
 # Name of the in-process MCP server that hosts Agent Framework tools.
@@ -823,6 +860,22 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                     raise AgentException(f"Claude API error: {error_msg}")
                 session_id = message.session_id
                 structured_output = message.structured_output
+                # Emit usage details and finish reason from the result message so
+                # they are captured in the final AgentResponse.usage_details and
+                # AgentResponse.finish_reason fields.
+                usage_contents: list[Content] = []
+                if message.usage:
+                    usage_details = _parse_claude_usage_details(message.usage)
+                    usage_contents.append(
+                        Content.from_usage(usage_details=usage_details, raw_representation=message)
+                    )
+                if usage_contents or message.stop_reason:
+                    yield AgentResponseUpdate(
+                        role="assistant",
+                        contents=usage_contents,
+                        raw_representation=message,
+                        finish_reason=message.stop_reason,
+                    )
 
         # Update session with session ID
         if session_id:
