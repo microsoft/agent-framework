@@ -1991,7 +1991,9 @@ async def test_mcp_progressive_unload_tool_rejects_always_loaded_tool() -> None:
     result = await unload_tool.invoke(arguments={"tool": "tool_one"}, context=context)
 
     assert result[0].text == "MCP tool 'tool_one' is configured in always_load and cannot be unloaded."
-    assert [tool.name for tool in context.tools or []] == [
+    assert context.tools is not None
+    visible_tools = cast(list[FunctionTool], context.tools)
+    assert [tool.name for tool in visible_tools] == [
         "list_mcp_tools",
         "load_tool",
         "unload_tool",
@@ -2079,6 +2081,7 @@ async def test_mcp_progressive_load_tool_rejects_loader_name_collision() -> None
 
     result = await load_tool.invoke(arguments={"tool": "load_tool"}, context=context)
 
+    assert result[0].text is not None
     assert "Set tool_name_prefix" in result[0].text
 
 
