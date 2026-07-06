@@ -1,12 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import logging
 import os
 from typing import Annotated, Any, Literal
 
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
-from agent_framework.observability import enable_instrumentation
 from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_monty import MontyCodeActProvider
 from azure.identity import DefaultAzureCredential
@@ -15,44 +13,6 @@ from pydantic import Field
 
 # Load environment variables from .env file (no-op when injected by Foundry).
 load_dotenv()
-
-logger = logging.getLogger(__name__)
-
-
-def _setup_telemetry() -> None:
-    """Wire Agent Framework spans to the Application Insights resource attached to the Foundry project.
-
-    Foundry-hosted runtimes inject ``APPLICATIONINSIGHTS_CONNECTION_STRING`` automatically;
-    locally you can set it yourself (see README). When the connection string is present we
-    configure Azure Monitor OTel exporters once and then flip the framework's instrumentation
-    flag so it emits ``invoke_agent`` / ``chat`` / ``execute_tool`` spans. The hosting layer's
-    incoming-request span becomes the parent automatically via OpenTelemetry context
-    propagation when both layers share the same global tracer provider.
-    """
-    connection_string = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
-    if not connection_string:
-        logger.info(
-            "APPLICATIONINSIGHTS_CONNECTION_STRING is not set; Agent Framework spans will not "
-            "be exported to Azure Monitor. Set the env var to enable telemetry."
-        )
-        return
-
-    try:
-        from azure.monitor.opentelemetry import configure_azure_monitor
-    except ImportError:
-        logger.warning(
-            "azure-monitor-opentelemetry is not installed; skipping Azure Monitor setup. "
-            "Install it to export telemetry."
-        )
-        return
-
-    # Configure the global OTel providers (tracer/meter/logger) to export to Azure Monitor.
-    # Idempotent for repeated imports because we only call it from this entry point.
-    configure_azure_monitor(connection_string=connection_string)
-    # Flip the Agent Framework instrumentation flag so its spans are actually emitted on
-    # the now-configured global providers.
-    enable_instrumentation()
-    logger.info("Azure Monitor + Agent Framework instrumentation enabled.")
 
 
 @tool(approval_mode="never_require")
@@ -95,10 +55,6 @@ def fetch_data(
 
 def main() -> None:
     """Host a Monty CodeAct agent over the Responses protocol."""
-    # Set up telemetry BEFORE building the client/agent so the framework picks up
-    # the configured tracer provider when it lazily wires instrumentation.
-    _setup_telemetry()
-
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],

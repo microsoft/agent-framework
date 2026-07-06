@@ -30,8 +30,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from event_stream import EventStream
-from typing_extensions import Never
+from event_stream import EventStream  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_ag_ui import AgentFrameworkWorkflow
 
@@ -59,7 +58,7 @@ async def test_workflow_text_output_golden_sequence() -> None:
     """Simple text output: RUN_STARTED → STEP_STARTED → TEXT_* → STEP_FINISHED → TEXT_MESSAGE_END → RUN_FINISHED."""
 
     @executor(id="greeter")
-    async def greeter(message: Any, ctx: WorkflowContext[Never, str]) -> None:
+    async def greeter(message: Any, ctx: WorkflowContext[Any, str]) -> None:
         await ctx.yield_output("Hello from workflow!")
 
     workflow = WorkflowBuilder(start_executor=greeter).build()
@@ -82,7 +81,7 @@ async def test_workflow_text_output_message_id_consistency() -> None:
     """All text events for a single output share the same message_id."""
 
     @executor(id="echo")
-    async def echo(message: Any, ctx: WorkflowContext[Never, str]) -> None:
+    async def echo(message: Any, ctx: WorkflowContext[Any, str]) -> None:
         await ctx.yield_output("echo reply")
 
     workflow = WorkflowBuilder(start_executor=echo).build()
@@ -101,7 +100,7 @@ async def test_workflow_executor_lifecycle_events() -> None:
     """Executor invocation produces STEP_STARTED, ACTIVITY_SNAPSHOT, STEP_FINISHED."""
 
     @executor(id="worker")
-    async def worker(message: Any, ctx: WorkflowContext[Never, str]) -> None:
+    async def worker(message: Any, ctx: WorkflowContext[Any, str]) -> None:
         await ctx.yield_output("done")
 
     workflow = WorkflowBuilder(start_executor=worker).build()
@@ -126,7 +125,7 @@ async def test_workflow_executor_step_ordering() -> None:
     """STEP_STARTED comes before content, STEP_FINISHED comes after."""
 
     @executor(id="orderer")
-    async def orderer(message: Any, ctx: WorkflowContext[Never, str]) -> None:
+    async def orderer(message: Any, ctx: WorkflowContext[Any, str]) -> None:
         await ctx.yield_output("ordered output")
 
     workflow = WorkflowBuilder(start_executor=orderer).build()
@@ -154,7 +153,7 @@ async def test_workflow_dict_output_maps_to_custom_event() -> None:
     """Non-chat dict output is emitted as CUSTOM workflow_output event."""
 
     @executor(id="structured")
-    async def structured(message: Any, ctx: WorkflowContext[Never, dict[str, int]]) -> None:
+    async def structured(message: Any, ctx: WorkflowContext[Any, dict[str, int]]) -> None:
         await ctx.yield_output({"count": 42, "status": 1})
 
     workflow = WorkflowBuilder(start_executor=structured).build()
@@ -181,7 +180,7 @@ async def test_workflow_base_event_passthrough() -> None:
     """AG-UI BaseEvent outputs are yielded directly, not wrapped."""
 
     @executor(id="stateful")
-    async def stateful(message: Any, ctx: WorkflowContext[Never, StateSnapshotEvent]) -> None:
+    async def stateful(message: Any, ctx: WorkflowContext[Any, StateSnapshotEvent]) -> None:
         await ctx.yield_output(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot={"active_agent": "flights"}))
 
     workflow = WorkflowBuilder(start_executor=stateful).build()
@@ -203,7 +202,7 @@ async def test_workflow_agent_response_output_extracts_latest_assistant() -> Non
     """AgentResponse output uses only the latest assistant message, not full history."""
 
     @executor(id="responder")
-    async def responder(message: Any, ctx: WorkflowContext[Never, AgentResponse]) -> None:
+    async def responder(message: Any, ctx: WorkflowContext[Any, AgentResponse]) -> None:
         response = AgentResponse(
             messages=[
                 Message(role="user", contents=[Content.from_text("My order is damaged")]),
@@ -232,14 +231,14 @@ class ProgressEvent(WorkflowEvent):
     """Custom workflow event for testing CUSTOM event mapping."""
 
     def __init__(self, progress: int) -> None:
-        super().__init__("custom_progress", data={"progress": progress})
+        super().__init__(cast(Any, "custom_progress"), data={"progress": progress})
 
 
 async def test_workflow_custom_events() -> None:
     """Custom workflow events are mapped to CUSTOM AG-UI events."""
 
     @executor(id="progress_tracker")
-    async def progress_tracker(message: Any, ctx: WorkflowContext[Never, str]) -> None:
+    async def progress_tracker(message: Any, ctx: WorkflowContext[Any, str]) -> None:
         await ctx.add_event(ProgressEvent(25))
         await ctx.yield_output("In progress...")
         await ctx.add_event(ProgressEvent(100))
@@ -355,7 +354,7 @@ async def test_workflow_text_drained_before_request_info() -> None:
 
     @executor(id="text_then_request")
     async def text_then_request(message: Any, ctx: WorkflowContext) -> None:
-        await ctx.yield_output("Please confirm this action.")
+        await ctx.yield_output("Please confirm this action.")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         await ctx.request_info("Need approval", str, request_id="approval-1")
 
     workflow = WorkflowBuilder(start_executor=text_then_request).build()
@@ -383,7 +382,7 @@ async def test_workflow_skips_duplicate_text_from_snapshot() -> None:
     """Duplicate text from AgentResponse snapshot is not re-emitted."""
 
     @executor(id="deduper")
-    async def deduper(message: Any, ctx: WorkflowContext[Never, Any]) -> None:
+    async def deduper(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
         text = "Order processed successfully."
         await ctx.yield_output(text)
         # Snapshot repeats the same text
@@ -410,7 +409,7 @@ async def test_workflow_skips_consecutive_duplicate_outputs() -> None:
     """Consecutive identical text outputs are deduplicated."""
 
     @executor(id="repeater")
-    async def repeater(message: Any, ctx: WorkflowContext[Never, Any]) -> None:
+    async def repeater(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
         text = "Done!"
         await ctx.yield_output(text)
         await ctx.yield_output(text)
@@ -428,7 +427,7 @@ async def test_workflow_emits_distinct_consecutive_outputs() -> None:
     """Distinct text outputs are all emitted, not incorrectly deduplicated."""
 
     @executor(id="multisayer")
-    async def multisayer(message: Any, ctx: WorkflowContext[Never, str]) -> None:
+    async def multisayer(message: Any, ctx: WorkflowContext[Any, str]) -> None:
         await ctx.yield_output("First part. ")
         await ctx.yield_output("Second part.")
 
@@ -505,7 +504,7 @@ async def test_workflow_interrupt_resume_round_trip() -> None:
 
         @response_handler
         async def handle_choice(self, original: str, response: str, ctx: WorkflowContext) -> None:
-            await ctx.yield_output(f"You chose: {response}")
+            await ctx.yield_output(f"You chose: {response}")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     workflow = WorkflowBuilder(start_executor=RequesterExecutor()).build()
     wrapper = AgentFrameworkWorkflow(workflow=workflow)
@@ -620,7 +619,7 @@ async def test_workflow_empty_turn_no_pending_requests() -> None:
     """Empty turn with no pending requests produces clean bookends."""
 
     @executor(id="noop")
-    async def noop(message: Any, ctx: WorkflowContext[Never, str]) -> None:
+    async def noop(message: Any, ctx: WorkflowContext[Any, str]) -> None:
         await ctx.yield_output("done")
 
     workflow = WorkflowBuilder(start_executor=noop).build()
@@ -651,7 +650,7 @@ async def test_workflow_usage_output_maps_to_custom_event() -> None:
     """Usage Content outputs are surfaced as custom usage events."""
 
     @executor(id="usage_reporter")
-    async def usage_reporter(message: Any, ctx: WorkflowContext[Never, Content]) -> None:
+    async def usage_reporter(message: Any, ctx: WorkflowContext[Any, Content]) -> None:
         await ctx.yield_output(
             Content.from_usage({"input_token_count": 100, "output_token_count": 50, "total_token_count": 150})
         )
@@ -694,7 +693,7 @@ async def test_workflow_approval_flow_round_trip() -> None:
         @response_handler
         async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
             status = "approved" if bool(response.approved) else "rejected"
-            await ctx.yield_output(f"Refund {status}.")
+            await ctx.yield_output(f"Refund {status}.")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
     wrapper = AgentFrameworkWorkflow(workflow=workflow)
@@ -762,7 +761,7 @@ async def test_workflow_message_list_resume() -> None:
         @response_handler
         async def handle_input(self, original: dict, response: list[Message], ctx: WorkflowContext) -> None:
             user_text = response[0].text if response else ""
-            await ctx.yield_output(f"Got: {user_text}")
+            await ctx.yield_output(f"Got: {user_text}")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     workflow = WorkflowBuilder(start_executor=MessageRequestExecutor()).build()
     wrapper = AgentFrameworkWorkflow(workflow=workflow)
@@ -861,7 +860,7 @@ async def test_workflow_factory_thread_scoping() -> None:
 
     def make_workflow(thread_id: str):
         @executor(id="echo")
-        async def echo(message: Any, ctx: WorkflowContext[Never, str]) -> None:
+        async def echo(message: Any, ctx: WorkflowContext[Any, str]) -> None:
             await ctx.yield_output(f"Thread: {thread_id}")
 
         return WorkflowBuilder(start_executor=echo).build()
@@ -914,7 +913,7 @@ async def test_workflow_sequential_request_info_interrupts() -> None:
 
         @response_handler
         async def handle_dest(self, original: str, response: str, ctx: WorkflowContext[str]) -> None:
-            await ctx.yield_output(f"Booking for {self._name} to {response}")
+            await ctx.yield_output(f"Booking for {self._name} to {response}")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     name_requester = NameRequester()
     dest_requester = DestRequester()

@@ -2,8 +2,6 @@
 
 using System;
 using System.ComponentModel;
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -27,7 +25,7 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// This attribute is compatible with Native AOT when used with <see cref="AgentClassSkill{TSelf}"/>.
-/// Alternatively, override the <see cref="AgentSkill.Resources"/> property and use
+/// Alternatively, override <see cref="AgentClassSkill{TSelf}.Resources"/> and use
 /// <see cref="AgentClassSkill{TSelf}.CreateResource(string, object, string?)"/> instead.
 /// </para>
 /// </remarks>
@@ -45,7 +43,6 @@ namespace Microsoft.Agents.AI;
 /// </code>
 /// </example>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Method, AllowMultiple = false, Inherited = false)]
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentSkillResourceAttribute : Attribute
 {
     /// <summary>

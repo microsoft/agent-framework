@@ -192,13 +192,16 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
 
     private bool GetAutoSendValue()
     {
-        if (this.AgentOutput?.AutoSend is null)
+        // AzureAgentOutput.AutoSend is never null — it returns a literal-false default
+        // when the YAML omits the field. Use AutoSendIsDefaultValue to distinguish an
+        // explicit autoSend value from the implicit default, and treat the implicit
+        // default as autoSend = true (the historical behavior for actions that omit
+        // autoSend or have no output block at all).
+        if (this.AgentOutput is { AutoSendIsDefaultValue: false } output)
         {
-            return true;
+            return this.Evaluator.GetValue(output.AutoSend).Value;
         }
 
-        EvaluationResult<bool> autoSendResult = this.Evaluator.GetValue(this.AgentOutput.AutoSend);
-
-        return autoSendResult.Value;
+        return true;
     }
 }

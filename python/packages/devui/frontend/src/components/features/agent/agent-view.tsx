@@ -40,11 +40,22 @@ import type {
   ExtendedResponseStreamEvent,
 } from "@/types";
 import { useDevUIStore } from "@/stores";
-import { loadStreamingState } from "@/services/streaming-state";
+import { loadStreamingState, type StreamingState } from "@/services/streaming-state";
 
 type DebugEventHandler = (event: ExtendedResponseStreamEvent | "clear") => void;
 
 const ASSISTANT_TEXT_RENDER_INTERVAL_MS = 50;
+const STREAMING_PREVIEW_PREFIX = "[Earlier streaming content omitted after refresh]\n\n";
+
+function getRestoredStreamingText(state: StreamingState): string {
+  if (!state.accumulatedText) {
+    return "";
+  }
+
+  return state.accumulatedTextIsPreview
+    ? `${STREAMING_PREVIEW_PREFIX}${state.accumulatedText}`
+    : state.accumulatedText;
+}
 
 interface AgentViewProps {
   selectedAgent: AgentInfo;
@@ -683,13 +694,14 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               const state = loadStreamingState(mostRecent.id);
 
               if (state && !state.completed) {
-                accumulatedTextRef.current = state.accumulatedText || "";
+                const restoredText = getRestoredStreamingText(state);
+                accumulatedTextRef.current = restoredText;
                 // Add assistant message with resumed text
                 const assistantMsg: import("@/types/openai").ConversationMessage = {
                   id: state.lastMessageId || `assistant-${Date.now()}`,
                   type: "message",
                   role: "assistant",
-                  content: state.accumulatedText ? [{ type: "text", text: state.accumulatedText }] : [],
+                  content: restoredText ? [{ type: "text", text: restoredText }] : [],
                   status: "in_progress",
                 };
                 setChatItems([...allItems as import("@/types/openai").ConversationItem[], assistantMsg]);
@@ -988,13 +1000,14 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         // Check for incomplete stream and restore accumulated text
         const state = loadStreamingState(conversationId);
         if (state?.accumulatedText) {
-          accumulatedTextRef.current = state.accumulatedText;
+          const restoredText = getRestoredStreamingText(state);
+          accumulatedTextRef.current = restoredText;
           // Add assistant message with resumed text - streaming will continue automatically
           const assistantMsg: import("@/types/openai").ConversationMessage = {
             id: `assistant-${Date.now()}`,
             type: "message",
             role: "assistant",
-            content: [{ type: "output_text", text: state.accumulatedText }],
+            content: [{ type: "output_text", text: restoredText }],
             status: "in_progress",
           };
           setChatItems([...items, assistantMsg]);

@@ -45,7 +45,7 @@ class TestWorkflowSharedState:
         spam_content = "URGENT! You have won $1,000,000! Click here to claim your prize now before it expires!"
 
         # Start orchestration with spam email
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", spam_content)
+        response = self.helper.post_text(f"{self.base_url}/api/workflow/run", spam_content)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data
@@ -64,7 +64,7 @@ class TestWorkflowSharedState:
         )
 
         # Start orchestration with legitimate email
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", legitimate_content)
+        response = self.helper.post_text(f"{self.base_url}/api/workflow/run", legitimate_content)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data
@@ -83,7 +83,7 @@ class TestWorkflowSharedState:
         )
 
         # Start orchestration with phishing email
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", phishing_content)
+        response = self.helper.post_text(f"{self.base_url}/api/workflow/run", phishing_content)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data

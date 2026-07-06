@@ -1,4 +1,4 @@
----
+﻿---
 name: verify-samples-tool
 description: How to use the verify-samples tool to run, verify, and manage sample definitions in the Agent Framework repository. Use this when adding, updating, or running sample verification.
 ---
@@ -157,7 +157,7 @@ new SampleDefinition
 new SampleDefinition
 {
     Name = "Agent_With_AzureOpenAIChatCompletion",
-    ProjectPath = "samples/02-agents/AgentProviders/Agent_With_AzureOpenAIChatCompletion",
+    ProjectPath = "samples/02-agents/AgentProviders/azure/Agent_With_AzureOpenAIChatCompletion",
     RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
     OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
     ExpectedOutputDescription =
@@ -173,11 +173,11 @@ new SampleDefinition
 ```csharp
 new SampleDefinition
 {
-    Name = "Workflow_Declarative_GenerateCode",
-    ProjectPath = "samples/03-workflows/Declarative/GenerateCode",
+    Name = "Workflow_Visualization",
+    ProjectPath = "samples/03-workflows/Visualization",
     IsDeterministic = true,
-    MustContain = ["WORKFLOW: Parsing", "WORKFLOW: Defined"],
-    ExpectedOutputDescription = ["The output should show a YAML workflow being parsed and C# code being generated from it."],
+    MustContain = ["Generating workflow visualization...", "Mermaid string:", "DiGraph string:"],
+    ExpectedOutputDescription = ["The output should show workflow visualization in Mermaid and DiGraph formats."],
 },
 ```
 
@@ -223,3 +223,5 @@ new SampleDefinition
     SkipReason = "Runs as an MCP stdio server that does not exit on its own.",
 },
 ```
+
+

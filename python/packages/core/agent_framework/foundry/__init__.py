@@ -34,6 +34,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "FoundryLocalChatOptions": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
     "FoundryLocalClient": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
     "FoundryLocalSettings": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
+    "GeneratedEvaluatorRef": ("agent_framework_foundry", "agent-framework-foundry"),
     "RawAnthropicFoundryClient": ("agent_framework_anthropic", "agent-framework-anthropic"),
     "RawFoundryAgent": ("agent_framework_foundry", "agent-framework-foundry"),
     "RawFoundryAgentChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
@@ -41,6 +42,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "RawFoundryEmbeddingClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "evaluate_foundry_target": ("agent_framework_foundry", "agent-framework-foundry"),
     "evaluate_traces": ("agent_framework_foundry", "agent-framework-foundry"),
+    "to_prompt_agent": ("agent_framework_foundry", "agent-framework-foundry"),
 }
 
 

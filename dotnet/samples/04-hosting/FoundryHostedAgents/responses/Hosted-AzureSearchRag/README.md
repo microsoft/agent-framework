@@ -1,4 +1,4 @@
-# Hosted-AzureSearchRag
+﻿# Hosted-AzureSearchRag
 
 A hosted agent with **Retrieval Augmented Generation (RAG)** capabilities backed by **Azure AI Search**. The agent grounds its answers in product documentation by running a keyword search against an Azure AI Search index before each model invocation, then citing the source in its response.
 
@@ -7,7 +7,7 @@ This sample is the Azure AI Search counterpart to `Hosted-TextRag`. Where `Hoste
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- An Azure AI Foundry project with a deployed model (e.g., `gpt-4o`)
+- A Foundry project with a deployed model (e.g., `gpt-4o`)
 - An Azure AI Search service ([create one](https://learn.microsoft.com/azure/search/search-create-service-portal))
 - **A pre-provisioned search index** with the schema and content described in the next section
 - Azure CLI logged in (`az login`)
@@ -77,8 +77,8 @@ cp .env.example .env
 Edit `.env`:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_MODEL=gpt-4o
 AZURE_SEARCH_ENDPOINT=https://<your-search>.search.windows.net
 AZURE_SEARCH_INDEX_NAME=contoso-outdoors
 AZURE_BEARER_TOKEN_FOUNDRY=DefaultAzureCredential
@@ -173,6 +173,34 @@ The `TextSearchProvider` runs a keyword search against the configured Azure AI S
 The model receives the top three search results as additional context and cites the source in its response. Each seeded document includes a unique `*-CANARY-*` token that does not exist in any model training data, so the integration tests can prove an answer was grounded in retrieved content (not fabricated from training) by asking for the canary and asserting it appears in the response.
 
 Replace the seed documents (or point the sample at an existing index with your own content) to ground the agent in your own knowledge base.
+
+## Deploying to Foundry (azd spec)
+
+This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent spec (`agent.yaml`) for deployment to Foundry.
+
+Initialize an `azd` project from this sample's manifest:
+
+```bash
+mkdir hosted-azure-search-rag && cd hosted-azure-search-rag
+azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-AzureSearchRag/agent.manifest.yaml
+```
+
+Then deploy:
+
+```bash
+azd deploy
+```
+
+If you need to override defaults, set deployment-time environment variables in the `azd` environment before deploying:
+
+```bash
+azd env set AGENT_NAME hosted-azure-search-rag
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-4o
+```
+
+For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+
+---
 
 ## NuGet package users
 

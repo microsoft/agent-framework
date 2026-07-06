@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -18,7 +17,6 @@ namespace Microsoft.Agents.AI.Workflows.Specialized.Magentic;
 [JsonDerivedType(typeof(MagenticPlanCreatedEvent))]
 [JsonDerivedType(typeof(MagenticReplannedEvent))]
 [JsonDerivedType(typeof(MagenticProgressLedgerUpdatedEvent))]
-[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public abstract class MagenticOrchestratorEvent(object? data) : WorkflowEvent(data)
 {
 }
@@ -27,7 +25,6 @@ public abstract class MagenticOrchestratorEvent(object? data) : WorkflowEvent(da
 /// Represents the creation of the initial plan
 /// </summary>
 /// <param name="fullTaskLeger"></param>
-[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public sealed class MagenticPlanCreatedEvent(ChatMessage fullTaskLeger) : MagenticOrchestratorEvent(fullTaskLeger)
 {
     /// <summary>
@@ -40,7 +37,6 @@ public sealed class MagenticPlanCreatedEvent(ChatMessage fullTaskLeger) : Magent
 /// Represents the creation of a new plan in response to a stall.
 /// </summary>
 /// <param name="fullTaskLeger"></param>
-[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public sealed class MagenticReplannedEvent(ChatMessage fullTaskLeger) : MagenticOrchestratorEvent(fullTaskLeger)
 {
     /// <summary>
@@ -53,7 +49,6 @@ public sealed class MagenticReplannedEvent(ChatMessage fullTaskLeger) : Magentic
 /// Represents an update to the <see cref="MagenticProgressLedger"/> when running a coordination round.
 /// </summary>
 /// <param name="progressLedger"></param>
-[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public sealed class MagenticProgressLedgerUpdatedEvent(MagenticProgressLedger progressLedger) : MagenticOrchestratorEvent(progressLedger)
 {
     /// <summary>
@@ -95,6 +90,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
 
     private MagenticTaskContext? _taskContext;
     private PortBinding? _planReviewPort;
+    private string? _currentSpeakerExecutorId;
 
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
@@ -138,7 +134,6 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
           to the conversation and enters the inner loop.
         - If revision requested, append the review comments to the chat history,
           trigger replanning via the manager, emit a REPLANNED event, then run the outer loop.
-         
          */
         if (this._taskContext == null || this._taskContext.TaskLedger == null)
         {
@@ -201,9 +196,45 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         }
         else
         {
-            // Subsequent turns: agent returned control, go directly to coordination (progress ledger only, no replan)
+            // Subsequent turns: agent returned control, go directly to coordination (progress ledger only, no replan).
+            if (messages is { Count: > 0 })
+            {
+                // Capture the participant's reply into the manager-visible chat history so the progress ledger can see it.
+                this._taskContext.ChatHistory.AddRange(messages);
+
+                // Share the reply with the other participants except the replier
+                await this.BroadcastReplyToOtherParticipantsAsync(messages, context, cancellationToken).ConfigureAwait(false);
+            }
             await this.RunCoordinationRoundAsync(this._taskContext, context, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Forwards a participant's reply to every other participant so they share the running conversation.
+    /// The messages are buffered (no <see cref="TurnToken"/> is sent) - they only become context for the participant's next turn.
+    /// </summary>
+    private ValueTask BroadcastReplyToOtherParticipantsAsync(
+        List<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        // Without a known current speaker we cannot exclude the reply's author, so skip the broadcast
+        // rather than risk echoing the reply back to its own author. This covers the window after a
+        // checkpoint restore but before any delegation has set the current speaker.
+        if (string.IsNullOrEmpty(this._currentSpeakerExecutorId))
+        {
+            return default;
+        }
+
+        List<Task>? sendTasks = null;
+        foreach (AIAgent agent in team)
+        {
+            string executorId = AIAgentHostExecutor.IdFor(agent);
+            if (string.Equals(executorId, this._currentSpeakerExecutorId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+            (sendTasks ??= []).Add(context.SendMessageAsync(messages, executorId, cancellationToken).AsTask());
+        }
+        return sendTasks is null ? default : new ValueTask(Task.WhenAll(sendTasks));
     }
 
     private ChatMessage? _fullTaskLedgerMessage;
@@ -288,15 +319,18 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
             return;
         }
 
+        string nextExecutorId = AIAgentHostExecutor.IdFor(nextAgent);
+
         if (!string.IsNullOrWhiteSpace(taskContext.ProgressLedger.InstructionOrQuestion))
         {
             ChatMessage instruction = new(ChatRole.Assistant, taskContext.ProgressLedger.InstructionOrQuestion);
             taskContext.ChatHistory.Add(instruction);
 
-            await context.SendMessageAsync(instruction, cancellationToken).ConfigureAwait(false);
+            // Target the instruction at the chosen speaker only.
+            await context.SendMessageAsync(instruction, nextExecutorId, cancellationToken).ConfigureAwait(false);
         }
 
-        string nextExecutorId = AIAgentHostExecutor.IdFor(nextAgent);
+        this._currentSpeakerExecutorId = nextExecutorId;
         await context.SendMessageAsync(new TurnToken(taskContext.EmitUpdateEvents), nextExecutorId, cancellationToken).ConfigureAwait(false);
     }
 
@@ -304,6 +338,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
     {
         bool wasStalled = taskContext.IsStalled;
         taskContext.Reset();
+        this._currentSpeakerExecutorId = null;
         await context.SendMessageAsync(new ResetChatSignal(), cancellationToken: cancellationToken).ConfigureAwait(false);
 
         await this.UpdatePlanAndDelegateAsync(taskContext, context, cancellationToken, replanAfterStall: wasStalled).ConfigureAwait(false);
@@ -314,9 +349,9 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         List<ChatMessage> messages = [await this._manager.PrepareFinalAnswerAsync(taskContext, context, cancellationToken).ConfigureAwait(false)];
         await context.YieldOutputAsync(messages, cancellationToken).ConfigureAwait(false);
         taskContext.IsTerminated = true;
+        this._currentSpeakerExecutorId = null;
     }
 
-    private const string CurrentTurnEmitUpdateEventsKey = nameof(CurrentTurnEmitUpdateEventsKey);
     protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Task contextStateTask = this._taskContext == null
@@ -326,14 +361,21 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
                                                               cancellationToken: cancellationToken)
                                        .AsTask();
 
+        Task currentSpeakerTask = context.QueueStateUpdateAsync(MagenticConstants.CurrentSpeakerStateKey,
+                                                            this._currentSpeakerExecutorId,
+                                                            cancellationToken: cancellationToken)
+                                        .AsTask();
+
         await Task.WhenAll(base.OnCheckpointingAsync(context, cancellationToken).AsTask(),
-                           contextStateTask).ConfigureAwait(false);
+                           contextStateTask,
+                           currentSpeakerTask).ConfigureAwait(false);
     }
 
     protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        await Task.WhenAll(base.OnCheckpointRestoredAsync(context, cancellationToken).AsTask(), LoadContextStateAsync())
-                  .ConfigureAwait(false);
+        await Task.WhenAll(base.OnCheckpointRestoredAsync(context, cancellationToken).AsTask(),
+                            LoadContextStateAsync(),
+                            LoadCurrentSpeakerAsync()).ConfigureAwait(false);
 
         async Task LoadContextStateAsync()
         {
@@ -344,6 +386,12 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
             {
                 this._taskContext = new MagenticTaskContext(state, team, limits, []);
             }
+        }
+
+        async Task LoadCurrentSpeakerAsync()
+        {
+            this._currentSpeakerExecutorId = await context.ReadStateAsync<string?>(MagenticConstants.CurrentSpeakerStateKey, cancellationToken: cancellationToken)
+                                                        .ConfigureAwait(false);
         }
     }
 }

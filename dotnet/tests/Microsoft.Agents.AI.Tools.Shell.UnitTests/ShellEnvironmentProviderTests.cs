@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
 
@@ -226,6 +227,8 @@ public sealed class ShellEnvironmentProviderTests
         public override Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public override Task<ShellResult> RunAsync(string command, CancellationToken cancellationToken = default) =>
             Task.FromResult(this.Responses.Dequeue());
+        public override AIFunction AsAIFunction(string name = "run_shell", string? description = null, bool requireApproval = true) =>
+            throw new NotSupportedException();
         public override ValueTask DisposeAsync() => default;
     }
 
@@ -280,6 +283,8 @@ public sealed class ShellEnvironmentProviderTests
         public override Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public override Task<ShellResult> RunAsync(string command, CancellationToken cancellationToken = default) =>
             Task.FromResult(this._factory(cancellationToken));
+        public override AIFunction AsAIFunction(string name = "run_shell", string? description = null, bool requireApproval = true) =>
+            throw new NotSupportedException();
         public override ValueTask DisposeAsync() => default;
     }
 
@@ -372,6 +377,8 @@ public sealed class ShellEnvironmentProviderTests
             this.RunCount++;
             return Task.FromResult(this.NextResult);
         }
+        public override AIFunction AsAIFunction(string name = "run_shell", string? description = null, bool requireApproval = true) =>
+            throw new NotSupportedException();
         public override ValueTask DisposeAsync() => default;
     }
 }

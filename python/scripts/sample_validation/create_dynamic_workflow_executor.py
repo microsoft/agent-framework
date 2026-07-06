@@ -14,8 +14,8 @@ from agent_framework import (
     handler,
 )
 from agent_framework.github import GitHubCopilotAgent
-from copilot.generated.session_events import PermissionRequest
-from copilot.session import PermissionRequestResult
+from copilot.session import PermissionHandler, PermissionRequestResult
+from copilot.session_events import PermissionRequest
 from pydantic import BaseModel
 from sample_validation.const import WORKER_COMPLETED
 from sample_validation.discovery import DiscoveryResult
@@ -103,7 +103,7 @@ def prompt_permission(
     logger.debug(
         f"[Permission Request: {request.kind}] ({context})Automatically approved for sample validation."
     )
-    return PermissionRequestResult(kind="approved")
+    return PermissionHandler.approve_all(request, context)
 
 
 class CustomAgentExecutor(Executor):

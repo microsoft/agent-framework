@@ -2,7 +2,7 @@
 
 using System;
 using System.Collections.Generic;
-using GitHub.Copilot.SDK;
+using GitHub.Copilot;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.GitHub.Copilot.UnitTests;
@@ -16,7 +16,7 @@ public sealed class CopilotClientExtensionsTests
     public void AsAIAgent_WithAllParameters_ReturnsGitHubCopilotAgentWithSpecifiedProperties()
     {
         // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions());
 
         const string TestId = "test-agent-id";
         const string TestName = "Test Agent";
@@ -37,7 +37,7 @@ public sealed class CopilotClientExtensionsTests
     public void AsAIAgent_WithMinimalParameters_ReturnsGitHubCopilotAgent()
     {
         // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions());
 
         // Act
         var agent = copilotClient.AsAIAgent(ownsClient: false, tools: null);
@@ -61,7 +61,7 @@ public sealed class CopilotClientExtensionsTests
     public void AsAIAgent_WithOwnsClient_ReturnsAgentThatOwnsClient()
     {
         // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions());
 
         // Act
         var agent = copilotClient.AsAIAgent(ownsClient: true, tools: null);
@@ -75,7 +75,7 @@ public sealed class CopilotClientExtensionsTests
     public void AsAIAgent_WithTools_ReturnsAgentWithTools()
     {
         // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions());
         List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
 
         // Act

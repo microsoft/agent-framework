@@ -111,7 +111,7 @@ curl -X POST http://localhost:8088/responses -H "Content-Type: application/json"
 
 To host the agent on Foundry, follow the instructions in the [Deploying the Agent to Foundry](../../README.md#deploying-the-agent-to-foundry) section of the README in the parent directory.
 
-When deploying, make sure `MEMORY_STORE_NAME` and `FOUNDRY_MEMORY_SCOPE` are set in your `azd` environment so they get injected into the hosted container per [`agent.manifest.yaml`](agent.manifest.yaml):
+When deploying, make sure `MEMORY_STORE_NAME` is set in your `azd` environment so it gets injected into the hosted container per [`agent.manifest.yaml`](agent.manifest.yaml):
 
 ```bash
 azd env set MEMORY_STORE_NAME "agent_framework_memory"

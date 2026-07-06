@@ -2,7 +2,7 @@ name: Issue Triage
 
 on:
   issues:
-    types: [opened, labeled]
+    types: [opened, typed]
 
 permissions:
   contents: read
@@ -12,9 +12,7 @@ permissions:
 concurrency:
   group: >-
     issue-triage-${{ github.repository }}-${{
-      ((github.event.action == 'opened' && contains(github.event.issue.labels.*.name, 'bug'))
-       || (github.event.action == 'labeled' && github.event.label.name == 'bug'))
-      && github.event.issue.number
+      github.event.issue.type.name == 'Bug' && github.event.issue.number
       || github.run_id
     }}
   cancel-in-progress: true
@@ -28,7 +26,7 @@ env:
 jobs:
   team_check:
     runs-on: ubuntu-latest
-    if: ${{ (github.event.action == 'opened' && contains(github.event.issue.labels.*.name, 'bug')) || (github.event.action == 'labeled' && github.event.label.name == 'bug') }}
+    if: ${{ github.event.issue.type.name == 'Bug' }}
     outputs:
       is_team_member: ${{ steps.check.outputs.is_team_member }}
       issue_number: ${{ steps.issue.outputs.issue_number }}
@@ -137,6 +135,7 @@ jobs:
         working-directory: ${{ env.DEVFLOW_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEVFLOW_TOKEN: ${{ secrets.DEVFLOW_TOKEN }}
           SK_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
           AGENT_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
           ISSUE_REPO: ${{ needs.team_check.outputs.repo }}

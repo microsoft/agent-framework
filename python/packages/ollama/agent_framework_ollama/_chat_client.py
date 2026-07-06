@@ -44,19 +44,19 @@ from ollama._types import Message as OllamaMessage
 from pydantic import BaseModel
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 
 __all__ = ["OllamaChatClient", "OllamaChatOptions"]
@@ -87,7 +87,8 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
         presence_penalty: Presence penalty, translates to ``options.presence_penalty``.
         tools: List of function tools.
         response_format: Output format, translates to ``format``.
-            Use 'json' for JSON mode or a JSON schema dict for structured output.
+            Use 'json' for JSON mode, a JSON schema dict, or a Pydantic model class
+            (converted to its JSON schema) for structured output.
 
         # Options not supported in Ollama:
         tool_choice: Ollama only supports auto tool choice.
@@ -415,6 +416,13 @@ class OllamaChatClient(
             else:
                 # Apply top-level translations (e.g., response_format -> format)
                 translated_key = OLLAMA_OPTION_TRANSLATIONS.get(key, key)
+                if translated_key == "format" and isinstance(value, type) and issubclass(value, BaseModel):
+                    # Ollama's `format` accepts '', 'json', or a JSON-schema dict, not a
+                    # Pydantic model class. Convert the class to its JSON schema, matching
+                    # OpenAIChatClient/FoundryChatClient and Ollama's documented usage
+                    # (https://ollama.com/blog/structured-outputs). The original class is
+                    # kept in `options` for typed parsing of the response.
+                    value = value.model_json_schema()
                 run_options[translated_key] = value
 
         # Add model options to run_options if any

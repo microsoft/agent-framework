@@ -1,4 +1,4 @@
-# Evaluation - Expected Outputs
+﻿# Evaluation - Expected Outputs
 
 This sample demonstrates evaluating agent responses against expected outputs using built-in checks.
 
@@ -16,8 +16,8 @@ This sample demonstrates evaluating agent responses against expected outputs usi
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:FOUNDRY_MODEL="gpt-4o-mini"
 ```
 
 ## Run the sample
@@ -31,3 +31,4 @@ dotnet run --project .\Evaluation_ExpectedOutputs
 
 - [Evaluation_SimpleEval](../Evaluation_SimpleEval/) — Simplest evaluation with built-in and custom checks
 - [Evaluation_FoundryQuality](../../../05-end-to-end/Evaluation/Evaluation_FoundryQuality/) — Cloud-based quality evaluation with Foundry evaluators
+- [Evaluation_FoundryRubric](../../../05-end-to-end/Evaluation/Evaluation_FoundryRubric/) — Rubric (adaptive) evaluators with per-dimension scores

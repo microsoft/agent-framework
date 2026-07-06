@@ -62,7 +62,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
     protected virtual bool EmitResultEvent => true;
 
     /// <inheritdoc/>
-    public ValueTask ResetAsync()
+    public virtual ValueTask ResetAsync()
     {
         return default;
     }
@@ -71,6 +71,13 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
     [SendsMessage(typeof(ActionExecutorResult))]
     public override async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
+        // Establish the Foundry ProductContext on the current async logical context before
+        // running any code that reads PropertyPath.VariableName / NamespaceAlias. ObjectModel
+        // resolves those lazily against AsyncLocal<ProductContext>; when the workflow is
+        // hosted (AsAIAgent + AddFoundryResponses) each HTTP request runs on a fresh logical
+        // context where the build-thread setting does not flow.
+        WorkflowDiagnostics.SetFoundryProduct();
+
         if (this.Model.Disabled)
         {
             Debug.WriteLine($"DISABLED {this.GetType().Name} [{this.Id}]");

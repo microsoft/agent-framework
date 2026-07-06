@@ -48,6 +48,10 @@ async def handle_approval_response(
 | `POST /api/workflow/respond/{instanceId}/{requestId}` | Send human response |
 | `GET /api/health` | Health check |
 
+These routes expose workflow status and human-response operations. In production, put them behind your application's authentication and authorization layer and verify that the caller is allowed to inspect or resume the targeted workflow before returning status or accepting a response.
+
+Treat `instanceId` and `requestId` as correlation handles only. They help locate workflow state, but they are not secrets or proof that a caller is authorized to act on that workflow.
+
 ### Durable Functions Integration
 
 When running on Durable Functions, the HITL pattern maps to:

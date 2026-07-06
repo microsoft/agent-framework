@@ -17,7 +17,7 @@ public sealed class ToolCallingHostedAgentTests(ToolCallingHostedAgentFixture fi
 {
     private readonly ToolCallingHostedAgentFixture _fixture = fixture;
 
-    [Fact(Skip = "Pending TestContainer build and end to end smoke (step 5).")]
+    [Fact]
     public async Task ServerSideTool_IsInvokedWhenPromptedAsync()
     {
         // Arrange
@@ -32,7 +32,7 @@ public sealed class ToolCallingHostedAgentTests(ToolCallingHostedAgentFixture fi
             "Expected at least one FunctionCallContent in the response messages.");
     }
 
-    [Fact(Skip = "Pending TestContainer build and end to end smoke (step 5).")]
+    [Fact]
     public async Task ServerSideTool_NotInvokedWhenNotNeededAsync()
     {
         // Arrange
@@ -47,7 +47,7 @@ public sealed class ToolCallingHostedAgentTests(ToolCallingHostedAgentFixture fi
         Assert.Equal(0, toolCallCount);
     }
 
-    [Fact(Skip = "Pending TestContainer build and end to end smoke (step 5).")]
+    [Fact]
     public async Task ServerSideTool_MultiTurn_RemembersPriorToolResultAsync()
     {
         // Arrange
@@ -64,7 +64,7 @@ public sealed class ToolCallingHostedAgentTests(ToolCallingHostedAgentFixture fi
         Assert.Contains("42", second.Text);
     }
 
-    [Fact(Skip = "Pending TestContainer build and end to end smoke (step 5).")]
+    [Fact]
     public async Task ServerSideTool_WithArguments_ReturnsExpectedResultAsync()
     {
         // Arrange

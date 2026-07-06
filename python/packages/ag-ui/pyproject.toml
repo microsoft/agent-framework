@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework-ag-ui"
-version = "1.0.0rc2"
+version = "1.0.0rc7"
 description = "AG-UI protocol integration for Agent Framework"
 readme = "README.md"
 license-files = ["LICENSE"]
@@ -22,15 +22,15 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.5.0,<2",
+    "agent-framework-core>=1.10.0,<2",
     "ag-ui-protocol>=0.1.16,<0.2",
-    "fastapi>=0.115.0,<0.133.1",
+    "fastapi>=0.115.0,<0.138.1",
     "uvicorn[standard]>=0.30.0,<1"
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest==9.0.3",
+    "pytest==9.1.0",
     "httpx==0.28.1",
 ]
 
