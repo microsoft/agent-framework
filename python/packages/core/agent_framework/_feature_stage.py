@@ -226,15 +226,16 @@ def _resolve_user_frame() -> tuple[str, int, str] | None:
 def _warn_on_feature_use(
     *,
     stage: FeatureStageName,
-    feature_id: str,
+    feature_id: str | Enum,
     object_name: str,
     category: type[Warning],
 ) -> None:
-    warning_key = (category, feature_id)
+    normalized_feature_id = _normalize_feature_id(feature_id)
+    warning_key = (category, normalized_feature_id)
     if warning_key in _WARNED_FEATURES:
         return
 
-    message = _build_stage_warning_message(stage=stage, feature_id=feature_id, object_name=object_name)
+    message = _build_stage_warning_message(stage=stage, feature_id=normalized_feature_id, object_name=object_name)
     user_frame = _resolve_user_frame()
     if user_frame is None:
         # Last-resort fallback: emit at the immediate caller of this helper.

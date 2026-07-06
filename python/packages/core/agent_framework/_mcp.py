@@ -23,7 +23,12 @@ from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 from opentelemetry import propagate
 from opentelemetry import trace as otel_trace
 
-from ._feature_stage import ExperimentalFeature, ExperimentalWarning, experimental
+from ._feature_stage import (
+    ExperimentalFeature,
+    ExperimentalWarning,
+    _warn_on_feature_use,  # pyright: ignore[reportPrivateUsage]
+    experimental,
+)
 from ._tools import FunctionTool
 from ._types import (
     ChatOptions,
@@ -484,11 +489,11 @@ class MCPTool:
         if use_progressive_disclosure and not load_tools:
             raise ValueError("use_progressive_disclosure=True requires load_tools=True.")
         if use_progressive_disclosure:
-            warnings.warn(
-                "[PROGRESSIVE_TOOLS] MCP progressive disclosure is experimental and may change or be removed "
-                "in future versions without notice.",
-                ExperimentalWarning,
-                stacklevel=2,
+            _warn_on_feature_use(
+                stage="experimental",
+                feature_id=ExperimentalFeature.PROGRESSIVE_TOOLS,
+                object_name="MCP progressive disclosure",
+                category=ExperimentalWarning,
             )
         self.name = name
         self.description = description or ""

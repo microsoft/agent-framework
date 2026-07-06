@@ -28,7 +28,7 @@ from agent_framework import (
     MCPWebsocketTool,
     Message,
 )
-from agent_framework._feature_stage import ExperimentalWarning
+from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalFeature, ExperimentalWarning
 from agent_framework._mcp import (
     MCPTool,
     _build_prefixed_mcp_name,
@@ -57,6 +57,10 @@ def _mcp_result_to_text(result: str | list[Content]) -> str:
 
 
 _HELPER_MCP_TOOL = MCPTool(name="helper")  # type: ignore[abstract]
+
+
+def _reset_progressive_mcp_warning_state() -> None:
+    _WARNED_FEATURES.discard((ExperimentalWarning, ExperimentalFeature.PROGRESSIVE_TOOLS.value))
 
 
 # Helper function tests
@@ -1711,6 +1715,7 @@ async def test_mcp_tool_allowed_tools(allowed_tools, expected_count, expected_na
 
 
 def test_mcp_transport_subclasses_accept_progressive_disclosure_options() -> None:
+    _reset_progressive_mcp_warning_state()
     with pytest.warns(ExperimentalWarning, match="PROGRESSIVE_TOOLS"):
         stdio = MCPStdioTool(
             name="stdio",
@@ -1718,20 +1723,18 @@ def test_mcp_transport_subclasses_accept_progressive_disclosure_options() -> Non
             use_progressive_disclosure=True,
             always_load=["search"],
         )
-    with pytest.warns(ExperimentalWarning, match="PROGRESSIVE_TOOLS"):
-        http = MCPStreamableHTTPTool(
-            name="http",
-            url="https://example.com/mcp",
-            use_progressive_disclosure=True,
-            always_load=["search"],
-        )
-    with pytest.warns(ExperimentalWarning, match="PROGRESSIVE_TOOLS"):
-        websocket = MCPWebsocketTool(
-            name="ws",
-            url="wss://example.com/mcp",
-            use_progressive_disclosure=True,
-            always_load=["search"],
-        )
+    http = MCPStreamableHTTPTool(
+        name="http",
+        url="https://example.com/mcp",
+        use_progressive_disclosure=True,
+        always_load=["search"],
+    )
+    websocket = MCPWebsocketTool(
+        name="ws",
+        url="wss://example.com/mcp",
+        use_progressive_disclosure=True,
+        always_load=["search"],
+    )
 
     assert stdio.use_progressive_disclosure is True
     assert http.use_progressive_disclosure is True
@@ -1751,8 +1754,10 @@ def test_mcp_progressive_disclosure_requires_loading_tools() -> None:
 
 
 def test_mcp_progressive_disclosure_warns_on_construction() -> None:
-    with pytest.warns(ExperimentalWarning, match="PROGRESSIVE_TOOLS"):
+    _reset_progressive_mcp_warning_state()
+    with pytest.warns(ExperimentalWarning, match=f"{ExperimentalFeature.PROGRESSIVE_TOOLS.value}"):
         MCPTool(name="test_server", use_progressive_disclosure=True)  # type: ignore[abstract]
+    assert (ExperimentalWarning, ExperimentalFeature.PROGRESSIVE_TOOLS.value) in _WARNED_FEATURES
 
 
 def test_mcp_tool_base_constructor_preserves_positional_tool_name_prefix() -> None:
@@ -1805,7 +1810,8 @@ async def _load_progressive_test_server(
     approval_mode: Any = None,
     tools: list[types.Tool] | None = None,
 ) -> MCPTool:
-    with pytest.warns(ExperimentalWarning, match="PROGRESSIVE_TOOLS"):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ExperimentalWarning)
         server = MCPTool(  # type: ignore[abstract]
             name="test_server",
             allowed_tools=allowed_tools,
@@ -2089,7 +2095,8 @@ async def test_mcp_progressive_resolve_rejects_ambiguous_tool_name() -> None:
     def _tool() -> None:
         return None
 
-    with pytest.warns(ExperimentalWarning, match="PROGRESSIVE_TOOLS"):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ExperimentalWarning)
         server = MCPTool(name="test_server", use_progressive_disclosure=True)  # type: ignore[abstract]
     server._functions = [
         FunctionTool(
@@ -2149,7 +2156,8 @@ async def test_mcp_progressive_loaded_http_tool_preserves_runtime_kwargs_for_hea
         provider_received.append(dict(kwargs))
         return {"X-Some-Token": kwargs.get("some_token", "")}
 
-    with pytest.warns(ExperimentalWarning, match="PROGRESSIVE_TOOLS"):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ExperimentalWarning)
         server = MCPStreamableHTTPTool(
             name="test",
             url="http://example.com/mcp",
