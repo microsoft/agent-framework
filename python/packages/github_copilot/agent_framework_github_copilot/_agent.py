@@ -30,6 +30,7 @@ from agent_framework import (
     ResponseStream,
     SessionContext,
     UsageDetails,
+    add_usage_details,
     normalize_messages,
 )
 from agent_framework._settings import load_settings
@@ -640,16 +641,16 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         if session_context.instructions:
             prompt = "\n".join(session_context.instructions) + "\n" + prompt
 
-        # Subscribe to events before send_and_wait so we can capture the
-        # ASSISTANT_USAGE event, which carries full input+output token counts.
-        # The handler coexists with send_and_wait's internal handler; both
-        # receive every event that the session emits.
-        usage_event_data: Any = None
+        # Subscribe to events before send_and_wait so we can capture every
+        # ASSISTANT_USAGE event.  Multi-turn runs (e.g. with tool calls) emit
+        # one ASSISTANT_USAGE event per model turn; we collect them all and sum
+        # into a per-run total.  The handler coexists with send_and_wait's own
+        # internal handler — both receive every event the session emits.
+        usage_events: list[Any] = []
 
         def _collect_usage(event: SessionEvent) -> None:
-            nonlocal usage_event_data
             if event.type == SessionEventType.ASSISTANT_USAGE:
-                usage_event_data = event.data
+                usage_events.append(event.data)
 
         unsubscribe_usage = copilot_session.on(_collect_usage)
         try:
@@ -680,18 +681,25 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 )
             response_id = message_id
 
-        # Build usage_details and finish_reason from the captured ASSISTANT_USAGE
-        # event.  Fall back to output_tokens on the ASSISTANT_MESSAGE data when no
+        # Build usage_details and finish_reason by aggregating all ASSISTANT_USAGE
+        # events collected during this run.  Summing per-turn counts gives the
+        # same per-run total as the streaming path (which relies on _process_update
+        # to accumulate Content.from_usage() updates).
+        # finish_reason and model are taken from the *last* event so they reflect
+        # the final model turn.
+        # Fall back to output_tokens on the ASSISTANT_MESSAGE data when no
         # dedicated usage event arrived (older CLI versions).
         response_usage: UsageDetails | None = None
         response_finish_reason: str | None = None
         response_model: str | None = None
-        if usage_event_data is not None:
-            response_usage = _parse_copilot_usage(usage_event_data)
-            response_finish_reason = getattr(usage_event_data, "reason", None) or getattr(
-                usage_event_data, "finish_reason", None
-            )
-            response_model = getattr(usage_event_data, "model", None)
+        if usage_events:
+            for evt_data in usage_events:
+                per_turn = _parse_copilot_usage(evt_data)
+                if per_turn:
+                    response_usage = add_usage_details(response_usage, per_turn)
+            last_evt = usage_events[-1]
+            response_finish_reason = getattr(last_evt, "reason", None) or getattr(last_evt, "finish_reason", None)
+            response_model = getattr(last_evt, "model", None)
         elif response_event and response_event.type == SessionEventType.ASSISTANT_MESSAGE:
             output_tokens = getattr(response_event.data, "output_tokens", None)
             if output_tokens is not None:
@@ -830,17 +838,25 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 # Capture per-turn token usage and emit it as a usage update so that
                 # AgentResponse.usage_details and AgentResponse.finish_reason are
                 # populated by the standard _process_update() aggregation path.
+                # Emit whenever usage OR finish_reason is present so finish_reason
+                # is never dropped for events that carry only non-token fields
+                # (e.g. cache-only or reasoning-only turns).
                 usage_data: Any = event.data
                 streamed_usage = _parse_copilot_usage(usage_data)
-                if streamed_usage:
-                    finish_reason: str | None = getattr(
-                        usage_data, "reason", None
-                    ) or getattr(usage_data, "finish_reason", None)
+                stream_finish_reason: str | None = getattr(usage_data, "reason", None) or getattr(
+                    usage_data, "finish_reason", None
+                )
+                if streamed_usage or stream_finish_reason:
+                    usage_contents = (
+                        [Content.from_usage(usage_details=streamed_usage, raw_representation=event)]
+                        if streamed_usage
+                        else []
+                    )
                     usage_update = AgentResponseUpdate(
                         role="assistant",
-                        contents=[Content.from_usage(usage_details=streamed_usage, raw_representation=event)],
+                        contents=usage_contents,
                         raw_representation=event,
-                        finish_reason=finish_reason,
+                        finish_reason=stream_finish_reason,
                     )
                     queue.put_nowait(usage_update)
             elif event.type == SessionEventType.SESSION_IDLE:

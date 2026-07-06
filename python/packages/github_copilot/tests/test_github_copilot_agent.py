@@ -1080,6 +1080,78 @@ class TestGitHubCopilotAgentUsageMetadata:
 
         assert response.additional_properties.get("model") == "gpt-5"
 
+    async def test_run_accumulates_usage_across_multiple_usage_events(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Non-streaming run sums usage from multiple ASSISTANT_USAGE events (multi-turn tool calls)."""
+        usage_event_1 = SessionEvent(
+            data=Data(input_tokens=50, output_tokens=20, model="gpt-5", reason=None),
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.ASSISTANT_USAGE,
+        )
+        usage_event_2 = SessionEvent(
+            data=Data(input_tokens=30, output_tokens=15, model="gpt-5", reason="stop"),
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.ASSISTANT_USAGE,
+        )
+
+        def mock_on(handler: Any) -> Any:
+            handler(usage_event_1)
+            handler(usage_event_2)
+            return lambda: None
+
+        mock_session.on = mock_on
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        response = await agent.run("Hello")
+
+        assert response.usage_details is not None
+        assert response.usage_details["input_token_count"] == 80   # 50 + 30
+        assert response.usage_details["output_token_count"] == 35  # 20 + 15
+        assert response.usage_details["total_token_count"] == 115  # 80 + 35
+        # finish_reason and model taken from last event
+        assert response.finish_reason == "stop"
+        assert response.additional_properties.get("model") == "gpt-5"
+
+    async def test_run_streaming_emits_finish_reason_without_token_counts(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Streaming run propagates finish_reason even when no input/output token counts are present."""
+        usage_event = SessionEvent(
+            data=Data(reason="stop"),  # no input_tokens / output_tokens
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.ASSISTANT_USAGE,
+        )
+
+        events = [assistant_delta_event, usage_event, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        response = await agent.run(  # type: ignore[misc]
+            "Hello",
+            stream=True,  # type: ignore[call-overload]
+        ).get_final_response()  # type: ignore[union-attr]
+
+        assert response.finish_reason == "stop"
+        assert response.usage_details is None  # no token counts → no usage
+
     async def test_run_streaming_propagates_usage_details(
         self,
         mock_client: MagicMock,
