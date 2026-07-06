@@ -55,12 +55,11 @@ public sealed class AgentInlineSkillContentBuilderTests
         // Act
         var content = AgentInlineSkillContentBuilder.Build("my-skill", "A skill.", "Instructions.", resources, scripts: null);
 
-        // Assert — resources are listed by name (no description), scripts are an empty element
+        // Assert — resources are listed by name with optional description, scripts are an empty element
         Assert.Contains("<available_resources>", content);
-        Assert.Contains("<resource name=\"config\"/>", content);
+        Assert.Contains("<resource name=\"config\" description=\"A described resource.\"/>", content);
         Assert.Contains("<resource name=\"table\"/>", content);
         Assert.Contains("</available_resources>", content);
-        Assert.DoesNotContain("A described resource.", content);
         Assert.Contains("<available_scripts />", content);
     }
 
@@ -125,7 +124,7 @@ public sealed class AgentInlineSkillContentBuilderTests
     }
 
     [Fact]
-    public void BuildAvailableResourcesBlock_WithResources_EmitsSelfClosingResourceEntries()
+    public void BuildAvailableResourcesBlock_WithResources_EmitsDescriptionWhenPresent()
     {
         // Arrange
         var resources = new AgentSkillResource[]
@@ -137,12 +136,52 @@ public sealed class AgentInlineSkillContentBuilderTests
         // Act
         var block = AgentInlineSkillContentBuilder.BuildAvailableResourcesBlock(resources);
 
-        // Assert — resources are listed by name only (no description)
+        // Assert — resources with description include it as an attribute; those without omit it
         Assert.Contains("<available_resources>", block);
-        Assert.Contains("<resource name=\"config\"/>", block);
+        Assert.Contains("<resource name=\"config\" description=\"A described resource.\"/>", block);
         Assert.Contains("<resource name=\"table\"/>", block);
         Assert.Contains("</available_resources>", block);
-        Assert.DoesNotContain("A described resource.", block);
+    }
+
+    [Fact]
+    public void BuildAvailableResourcesBlock_ResourceDescriptionWithSpecialCharacters_IsXmlEscaped()
+    {
+        // Arrange
+        var resources = new AgentSkillResource[] { new AgentInlineSkillResource("cfg", "v", "has <special> & \"chars\"") };
+
+        // Act
+        var block = AgentInlineSkillContentBuilder.BuildAvailableResourcesBlock(resources);
+
+        // Assert
+        Assert.Contains("description=\"has &lt;special&gt; &amp; &quot;chars&quot;\"", block);
+    }
+
+    [Fact]
+    public void BuildAvailableResourcesBlock_ResourceWithEmptyDescription_OmitsDescriptionAttribute()
+    {
+        // Arrange
+        var resources = new AgentSkillResource[] { new AgentInlineSkillResource("config", "value", string.Empty) };
+
+        // Act
+        var block = AgentInlineSkillContentBuilder.BuildAvailableResourcesBlock(resources);
+
+        // Assert
+        Assert.Contains("<resource name=\"config\"/>", block);
+        Assert.DoesNotContain("description=", block);
+    }
+
+    [Fact]
+    public void BuildAvailableResourcesBlock_ResourceWithWhitespaceDescription_OmitsDescriptionAttribute()
+    {
+        // Arrange
+        var resources = new AgentSkillResource[] { new AgentInlineSkillResource("config", "value", "   ") };
+
+        // Act
+        var block = AgentInlineSkillContentBuilder.BuildAvailableResourcesBlock(resources);
+
+        // Assert
+        Assert.Contains("<resource name=\"config\"/>", block);
+        Assert.DoesNotContain("description=", block);
     }
 
     [Fact]
@@ -175,7 +214,7 @@ public sealed class AgentInlineSkillContentBuilderTests
     [Fact]
     public void BuildAvailableScriptsBlock_ScriptWithoutSchema_UsesSelfClosingScript()
     {
-        // Arrange — a script whose ParametersSchema is null
+        // Arrange — a script whose ParametersSchema is null and has no description
         var scripts = new AgentSkillScript[] { new FakeScript("no-params", parametersSchema: null) };
 
         // Act
@@ -184,6 +223,74 @@ public sealed class AgentInlineSkillContentBuilderTests
         // Assert — self-closing <script> element with no nested parameters_schema
         Assert.Contains("<script name=\"no-params\"/>", block);
         Assert.DoesNotContain("<parameters_schema>", block);
+    }
+
+    [Fact]
+    public void BuildAvailableScriptsBlock_ScriptWithDescription_EmitsDescriptionAttribute()
+    {
+        // Arrange — a script with a description but no schema
+        var scripts = new AgentSkillScript[] { new FakeScript("deploy", parametersSchema: null, description: "Deploy the app.") };
+
+        // Act
+        var block = AgentInlineSkillContentBuilder.BuildAvailableScriptsBlock(scripts);
+
+        // Assert — description attribute is included
+        Assert.Contains("<script name=\"deploy\" description=\"Deploy the app.\"/>", block);
+    }
+
+    [Fact]
+    public void BuildAvailableScriptsBlock_ScriptDescriptionWithSpecialCharacters_IsXmlEscaped()
+    {
+        // Arrange
+        var scripts = new AgentSkillScript[] { new FakeScript("deploy", parametersSchema: null, description: "has <special> & \"chars\"") };
+
+        // Act
+        var block = AgentInlineSkillContentBuilder.BuildAvailableScriptsBlock(scripts);
+
+        // Assert
+        Assert.Contains("description=\"has &lt;special&gt; &amp; &quot;chars&quot;\"", block);
+    }
+
+    [Fact]
+    public void BuildAvailableScriptsBlock_ScriptWithEmptyDescription_OmitsDescriptionAttribute()
+    {
+        // Arrange
+        var scripts = new AgentSkillScript[] { new FakeScript("deploy", parametersSchema: null, description: string.Empty) };
+
+        // Act
+        var block = AgentInlineSkillContentBuilder.BuildAvailableScriptsBlock(scripts);
+
+        // Assert
+        Assert.Contains("<script name=\"deploy\"/>", block);
+        Assert.DoesNotContain("description=", block);
+    }
+
+    [Fact]
+    public void BuildAvailableScriptsBlock_ScriptWithWhitespaceDescription_OmitsDescriptionAttribute()
+    {
+        // Arrange
+        var scripts = new AgentSkillScript[] { new FakeScript("deploy", parametersSchema: null, description: "   ") };
+
+        // Act
+        var block = AgentInlineSkillContentBuilder.BuildAvailableScriptsBlock(scripts);
+
+        // Assert
+        Assert.Contains("<script name=\"deploy\"/>", block);
+        Assert.DoesNotContain("description=", block);
+    }
+
+    [Fact]
+    public void BuildAvailableScriptsBlock_ScriptWithDescriptionAndSchema_EmitsDescriptionAttribute()
+    {
+        // Arrange — a script with both description and schema
+        var scripts = new AgentSkillScript[] { new FakeScript("search", ParseSchema("{\"type\":\"object\"}"), description: "Search something.") };
+
+        // Act
+        var block = AgentInlineSkillContentBuilder.BuildAvailableScriptsBlock(scripts);
+
+        // Assert — description attribute is on the opening tag, schema is nested
+        Assert.Contains("<script name=\"search\" description=\"Search something.\">", block);
+        Assert.Contains("<parameters_schema>", block);
     }
 
     [Fact]
@@ -227,8 +334,8 @@ public sealed class AgentInlineSkillContentBuilderTests
     {
         private readonly JsonElement? _parametersSchema;
 
-        public FakeScript(string name, JsonElement? parametersSchema)
-            : base(name)
+        public FakeScript(string name, JsonElement? parametersSchema, string? description = null)
+            : base(name, description)
         {
             this._parametersSchema = parametersSchema;
         }

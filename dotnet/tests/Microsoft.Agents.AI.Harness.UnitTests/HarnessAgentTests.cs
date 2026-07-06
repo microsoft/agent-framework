@@ -1575,6 +1575,125 @@ public class HarnessAgentTests
     }
 
     /// <summary>
+    /// Verify that a custom shell tool name, description, and approval flag are forwarded to the executor.
+    /// </summary>
+    [Fact]
+    public async Task ShellExecutor_CustomToolNameDescriptionAndApprovalForwardedAsync()
+    {
+        // Arrange
+        ChatOptions? capturedOptions = null;
+        var chatClientMock = new Mock<IChatClient>();
+        chatClientMock
+            .Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((_, opts, _) => capturedOptions = opts)
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "done")));
+
+        string? capturedName = null;
+        string? capturedDescription = null;
+        bool? capturedRequireApproval = null;
+        var executorMock = new Mock<ShellExecutor>();
+        executorMock.Setup(e => e.AsAIFunction(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>()))
+            .Callback<string, string?, bool>((name, description, requireApproval) =>
+            {
+                capturedName = name;
+                capturedDescription = description;
+                capturedRequireApproval = requireApproval;
+            })
+            .Returns(AIFunctionFactory.Create(() => "shell output", "custom_shell"));
+
+        var options = CreateAllDisabledOptions();
+        options.DisableWebSearch = true;
+        options.ShellExecutor = executorMock.Object;
+        options.ShellToolName = "custom_shell";
+        options.ShellToolDescription = "Run a custom command.";
+        options.DisableShellToolApproval = true;
+
+        // Act
+        var agent = new HarnessAgent(chatClientMock.Object, options);
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert — the configured values are passed through to the executor and the tool is registered.
+        Assert.Equal("custom_shell", capturedName);
+        Assert.Equal("Run a custom command.", capturedDescription);
+        Assert.False(capturedRequireApproval);
+        Assert.NotNull(capturedOptions?.Tools);
+        Assert.Contains(capturedOptions!.Tools!, t => t is AIFunction f && f.Name == "custom_shell");
+    }
+
+    /// <summary>
+    /// Verify that the shell tool defaults to requiring approval and the executor's default name when not configured.
+    /// </summary>
+    [Fact]
+    public async Task ShellExecutor_DefaultsToApprovalAndDefaultNameAsync()
+    {
+        // Arrange
+        var chatClientMock = new Mock<IChatClient>();
+        chatClientMock
+            .Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "done")));
+
+        bool? capturedRequireApproval = null;
+        string? capturedName = null;
+        var executorMock = new Mock<ShellExecutor>();
+        executorMock.Setup(e => e.AsAIFunction(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>()))
+            .Callback<string, string?, bool>((name, _, requireApproval) =>
+            {
+                capturedName = name;
+                capturedRequireApproval = requireApproval;
+            })
+            .Returns(AIFunctionFactory.Create(() => "shell output", "run_shell"));
+
+        var options = CreateAllDisabledOptions();
+        options.DisableWebSearch = true;
+        options.ShellExecutor = executorMock.Object;
+
+        // Act
+        var agent = new HarnessAgent(chatClientMock.Object, options);
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert — approval is required by default and the executor's default name is used.
+        Assert.True(capturedRequireApproval);
+        Assert.Equal("run_shell", capturedName);
+    }
+
+    /// <summary>
+    /// Verify that disabling shell approval is honored end-to-end when the underlying executor permits unapproved use:
+    /// a real <see cref="LocalShellExecutor"/> constructed with <see cref="LocalShellExecutorOptions.AcknowledgeUnsafe"/>
+    /// set to <see langword="true"/> plus <see cref="HarnessAgentOptions.DisableShellToolApproval"/> set to
+    /// <see langword="true"/> yields a shell tool that is not wrapped in an <see cref="ApprovalRequiredAIFunction"/>.
+    /// </summary>
+    [Fact]
+    public async Task ShellExecutor_ApprovalDisabledWithAcknowledgedExecutorProducesNonApprovalToolAsync()
+    {
+        // Arrange
+        ChatOptions? capturedOptions = null;
+        var chatClientMock = new Mock<IChatClient>();
+        chatClientMock
+            .Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((_, opts, _) => capturedOptions = opts)
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "done")));
+
+        await using var executor = new LocalShellExecutor(new LocalShellExecutorOptions { AcknowledgeUnsafe = true });
+
+        var options = CreateAllDisabledOptions();
+        options.DisableWebSearch = true;
+        options.ShellExecutor = executor;
+        options.DisableShellToolApproval = true;
+
+        // Act
+        var agent = new HarnessAgent(chatClientMock.Object, options);
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert — the shell tool is registered but not gated by approval.
+        Assert.NotNull(capturedOptions?.Tools);
+        var shellTool = Assert.Single(capturedOptions!.Tools!, t => t is AIFunction f && f.Name == "run_shell");
+        Assert.IsNotType<ApprovalRequiredAIFunction>(shellTool);
+    }
+
+    /// <summary>
     /// Verify that ShellEnvironmentProvider is present when ShellEnvironmentProviderOptions is also specified.
     /// </summary>
     [Fact]

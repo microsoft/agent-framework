@@ -47,7 +47,7 @@ public sealed class AgentMcpSkillsSourceTests
         var source = new AgentMcpSkillsSource(client);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert - frontmatter comes from index; Content is the actual SKILL.md body from the server.
         var skill = Assert.Single(skills);
@@ -71,7 +71,7 @@ public sealed class AgentMcpSkillsSourceTests
         var source = new AgentMcpSkillsSource(client);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -88,7 +88,7 @@ public sealed class AgentMcpSkillsSourceTests
         var source = new AgentMcpSkillsSource(client);
 
         // Act
-        var skill = Assert.Single(await source.GetSkillsAsync());
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
         var resource = await skill.GetResourceAsync("references/checklist.md");
 
         // Assert
@@ -107,7 +107,7 @@ public sealed class AgentMcpSkillsSourceTests
         var source = new AgentMcpSkillsSource(client);
 
         // Act
-        var skill = Assert.Single(await source.GetSkillsAsync());
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
         var resource = await skill.GetResourceAsync("assets/icon.bin");
 
         // Assert
@@ -130,7 +130,7 @@ public sealed class AgentMcpSkillsSourceTests
         var source = new AgentMcpSkillsSource(client);
 
         // Act
-        var skill = Assert.Single(await source.GetSkillsAsync());
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
         var resource = await skill.GetResourceAsync("references/does-not-exist.md");
 
         // Assert - resource does not exist on the server, so null is returned
@@ -151,7 +151,7 @@ public sealed class AgentMcpSkillsSourceTests
         var source = new AgentMcpSkillsSource(client);
 
         // Act
-        var skill = Assert.Single(await source.GetSkillsAsync());
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
         var resource = await skill.GetResourceAsync(name);
 
         // Assert - resource does not exist on the server, so null is returned
@@ -169,7 +169,7 @@ public sealed class AgentMcpSkillsSourceTests
         var source = new AgentMcpSkillsSource(client);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert - discovery succeeds from index alone.
         var skill = Assert.Single(skills);
@@ -186,7 +186,7 @@ public sealed class AgentMcpSkillsSourceTests
         var source = new AgentMcpSkillsSource(client);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -202,7 +202,7 @@ public sealed class AgentMcpSkillsSourceTests
         var source = new AgentMcpSkillsSource(client);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -219,7 +219,7 @@ public sealed class AgentMcpSkillsSourceTests
         var source = new AgentMcpSkillsSource(client);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -236,7 +236,7 @@ public sealed class AgentMcpSkillsSourceTests
         var source = new AgentMcpSkillsSource(client);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
