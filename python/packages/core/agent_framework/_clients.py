@@ -671,7 +671,7 @@ class SupportsCodeInterpreterTool(Protocol):
     Examples:
         .. code-block:: python
 
-            from agent_framework import SupportsCodeInterpreterTool
+            from agent_framework import Agent, SupportsCodeInterpreterTool
 
             if isinstance(client, SupportsCodeInterpreterTool):
                 tool = client.get_code_interpreter_tool()
@@ -701,7 +701,7 @@ class SupportsWebSearchTool(Protocol):
     Examples:
         .. code-block:: python
 
-            from agent_framework import SupportsWebSearchTool
+            from agent_framework import Agent, SupportsWebSearchTool
 
             if isinstance(client, SupportsWebSearchTool):
                 tool = client.get_web_search_tool()
@@ -731,7 +731,7 @@ class SupportsImageGenerationTool(Protocol):
     Examples:
         .. code-block:: python
 
-            from agent_framework import SupportsImageGenerationTool
+            from agent_framework import Agent, SupportsImageGenerationTool
 
             if isinstance(client, SupportsImageGenerationTool):
                 tool = client.get_image_generation_tool()
@@ -761,7 +761,7 @@ class SupportsMCPTool(Protocol):
     Examples:
         .. code-block:: python
 
-            from agent_framework import SupportsMCPTool
+            from agent_framework import Agent, SupportsMCPTool
 
             if isinstance(client, SupportsMCPTool):
                 tool = client.get_mcp_tool(name="my_mcp", url="https://...")
@@ -792,7 +792,7 @@ class SupportsFileSearchTool(Protocol):
     Examples:
         .. code-block:: python
 
-            from agent_framework import SupportsFileSearchTool
+            from agent_framework import Agent, SupportsFileSearchTool
 
             if isinstance(client, SupportsFileSearchTool):
                 tool = client.get_file_search_tool(vector_store_ids=["vs_123"])
@@ -822,11 +822,13 @@ class SupportsShellTool(Protocol):
     Examples:
         .. code-block:: python
 
-            from agent_framework import SupportsShellTool
+            from agent_framework import Agent, SupportsShellTool
+            from agent_framework_tools.shell import LocalShellTool
 
             if isinstance(client, SupportsShellTool):
-                tool = client.get_shell_tool(func=shell.as_function())
-                agent = Agent(client, tools=[tool])
+                async with LocalShellTool() as shell:
+                    tool = client.get_shell_tool(func=shell.as_function())
+                    agent = Agent(client, tools=[tool])
     """
 
     @staticmethod
