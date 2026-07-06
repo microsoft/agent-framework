@@ -3879,6 +3879,47 @@ class TestSkillsProviderFactories:
         assert tools["read_skill_resource"].approval_mode == "always_require"
         assert tools["run_skill_script"].approval_mode == "never_require"
 
+    async def test_from_paths_subclass_without_new_kwargs_still_works(self, tmp_path: Path) -> None:
+        """from_paths does not break subclasses that override __init__ without the new kwargs.
+
+        When the disable_*_approval flags are left at their defaults, from_paths must not
+        forward them, so a subclass with the previous __init__ signature keeps working.
+        """
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: A test skill.\n---\nBody.", encoding="utf-8"
+        )
+
+        class LegacySkillsProvider(SkillsProvider):
+            def __init__(
+                self,
+                source: Any,
+                *,
+                instruction_template: str | None = None,
+                disable_caching: bool = False,
+                source_id: str | None = None,
+            ) -> None:
+                super().__init__(
+                    source,
+                    instruction_template=instruction_template,
+                    disable_caching=disable_caching,
+                    source_id=source_id,
+                )
+
+        # Defaults: must not raise TypeError even though the subclass __init__
+        # does not accept the new kwargs.
+        provider = LegacySkillsProvider.from_paths(str(tmp_path))
+        assert isinstance(provider, LegacySkillsProvider)
+        await _init_provider(provider)
+        tools = {t.name: t for t in _ctx(provider)[2] if hasattr(t, "name")}
+        assert all(t.approval_mode == "always_require" for t in tools.values())
+
+        # Explicitly opting in forwards the kwarg, so a subclass that cannot accept
+        # it fails loudly (the caller opted into the feature).
+        with pytest.raises(TypeError):
+            LegacySkillsProvider.from_paths(str(tmp_path), disable_load_skill_approval=True)
+
     async def test_tool_name_constants(self) -> None:
         """The provider exposes its tool names as class constants."""
         assert SkillsProvider.LOAD_SKILL_TOOL_NAME == "load_skill"

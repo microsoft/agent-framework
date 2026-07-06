@@ -2194,14 +2194,20 @@ class SkillsProvider(ContextProvider):
                 resource_filter=resource_filter,
             )
         )
+        # Only forward the approval-disable kwargs when explicitly enabled.
+        approval_overrides: dict[str, bool] = {}
+        if disable_load_skill_approval:
+            approval_overrides["disable_load_skill_approval"] = True
+        if disable_read_skill_resource_approval:
+            approval_overrides["disable_read_skill_resource_approval"] = True
+        if disable_run_skill_script_approval:
+            approval_overrides["disable_run_skill_script_approval"] = True
         return cls(
             source,
             instruction_template=instruction_template,
             disable_caching=disable_caching,
-            disable_load_skill_approval=disable_load_skill_approval,
-            disable_read_skill_resource_approval=disable_read_skill_resource_approval,
-            disable_run_skill_script_approval=disable_run_skill_script_approval,
             source_id=source_id,
+            **approval_overrides,
         )
 
     @staticmethod
