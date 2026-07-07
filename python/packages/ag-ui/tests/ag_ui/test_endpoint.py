@@ -3,6 +3,7 @@
 """Tests for FastAPI endpoint creation (_endpoint.py)."""
 
 import json
+from inspect import signature
 from typing import Any, cast
 
 import pytest
@@ -130,6 +131,62 @@ async def test_add_endpoint_with_workflow_protocol():
     assert "RUN_STARTED" in event_types
     assert "TEXT_MESSAGE_CONTENT" in event_types
     assert "RUN_FINISHED" in event_types
+
+
+async def test_add_endpoint_accepts_keepalive_option_for_supported_runners(build_chat_client):
+    """Keepalive configuration is accepted at the endpoint seam for every supported runner shape."""
+
+    @executor(id="start")
+    async def start(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
+        await ctx.yield_output("Workflow response")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
+
+    workflow = WorkflowBuilder(start_executor=start, output_from="all").build()
+    app = FastAPI()
+    raw_agent = Agent(name="raw", instructions="Test agent", client=build_chat_client())
+    wrapped_agent = AgentFrameworkAgent(
+        agent=Agent(name="wrapped", instructions="Test agent", client=build_chat_client()),
+        name="wrapped",
+    )
+
+    add_agent_framework_fastapi_endpoint(app, raw_agent, path="/raw-agent", keepalive_seconds=0.5)
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/wrapped-agent", keepalive_seconds=None)
+    add_agent_framework_fastapi_endpoint(app, workflow, path="/raw-workflow", keepalive_seconds=1.0)
+    add_agent_framework_fastapi_endpoint(
+        app,
+        AgentFrameworkWorkflow(workflow=workflow),
+        path="/wrapped-workflow",
+        keepalive_seconds=None,
+    )
+
+    client = TestClient(app)
+
+    for path in ("/raw-agent", "/wrapped-agent", "/raw-workflow", "/wrapped-workflow"):
+        response = client.post(path, json={"messages": [{"role": "user", "content": "Hello"}]})
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+
+
+def test_add_endpoint_keepalive_default_is_enabled() -> None:
+    """Keepalive defaults to the endpoint-owned enabled interval."""
+    parameter = signature(add_agent_framework_fastapi_endpoint).parameters["keepalive_seconds"]
+
+    assert parameter.default == 15
+
+
+def test_keepalive_option_is_endpoint_owned() -> None:
+    """Keepalive is endpoint transport configuration, not runner configuration."""
+    assert "keepalive_seconds" not in signature(AgentFrameworkAgent).parameters
+    assert "keepalive_seconds" not in signature(AgentFrameworkWorkflow).parameters
+
+
+@pytest.mark.parametrize("keepalive_seconds", [0, -1, -0.5])
+def test_add_endpoint_rejects_non_positive_keepalive_interval(build_chat_client, keepalive_seconds: float) -> None:
+    """Invalid keepalive intervals fail immediately during endpoint registration."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+
+    with pytest.raises(ValueError, match="keepalive_seconds must be positive"):
+        add_agent_framework_fastapi_endpoint(app, agent, path="/invalid", keepalive_seconds=keepalive_seconds)
 
 
 async def test_endpoint_with_state_schema(build_chat_client):

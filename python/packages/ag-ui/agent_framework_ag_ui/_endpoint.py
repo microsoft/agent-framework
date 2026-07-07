@@ -70,6 +70,11 @@ def _configure_snapshot_persistence(
         )
 
 
+def _validate_keepalive_seconds(keepalive_seconds: float | None) -> None:
+    if keepalive_seconds is not None and not keepalive_seconds > 0:
+        raise ValueError("keepalive_seconds must be positive or None.")
+
+
 def add_agent_framework_fastapi_endpoint(
     app: FastAPI,
     agent: SupportsAgentRun | AgentFrameworkAgent | Workflow | AgentFrameworkWorkflow,
@@ -82,6 +87,7 @@ def add_agent_framework_fastapi_endpoint(
     dependencies: Sequence[Depends] | None = None,
     snapshot_store: AGUIThreadSnapshotStore | None = None,
     snapshot_scope_resolver: SnapshotScopeResolver | None = None,
+    keepalive_seconds: float | None = 15,
 ) -> None:
     """Add an AG-UI endpoint to a FastAPI app.
 
@@ -103,7 +109,11 @@ def add_agent_framework_fastapi_endpoint(
             explicit Snapshot Scope resolver.
         snapshot_scope_resolver: Optional resolver for the application-defined Snapshot Scope. Required whenever
             a snapshot store is configured because an AG-UI Thread id is not an authorization boundary.
+        keepalive_seconds: Optional endpoint SSE keepalive interval. Positive values enable keepalive; None disables
+            it.
     """
+    _validate_keepalive_seconds(keepalive_seconds)
+
     protocol_runner: AgentFrameworkAgent | AgentFrameworkWorkflow
     if isinstance(agent, AgentFrameworkWorkflow):
         protocol_runner = agent

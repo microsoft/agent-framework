@@ -198,6 +198,7 @@ dependencies = [
     { name = "ag-ui-protocol", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "fastapi", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "sse-starlette", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "uvicorn", extra = ["standard"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
@@ -214,6 +215,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0,<0.138.1" },
     { name = "httpx", marker = "extra == 'dev'", specifier = "==0.28.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.1.0" },
+    { name = "sse-starlette", specifier = ">=3.4.5,<4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0,<1" },
 ]
 provides-extras = ["dev"]
