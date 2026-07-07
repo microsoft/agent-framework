@@ -9,7 +9,7 @@ env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
   # GitHub Copilot configuration
-  GITHUB_COPILOT_MODEL: claude-opus-4.8
+  GITHUB_COPILOT_MODEL: auto
   COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
 
 permissions:
@@ -199,6 +199,7 @@ jobs:
 
   validate-02-agents-anthropic:
     name: Validate 02-agents/providers/anthropic
+    if: false # Temporarily disabled - to free up Copilot quota for other jobs
     runs-on: ubuntu-latest
     environment: integration
     env:
@@ -236,6 +237,7 @@ jobs:
 
   validate-02-agents-github-copilot:
     name: Validate 02-agents/providers/github_copilot
+    if: false # Temporarily disabled - to free up Copilot quota for other jobs
     runs-on: ubuntu-latest
     environment: integration
     defaults:
@@ -476,8 +478,8 @@ jobs:
           name: validation-report-03-workflows
           path: python/samples/sample_validation/reports/
 
-  validate-04-hosting:
-    name: Validate 04-hosting
+  validate-04-hosting-foundry-hosted-agents:
+    name: Validate 04-hosting (foundry-hosted-agents)
     runs-on: ubuntu-latest
     environment: integration
     env:
@@ -487,6 +489,40 @@ jobs:
       AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.FOUNDRY_MODEL }}
       FOUNDRY_PROJECT_ID: ${{ vars.FOUNDRY_PROJECT_ID }}
       AZURE_CONTAINER_REGISTRY_ENDPOINT: ${{ vars.AZURE_CONTAINER_REGISTRY_ENDPOINT }}
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          os: ${{ runner.os }}
+
+      - name: Run sample validation
+        run: |
+          cd scripts && uv run python -m sample_validation --subdir 04-hosting/foundry-hosted-agents --save-report --report-name 04-hosting-foundry-hosted-agents
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: validation-report-04-hosting-foundry-hosted-agents
+          path: python/samples/sample_validation/reports/
+
+  validate-04-hosting-other:
+    name: Validate 04-hosting (other)
+    if: false # Temporarily disabled - to free up Copilot quota for other jobs
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       # A2A configuration
       A2A_AGENT_HOST: http://localhost:5001/
     defaults:
@@ -505,13 +541,13 @@ jobs:
 
       - name: Run sample validation
         run: |
-          cd scripts && uv run python -m sample_validation --subdir 04-hosting --save-report --report-name 04-hosting
+          cd scripts && uv run python -m sample_validation --subdir 04-hosting --exclude foundry-hosted-agents --save-report --report-name 04-hosting-other
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
-          name: validation-report-04-hosting
+          name: validation-report-04-hosting-other
           path: python/samples/sample_validation/reports/
 
   validate-05-end-to-end:
@@ -688,7 +724,8 @@ jobs:
       - validate-02-agents-copilotstudio
       - validate-02-agents-custom
       - validate-03-workflows
-      - validate-04-hosting
+      - validate-04-hosting-foundry-hosted-agents
+      - validate-04-hosting-other
       - validate-05-end-to-end
       - validate-autogen-migration
       - validate-semantic-kernel-migration
