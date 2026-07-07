@@ -983,7 +983,7 @@ def _apply_get_response_docstrings() -> None:
     try:
         from ._middleware import ChatMiddlewareLayer
     except ImportError as exc:
-        if "partially initialized module 'agent_framework._middleware'" in str(exc):
+        if exc.name == "agent_framework._middleware" and "partially initialized module" in str(exc):
             return
         raise
 
