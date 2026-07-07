@@ -16,8 +16,6 @@ from agent_framework import SupportsAgentRun, Workflow
 from fastapi import FastAPI, HTTPException
 from fastapi.params import Depends
 from fastapi.responses import Response, StreamingResponse
-from sse_starlette.event import ServerSentEvent
-from sse_starlette.sse import EventSourceResponse
 
 from ._agent import AgentFrameworkAgent
 from ._snapshots import (
@@ -236,6 +234,9 @@ def add_agent_framework_fastapi_endpoint(
                 "X-Accel-Buffering": "no",
             }
             if keepalive_seconds is not None:
+                from sse_starlette.event import ServerSentEvent
+                from sse_starlette.sse import EventSourceResponse
+
                 return EventSourceResponse(
                     event_generator(),
                     ping=cast(int, keepalive_seconds),

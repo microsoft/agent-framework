@@ -4,6 +4,8 @@
 
 import asyncio
 import json
+import subprocess
+import sys
 from inspect import signature
 from typing import Any, cast
 
@@ -193,6 +195,21 @@ def test_keepalive_option_is_endpoint_owned() -> None:
     assert "keepalive_seconds" not in signature(AgentFrameworkWorkflow).parameters
 
 
+def test_endpoint_module_import_does_not_import_sse_transport() -> None:
+    """Importing endpoint helpers does not trigger sse-starlette's process-global transport hooks."""
+    import_check = (
+        "import sys; import agent_framework_ag_ui._endpoint; raise SystemExit('sse_starlette.sse' in sys.modules)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", import_check],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
 async def test_endpoint_keepalive_enabled_emits_static_comment_during_silent_gap(streaming_chat_client_stub):
     """Enabled keepalive sends static SSE comments without changing AG-UI data frames."""
     app = FastAPI()
@@ -257,6 +274,34 @@ async def test_endpoint_keepalive_disabled_preserves_streaming_response_shape(st
     assert "RUN_STARTED" in event_types
     assert "TEXT_MESSAGE_CONTENT" in event_types
     assert "RUN_FINISHED" in event_types
+
+
+async def test_endpoint_keepalive_disabled_does_not_import_sse_transport(build_chat_client) -> None:
+    """Disabled keepalive avoids importing sse-starlette's transport module."""
+    saved_sse_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "sse_starlette" or name.startswith("sse_starlette.")
+    }
+    for name in saved_sse_modules:
+        sys.modules.pop(name, None)
+
+    try:
+        app = FastAPI()
+        agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+
+        add_agent_framework_fastapi_endpoint(app, agent, path="/no-keepalive-import", keepalive_seconds=None)
+
+        client = TestClient(app)
+        response = client.post("/no-keepalive-import", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+        assert response.status_code == 200
+        assert "sse_starlette.sse" not in sys.modules
+    finally:
+        for name in list(sys.modules):
+            if name == "sse_starlette" or name.startswith("sse_starlette."):
+                sys.modules.pop(name, None)
+        sys.modules.update(saved_sse_modules)
 
 
 @pytest.mark.parametrize("keepalive_seconds", [0, -1, -0.5])
