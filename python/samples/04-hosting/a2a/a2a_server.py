@@ -8,8 +8,8 @@ import uvicorn
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
-from agent_definitions import AGENT_CARD_FACTORIES, AGENT_FACTORIES
-from agent_executor import AgentFrameworkExecutor
+from agent_definitions import AGENT_CARD_FACTORIES, AGENT_FACTORIES  # pyrefly: ignore[missing-import]
+from agent_framework.a2a import A2AExecutor
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -92,7 +92,7 @@ def main() -> None:
     # Build the A2A server components
     url = f"http://{args.host}:{args.port}/"
     agent_card = AGENT_CARD_FACTORIES[args.agent_type](url)
-    executor = AgentFrameworkExecutor(agent)
+    executor = A2AExecutor(agent, stream=True)
     task_store = InMemoryTaskStore()
     request_handler = DefaultRequestHandler(
         agent_executor=executor,

@@ -56,6 +56,22 @@ def safe_json_parse(value: Any) -> dict[str, Any] | None:
     return None
 
 
+def canonical_function_arguments(function_call: Any) -> str | None:
+    """Return a stable representation of function-call arguments."""
+    if function_call is None:
+        return None
+
+    try:
+        parsed_arguments = function_call.parse_arguments()
+    except Exception:
+        parsed_arguments = getattr(function_call, "arguments", None)
+
+    if parsed_arguments is None:
+        parsed_arguments = {}
+
+    return json.dumps(make_json_safe(parsed_arguments), sort_keys=True, separators=(",", ":"))
+
+
 def get_role_value(message: Any) -> str:
     """Extract role string from a message object.
 
@@ -146,11 +162,11 @@ def make_json_safe(obj: Any) -> Any:  # noqa: ANN401
         # asdict may return nested non-dataclass objects, so recursively make them safe
         return make_json_safe(asdict(obj))  # type: ignore[arg-type]
     if hasattr(obj, "model_dump"):
-        return make_json_safe(obj.model_dump())  # type: ignore[no-any-return]
+        return make_json_safe(obj.model_dump())
     if hasattr(obj, "to_dict"):
-        return make_json_safe(obj.to_dict())  # type: ignore[no-any-return]
+        return make_json_safe(obj.to_dict())
     if hasattr(obj, "dict"):
-        return make_json_safe(obj.dict())  # type: ignore[no-any-return]
+        return make_json_safe(obj.dict())
     if hasattr(obj, "__dict__"):
         return {key: make_json_safe(value) for key, value in vars(obj).items()}  # type: ignore[misc]
     if isinstance(obj, (list, tuple)):

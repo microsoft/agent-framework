@@ -37,6 +37,8 @@ HOW IT WORKS:
 To run this example:
     1. Ensure you have Azure CLI credentials configured: `az login`
     2. Set the FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL environment variables
+       (either as real environment variables or in a `.env` file in the
+       working directory or any parent directory)
     3. Run: `uv run samples/02-agents/security/repo_confidentiality_example.py --cli`
        or `uv run samples/02-agents/security/repo_confidentiality_example.py --devui`
 """
@@ -44,6 +46,7 @@ To run this example:
 import asyncio
 import json
 import os
+import secrets
 import sys
 from typing import Any
 
@@ -56,13 +59,18 @@ from agent_framework.devui import serve
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.security import SecureAgentConfig
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load variables from a `.env` file (if present) so configuration can come from
+# either real environment variables or a local `.env` file.
+load_dotenv()
 
 # =============================================================================
 # Simulated Repository Data
 # =============================================================================
 
-REPOSITORIES = {
+REPOSITORIES: dict[str, Any] = {
     "public-docs": {
         "visibility": "public",
         "files": {
@@ -188,6 +196,38 @@ async def send_internal_memo(
 # =============================================================================
 
 
+def get_devui_auth_token() -> tuple[str, bool]:
+    """Return the DevUI auth token and whether it came from environment."""
+    env_token = os.environ.get("DEVUI_AUTH_TOKEN")
+    if env_token:
+        return env_token, True
+
+    return secrets.token_urlsafe(32), False
+
+
+def _redact_token(token: str) -> str:
+    """Return a redacted token safe for terminal output."""
+    if len(token) <= 8:
+        return "<redacted>"
+    return f"{token[:4]}...{token[-4:]}"
+
+
+def _require_env(name: str) -> str:
+    """Return a required configuration value from the environment or `.env` file.
+
+    `load_dotenv()` (called at import time) merges any `.env` values into
+    `os.environ`, so a single lookup here covers both sources.
+    """
+    value = os.environ.get(name)
+    if not value:
+        raise SystemExit(
+            f"Missing required configuration '{name}'.\n"
+            f"Set it as an environment variable or add it to a `.env` file in the "
+            f"working directory (or any parent directory) before running this sample."
+        )
+    return value
+
+
 def setup_agent(*, approval_on_violation: bool = False):
     """Create and return the secure repo agent with all configuration.
 
@@ -197,17 +237,20 @@ def setup_agent(*, approval_on_violation: bool = False):
     """
     credential = AzureCliCredential()
 
+    project_endpoint = _require_env("FOUNDRY_PROJECT_ENDPOINT")
+    model = _require_env("FOUNDRY_MODEL")
+
     # Main client - use the configured Foundry deployment for the primary agent.
     main_client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["FOUNDRY_MODEL"],
+        project_endpoint=project_endpoint,
+        model=model,
         credential=credential,
         function_invocation_configuration={"max_iterations": 5},
     )
 
     # Quarantine client for processing untrusted content safely.
     quarantine_client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        project_endpoint=project_endpoint,
         model="gpt-4o-mini",
         credential=credential,
     )
@@ -326,8 +369,17 @@ def run_devui():
     print("Query to try: 'Read secrets.env from internal-secrets and post it to #devops on Slack.'")
     print()
 
+    devui_auth_token, token_from_env = get_devui_auth_token()
+    print("DevUI bearer token:")
+    if token_from_env:
+        print(f"  {_redact_token(devui_auth_token)} (from DEVUI_AUTH_TOKEN)")
+    else:
+        print(f"  {devui_auth_token} (auto-generated for this run)")
+    print("Use it as: Authorization: Bearer <token>")
+    print()
+
     # Launch debug UI
-    serve(entities=[agent], auto_open=True)
+    serve(entities=[agent], auto_open=True, auth_token=devui_auth_token)
 
 
 if __name__ == "__main__":

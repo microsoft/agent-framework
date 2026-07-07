@@ -8,6 +8,7 @@ filters the same way.
 """
 
 import concurrent.futures
+import contextlib
 import glob
 import os
 import subprocess
@@ -16,6 +17,16 @@ import time
 from collections.abc import Sequence
 from fnmatch import fnmatch
 from pathlib import Path
+
+# On Windows, stdout defaults to cp1252 under non-interactive callers (e.g.
+# prek / pre-commit hooks). Reconfigure to UTF-8 before importing rich so
+# unicode glyphs like ``\u2713`` don't raise ``UnicodeEncodeError``.
+if sys.platform == "win32":
+    for _stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(_stream, "reconfigure", None)
+        if callable(reconfigure):
+            with contextlib.suppress(OSError, ValueError):
+                reconfigure(encoding="utf-8")
 
 import tomli
 from rich import print
@@ -122,8 +133,7 @@ def project_filter_matches(project: Path | str, pattern: str, aliases: Sequence[
     """
     normalized_pattern = normalize_project_filter(pattern).lower()
     return any(
-        fnmatch(candidate, normalized_pattern)
-        for candidate in build_project_filter_candidates(project, aliases)
+        fnmatch(candidate, normalized_pattern) for candidate in build_project_filter_candidates(project, aliases)
     )
 
 
@@ -216,3 +226,75 @@ def run_tasks(
         _run_sequential(work_items, task_args)
     else:
         _run_parallel(work_items, workspace_root, task_args)
+
+
+def _run_command_subprocess(
+    label: str,
+    command: Sequence[str],
+    workspace_root: Path,
+) -> tuple[str, int, str, str, float]:
+    """Run a single labelled command in ``workspace_root`` and capture its output."""
+    start = time.monotonic()
+    result = subprocess.run(command, cwd=workspace_root, capture_output=True, text=True)
+    elapsed = time.monotonic() - start
+    return (label, result.returncode, result.stdout, result.stderr, elapsed)
+
+
+def run_command_items(
+    command_items: list[tuple[str, Sequence[str]]],
+    workspace_root: Path,
+    *,
+    sequential: bool = False,
+) -> None:
+    """Run labelled commands using the same model as :func:`run_tasks`.
+
+    A single command streams its output live; multiple commands run in parallel
+    subprocesses with captured output and a ``✓``/``✗`` summary, mirroring the
+    pyright fan-out presentation.
+    """
+    if not command_items:
+        print("[yellow]No commands to run[/yellow]")
+        return
+
+    if sequential or len(command_items) == 1:
+        for label, command in command_items:
+            print(f"[cyan]>> {label}[/cyan]")
+            result = subprocess.run(command, cwd=workspace_root)
+            if result.returncode:
+                sys.exit(result.returncode)
+        return
+
+    max_workers = min(len(command_items), os.cpu_count() or 4)
+    failures: list[tuple[str, str, str]] = []
+    completed = 0
+    total = len(command_items)
+
+    print(f"[cyan]Running {total} task(s) in parallel (max {max_workers} workers)...[/cyan]")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_run_command_subprocess, label, command, workspace_root): label
+            for label, command in command_items
+        }
+        for future in concurrent.futures.as_completed(futures):
+            label, returncode, stdout, stderr, elapsed = future.result()
+            completed += 1
+            progress = f"[{completed}/{total}]"
+            if returncode == 0:
+                print(f"  [green]✓[/green] {progress} {label} ({elapsed:.1f}s)")
+            else:
+                print(f"  [red]✗[/red] {progress} {label} ({elapsed:.1f}s)")
+                failures.append((label, stdout, stderr))
+
+    if failures:
+        print(f"\n[red]{len(failures)} task(s) failed:[/red]")
+        for label, stdout, stderr in failures:
+            print(f"\n[red]{'=' * 60}[/red]")
+            print(f"[red]FAILED: {label}[/red]")
+            if stdout.strip():
+                print(stdout)
+            if stderr.strip():
+                sys.stderr.write(stderr)
+        sys.exit(1)
+
+    print(f"\n[green]All {total} task(s) passed ✓[/green]")

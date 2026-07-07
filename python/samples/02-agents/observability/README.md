@@ -2,16 +2,16 @@
 
 These samples show how to send Agent Framework observability data to the Application Performance Management (APM) backend of your choice, based on the OpenTelemetry standard.
 
-The samples target [Application Insights](https://learn.microsoft.com/en-us/azure/azure-monitor/app/app-insights-overview), the [Aspire Dashboard](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/dashboard/overview?tabs=bash), and the console, but any OTLP-compatible backend works.
+The samples target [Application Insights](https://learn.microsoft.com/azure/azure-monitor/app/app-insights-overview), the [Aspire Dashboard](https://learn.microsoft.com/dotnet/aspire/fundamentals/dashboard/overview?tabs=bash), and the console, but any OTLP-compatible backend works.
 
-> **Quick Start**: For local development without Azure setup, use the [Aspire Dashboard](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/dashboard/standalone) (runs locally via Docker), or the built-in tracing module of the [AI Toolkit for VS Code](https://marketplace.visualstudio.com/items?itemName=ms-windows-ai-studio.windows-ai-studio).
+> **Quick Start**: For local development without Azure setup, use the [Aspire Dashboard](https://learn.microsoft.com/dotnet/aspire/fundamentals/dashboard/standalone) (runs locally via Docker), or the built-in tracing module of the [AI Toolkit for VS Code](https://marketplace.visualstudio.com/items?itemName=ms-windows-ai-studio.windows-ai-studio).
 
 > Other backends such as [Prometheus](https://prometheus.io/docs/introduction/overview/) are also supported. See the [OpenTelemetry Python exporters](https://opentelemetry.io/docs/languages/python/exporters/) page for the full list.
 
 For more information, please refer to the following resources:
 
 1. [Azure Monitor OpenTelemetry Exporter](https://github.com/Azure/azure-sdk-for-python/tree/main/sdk/monitor/azure-monitor-opentelemetry-exporter)
-2. [Aspire Dashboard for Python Apps](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/dashboard/standalone-for-python?tabs=flask%2Cwindows)
+2. [Aspire Dashboard for Python Apps](https://learn.microsoft.com/dotnet/aspire/fundamentals/dashboard/standalone-for-python?tabs=flask%2Cwindows)
 3. [AI Toolkit for VS Code](https://marketplace.visualstudio.com/items?itemName=ms-windows-ai-studio.windows-ai-studio)
 4. [Python Logging](https://docs.python.org/3/library/logging.html)
 5. [Observability in Python](https://www.cncf.io/blog/2022/04/22/opentelemetry-and-python-a-complete-instrumentation-guide/)
@@ -418,7 +418,7 @@ enable_sensitive_telemetry()
 
 ## Aspire Dashboard
 
-The [Aspire Dashboard](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/dashboard/standalone) is a local telemetry viewing tool that provides an excellent experience for viewing OpenTelemetry data without requiring Azure setup.
+The [Aspire Dashboard](https://learn.microsoft.com/dotnet/aspire/fundamentals/dashboard/standalone) is a local telemetry viewing tool that provides an excellent experience for viewing OpenTelemetry data without requiring Azure setup.
 
 ### Setting up Aspire Dashboard with Docker
 
@@ -456,4 +456,17 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 python configure_otel_provider
 
 > Make sure you have the dashboard running to receive telemetry data.
 
-Once your sample finishes running, navigate to <http://localhost:18888> in a web browser to see the telemetry data. Follow the [Aspire Dashboard exploration guide](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/dashboard/explore) to authenticate to the dashboard and start exploring your traces, logs, and metrics!
+Once your sample finishes running, navigate to <http://localhost:18888> in a web browser to see the telemetry data. Follow the [Aspire Dashboard exploration guide](https://learn.microsoft.com/dotnet/aspire/fundamentals/dashboard/explore) to authenticate to the dashboard and start exploring your traces, logs, and metrics!
+
+## Security Considerations
+
+Agent Framework emits telemetry via the standard OpenTelemetry APIs — it does not itself
+contact any external system. Where that telemetry is sent (a local collector, a hosted
+observability backend, the VS Code extension port, etc.) is entirely determined by the
+exporters and pipeline the developer configures. By default, emitted telemetry is limited to
+metadata (e.g. token counts, operation names, durations) and does not include message content.
+Enabling sensitive-data capture — via `enable_sensitive_telemetry()` or the
+`ENABLE_SENSITIVE_DATA` environment variable — is an explicit, separate opt-in that
+additionally emits raw chat message content, function-call arguments, and function-call
+results — treat that data as sensitive and only send it to a telemetry backend
+you have secured appropriately.

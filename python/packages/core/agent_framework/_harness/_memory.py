@@ -1066,7 +1066,7 @@ class MemoryContextProvider(HistoryProvider):
             return override
         client: object = getattr(agent, "client", None)
         if isinstance(client, SupportsChatGetResponse):
-            return cast(SupportsChatGetResponse[Any], client)  # type: ignore[redundant-cast]
+            return cast(SupportsChatGetResponse[Any], client)
         return None
 
     @staticmethod

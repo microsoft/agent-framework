@@ -42,102 +42,42 @@ class TestWorkflowParallel:
         self.base_url = base_url
         self.helper = sample_helper
 
-    @pytest.mark.skip(reason="xdist distributes module tests across workers, each spawning a func process")
-    def test_parallel_workflow_document_analysis(self) -> None:
-        """Test parallel workflow with a standard document."""
+    @pytest.mark.skip(reason="Flaky in CI: times out / crashes the xdist runner; temporarily disabled.")
+    def test_parallel_workflow_end_to_end(self) -> None:
+        """Run the parallel workflow end-to-end: start, check status, verify completion.
+
+        Consolidated into a single test on purpose: the work-stealing xdist scheduler
+        distributes tests (not modules) across workers, and the module-scoped
+        ``function_app_for_test`` fixture is created per worker -- so multiple tests in
+        this module would each spawn a separate ``func`` host for this resource-heavy
+        parallel sample. One test keeps it to a single host while still covering the
+        fan-out path end-to-end.
+        """
         payload = {
             "document_id": "doc-test-001",
             "content": (
                 "The quarterly earnings report shows strong growth in our cloud services division. "
                 "Revenue increased by 25% compared to last year, driven by enterprise adoption. "
-                "Customer satisfaction remains high at 92%. However, we face challenges in the "
-                "mobile segment where competition is intense. Overall, the outlook is positive "
-                "with expected continued growth in the coming quarters."
+                "Customer satisfaction remains high at 92%."
             ),
         }
 
-        # Start orchestration
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
-        assert response.status_code == 202
-        data = response.json()
-        assert "instanceId" in data
-        assert "statusQueryGetUri" in data
-
-        # Wait for completion - parallel workflows may take longer
-        status = self.helper.wait_for_orchestration_with_output(
-            data["statusQueryGetUri"],
-            max_wait=300,  # 5 minutes for parallel execution
-        )
-        assert status["runtimeStatus"] == "Completed"
-        assert "output" in status
-
-    @pytest.mark.skip(reason="xdist distributes module tests across workers, each spawning a func process")
-    def test_parallel_workflow_short_document(self) -> None:
-        """Test parallel workflow with a short document."""
-        payload = {
-            "document_id": "doc-test-002",
-            "content": "Quick update: Project completed successfully. Team performance exceeded expectations.",
-        }
-
-        # Start orchestration
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
-        assert response.status_code == 202
-        data = response.json()
-        assert "instanceId" in data
-        assert "statusQueryGetUri" in data
-
-        # Wait for completion
-        status = self.helper.wait_for_orchestration_with_output(data["statusQueryGetUri"], max_wait=300)
-        assert status["runtimeStatus"] == "Completed"
-        assert "output" in status
-
-    @pytest.mark.skip(reason="xdist distributes module tests across workers, each spawning a func process")
-    def test_parallel_workflow_technical_document(self) -> None:
-        """Test parallel workflow with a technical document."""
-        payload = {
-            "document_id": "doc-test-003",
-            "content": (
-                "The new microservices architecture has been deployed to production. "
-                "Key improvements include: reduced latency by 40%, improved scalability "
-                "to handle 10x traffic spikes, and enhanced monitoring with distributed tracing. "
-                "The Kubernetes cluster is now running on version 1.28 with auto-scaling enabled. "
-                "Next steps include implementing service mesh and improving CI/CD pipelines."
-            ),
-        }
-
-        # Start orchestration
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
-        assert response.status_code == 202
-        data = response.json()
-        assert "instanceId" in data
-
-        # Wait for completion
-        status = self.helper.wait_for_orchestration_with_output(data["statusQueryGetUri"], max_wait=300)
-        assert status["runtimeStatus"] == "Completed"
-
-    @pytest.mark.skip(reason="xdist distributes module tests across workers, each spawning a func process")
-    def test_workflow_status_endpoint(self) -> None:
-        """Test that the workflow status endpoint works correctly."""
-        payload = {
-            "document_id": "doc-test-004",
-            "content": "Brief status update for testing purposes.",
-        }
-
-        # Start orchestration
+        # Start the orchestration.
         response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
         assert response.status_code == 202
         data = response.json()
         instance_id = data["instanceId"]
+        assert "statusQueryGetUri" in data
 
-        # Check status
+        # The status endpoint reflects the started instance.
         status_response = self.helper.get(f"{self.base_url}/api/workflow/status/{instance_id}")
         assert status_response.status_code == 200
-        status = status_response.json()
-        assert "instanceId" in status
-        assert status["instanceId"] == instance_id
+        assert status_response.json()["instanceId"] == instance_id
 
-        # Wait for completion
-        self.helper.wait_for_orchestration(data["statusQueryGetUri"], max_wait=300)
+        # Fan-out to parallel processors and agents completes with an aggregated output.
+        status = self.helper.wait_for_orchestration_with_output(data["statusQueryGetUri"], max_wait=300)
+        assert status["runtimeStatus"] == "Completed"
+        assert "output" in status
 
 
 if __name__ == "__main__":

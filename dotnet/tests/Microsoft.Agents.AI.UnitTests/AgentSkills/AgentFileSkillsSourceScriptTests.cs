@@ -40,7 +40,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Single(skills);
@@ -64,7 +64,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Single(skills);
@@ -88,7 +88,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Single(skills);
@@ -103,7 +103,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Single(skills);
@@ -111,21 +111,21 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
     }
 
     [Fact]
-    public async Task GetSkillsAsync_ScriptsOutsideScriptsDir_AreNotDiscoveredAsync()
+    public async Task GetSkillsAsync_ScriptsInRootAndSubdirectories_AreDiscoveredByDefaultAsync()
     {
-        // Arrange — scripts outside configured directories are not discovered; only files directly
-        // inside the configured directory are picked up (no subdirectory recursion)
+        // Arrange — with default depth=2, scripts in root and immediate subdirectories are discovered
         string skillDir = CreateSkillDir(this._testRoot, "root-scripts", "Root scripts skill", "Body.");
         CreateFile(skillDir, "convert.py", "print('root')");
         CreateFile(skillDir, "tools/helper.sh", "echo 'helper'");
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
-        // Assert — neither file is in the default scripts/ directory, so no scripts are discovered
+        // Assert — both root and subdirectory scripts are discovered
         Assert.Single(skills);
-        Assert.Null(await skills[0].GetScriptAsync("convert.py"));
+        Assert.NotNull(await skills[0].GetScriptAsync("convert.py"));
+        Assert.NotNull(await skills[0].GetScriptAsync("tools/helper.sh"));
     }
 
     [Fact]
@@ -146,7 +146,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
             });
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         var scriptResult = await (await skills[0].GetScriptAsync("scripts/test.py"))!.RunAsync(skills[0], null, null, CancellationToken.None);
 
         // Assert
@@ -171,7 +171,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, scriptRunner: null);
 
         // Act — discovery succeeds even without a runner
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         var script = (await skills[0].GetScriptAsync("scripts/run.sh"))!;
 
         // Assert — running the script throws because no runner was provided
@@ -188,7 +188,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor, new AgentFileSkillsSourceOptions { AllowedScriptExtensions = s_rubyExtension });
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Single(skills);
@@ -212,7 +212,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
             });
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         using var argumentsDoc = JsonDocument.Parse("""{"value":26.2,"factor":1.60934}""");
         var arguments = argumentsDoc.RootElement;
         await (await skills[0].GetScriptAsync("scripts/test.py"))!.RunAsync(skills[0], arguments, null, CancellationToken.None);
@@ -225,16 +225,16 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
     }
 
     [Fact]
-    public async Task GetSkillsAsync_ScriptDirectoriesWithNestedPath_DiscoversScriptsAsync()
+    public async Task GetSkillsAsync_DeepScript_DiscoveredWithHigherDepthAsync()
     {
-        // Arrange — ScriptDirectories configured with a multi-segment relative path (f1/f2/f3)
+        // Arrange — script at depth 4 (f1/f2/f3/run.py) discovered with SearchDepth=5
         string skillDir = CreateSkillDir(this._testRoot, "nested-script-skill", "Nested script directory", "Body.");
         CreateFile(skillDir, "f1/f2/f3/run.py", "print('nested')");
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor,
-            new AgentFileSkillsSourceOptions { ScriptDirectories = ["f1/f2/f3"] });
+            new AgentFileSkillsSourceOptions { SearchDepth = 5 });
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert — script file inside the deeply nested directory is discovered
         Assert.Single(skills);
@@ -243,36 +243,25 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         Assert.Equal("f1/f2/f3/run.py", nestedScript!.Name);
     }
 
-    [Theory]
-    [InlineData("./scripts")]
-    [InlineData("./scripts/f1")]
-    [InlineData("./scripts/f1", "./f2")]
-    public async Task GetSkillsAsync_ScriptDirectoryWithDotSlashPrefix_DiscoversScriptsAsync(params string[] directories)
+    [Fact]
+    public async Task GetSkillsAsync_ScriptFilter_ExcludesFilteredScriptsAsync()
     {
-        // Arrange — "./"-prefixed directories are equivalent to their counterparts without the prefix;
-        // the leading "./" is transparently normalized by Path.GetFullPath during file enumeration.
-        string skillDir = CreateSkillDir(this._testRoot, "dotslash-script-skill", "Dot-slash prefix", "Body.");
-        foreach (string directory in directories)
-        {
-            string directoryWithoutDotSlash = directory.Substring(2); // strip "./"
-            CreateFile(skillDir, $"{directoryWithoutDotSlash}/run.py", "print('dotslash')");
-        }
-
+        // Arrange — ScriptFilter excludes scripts in the "f2" subdirectory
+        string skillDir = CreateSkillDir(this._testRoot, "dotslash-script-skill", "Filter test", "Body.");
+        CreateFile(skillDir, "scripts/run.py", "print('scripts')");
+        CreateFile(skillDir, "f2/run.py", "print('f2')");
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor,
-            new AgentFileSkillsSourceOptions { ScriptDirectories = directories });
+            new AgentFileSkillsSourceOptions { ScriptFilter = ctx => !ctx.RelativeFilePath.StartsWith("f2/", StringComparison.OrdinalIgnoreCase) });
 
         // Act
-        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
-        // Assert — scripts are discovered with names identical to using directories without "./"
+        // Assert — only scripts/ script is included; f2/ is excluded by filter
         Assert.Single(skills);
-        foreach (string directory in directories)
-        {
-            string expectedName = $"{directory.Substring(2)}/run.py";
-            var script = await skills[0].GetScriptAsync(expectedName);
-            Assert.NotNull(script);
-            Assert.Equal(expectedName, script!.Name);
-        }
+        var script = await skills[0].GetScriptAsync("scripts/run.py");
+        Assert.NotNull(script);
+        Assert.Equal("scripts/run.py", script!.Name);
+        Assert.Null(await skills[0].GetScriptAsync("f2/run.py"));
     }
 
     private static string CreateSkillDir(string root, string name, string description, string body)

@@ -10,21 +10,20 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 /// <summary>
 /// Test fake that returns a non-null <see cref="HostedSessionContext"/> by default, allowing tests
 /// that were written before the strict isolation-key contract to keep passing without each test
-/// having to stub <c>ResponseContext.Isolation</c>. The constructor also accepts <see langword="null"/>
-/// values so individual tests can exercise the handler's null-key error path.
+/// having to stub <c>ResponseContext.PlatformContext</c>. The constructor also accepts <see langword="null"/>
+/// so individual tests can exercise the handler's null-key error path.
 /// </summary>
 internal sealed class FakeHostedSessionIsolationKeyProvider : HostedSessionIsolationKeyProvider
 {
     public const string DefaultUserId = "test-user-isolation";
-    public const string DefaultChatId = "test-chat-isolation";
 
     private readonly HostedSessionContext? _context;
 
-    public FakeHostedSessionIsolationKeyProvider(string? userId = DefaultUserId, string? chatId = DefaultChatId)
+    public FakeHostedSessionIsolationKeyProvider(string? userId = DefaultUserId)
     {
-        this._context = userId is null || chatId is null
+        this._context = userId is null
             ? null
-            : new HostedSessionContext(userId, chatId);
+            : new HostedSessionContext(userId);
     }
 
     public override ValueTask<HostedSessionContext?> GetKeysAsync(
