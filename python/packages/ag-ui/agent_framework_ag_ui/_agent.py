@@ -2,7 +2,6 @@
 
 """AgentFrameworkAgent wrapper for AG-UI protocol."""
 
-from collections import OrderedDict
 from collections.abc import AsyncGenerator
 from typing import Any, cast
 
@@ -10,6 +9,7 @@ from ag_ui.core import BaseEvent
 from agent_framework import SupportsAgentRun
 
 from ._agent_run import PendingApprovalEntry, PendingApprovalKey, run_agent_stream
+from ._approval_state import InMemoryAGUIApprovalStateStore
 from ._snapshots import AGUIThreadSnapshotStore
 
 
@@ -111,13 +111,14 @@ class AgentFrameworkAgent:
             snapshot_store=snapshot_store,
         )
 
-        # Server-side registry of pending approval requests.
-        # Keys are (thread_id, request_id), values are the function name.
-        # Populated when approval requests are emitted; consumed when responses arrive.
-        # Prevents bypass, function name spoofing, and replay attacks.
-        # Bounded to prevent unbounded growth from abandoned approval requests.
-        self._pending_approvals: OrderedDict[PendingApprovalKey, PendingApprovalEntry] = OrderedDict()
-        self._pending_approvals_max_size: int = 10_000
+        # Server-side Approval State. Populated when approval requests are emitted
+        # and consumed when resume decisions arrive.
+        self._approval_state_store = InMemoryAGUIApprovalStateStore()
+        self._pending_approvals = cast(
+            dict[PendingApprovalKey, PendingApprovalEntry],
+            self._approval_state_store.pending_approvals,
+        )
+        self._pending_approvals_max_size: int = self._approval_state_store.max_entries
 
     @property
     def snapshot_store(self) -> AGUIThreadSnapshotStore | None:

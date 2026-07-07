@@ -373,6 +373,111 @@ async def test_endpoint_agent_approval_resume_entry_executes_approved_tool():
     assert "outcome" not in [event for event in events if event.get("type") == "RUN_FINISHED"][-1]
 
 
+async def test_endpoint_agent_approval_replayed_resume_entry_emits_run_error():
+    """A consumed server-side approval cannot be replayed to execute a tool again."""
+    client, agent, executed_cities = _build_weather_approval_endpoint()
+
+    first_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-resume",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [{"interruptId": "call_get_weather", "status": "resolved", "payload": {"accepted": True}}],
+        },
+    )
+    assert first_response.status_code == 200
+    assert executed_cities == ["Seattle"]
+
+    agent.updates = [AgentResponseUpdate(contents=[Content.from_text(text="Should not run.")], role="assistant")]
+    replay_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-replay",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [{"interruptId": "call_get_weather", "status": "resolved", "payload": {"accepted": True}}],
+        },
+    )
+
+    assert replay_response.status_code == 200
+    replay_events = _decode_sse_events(replay_response)
+    run_errors = [event for event in replay_events if event.get("type") == "RUN_ERROR"]
+    assert len(run_errors) == 1
+    assert run_errors[0]["code"] == "APPROVAL_RESUME_NOT_FOUND"
+    assert executed_cities == ["Seattle"]
+    assert not [event for event in replay_events if event.get("type") == "TOOL_CALL_RESULT"]
+
+
+async def test_endpoint_agent_approval_resume_wrong_scope_emits_run_error_without_snapshot_store():
+    """Approval State is scoped independently of AG-UI Thread Snapshots."""
+    executed_cities: list[str] = []
+    scope = {"value": "tenant-a"}
+
+    def get_weather(city: str) -> str:
+        executed_cities.append(city)
+        return f"Sunny in {city}"
+
+    weather_tool = FunctionTool(
+        name="get_weather",
+        description="Get the weather for a city",
+        func=get_weather,
+        approval_mode="always_require",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="call_get_weather",
+        function_call=Content.from_function_call(
+            call_id="call_get_weather",
+            name="get_weather",
+            arguments={"city": "Seattle"},
+        ),
+    )
+    agent = StubAgent(
+        updates=[AgentResponseUpdate(contents=[approval_request], role="assistant")],
+        default_options={"tools": [weather_tool]},
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        AgentFrameworkAgent(agent=agent, require_confirmation=False),
+        path="/approval-scoped",
+        snapshot_scope_resolver=lambda _request: scope["value"],
+    )
+    client = TestClient(app)
+
+    pause_response = client.post(
+        "/approval-scoped",
+        json={
+            "runId": "run-pause",
+            "threadId": "thread-weather",
+            "messages": [{"role": "user", "content": "What is the weather?"}],
+        },
+    )
+    assert pause_response.status_code == 200
+    pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
+    assert _run_finished_interrupts(pause_finished[-1])[0]["id"] == "call_get_weather"
+
+    scope["value"] = "tenant-b"
+    agent.updates = [AgentResponseUpdate(contents=[Content.from_text(text="Should not run.")], role="assistant")]
+    response = client.post(
+        "/approval-scoped",
+        json={
+            "runId": "run-wrong-scope",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [{"interruptId": "call_get_weather", "status": "resolved", "payload": {"accepted": True}}],
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    run_errors = [event for event in events if event.get("type") == "RUN_ERROR"]
+    assert len(run_errors) == 1
+    assert run_errors[0]["code"] == "APPROVAL_RESUME_NOT_FOUND"
+    assert executed_cities == []
+    assert not [event for event in events if event.get("type") == "TOOL_CALL_RESULT"]
+
+
 async def test_endpoint_agent_approval_resume_entry_denial_does_not_execute_tool():
     """A resolved canonical denial resume should not execute the pending tool."""
     client, _, executed_cities = _build_weather_approval_endpoint()

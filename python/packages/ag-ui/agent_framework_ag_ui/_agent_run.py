@@ -42,6 +42,7 @@ from agent_framework._tools import (
 from agent_framework._types import ResponseStream
 from agent_framework.exceptions import AgentInvalidResponseException
 
+from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY, approval_state_thread_id
 from ._message_adapters import normalize_agui_input_messages
 from ._orchestration._predictive_state import PredictiveStateHandler
 from ._orchestration._tooling import collect_server_tools, merge_tools, register_additional_client_tools
@@ -529,6 +530,17 @@ def _stored_pending_approval_interrupt_ids(interrupts: list[dict[str, Any]] | No
     return interrupt_ids
 
 
+def _resume_payload_has_approval_decision(resume_payload: Any) -> bool:
+    """Return whether a resume payload looks like an approval decision."""
+    for interrupt in _normalize_resume_interrupts(resume_payload):
+        if interrupt.get("status") == "cancelled":
+            return True
+        value = interrupt.get("value")
+        if isinstance(value, dict) and any(key in value for key in ("accepted", "approved")):
+            return True
+    return False
+
+
 def _find_pending_approval_entry(
     pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] | None,
     thread_id: str,
@@ -635,6 +647,18 @@ def _canonical_approval_resume_messages(
     pending_interrupt_ids = _pending_approval_interrupt_ids(pending_approvals, thread_id)
     contract_interrupt_ids = expected_ids | pending_interrupt_ids
     if not contract_interrupt_ids:
+        if _resume_payload_has_approval_decision(resume_payload):
+            normalized_interrupts = _normalize_resume_interrupts(resume_payload)
+            interrupt_id = normalized_interrupts[0]["id"] if normalized_interrupts else "unknown"
+            return (
+                [],
+                handled_ids,
+                cancelled_ids,
+                RunErrorEvent(
+                    message=f"No pending approval interrupt found for resume interruptId '{interrupt_id}'.",
+                    code="APPROVAL_RESUME_NOT_FOUND",
+                ),
+            )
         return messages, handled_ids, cancelled_ids, None
 
     entries, contract_error, contract_code = _resume_contract_error(
@@ -1215,6 +1239,8 @@ async def run_agent_stream(
     thread_id = input_data.get("thread_id") or input_data.get("threadId") or str(uuid.uuid4())
     run_id = input_data.get("run_id") or input_data.get("runId") or str(uuid.uuid4())
     snapshot_scope = cast(str | None, input_data.get(_SNAPSHOT_SCOPE_INPUT_KEY))
+    approval_scope = cast(str | None, input_data.get(_APPROVAL_SCOPE_INPUT_KEY))
+    approval_thread_id = approval_state_thread_id(scope=approval_scope, thread_id=thread_id)
 
     state_schema = cast(dict[str, Any], getattr(config, "state_schema", {}) or {})
     predict_state_config = cast(dict[str, dict[str, str]], getattr(config, "predict_state_config", {}) or {})
@@ -1290,7 +1316,7 @@ async def run_agent_stream(
         _canonical_approval_resume_messages(
             resume_payload,
             pending_approvals,
-            thread_id,
+            approval_thread_id,
             expected_interrupt_ids=stored_pending_approval_interrupt_ids or None,
         )
     )
@@ -1380,7 +1406,7 @@ async def run_agent_stream(
     # This must happen before running the agent so it sees the tool results
     tools_for_execution = tools if tools is not None else server_tools
     resolved_approval_results = await _resolve_approval_responses(
-        messages, tools_for_execution, agent, run_kwargs, pending_approvals, thread_id
+        messages, tools_for_execution, agent, run_kwargs, pending_approvals, approval_thread_id
     )
 
     # Defense-in-depth: replace approval payloads in snapshot with actual tool results
@@ -1490,9 +1516,11 @@ async def run_agent_stream(
                         request_id=str(content.id),
                         interrupt_id=str(canonical_interrupt_id),
                     )
-                    pending_approvals[_pending_approval_key(thread_id, str(content.id))] = pending_entry
+                    pending_approvals[_pending_approval_key(approval_thread_id, str(content.id))] = pending_entry
                     if canonical_interrupt_id:
-                        pending_approvals[_pending_approval_key(thread_id, str(canonical_interrupt_id))] = pending_entry
+                        pending_approvals[_pending_approval_key(approval_thread_id, str(canonical_interrupt_id))] = (
+                            pending_entry
+                        )
                     # Evict oldest entries if the registry exceeds a safe bound (LRU)
                     _evict_oldest_approvals(pending_approvals, max_size=10_000)
                 else:
