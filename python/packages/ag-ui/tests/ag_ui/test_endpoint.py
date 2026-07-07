@@ -3,6 +3,7 @@
 """Tests for FastAPI endpoint creation (_endpoint.py)."""
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any, cast
 
 import pytest
@@ -14,6 +15,7 @@ from agent_framework import (
     Content,
     Executor,
     FunctionTool,
+    Message,
     WorkflowBuilder,
     WorkflowContext,
     executor,
@@ -343,6 +345,74 @@ def _build_weather_approval_endpoint() -> tuple[TestClient, StubAgent, list[str]
     return client, agent, executed_cities
 
 
+def _build_mixed_approval_batch_endpoint(
+    streaming_chat_client_stub: Any,
+) -> tuple[TestClient, list[str], list[Message], dict[str, str]]:
+    executed: list[str] = []
+    messages_received: list[Message] = []
+    state = {"phase": "pause"}
+
+    def sensitive_action(city: str) -> str:
+        executed.append(f"sensitive:{city}")
+        return f"Sensitive action in {city}"
+
+    def lookup_weather(city: str) -> str:
+        executed.append(f"weather:{city}")
+        return f"Weather in {city}"
+
+    gated_tool = FunctionTool(
+        name="sensitive_action",
+        description="Run a sensitive city action",
+        func=sensitive_action,
+        approval_mode="always_require",
+    )
+    sibling_tool = FunctionTool(
+        name="lookup_weather",
+        description="Look up weather",
+        func=lookup_weather,
+    )
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        if state["phase"] == "pause":
+            yield ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_sensitive",
+                        name="sensitive_action",
+                        arguments={"city": "Seattle"},
+                    ),
+                    Content.from_function_call(
+                        call_id="call_weather",
+                        name="lookup_weather",
+                        arguments={"city": "Seattle"},
+                    ),
+                ],
+                role="assistant",
+            )
+            return
+        messages_received[:] = list(messages)
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")
+
+    agent = Agent(
+        name="test_agent",
+        instructions="Test",
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[gated_tool, sibling_tool],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        AgentFrameworkAgent(agent=agent, require_confirmation=False),
+        path="/approval",
+    )
+    return TestClient(app), executed, messages_received, state
+
+
 async def test_endpoint_agent_approval_resume_entry_executes_approved_tool():
     """A resolved canonical approval resume should execute the pending approved tool."""
     client, _, executed_cities = _build_weather_approval_endpoint()
@@ -371,6 +441,137 @@ async def test_endpoint_agent_approval_resume_entry_executes_approved_tool():
     assert tool_results[0]["content"] == "Sunny in Seattle"
     assert executed_cities == ["Seattle"]
     assert "outcome" not in [event for event in events if event.get("type") == "RUN_FINISHED"][-1]
+
+
+async def test_endpoint_agent_approval_resume_releases_already_approved_sibling(streaming_chat_client_stub):
+    """Resuming a visible approval should also complete never-require siblings from the same batch."""
+    client, executed, messages_received, state = _build_mixed_approval_batch_endpoint(streaming_chat_client_stub)
+
+    pause_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": "thread-mixed-batch",
+            "messages": [{"role": "user", "content": "Run both tools"}],
+        },
+    )
+
+    assert pause_response.status_code == 200
+    pause_events = _decode_sse_events(pause_response)
+    pause_finished = [event for event in pause_events if event.get("type") == "RUN_FINISHED"]
+    interrupts = _run_finished_interrupts(pause_finished[-1])
+    assert [interrupt["id"] for interrupt in interrupts] == ["call_sensitive"]
+    assert not [event for event in pause_events if event.get("type") == "TOOL_CALL_RESULT"]
+
+    state["phase"] = "resume"
+    resume_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-resume",
+            "threadId": "thread-mixed-batch",
+            "messages": [],
+            "resume": [{"interruptId": "call_sensitive", "status": "resolved", "payload": {"accepted": True}}],
+        },
+    )
+
+    assert resume_response.status_code == 200
+    resume_events = _decode_sse_events(resume_response)
+    tool_results = [event for event in resume_events if event.get("type") == "TOOL_CALL_RESULT"]
+    assert [(event["toolCallId"], event["content"]) for event in tool_results] == [
+        ("call_sensitive", "Sensitive action in Seattle"),
+        ("call_weather", "Weather in Seattle"),
+    ]
+    assert executed == ["sensitive:Seattle", "weather:Seattle"]
+    assert not [
+        event
+        for event in resume_events
+        if event.get("type") == "TOOL_CALL_START" and event.get("toolCallId") == "call_weather"
+    ]
+    replayed_results = [
+        content for message in messages_received for content in message.contents if content.type == "function_result"
+    ]
+    replayed_call_ids = [content.call_id for content in replayed_results if content.call_id is not None]
+    assert sorted(replayed_call_ids) == ["call_sensitive", "call_weather"]
+
+
+async def test_endpoint_agent_approval_rejection_releases_already_approved_sibling(streaming_chat_client_stub):
+    """Denying a visible approval should not discard never-require siblings from the same batch."""
+    client, executed, messages_received, state = _build_mixed_approval_batch_endpoint(streaming_chat_client_stub)
+    pause_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": "thread-mixed-reject",
+            "messages": [{"role": "user", "content": "Run both tools"}],
+        },
+    )
+    assert pause_response.status_code == 200
+    pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
+    assert [interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])] == ["call_sensitive"]
+
+    state["phase"] = "resume"
+    resume_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-resume",
+            "threadId": "thread-mixed-reject",
+            "messages": [],
+            "resume": [{"interruptId": "call_sensitive", "status": "resolved", "payload": {"accepted": False}}],
+        },
+    )
+
+    assert resume_response.status_code == 200
+    resume_events = _decode_sse_events(resume_response)
+    tool_results = [event for event in resume_events if event.get("type") == "TOOL_CALL_RESULT"]
+    assert [(event["toolCallId"], event["content"]) for event in tool_results] == [
+        ("call_weather", "Weather in Seattle")
+    ]
+    assert executed == ["weather:Seattle"]
+    replayed_results = [
+        content for message in messages_received for content in message.contents if content.type == "function_result"
+    ]
+    assert {content.call_id for content in replayed_results} == {"call_sensitive", "call_weather"}
+    rejected_results = [content for content in replayed_results if content.call_id == "call_sensitive"]
+    assert len(rejected_results) == 1
+    assert rejected_results[0].result == "Error: Tool call invocation was rejected by user."
+
+
+async def test_endpoint_agent_approval_cancellation_does_not_release_already_approved_sibling(
+    streaming_chat_client_stub,
+):
+    """Cancelling a visible approval remains fail-closed and emits no sibling result."""
+    client, executed, messages_received, state = _build_mixed_approval_batch_endpoint(streaming_chat_client_stub)
+    pause_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": "thread-mixed-cancel",
+            "messages": [{"role": "user", "content": "Run both tools"}],
+        },
+    )
+    assert pause_response.status_code == 200
+    pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
+    assert [interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])] == ["call_sensitive"]
+
+    state["phase"] = "resume"
+    cancel_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-cancel",
+            "threadId": "thread-mixed-cancel",
+            "messages": [],
+            "resume": [{"interruptId": "call_sensitive", "status": "cancelled"}],
+        },
+    )
+
+    assert cancel_response.status_code == 200
+    cancel_events = _decode_sse_events(cancel_response)
+    run_errors = [event for event in cancel_events if event.get("type") == "RUN_ERROR"]
+    assert len(run_errors) == 1
+    assert run_errors[0]["code"] == "APPROVAL_RESUME_CANCELLED"
+    assert not [event for event in cancel_events if event.get("type") == "TOOL_CALL_RESULT"]
+    assert executed == []
+    assert messages_received == []
 
 
 async def test_endpoint_agent_approval_replayed_resume_entry_emits_run_error():

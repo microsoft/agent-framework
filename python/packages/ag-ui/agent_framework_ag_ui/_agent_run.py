@@ -8,7 +8,7 @@ import copy
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterable, Awaitable
+from collections.abc import AsyncIterable, Awaitable, Mapping
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from ag_ui.core import (
@@ -34,8 +34,10 @@ from agent_framework import (
 )
 from agent_framework._middleware import FunctionMiddlewarePipeline
 from agent_framework._tools import (
+    _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY,  # type: ignore
     _collect_approval_responses,  # type: ignore
     _replace_approval_contents_with_results,  # type: ignore
+    _TOOL_APPROVAL_STATE_KEY,  # type: ignore
     _try_execute_function_calls,  # type: ignore
     normalize_function_invocation_configuration,
 )
@@ -438,7 +440,13 @@ class _PendingApproval(TypedDict):
     interrupt_id: str | None
 
 
-PendingApprovalEntry = _PendingApproval | str
+class _PendingApprovalWithSiblings(_PendingApproval, total=False):
+    """Pending approval details including hidden already-approved sibling calls."""
+
+    already_approved_requests: list[dict[str, Any]]
+
+
+PendingApprovalEntry = _PendingApprovalWithSiblings | str
 PendingApprovalKey = tuple[str, str]
 
 
@@ -453,8 +461,28 @@ def _make_pending_approval_entry(
     *,
     request_id: str | None = None,
     interrupt_id: str | None = None,
-) -> _PendingApproval:
-    return {"name": name, "arguments": arguments, "request_id": request_id, "interrupt_id": interrupt_id}
+    already_approved_requests: list[dict[str, Any]] | None = None,
+) -> _PendingApprovalWithSiblings:
+    entry: _PendingApprovalWithSiblings = {
+        "name": name,
+        "arguments": arguments,
+        "request_id": request_id,
+        "interrupt_id": interrupt_id,
+    }
+    if already_approved_requests:
+        entry["already_approved_requests"] = already_approved_requests
+    return entry
+
+
+def _register_pending_approval_entry(
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry],
+    thread_id: str,
+    entry: PendingApprovalEntry,
+    *ids: str | None,
+) -> None:
+    """Register all server-owned aliases for one pending approval entry."""
+    for alias_key in _pending_approval_alias_keys(thread_id, entry, *ids):
+        pending_approvals[alias_key] = entry
 
 
 def _pending_approval_name(entry: PendingApprovalEntry) -> str | None:
@@ -467,6 +495,60 @@ def _pending_approval_arguments(entry: PendingApprovalEntry) -> str | None:
     if isinstance(entry, str):
         return None
     return entry["arguments"]
+
+
+def _pending_approval_already_approved_requests(entry: PendingApprovalEntry) -> list[dict[str, Any]]:
+    if isinstance(entry, str):
+        return []
+    return list(entry.get("already_approved_requests", []))
+
+
+def _stored_already_approved_requests_for_visible_approval(
+    session: AgentSession,
+    *approval_ids: str | None,
+) -> list[dict[str, Any]]:
+    """Return hidden already-approved sibling requests recorded by the core invocation loop."""
+    requested_ids = {str(approval_id) for approval_id in approval_ids if approval_id}
+    if not requested_ids:
+        return []
+
+    tool_approval_state = session.state.get(_TOOL_APPROVAL_STATE_KEY)
+    if not isinstance(tool_approval_state, Mapping):
+        return []
+
+    raw_groups = tool_approval_state.get(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY)
+    if not isinstance(raw_groups, list):
+        return []
+
+    stored_requests: list[dict[str, Any]] = []
+    seen_request_ids: set[str] = set()
+    for raw_group in raw_groups:
+        if not isinstance(raw_group, Mapping):
+            continue
+        raw_ids = raw_group.get("approval_request_ids")
+        group_ids = {str(item) for item in raw_ids if item is not None} if isinstance(raw_ids, list) else set()
+        if group_ids.isdisjoint(requested_ids):
+            continue
+
+        raw_requests = raw_group.get("approval_requests")
+        if not isinstance(raw_requests, list):
+            continue
+        for raw_request in raw_requests:
+            if not isinstance(raw_request, Mapping):
+                continue
+            request = dict(cast(Mapping[str, Any], raw_request))
+            request_id = request.get("id")
+            function_call = request.get("function_call") or request.get("functionCall")
+            if request_id is None and isinstance(function_call, Mapping):
+                request_id = function_call.get("call_id") or function_call.get("callId")
+            dedupe_key = (
+                str(request_id) if request_id is not None else json.dumps(make_json_safe(request), sort_keys=True)
+            )
+            if dedupe_key in seen_request_ids:
+                continue
+            seen_request_ids.add(dedupe_key)
+            stored_requests.append(request)
+    return stored_requests
 
 
 def _parse_json_object(value: Any) -> dict[str, Any] | None:
@@ -728,7 +810,8 @@ def _canonical_approval_resume_messages(
             ),
         )
 
-    argument_updates: list[tuple[_PendingApproval, str]] = []
+    argument_updates: list[tuple[_PendingApprovalWithSiblings, str]] = []
+    restored_sibling_response_ids: set[str] = set()
     for entry in entries:
         interrupt_id = cast(str, entry["interrupt_id"])
         pending_entry = entries_by_interrupt_id.get(interrupt_id)
@@ -792,20 +875,52 @@ def _canonical_approval_resume_messages(
             argument_updates.append(
                 (pending_entry, json.dumps(make_json_safe(merged_arguments), sort_keys=True, separators=(",", ":")))
             )
-        messages.append(
+        function_approvals = [
             {
-                "role": "user",
-                "function_approvals": [
-                    {
-                        "id": interrupt_id,
-                        "call_id": interrupt_id,
-                        "name": _pending_approval_name(pending_entry) or "",
-                        "approved": accepted,
-                        "arguments": merged_arguments,
-                    }
-                ],
+                "id": interrupt_id,
+                "call_id": interrupt_id,
+                "name": _pending_approval_name(pending_entry) or "",
+                "approved": accepted,
+                "arguments": merged_arguments,
             }
-        )
+        ]
+        for raw_request in _pending_approval_already_approved_requests(pending_entry):
+            request = Content.from_dict(raw_request)
+            if request.type != "function_approval_request" or request.function_call is None:
+                continue
+            response = request.to_function_approval_response(approved=True)
+            function_call = response.function_call
+            if function_call is None:
+                continue
+            response_id = response.id or function_call.call_id
+            if not response_id or not function_call.name:
+                continue
+            if str(response_id) in restored_sibling_response_ids:
+                continue
+            restored_sibling_response_ids.add(str(response_id))
+            sibling_entry = _make_pending_approval_entry(
+                function_call.name,
+                canonical_function_arguments(function_call),
+                request_id=str(response.id) if response.id else None,
+                interrupt_id=str(function_call.call_id) if function_call.call_id else None,
+            )
+            _register_pending_approval_entry(
+                pending_approvals,
+                thread_id,
+                sibling_entry,
+                str(response_id),
+                str(function_call.call_id) if function_call.call_id else None,
+            )
+            function_approvals.append(
+                {
+                    "id": str(response_id),
+                    "call_id": str(function_call.call_id or response_id),
+                    "name": function_call.name,
+                    "approved": True,
+                    "arguments": make_json_safe(function_call.parse_arguments() or {}),
+                }
+            )
+        messages.append({"role": "user", "function_approvals": function_approvals})
 
     for pending_entry, arguments_json in argument_updates:
         pending_entry["arguments"] = arguments_json
@@ -1515,12 +1630,19 @@ async def run_agent_stream(
                         canonical_function_arguments(content.function_call),
                         request_id=str(content.id),
                         interrupt_id=str(canonical_interrupt_id),
+                        already_approved_requests=_stored_already_approved_requests_for_visible_approval(
+                            session,
+                            str(content.id),
+                            str(canonical_interrupt_id) if canonical_interrupt_id else None,
+                        ),
                     )
-                    pending_approvals[_pending_approval_key(approval_thread_id, str(content.id))] = pending_entry
-                    if canonical_interrupt_id:
-                        pending_approvals[_pending_approval_key(approval_thread_id, str(canonical_interrupt_id))] = (
-                            pending_entry
-                        )
+                    _register_pending_approval_entry(
+                        pending_approvals,
+                        approval_thread_id,
+                        pending_entry,
+                        str(content.id),
+                        str(canonical_interrupt_id) if canonical_interrupt_id else None,
+                    )
                     # Evict oldest entries if the registry exceeds a safe bound (LRU)
                     _evict_oldest_approvals(pending_approvals, max_size=10_000)
                 else:
