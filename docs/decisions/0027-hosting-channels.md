@@ -19,12 +19,11 @@ calls. Agent Framework should not duplicate those surfaces unless a specific hos
 ## Decision Drivers
 
 - Keep the released surface small enough to explain without first teaching a channel framework.
-- Provide reusable Agent Framework run translation that works with FastAPI and other web frameworks.
+- Provide reusable Agent Framework run translation that works with FastAPI, Django, and other web frameworks.
 - Let app/framework code own route declaration, auth, middleware, native SDK clients, command handling, and background
   work.
 - Keep stateful execution support explicit: session lookup/storage and workflow checkpoint lookup/storage may still need
   a small AF-owned home.
-- Avoid approving cross-channel identity and delivery semantics before their safety model is reviewed.
 
 ## Considered Options
 
@@ -32,27 +31,27 @@ calls. Agent Framework should not duplicate those surfaces unless a specific hos
 2. Ship a full host/channel framework with route contribution and channel hooks.
 3. Ship protocol conversion helpers plus optional execution state.
 
-### Create protocol-specific hosts
+### 1. Create protocol-specific hosts
 
 - Good: no new shared abstraction.
 - Neutral: each protocol host can evolve independently.
 - Bad: every package reinvents AF input/result mapping, session-key conventions, and stateful execution helpers.
 
-### Ship a full host/channel framework
+### 2. Ship a full host/channel framework
 
 - Good: one object can assemble routes, channels, session handling, hooks, and lifecycle callbacks.
 - Good: app code using the supported host shape can be short.
 - Bad: the framework owns concerns already handled by web frameworks, protocol SDKs and/or other services.
 - Bad: users must understand `Channel`, contribution, hook, and host-dispatch concepts before they can see how a request
   becomes `agent.run(...)`.
-- Bad: the abstraction is hard to reuse outside the chosen ASGI shape.
+- Bad: the abstraction is hard to reuse outside the chosen web framework.
 
-### Ship protocol helpers plus optional execution state
+### 3. Ship protocol helpers plus optional execution state
 
 - Good: protocol packages provide the Agent Framework run value directly: `<protocol>_to_run(...)` and
   `<protocol>_from_run(...)` style helpers.
 - Good: apps keep native FastAPI, Starlette, Azure Functions, Django, Bot Framework, or Telegram SDK code.
-- Good: helper functions can be tested without an ASGI app or host pipeline.
+- Good: helper functions can be tested without a web framework app or host pipeline.
 - Good: small state objects can still own target-coupled state: `AgentState` pairs an agent target with a `SessionStore`,
   and `WorkflowState` resolves a workflow target while reusing the existing `CheckpointStorage` abstraction.
 - Good: provides maximum configurability in handling input and outputs (outside of the conversions)
@@ -61,7 +60,7 @@ calls. Agent Framework should not duplicate those surfaces unless a specific hos
 
 ## Decision Outcome
 
-Chosen option: **protocol helpers plus optional execution state**.
+Chosen option: **3. Ship protocol helpers plus optional execution state**.
 
 Protocol packages own:
 
