@@ -222,6 +222,13 @@ warn_return_any = false
 warn_unused_ignores = false
 show_error_codes = true
 
+# NumPy 2.5 stubs use Python 3.12 type-statement syntax while mypy intentionally
+# targets Python 3.10 for test typing; skip parsing NumPy internals.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
 # ty (preview) over tests + samples. Relaxed: ty's defaults are gradual, and a few
 # categories are too noisy on test/mock-heavy code to gate on yet.
 [tool.ty.rules]
