@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -214,3 +215,43 @@ async def test_provider_as_async_context_manager_cleans_up() -> None:
     assert recorder["terminated"] is True
     # Injected client is not owned, so it is left open for the caller.
     assert client.closed is False
+
+
+async def test_close_during_in_flight_claim_terminates_new_sandbox() -> None:
+    """close() must not leak a sandbox that is being claimed concurrently."""
+    sandbox, recorder = _fake_sandbox(_fake_execution_result(stdout="hi\n"))
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class _SlowClient:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def create_sandbox(self, **kwargs: Any) -> Any:
+            started.set()
+            await release.wait()  # hold the sandbox lock while close() blocks on it
+            return sandbox
+
+        async def close(self) -> None:
+            self.closed = True
+
+    slow_client = _SlowClient()
+    provider = AgentSandboxCodeActProvider(
+        warmpool=WARMPOOL,
+        _client=cast("AsyncSandboxClient", slow_client),
+    )
+    tool = cast("AgentSandboxExecuteCodeTool", provider.execute_code_tool)
+
+    claim = asyncio.create_task(tool._ensure_sandbox())
+    await started.wait()  # _ensure_sandbox holds the lock, awaiting create_sandbox
+    close_task = asyncio.create_task(provider.close())  # blocks on the same lock
+    await asyncio.sleep(0)  # let close_task reach the lock
+    release.set()  # let the claim finish
+    await claim
+    await close_task
+
+    # The freshly claimed sandbox was terminated rather than orphaned.
+    assert recorder["terminated"] is True
+    # A subsequent claim is refused now that the tool is closed.
+    with pytest.raises(RuntimeError, match="has been closed"):
+        await tool._ensure_sandbox()

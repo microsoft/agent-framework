@@ -178,15 +178,19 @@ class AgentSandboxExecuteCodeTool(FunctionTool):
 
     async def _ensure_sandbox(self) -> AsyncSandbox:
         """Lazily claim and return the underlying sandbox, idempotently."""
-        if self._closed:
-            raise RuntimeError(
-                "AgentSandboxExecuteCodeTool has been closed; create a new tool or provider instance.",
-            )
+        # Fast path outside the lock; the authoritative check is inside it.
         sandbox = self._sandbox
-        if sandbox is not None and sandbox.is_active:
+        if not self._closed and sandbox is not None and sandbox.is_active:
             return sandbox
 
         async with self._sandbox_lock:
+            # Re-check under the lock so a concurrent close() cannot slip in
+            # between the check and the create and leave the new sandbox
+            # orphaned (close() flips _closed while holding this same lock).
+            if self._closed:
+                raise RuntimeError(
+                    "AgentSandboxExecuteCodeTool has been closed; create a new tool or provider instance.",
+                )
             sandbox = self._sandbox
             if sandbox is not None and sandbox.is_active:
                 return sandbox
@@ -250,12 +254,23 @@ class AgentSandboxExecuteCodeTool(FunctionTool):
         Safe to call multiple times. After ``close`` returns, the tool can no
         longer execute code — construct a new instance if needed.
         """
-        if self._closed:
-            return
-        self._closed = True
+        # Flip _closed and detach the sandbox/client references under the same
+        # lock _ensure_sandbox() uses. If a claim is in flight, this blocks
+        # until it finishes and then picks up the freshly created sandbox, so
+        # nothing is orphaned; if creation has not started, _ensure_sandbox()
+        # sees _closed under the lock and refuses to create.
+        async with self._sandbox_lock:
+            if self._closed:
+                return
+            self._closed = True
+            sandbox = self._sandbox
+            self._sandbox = None
+            client = self._client
+            self._client = None
+            owns_client = self._owns_client
 
-        sandbox = self._sandbox
-        self._sandbox = None
+        # Terminate outside the lock — these are network round-trips and the
+        # references are already detached.
         if sandbox is not None:
             try:
                 # terminate() closes the connection and deletes the SandboxClaim.
@@ -266,9 +281,7 @@ class AgentSandboxExecuteCodeTool(FunctionTool):
                     sandbox.sandbox_id,
                 )
 
-        client = self._client
-        self._client = None
-        if self._owns_client and client is not None:
+        if owns_client and client is not None:
             try:
                 # close() shuts down any remaining sandbox connections and the
                 # underlying async k8s API client (httpx / kubernetes_asyncio).

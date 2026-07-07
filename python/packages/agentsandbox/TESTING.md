@@ -103,6 +103,13 @@ The template defines the Pod spec; the warm pool references the template and is
 what the SDK claims from. The sample defaults to a pool named
 `python-sandbox-pool`.
 
+> **`service: true` is required.** The router reaches each Pod by its DNS name
+> (`<sandbox>.<ns>.svc.cluster.local`), which needs a per-sandbox headless
+> Service. That Service is only created when the sandbox has `spec.service:
+> true`, configured on the **template** (`SandboxTemplate.spec.service`). The
+> upstream `python-sandbox-template.yaml` does not set it, so the step below
+> patches it in — without it the router returns `502 Bad Gateway`.
+
 ```bash
 cd "$AGENT_SANDBOX/clients/python/agentic-sandbox-client"
 
@@ -110,6 +117,9 @@ cd "$AGENT_SANDBOX/clients/python/agentic-sandbox-client"
 SANDBOX_TEMPLATE_NAME=python-sandbox-template \
 SANDBOX_NAMESPACE=default \
   envsubst < python-sandbox-template.yaml | kubectl apply -f -
+
+# Enable the per-sandbox headless Service the router resolves:
+kubectl patch sandboxtemplate python-sandbox-template --type merge -p '{"spec":{"service":true}}'
 
 # Warm pool that references the template:
 kubectl apply -f - <<'EOF'
@@ -265,7 +275,7 @@ kind delete cluster --name agent-sandbox
 | Router pod in `CrashLoopBackOff`; logs say `ROUTER_AUTH_TOKEN must be set` | The router refuses to start unauthenticated by default. Set `ALLOW_UNAUTHENTICATED_ROUTER=true` on the deployment (Step 3) for local/dev, or `ROUTER_AUTH_TOKEN` for token mode. The SDK does not send a token yet, so it needs the router in unauthenticated mode. |
 | `pip install` fails with `Permission denied: '/.local'` inside the sandbox | The runtime image's `HOME` is read-only. Install under `/app` instead: `pip install --target=/app/.pkgs <pkg>` then `sys.path.insert(0, "/app/.pkgs")`. See the note in Step 9. |
 | `ValueError: connection_config is required` | The async client needs `SandboxDirectConnectionConfig` / `SandboxGatewayConnectionConfig` / `SandboxInClusterConnectionConfig`. Local-tunnel is not supported by the async client. |
-| `502 Bad Gateway` / `Name or service not known` from the router | Controller older than v0.5.0 — the per-sandbox headless Service is missing. Install the v0.5.0 (or newer) release manifests (Step 1). |
+| `502 Bad Gateway` / `Name or service not known` from the router | No per-sandbox headless Service, so its DNS name does not resolve. Set `spec.service: true` on the `SandboxTemplate` (Step 4) and recreate the warm pool so its Pods inherit it. |
 | `create_sandbox() got an unexpected keyword 'warmpool'` | SDK older than 0.5.0. Confirm with `uv run --no-sync python -c "import inspect; from k8s_agent_sandbox import AsyncSandboxClient; print(inspect.signature(AsyncSandboxClient.create_sandbox))"`. |
 | `SandboxWarmPoolNotFoundError` | The warm pool is missing or in another namespace. It must match the provider's `namespace` (`default`). |
 | Claim never becomes Ready | First image pull is slow. Pre-pull + load the runtime image (end of Step 4), or raise `sandbox_ready_timeout`. |
