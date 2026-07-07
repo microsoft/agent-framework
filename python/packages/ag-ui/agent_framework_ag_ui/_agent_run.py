@@ -768,6 +768,32 @@ def _approval_state_tool_call_ids(
     return call_ids
 
 
+def _cancelled_resume_interrupt_ids(resume_payload: Any) -> set[str]:
+    """Return cancelled canonical resume interrupt ids."""
+    interrupt_ids: set[str] = set()
+    for interrupt in _normalize_resume_interrupts(resume_payload):
+        if interrupt.get("status") != "cancelled":
+            continue
+        interrupt_id = interrupt.get("id")
+        if interrupt_id:
+            interrupt_ids.add(str(interrupt_id))
+    return interrupt_ids
+
+
+def _tool_approval_state_exists_for_cancelled_resume(
+    resume_payload: Any,
+    approval_state_store: InMemoryAGUIApprovalStateStore | None,
+    thread_id: str,
+) -> bool:
+    """Return whether an unmatched cancelled resume should discard hidden queued approval state."""
+    if approval_state_store is None:
+        return False
+    cancelled_ids = _cancelled_resume_interrupt_ids(resume_payload)
+    if not cancelled_ids:
+        return False
+    return thread_id in approval_state_store.tool_approval_states
+
+
 def _stored_pending_approval_interrupt_ids(interrupts: list[dict[str, Any]] | None) -> set[str]:
     """Return stored interrupt ids that require server-side approval registry validation."""
     if not interrupts:
@@ -1684,8 +1710,16 @@ async def run_agent_stream(
     )
     if resume_error is not None:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-        if getattr(resume_error, "code", None) == "APPROVAL_RESUME_CANCELLED":
+        resume_error_code = getattr(resume_error, "code", None)
+        should_clear_tool_approval_state = resume_error_code == "APPROVAL_RESUME_CANCELLED" or (
+            resume_error_code == "APPROVAL_RESUME_NOT_FOUND"
+            and _tool_approval_state_exists_for_cancelled_resume(
+                resume_payload, approval_state_store, approval_thread_id
+            )
+        )
+        if should_clear_tool_approval_state:
             _clear_tool_approval_state(approval_state_store, approval_thread_id)
+        if resume_error_code == "APPROVAL_RESUME_CANCELLED":
             if config.snapshot_store is not None and snapshot_scope is not None:
                 await _clear_thread_snapshot_interrupt(
                     snapshot_store=config.snapshot_store,

@@ -421,7 +421,7 @@ def _build_mixed_approval_batch_endpoint(
 
 def _build_tool_approval_queue_endpoint(
     streaming_chat_client_stub: Any,
-) -> tuple[TestClient, list[str], list[Message], dict[str, str]]:
+) -> tuple[TestClient, list[str], list[Message], dict[str, str], AgentFrameworkAgent]:
     executed: list[str] = []
     messages_received: list[Message] = []
     state = {"phase": "pause"}
@@ -465,12 +465,13 @@ def _build_tool_approval_queue_endpoint(
         middleware=[ToolApprovalMiddleware()],
     )
     app = FastAPI()
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     add_agent_framework_fastapi_endpoint(
         app,
-        AgentFrameworkAgent(agent=agent, require_confirmation=False),
+        wrapped_agent,
         path="/approval",
     )
-    return TestClient(app), executed, messages_received, state
+    return TestClient(app), executed, messages_received, state, wrapped_agent
 
 
 def _build_tool_approval_auto_endpoint(
@@ -696,7 +697,7 @@ async def test_endpoint_agent_approval_resume_persists_replayable_tool_results(s
 
 async def test_endpoint_agent_approval_resume_surfaces_queued_tool_approval(streaming_chat_client_stub):
     """Queued harness approval requests should survive and surface one at a time across AG-UI resumes."""
-    client, executed, messages_received, state = _build_tool_approval_queue_endpoint(streaming_chat_client_stub)
+    client, executed, messages_received, state, _ = _build_tool_approval_queue_endpoint(streaming_chat_client_stub)
     pause_response = client.post(
         "/approval",
         json={
@@ -760,7 +761,7 @@ async def test_endpoint_agent_approval_resume_surfaces_queued_tool_approval(stre
 
 async def test_endpoint_agent_approval_cancel_discards_queued_tool_approval(streaming_chat_client_stub):
     """Cancelling a queued approval batch must not replay stale approval prompts on the next user turn."""
-    client, executed, messages_received, state = _build_tool_approval_queue_endpoint(streaming_chat_client_stub)
+    client, executed, messages_received, state, _ = _build_tool_approval_queue_endpoint(streaming_chat_client_stub)
     pause_response = client.post(
         "/approval",
         json={
@@ -798,6 +799,69 @@ async def test_endpoint_agent_approval_cancel_discards_queued_tool_approval(stre
         json={
             "runId": "run-next",
             "threadId": "thread-queued-cancel",
+            "messages": [{"role": "user", "content": "Fresh request"}],
+        },
+    )
+
+    assert next_response.status_code == 200
+    next_events = _decode_sse_events(next_response)
+    next_finished = [event for event in next_events if event.get("type") == "RUN_FINISHED"]
+    assert "outcome" not in next_finished[-1]
+    assert not [
+        event
+        for event in next_events
+        if event.get("type") == "TOOL_CALL_START" and event.get("toolCallId") == "call_second"
+    ]
+    assert executed == []
+    assert [(message.role, message.text) for message in messages_received] == [("user", "Fresh request")]
+
+
+async def test_endpoint_agent_approval_cancel_clears_queued_state_when_visible_entry_evicted(
+    streaming_chat_client_stub,
+):
+    """A cancelled resume for server-owned queued state clears stale state even after pending-entry eviction."""
+    client, executed, messages_received, state, wrapped_agent = _build_tool_approval_queue_endpoint(
+        streaming_chat_client_stub
+    )
+    pause_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": "thread-queued-cancel-evicted",
+            "messages": [{"role": "user", "content": "Run both tools"}],
+        },
+    )
+    assert pause_response.status_code == 200
+    pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
+    assert [interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])] == ["call_first"]
+    stored_state = wrapped_agent._approval_state_store.tool_approval_states["thread-queued-cancel-evicted"]
+    assert "call_second" in json.dumps(stored_state)
+
+    wrapped_agent._pending_approvals.clear()
+    state["phase"] = "resume"
+    cancel_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-cancel",
+            "threadId": "thread-queued-cancel-evicted",
+            "messages": [],
+            "resume": [{"interruptId": "call_first", "status": "cancelled"}],
+        },
+    )
+
+    assert cancel_response.status_code == 200
+    cancel_events = _decode_sse_events(cancel_response)
+    run_errors = [event for event in cancel_events if event.get("type") == "RUN_ERROR"]
+    assert len(run_errors) == 1
+    assert run_errors[0]["code"] == "APPROVAL_RESUME_NOT_FOUND"
+    assert executed == []
+    assert messages_received == []
+
+    next_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-next",
+            "threadId": "thread-queued-cancel-evicted",
             "messages": [{"role": "user", "content": "Fresh request"}],
         },
     )

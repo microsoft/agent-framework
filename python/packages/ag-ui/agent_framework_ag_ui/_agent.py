@@ -118,7 +118,6 @@ class AgentFrameworkAgent:
             dict[PendingApprovalKey, PendingApprovalEntry],
             self._approval_state_store.pending_approvals,
         )
-        self._pending_approvals_max_size: int = self._approval_state_store.max_entries
 
     @property
     def snapshot_store(self) -> AGUIThreadSnapshotStore | None:

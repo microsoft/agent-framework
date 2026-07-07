@@ -15,10 +15,17 @@ _APPROVAL_SCOPE_INPUT_KEY = "__ag_ui_approval_scope"
 _APPROVAL_THREAD_SEPARATOR = "\x1f"
 
 
-def approval_state_thread_id(*, scope: ApprovalScope | None, thread_id: str) -> str:
-    """Return the storage thread key for Approval State."""
-    if not scope:
+def approval_state_thread_id(*, scope: object | None, thread_id: str) -> str:
+    """Return the storage thread key for Approval State.
+
+    ``None`` is the only unscoped value. A provided scope must be a non-empty
+    string so accidental empty or malformed scopes cannot collapse into the
+    unscoped namespace.
+    """
+    if scope is None:
         return thread_id
+    if not isinstance(scope, str) or not scope:
+        raise ValueError("scope must be a non-empty string when provided.")
     return f"{scope}{_APPROVAL_THREAD_SEPARATOR}{thread_id}"
 
 
