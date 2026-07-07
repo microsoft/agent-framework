@@ -68,14 +68,13 @@ AgentInstruction = (
     "follow its guidance to resolve the setup and then re-run the sample.\n"
     "Feel free to install any required dependencies if needed.\n"
     "The sample can be interactive. If it is interactive, respond to the sample when prompted "
-    "based on your analysis of the code. You do not need to consult human on what to respond.\n"
-    "If the sample fails, investigate the error and suggest a fix.\n"
+    "based on your analysis of the code. You do not need to consult human on what to respond.\n" \
+    "Fail fast and do not attempt to fix the sample unless instructed by a skill.\n"
     "Return ONLY valid JSON with this schema:\n"
     "{\n"
     '  "status": "success|failure|missing_setup",\n'
     '  "output": "short summary of the result and what you did if the sample was interactive",\n'
     '  "error": "error details or empty string",\n'
-    '  "fix": "suggested code fix if the sample failed, otherwise empty string"\n'
     "}\n\n"
 )
 
@@ -151,7 +150,6 @@ class CustomAgentExecutor(Executor):
                     status=status_from_text(result_payload.status),
                     output=result_payload.output,
                     error=result_payload.error,
-                    fix=result_payload.fix,
                 )
                 break
             except Exception as ex:
@@ -174,7 +172,6 @@ class CustomAgentExecutor(Executor):
                             status=RunStatus.FAILURE,
                             output="",
                             error=f"Original error: {ex}. Restart error: {restart_ex}",
-                            fix="",
                         )
                         break
 
@@ -184,7 +181,6 @@ class CustomAgentExecutor(Executor):
                     status=RunStatus.FAILURE,
                     output="",
                     error=str(ex),
-                    fix="",
                 )
                 break
 

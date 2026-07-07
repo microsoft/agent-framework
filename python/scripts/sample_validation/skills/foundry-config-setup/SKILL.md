@@ -49,5 +49,4 @@ client = FoundryChatClient(
 
 These samples are intentionally written with hardcoded placeholders, so this
 is expected setup—not a defect in the sample. After applying the change,
-re-run the sample and report the result as a `success` if it now runs. Do not
-include a suggested `fix`.
+re-run the sample and report the result as a `success` if it now runs.

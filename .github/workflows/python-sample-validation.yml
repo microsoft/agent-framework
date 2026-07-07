@@ -483,6 +483,10 @@ jobs:
     env:
       FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
       FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
+      # Foundry hosted agent configuration
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.FOUNDRY_MODEL }}
+      FOUNDRY_PROJECT_ID: ${{ vars.FOUNDRY_PROJECT_ID }}
+      AZURE_CONTAINER_REGISTRY_ENDPOINT: ${{ vars.AZURE_CONTAINER_REGISTRY_ENDPOINT }}
       # A2A configuration
       A2A_AGENT_HOST: http://localhost:5001/
     defaults:

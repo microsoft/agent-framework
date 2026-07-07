@@ -50,10 +50,10 @@ class RunDynamicValidationWorkflowExecutor(Executor):
                 CoordinatorStart(samples=creation.samples), stream=True
             ):
                 if event.type == "output" and isinstance(event.data, ExecutionResult):
-                    result = event.data  # type: ignore
-                elif event.type == WORKER_COMPLETED and isinstance(
+                    result = event.data
+                elif event.type == WORKER_COMPLETED and isinstance( # type: ignore
                     event.data, SampleInfo
-                ):  # type: ignore
+                ):
                     remaining_sample_counts -= 1
                     print(
                         f"Completed validation for sample: {event.data.relative_path:<80} | "
@@ -69,7 +69,6 @@ class RunDynamicValidationWorkflowExecutor(Executor):
                         status=RunStatus.FAILURE,
                         output="",
                         error="Nested workflow did not return an ExecutionResult.",
-                        fix="",
                     )
                     for sample in creation.samples
                 ]
