@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from agent_framework import (
+    Agent,
     ChatMiddlewareLayer,
     ChatOptions,
     ChatResponseUpdate,
@@ -134,6 +135,16 @@ def test_anthropic_client_wraps_raw_client_with_standard_layer_order() -> None:
     assert not issubclass(RawAnthropicClient, FunctionInvocationLayer)
     assert not issubclass(RawAnthropicClient, ChatMiddlewareLayer)
     assert not issubclass(RawAnthropicClient, ChatTelemetryLayer)
+
+
+def test_agent_accepts_anthropic_clients() -> None:
+    raw_client = RawAnthropicClient(api_key="test-api-key", model="claude-3-5-sonnet-20241022")
+    raw_agent = Agent(client=raw_client, instructions="test agent")
+    assert raw_agent.client is raw_client
+
+    client = AnthropicClient(api_key="test-api-key", model="claude-3-5-sonnet-20241022")
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
 
 
 def test_anthropic_client_init_auto_create_client(
