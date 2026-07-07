@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -747,4 +747,55 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
             yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "Test response"));
         }
     }
+
+    #region Factory Delegate Overload Tests
+
+    [Fact]
+    public void MapAGUI_WithFactoryDelegate_MapsEndpoint_AtSpecifiedPattern()
+    {
+        // Arrange
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+        serviceProviderMock.As<IKeyedServiceProvider>();
+
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+        endpointsMock.Setup(e => e.DataSources).Returns([]);
+
+        const string Pattern = "/agents/{agentId}";
+
+        // Act
+        IEndpointConventionBuilder? result = endpointsMock.Object.MapAGUI(
+            Pattern,
+            (HttpContext context, CancellationToken ct) => new ValueTask<AIAgent?>(new TestAgent()));
+
+        // Assert
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public void MapAGUI_WithNullFactory_ThrowsArgumentNullException()
+    {
+        // Arrange
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+        serviceProviderMock.As<IKeyedServiceProvider>();
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() =>
+            endpointsMock.Object.MapAGUI("/agents/{agentId}", (Func<HttpContext, CancellationToken, ValueTask<AIAgent?>>)null!));
+    }
+
+    [Fact]
+    public void MapAGUI_WithFactoryDelegate_AndNullEndpoints_ThrowsArgumentNullException()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() =>
+            AGUIEndpointRouteBuilderExtensions.MapAGUI(
+                null!,
+                "/agents/{agentId}",
+                (HttpContext context, CancellationToken ct) => new ValueTask<AIAgent?>(new TestAgent())));
+    }
+
+    #endregion
 }
