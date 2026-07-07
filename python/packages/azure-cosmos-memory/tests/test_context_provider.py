@@ -1,14 +1,20 @@
 # Copyright (c) Microsoft. All rights reserved.
 # pyright: reportPrivateUsage=false
+# ruff: noqa: E402
 
 """Unit tests for CosmosMemoryContextProvider with mocked dependencies."""
 
 from __future__ import annotations
 
+import pytest
+
+# The Agent Memory Toolkit requires Python 3.11+, so it is not installed on the 3.10 CI
+# leg. Skip this module there (mirrors the github_copilot package's importorskip guard).
+pytest.importorskip("azure.cosmos.agent_memory")
+
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import SettingNotFoundError
@@ -17,10 +23,6 @@ from agent_framework_azure_cosmos_memory._context_provider import (
     DEFAULT_CONTEXT_PROMPT,
     CosmosMemoryContextProvider,
 )
-
-# The Agent Memory Toolkit requires Python 3.11+, so it is not installed on the 3.10 CI
-# leg. Skip this module there (mirrors the github_copilot package's importorskip guard).
-pytest.importorskip("azure.cosmos.agent_memory")
 
 # The provider methods accept an ``agent`` implementing ``SupportsAgentRun`` but never
 # use it in these tests, so a typed ``None`` stub keeps the call sites clean.
@@ -81,7 +83,7 @@ class TestInit:
     def test_init_creates_client_when_none(self) -> None:
         """When no client provided, creates AsyncCosmosMemoryClient with default credential."""
         with patch(
-            "agent_framework_azure_cosmos_memory._context_provider._RuntimeCosmosMemoryClient"
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
         ) as mock_client_class:
             mock_client_class.return_value = AsyncMock()
 
@@ -101,7 +103,7 @@ class TestInit:
     def test_init_wires_explicit_credential(self) -> None:
         """An explicit credential is passed to both Cosmos and AI Foundry, disabling default."""
         with patch(
-            "agent_framework_azure_cosmos_memory._context_provider._RuntimeCosmosMemoryClient"
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
         ) as mock_client_class:
             mock_client_class.return_value = AsyncMock()
             sentinel = MagicMock()
@@ -163,14 +165,6 @@ class TestInit:
                     os.environ[k] = v
                 else:
                     os.environ.pop(k, None)
-
-    def test_init_raises_when_memory_toolkit_not_available(self) -> None:
-        """Raises ImportError when azure-cosmos-agent-memory not installed."""
-        with (
-            patch("agent_framework_azure_cosmos_memory._context_provider._memory_toolkit_available", False),
-            pytest.raises(ImportError, match="azure-cosmos-agent-memory is required"),
-        ):
-            CosmosMemoryContextProvider(memory_client=MagicMock())  # type: ignore
 
 
 # -- before_run tests ----------------------------------------------------------
@@ -570,7 +564,7 @@ class TestContextManager:
         """Enters and exits the memory client when provider owns it."""
         # When provider creates the client, it should manage its lifecycle
         with patch(
-            "agent_framework_azure_cosmos_memory._context_provider._RuntimeCosmosMemoryClient"
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
         ) as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
@@ -657,7 +651,7 @@ class TestFlush:
     async def test_only_closes_owned_client(self) -> None:
         """Only closes client if provider created it."""
         with patch(
-            "agent_framework_azure_cosmos_memory._context_provider._RuntimeCosmosMemoryClient"
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
         ) as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client

@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+# ruff: noqa: E402
 
 """Integration tests for CosmosMemoryContextProvider with live Azure accounts.
 
@@ -14,21 +15,22 @@ Run with: pytest -m integration tests/
 
 from __future__ import annotations
 
+import pytest
+
+# The Agent Memory Toolkit requires Python 3.11+, so it is not installed on the 3.10 CI
+# leg. Skip this module there (mirrors the github_copilot package's importorskip guard).
+pytest.importorskip("azure.cosmos.agent_memory")
+
 import os
 import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
-import pytest
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, SessionContext
 from azure.identity.aio import DefaultAzureCredential
 
 from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider
-
-# The Agent Memory Toolkit requires Python 3.11+, so it is not installed on the 3.10 CI
-# leg. Skip this module there (mirrors the github_copilot package's importorskip guard).
-pytest.importorskip("azure.cosmos.agent_memory")
 
 # Skip all tests in this module if required env vars not set.
 # These tests hit a LIVE Azure account (Cosmos DB + AI Foundry), so they carry both

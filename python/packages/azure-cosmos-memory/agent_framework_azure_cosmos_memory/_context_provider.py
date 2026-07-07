@@ -26,15 +26,14 @@ else:
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
-    from azure.cosmos.agent_memory.aio import AsyncCosmosMemoryClient
 
 try:
-    from azure.cosmos.agent_memory.aio import AsyncCosmosMemoryClient as _RuntimeCosmosMemoryClient
-
-    _memory_toolkit_available = True
-except ImportError:
-    _memory_toolkit_available = False
-    _RuntimeCosmosMemoryClient = None
+    from azure.cosmos.agent_memory.aio import AsyncCosmosMemoryClient
+except ImportError as _memory_toolkit_import_error:  # pragma: no cover - only hit on Python < 3.11
+    raise ImportError(
+        "agent-framework-azure-cosmos-memory requires the 'azure-cosmos-agent-memory' package, "
+        "which is only available on Python 3.11+. Please use Python 3.11 or later."
+    ) from _memory_toolkit_import_error
 
 logger = logging.getLogger(__name__)
 
@@ -136,13 +135,9 @@ class CosmosMemoryContextProvider(ContextProvider):
                 by the provider or supplied via ``memory_client``.
 
         Raises:
-            ImportError: If azure-cosmos-agent-memory is not installed.
+            SettingNotFoundError: If ``cosmos_endpoint`` or ``foundry_endpoint`` cannot be resolved
+                from arguments or the environment (only when ``memory_client`` is not supplied).
         """
-        if not _memory_toolkit_available:
-            raise ImportError(
-                "azure-cosmos-agent-memory is required. Install with: pip install agent-framework-azure-cosmos-memory"
-            )
-
         super().__init__(source_id)
 
         # Track whether we created the client (and thus should close it in __aexit__)
@@ -195,7 +190,7 @@ class CosmosMemoryContextProvider(ContextProvider):
             # ManagedIdentityCredential → AzureCliCredential → …), which it also owns and closes.
             # This works in production (via ManagedIdentity) and local dev (via az login).
             if credential is not None:
-                memory_client = _RuntimeCosmosMemoryClient(
+                memory_client = AsyncCosmosMemoryClient(
                     cosmos_endpoint=cosmos_endpoint,
                     cosmos_database=cosmos_database,
                     ai_foundry_endpoint=foundry_endpoint,
@@ -206,7 +201,7 @@ class CosmosMemoryContextProvider(ContextProvider):
                     use_default_credential=False,
                 )
             else:
-                memory_client = _RuntimeCosmosMemoryClient(
+                memory_client = AsyncCosmosMemoryClient(
                     cosmos_endpoint=cosmos_endpoint,
                     cosmos_database=cosmos_database,
                     ai_foundry_endpoint=foundry_endpoint,
