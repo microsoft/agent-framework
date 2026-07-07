@@ -3,6 +3,7 @@ status: accepted
 contact: eavanvalkenburg
 date: 2026-06-30
 deciders: eavanvalkenburg
+consulted: rogerbarreto, moonbox3
 ---
 
 # Python protocol helpers and optional execution state
