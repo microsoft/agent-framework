@@ -919,8 +919,11 @@ class MCPTool:
                     "type": "object",
                     "properties": {
                         "tool": {
-                            "type": "string",
-                            "description": "The MCP tool name to load.",
+                            "oneOf": [
+                                {"type": "string"},
+                                {"type": "array", "items": {"type": "string"}},
+                            ],
+                            "description": "The MCP tool name, or MCP tool names, to load.",
                         },
                     },
                     "required": ["tool"],
@@ -935,8 +938,11 @@ class MCPTool:
                     "type": "object",
                     "properties": {
                         "tool": {
-                            "type": "string",
-                            "description": "The MCP tool name to unload.",
+                            "oneOf": [
+                                {"type": "string"},
+                                {"type": "array", "items": {"type": "string"}},
+                            ],
+                            "description": "The MCP tool name, or MCP tool names, to unload.",
                         },
                     },
                     "required": ["tool"],
@@ -962,6 +968,18 @@ class MCPTool:
         if len(matches) > 1:
             raise ToolExecutionException(f"MCP tool name '{tool_name}' is ambiguous.")
         return matches[0]
+
+    @staticmethod
+    def _progressive_tool_names(tool: str | Sequence[str]) -> list[str]:
+        """Normalize a progressive loader request to a tool-name list."""
+        if isinstance(tool, str):
+            return [tool]
+        if not isinstance(tool, Sequence):
+            raise ToolExecutionException("Progressive MCP tool request must be a string or a list of strings.")
+        tool_names = list(tool)
+        if not all(isinstance(tool_name, str) for tool_name in tool_names):
+            raise ToolExecutionException("Progressive MCP tool request must contain only strings.")
+        return tool_names
 
     def _is_progressive_function_loaded(
         self,
@@ -996,62 +1014,96 @@ class MCPTool:
             })
         return tools
 
-    async def _load_progressive_mcp_tool(self, ctx: FunctionInvocationContext, tool: str) -> str:
+    async def _load_progressive_mcp_tool(self, ctx: FunctionInvocationContext, tool: str | Sequence[str]) -> str:
         """Load an allowed MCP tool into the live function-calling tool list."""
         if ctx.tools is None:
             raise ToolExecutionException("load_tool can only be used inside an agent function-calling run.")
-        try:
-            func = self._resolve_progressive_function(tool)
-        except ToolExecutionException as ex:
-            return str(ex)
-        if self._function_collides_with_progressive_loader(func):
-            loader_names = ", ".join(sorted(self._progressive_loader_names()))
-            return (
-                f"MCP tool '{func.name}' conflicts with progressive disclosure loader tool name(s): "
-                f"{loader_names}. Set tool_name_prefix or exclude the colliding MCP tool."
-            )
-        if any(tool_item is func for tool_item in ctx.tools):
-            self._progressive_loaded_tool_names.add(func.name)
-            return f"MCP tool '{func.name}' is already available."
+        messages: list[str] = []
+        functions_to_load: list[FunctionTool] = []
+        function_names_to_load: set[str] = set()
+        for tool_name in self._progressive_tool_names(tool):
+            try:
+                func = self._resolve_progressive_function(tool_name)
+            except ToolExecutionException as ex:
+                messages.append(str(ex))
+                continue
+            if self._function_collides_with_progressive_loader(func):
+                loader_names = ", ".join(sorted(self._progressive_loader_names()))
+                messages.append(
+                    f"MCP tool '{func.name}' conflicts with progressive disclosure loader tool name(s): "
+                    f"{loader_names}. Set tool_name_prefix or exclude the colliding MCP tool."
+                )
+                continue
+            if any(tool_item is func for tool_item in ctx.tools):
+                self._progressive_loaded_tool_names.add(func.name)
+                messages.append(f"MCP tool '{func.name}' is already available.")
+                continue
+            if func.name in function_names_to_load:
+                messages.append(f"MCP tool '{func.name}' is already queued to load.")
+                continue
+            functions_to_load.append(func)
+            function_names_to_load.add(func.name)
+            messages.append(f"Loaded MCP tool '{func.name}'. It is available on the next model iteration.")
+        if not messages:
+            return "No MCP tools requested."
+        if not functions_to_load:
+            return "\n".join(messages)
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", ExperimentalWarning)
-                ctx.add_tools(func)
+                ctx.add_tools(functions_to_load)
         except ValueError as ex:
             raise ToolExecutionException(str(ex), inner_exception=ex) from ex
-        self._progressive_loaded_tool_names.add(func.name)
-        return f"Loaded MCP tool '{func.name}'. It is available on the next model iteration."
+        self._progressive_loaded_tool_names.update(func.name for func in functions_to_load)
+        return "\n".join(messages)
 
-    async def _unload_progressive_mcp_tool(self, ctx: FunctionInvocationContext, tool: str) -> str:
+    async def _unload_progressive_mcp_tool(self, ctx: FunctionInvocationContext, tool: str | Sequence[str]) -> str:
         """Unload a progressively loaded MCP tool from the live function-calling tool list."""
         if ctx.tools is None:
             raise ToolExecutionException("unload_tool can only be used inside an agent function-calling run.")
-        if tool in self._progressive_loader_names():
-            return f"MCP loader tool '{tool}' cannot be unloaded."
-        try:
-            func = self._resolve_progressive_function(tool)
-        except ToolExecutionException as ex:
-            return str(ex)
-        if self._function_collides_with_progressive_loader(func):
-            loader_names = ", ".join(sorted(self._progressive_loader_names()))
-            return (
-                f"MCP tool '{func.name}' conflicts with progressive disclosure loader tool name(s): "
-                f"{loader_names}. Set tool_name_prefix or exclude the colliding MCP tool."
-            )
-        if self._function_matches_names(func, self._always_load_names):
-            return f"MCP tool '{func.name}' is configured in always_load and cannot be unloaded."
-        if func.name not in self._progressive_loaded_tool_names and not any(
-            tool_item is func for tool_item in ctx.tools
-        ):
-            return f"MCP tool '{func.name}' is not currently loaded."
+        messages: list[str] = []
+        function_names_to_unload: set[str] = set()
+        for tool_name in self._progressive_tool_names(tool):
+            if tool_name in self._progressive_loader_names():
+                messages.append(f"MCP loader tool '{tool_name}' cannot be unloaded.")
+                continue
+            try:
+                func = self._resolve_progressive_function(tool_name)
+            except ToolExecutionException as ex:
+                messages.append(str(ex))
+                continue
+            if self._function_collides_with_progressive_loader(func):
+                loader_names = ", ".join(sorted(self._progressive_loader_names()))
+                messages.append(
+                    f"MCP tool '{func.name}' conflicts with progressive disclosure loader tool name(s): "
+                    f"{loader_names}. Set tool_name_prefix or exclude the colliding MCP tool."
+                )
+                continue
+            if self._function_matches_names(func, self._always_load_names):
+                messages.append(f"MCP tool '{func.name}' is configured in always_load and cannot be unloaded.")
+                continue
+            if func.name in function_names_to_unload:
+                messages.append(f"MCP tool '{func.name}' is already queued to unload.")
+                continue
+            if func.name not in self._progressive_loaded_tool_names and not any(
+                tool_item is func for tool_item in ctx.tools
+            ):
+                messages.append(f"MCP tool '{func.name}' is not currently loaded.")
+                continue
+            function_names_to_unload.add(func.name)
+            messages.append(f"Unloaded MCP tool '{func.name}'. It will be removed on the next model iteration.")
+        if not messages:
+            return "No MCP tools requested."
+        if not function_names_to_unload:
+            return "\n".join(messages)
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", ExperimentalWarning)
-                ctx.remove_tools(func.name)
+                ctx.remove_tools(list(function_names_to_unload))
         except RuntimeError as ex:
             raise ToolExecutionException(str(ex), inner_exception=ex) from ex
-        self._progressive_loaded_tool_names.discard(func.name)
-        return f"Unloaded MCP tool '{func.name}'. It will be removed on the next model iteration."
+        self._progressive_loaded_tool_names.difference_update(function_names_to_unload)
+        return "\n".join(messages)
 
     async def _ensure_lifecycle_owner(self) -> None:
         async with self._lifecycle_lock:

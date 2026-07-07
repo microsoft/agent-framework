@@ -1864,6 +1864,14 @@ async def test_mcp_progressive_disclosure_loader_names_honor_tool_name_prefix() 
         "github_unload_tool",
         "github_tool_one",
     ]
+    assert server.functions[1].parameters()["properties"]["tool"] == {
+        "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
+        "description": "The MCP tool name, or MCP tool names, to load.",
+    }
+    assert server.functions[2].parameters()["properties"]["tool"] == {
+        "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
+        "description": "The MCP tool name, or MCP tool names, to unload.",
+    }
 
 
 async def test_mcp_progressive_list_mcp_tools_only_reports_allowed_tools() -> None:
@@ -1957,6 +1965,64 @@ async def test_mcp_progressive_load_tool_adds_hidden_tool_to_live_tools() -> Non
     ]
 
 
+async def test_mcp_progressive_load_tool_adds_multiple_hidden_tools_to_live_tools() -> None:
+    server = await _load_progressive_test_server()
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": ["tool_one", "tool_two"]},
+        tools=list(server.functions),
+    )
+
+    result = await load_tool.invoke(arguments={"tool": ["tool_one", "tool_two"]}, context=context)
+
+    assert result[0].text == (
+        "Loaded MCP tool 'tool_one'. It is available on the next model iteration.\n"
+        "Loaded MCP tool 'tool_two'. It is available on the next model iteration."
+    )
+    assert context.tools is not None
+    assert [tool.name for tool in context.tools] == [  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+        "tool_one",
+        "tool_two",
+    ]
+    assert [func.name for func in server.functions] == [
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+        "tool_one",
+        "tool_two",
+    ]
+
+
+async def test_mcp_progressive_load_tool_reports_mixed_batch_results() -> None:
+    server = await _load_progressive_test_server(always_load=["tool_one"])
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": ["tool_one", "tool_two", "missing_tool"]},
+        tools=list(server.functions),
+    )
+
+    result = await load_tool.invoke(arguments={"tool": ["tool_one", "tool_two", "missing_tool"]}, context=context)
+
+    assert result[0].text == (
+        "MCP tool 'tool_one' is already available.\n"
+        "Loaded MCP tool 'tool_two'. It is available on the next model iteration.\n"
+        "MCP tool 'missing_tool' is not available. Available tools: tool_one, tool_two, secret_tool."
+    )
+    assert context.tools is not None
+    assert [tool.name for tool in context.tools] == [  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+        "tool_one",
+        "tool_two",
+    ]
+
+
 async def test_mcp_progressive_unload_tool_removes_dynamically_loaded_tool() -> None:
     server = await _load_progressive_test_server()
     load_tool = server.functions[1]
@@ -1976,6 +2042,37 @@ async def test_mcp_progressive_unload_tool_removes_dynamically_loaded_tool() -> 
     result = await unload_tool.invoke(arguments={"tool": "tool_two"}, context=unload_context)
 
     assert result[0].text == "Unloaded MCP tool 'tool_two'. It will be removed on the next model iteration."
+    assert unload_context.tools is not None
+    assert [tool.name for tool in unload_context.tools] == [  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+    ]
+    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "unload_tool"]
+
+
+async def test_mcp_progressive_unload_tool_removes_multiple_dynamically_loaded_tools() -> None:
+    server = await _load_progressive_test_server()
+    load_tool = server.functions[1]
+    unload_tool = server.functions[2]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": ["tool_one", "tool_two"]},
+        tools=list(server.functions),
+    )
+    await load_tool.invoke(arguments={"tool": ["tool_one", "tool_two"]}, context=context)
+    unload_context = FunctionInvocationContext(
+        function=unload_tool,
+        arguments={"tool": ["tool_one", "tool_two"]},
+        tools=context.tools,
+    )
+
+    result = await unload_tool.invoke(arguments={"tool": ["tool_one", "tool_two"]}, context=unload_context)
+
+    assert result[0].text == (
+        "Unloaded MCP tool 'tool_one'. It will be removed on the next model iteration.\n"
+        "Unloaded MCP tool 'tool_two'. It will be removed on the next model iteration."
+    )
     assert unload_context.tools is not None
     assert [tool.name for tool in unload_context.tools] == [  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         "list_mcp_tools",
@@ -2019,6 +2116,44 @@ async def test_mcp_progressive_unload_tool_reports_tool_not_loaded() -> None:
     result = await unload_tool.invoke(arguments={"tool": "tool_two"}, context=context)
 
     assert result[0].text == "MCP tool 'tool_two' is not currently loaded."
+
+
+async def test_mcp_progressive_unload_tool_reports_mixed_batch_results() -> None:
+    server = await _load_progressive_test_server(always_load=["tool_one"])
+    load_tool = server.functions[1]
+    unload_tool = server.functions[2]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "tool_two"},
+        tools=list(server.functions),
+    )
+    await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+    unload_context = FunctionInvocationContext(
+        function=unload_tool,
+        arguments={"tool": ["tool_one", "tool_two", "secret_tool", "missing_tool"]},
+        tools=context.tools,
+    )
+
+    result = await unload_tool.invoke(
+        arguments={"tool": ["tool_one", "tool_two", "secret_tool", "missing_tool"]},
+        context=unload_context,
+    )
+
+    assert result[0].text == (
+        "MCP tool 'tool_one' is configured in always_load and cannot be unloaded.\n"
+        "Unloaded MCP tool 'tool_two'. It will be removed on the next model iteration.\n"
+        "MCP tool 'secret_tool' is not currently loaded.\n"
+        "MCP tool 'missing_tool' is not available. Available tools: tool_one, tool_two, secret_tool."
+    )
+    assert unload_context.tools is not None
+    visible_tools = cast(list[FunctionTool], unload_context.tools)
+    assert [tool.name for tool in visible_tools] == [
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+        "tool_one",
+    ]
+    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "unload_tool", "tool_one"]
 
 
 async def test_mcp_progressive_load_and_unload_suppress_experimental_context_warnings() -> None:

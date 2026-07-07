@@ -31,6 +31,7 @@ The ``MCPStdioTool`` is configured with:
    or load.
 4. ``tool_name_prefix="docs"`` so multiple MCP servers can expose their own
    ``docs_list_mcp_tools`` / ``docs_load_tool`` / ``docs_unload_tool`` names without collisions.
+   ``docs_load_tool`` and ``docs_unload_tool`` accept either one tool name or a list of tool names.
 
 Sample output:
 User: Explain how progressive MCP tool disclosure works. First inspect the MCP
