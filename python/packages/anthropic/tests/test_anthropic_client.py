@@ -485,6 +485,20 @@ def test_prepare_message_for_anthropic_text_reasoning_with_signature(
     assert result["content"][0]["signature"] == "sig_abc123"
 
 
+def test_prepare_message_for_anthropic_provider_reasoning_without_signature_is_text(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=[Content.from_text_reasoning(id="rs_abc123", text="Foundry summary")],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["content"] == [{"type": "text", "text": "Foundry summary"}]
+
+
 def test_prepare_message_for_anthropic_attaches_signature_only_reasoning(
     mock_anthropic_client: MagicMock,
 ) -> None:

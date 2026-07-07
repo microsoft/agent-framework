@@ -909,6 +909,10 @@ class RawOpenAIChatCompletionClient(
                 case "text_reasoning" if (protected_data := content.protected_data) is not None:
                     # Buffer reasoning to attach to the next message with content/tool_calls
                     pending_reasoning = json.loads(protected_data)
+                case "text_reasoning":
+                    if content.text is None:
+                        continue
+                    args["content"] = [{"type": "text", "text": content.text}]
                 case _:
                     if "content" not in args:
                         args["content"] = []

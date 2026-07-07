@@ -133,6 +133,34 @@ _AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX = "response.azure_ai_search_call_output."
 _AF_MCP_PENDING_OUTPUT_KEY = "__af_pending_mcp_result__"
 
 
+def _mcp_call_ids_paired_with_reasoning(messages: Sequence[Message]) -> set[str]:
+    paired_call_ids: set[str] = set()
+    pending_reasoning_prefix = False
+
+    for message in messages:
+        has_reasoning = any(content.type == "text_reasoning" for content in message.contents)
+        has_mcp_call = False
+        for content in message.contents:
+            if content.type != "mcp_server_tool_call":
+                continue
+            has_mcp_call = True
+            if (has_reasoning or pending_reasoning_prefix) and content.call_id:
+                paired_call_ids.add(content.call_id)
+
+        if has_mcp_call:
+            pending_reasoning_prefix = False
+        elif (
+            message.role == "assistant"
+            and message.contents
+            and all(content.type == "text_reasoning" for content in message.contents)
+        ):
+            pending_reasoning_prefix = True
+        else:
+            pending_reasoning_prefix = False
+
+    return paired_call_ids
+
+
 class OpenAIContinuationToken(ContinuationToken):
     """Continuation token for OpenAI Responses API background operations."""
 
@@ -1482,10 +1510,7 @@ class RawOpenAIChatClient(
         )
         drop_mcp_call_ids: set[str] = set()
         if drops_reasoning_without_storage:
-            for message in chat_messages:
-                for content in message.contents:
-                    if content.type == "mcp_server_tool_call" and content.call_id:
-                        drop_mcp_call_ids.add(content.call_id)
+            drop_mcp_call_ids = _mcp_call_ids_paired_with_reasoning(chat_messages)
 
         list_of_list = [
             self._prepare_message_for_openai(

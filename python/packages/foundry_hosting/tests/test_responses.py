@@ -823,7 +823,10 @@ class TestOutputItemToMessage:
         item = OutputItemReasoningItem({"type": "reasoning", "id": "r-2"})
         msg = await _output_item_to_message(item)
         assert msg.role == "assistant"
-        assert msg.contents == []
+        assert len(msg.contents) == 1
+        assert msg.contents[0].type == "text_reasoning"
+        assert msg.contents[0].id == "r-2"
+        assert msg.contents[0].text is None
 
     async def test_mcp_call(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpToolCall
@@ -1311,7 +1314,10 @@ class TestItemToMessage:
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "assistant"
-        assert msg.contents == []
+        assert len(msg.contents) == 1
+        assert msg.contents[0].type == "text_reasoning"
+        assert msg.contents[0].id == "r-2"
+        assert msg.contents[0].text is None
 
     async def test_mcp_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemMcpToolCall

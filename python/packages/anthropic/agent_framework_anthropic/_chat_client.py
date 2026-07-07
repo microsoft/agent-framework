@@ -916,6 +916,9 @@ class RawAnthropicClient(
                         ):
                             a_content[-1]["signature"] = content.protected_data
                         continue
+                    if content.id and not content.protected_data:
+                        a_content.append({"type": "text", "text": content.text})
+                        continue
                     thinking_block: dict[str, Any] = {"type": "thinking", "thinking": content.text}
                     if content.protected_data:
                         thinking_block["signature"] = content.protected_data

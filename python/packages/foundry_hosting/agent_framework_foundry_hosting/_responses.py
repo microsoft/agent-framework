@@ -880,13 +880,13 @@ class _OutputItemTracker:
             if self._text_content is not None:
                 yield self._text_content.emit_delta(content.text)
 
-        elif content.type == "text_reasoning" and content.text is not None:
+        elif content.type == "text_reasoning":
             if self._active_type != "text_reasoning":
                 yield from self._close()
                 yield from self._open_reasoning()
-            self._accumulated.append(content.text)
+            self._accumulated.append(content.text or "")
             if self._summary_part is not None:
-                yield self._summary_part.emit_text_delta(content.text)
+                yield self._summary_part.emit_text_delta(content.text or "")
 
         elif content.type == "function_call" and content.call_id is not None:
             if self._active_type != "function_call" or self._active_id != content.call_id:
@@ -1111,6 +1111,8 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         if reasoning.summary:
             for summary in reasoning.summary:
                 reason_contents.append(Content.from_text_reasoning(id=reasoning.id, text=summary.text))
+        else:
+            reason_contents.append(Content.from_text_reasoning(id=reasoning.id))
         return Message(role="assistant", contents=reason_contents)
 
     if item.type == "mcp_call":
@@ -1384,6 +1386,8 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         if reasoning.summary:
             for summary in reasoning.summary:
                 contents.append(Content.from_text_reasoning(id=reasoning.id, text=summary.text))
+        else:
+            contents.append(Content.from_text_reasoning(id=reasoning.id))
         return Message(role="assistant", contents=contents)
 
     if item.type == "mcp_call":
@@ -1754,8 +1758,8 @@ async def _to_outputs(
     if content.type == "text" and content.text is not None:
         async for event in stream.aoutput_item_message(content.text):
             yield event
-    elif content.type == "text_reasoning" and content.text is not None:
-        async for event in stream.aoutput_item_reasoning_item(content.text):
+    elif content.type == "text_reasoning":
+        async for event in stream.aoutput_item_reasoning_item(content.text or ""):
             yield event
     elif content.type == "function_call":
         async for event in stream.aoutput_item_function_call(
