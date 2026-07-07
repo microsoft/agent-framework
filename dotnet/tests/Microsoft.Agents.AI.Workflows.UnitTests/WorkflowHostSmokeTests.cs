@@ -759,6 +759,29 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         await action.Should().ThrowAsync<InvalidOperationException>();
     }
 
+    [Fact]
+    public async Task Test_AsAgent_SessionGetServiceReturnsReadableChatHistoryProviderAsync()
+    {
+        // Arrange
+        TestReplayAgent replayAgent = new(TestMessages, TestAgentId, TestAgentName);
+        Workflow workflow = new WorkflowBuilder(replayAgent).Build();
+        AIAgent workflowAgent = workflow.AsAIAgent();
+        AgentSession session = await workflowAgent.CreateSessionAsync();
+
+        // Act
+        AgentResponse response = await workflowAgent.RunAsync(session);
+        ChatHistoryProvider? chatHistoryProvider = session.GetService<ChatHistoryProvider>();
+        List<ChatMessage> history = chatHistoryProvider is null
+            ? []
+            : [.. await chatHistoryProvider.InvokingAsync(new ChatHistoryProvider.InvokingContext(workflowAgent, session, []))];
+
+        // Assert
+        chatHistoryProvider.Should().NotBeNull();
+        history.Should().HaveSameCount(response.Messages);
+        history.Select(m => m.Role).Should().Equal(response.Messages.Select(m => m.Role));
+        history.Select(m => m.Text).Should().Equal(response.Messages.Select(m => m.Text));
+    }
+
     private async Task Run_AsAgent_OutgoingMessagesInHistoryAsync(Workflow workflow, bool runAsync)
     {
         // Arrange
