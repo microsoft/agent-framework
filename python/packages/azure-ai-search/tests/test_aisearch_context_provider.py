@@ -1353,7 +1353,7 @@ class TestAgenticSearch:
         assert results[0].role == "assistant"
         retrieve_call = mock_retrieval.retrieve.await_args
         assert retrieve_call is not None
-        assert "x_ms_query_source_authorization" not in retrieve_call.kwargs
+        assert "query_source_authorization" not in retrieve_call.kwargs
 
     async def test_query_source_credential_forwards_authorization_token(self) -> None:
         query_source_credential = AsyncMock()
@@ -1387,7 +1387,7 @@ class TestAgenticSearch:
         query_source_credential.get_token.assert_awaited_once_with("https://search.azure.com/.default")
         retrieve_call = mock_retrieval.retrieve.await_args
         assert retrieve_call is not None
-        assert retrieve_call.kwargs["x_ms_query_source_authorization"] == "user-token"
+        assert retrieve_call.kwargs["query_source_authorization"] == "user-token"
 
     async def test_query_source_credential_requires_async_credential(self) -> None:
         query_source_credential = Mock()

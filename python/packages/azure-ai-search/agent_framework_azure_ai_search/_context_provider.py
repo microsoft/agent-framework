@@ -901,7 +901,7 @@ class AzureAISearchContextProvider(ContextProvider):
             raise RuntimeError("Retrieval client not initialized.")
         retrieve_kwargs: dict[str, Any] = {"retrieval_request": retrieval_request}
         if query_source_authorization := await self._query_source_authorization():
-            retrieve_kwargs["x_ms_query_source_authorization"] = query_source_authorization
+            retrieve_kwargs["query_source_authorization"] = query_source_authorization
         retrieval_result = await self._retrieval_client.retrieve(**retrieve_kwargs)
 
         return self._parse_messages_from_kb_response(retrieval_result)
