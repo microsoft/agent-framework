@@ -114,15 +114,15 @@ checklist. Not every protocol needs every helper, but when a protocol has the co
 | --- | --- | --- |
 | Run conversion | `<protocol>_to_run(...)` | Convert one protocol-native call/update/request into `Agent.run` or `Workflow.run` values. |
 | Final rendering | `<protocol>_from_run(...)` | Convert a final `AgentResponse` / workflow result into protocol-native response payloads or operations. |
-| Stream rendering | `<protocol>_stream_from_run(...)` | Convert `ResponseStream` / workflow updates into protocol-native events or operations. |
+| Stream rendering | `<protocol>_from_streaming_run(...)` | Convert `ResponseStream` / workflow updates into protocol-native events or operations. |
 | Session id extraction | `<protocol>_session_id(...)` | Extract the protocol's natural continuation/partition key from the call, if present. |
 | Command/action parsing | `<protocol>_command(...)` | Parse a protocol-native command/action/operation name without deciding app policy. |
 
 Examples:
 
-- `responses_to_run(...)`, `responses_from_run(...)`, `responses_stream_from_run(...)`,
+- `responses_to_run(...)`, `responses_from_run(...)`, `responses_from_streaming_run(...)`,
   `responses_session_id(...)`;
-- `telegram_to_run(...)`, `telegram_from_run(...)`, `telegram_stream_from_run(...)`,
+- `telegram_to_run(...)`, `telegram_from_run(...)`, `telegram_from_streaming_run(...)`,
   `telegram_session_id(...)`, `telegram_command(...)`;
 - `activity_to_run(...)`, `activity_from_run(...)`, `activity_session_id(...)`, `activity_command(...)`;
 - `discord_to_run(...)`, `discord_from_run(...)`, `discord_session_id(...)`, `discord_command(...)`.
