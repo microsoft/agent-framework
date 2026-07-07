@@ -16,7 +16,7 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 
 - **`AGUIRequest`** / **`AGUIChatOptions`** - Request types
 - **`AGUIThreadSnapshot`** / **`AGUIThreadSnapshotStore`** - Replayable thread snapshot model and scoped async store protocol
-- **`availableInterrupts` / `resume`** - Optional interrupt configuration and continuation payloads
+- **`availableInterrupts` / `resume`** - Optional canonical AG-UI `Interrupt` and `ResumeEntry` protocol data
 - **`AgentState`** / **`RunMetadata`** - State management types
 - **`PredictStateConfig`** - Configuration for state prediction
 
@@ -26,7 +26,8 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - Usage metadata from `Content(type="usage")` is surfaced as `CUSTOM` events with `name="usage"`.
 - Inbound custom event aliases are accepted: `CUSTOM`, `CUSTOM_EVENT`, and `custom_event`.
 - Multimodal user inputs support both legacy (`text`, `binary`) and draft-style (`image`, `audio`, `video`, `document`) shapes.
-- `RUN_FINISHED.interrupt` can be emitted for pause/request-info flows, and interruption metadata is preserved in converters.
+- Interrupted runs complete with `RUN_FINISHED.outcome.type == "interrupt"` and canonical `outcome.interrupts`; do not document or add new flows that depend on the legacy top-level `RUN_FINISHED.interrupt` field.
+- `Interrupt` and `ResumeEntry` come from the `ag-ui-protocol` package (`ag_ui.core`), not from an Agent Framework-specific interrupt model.
 
 ## Usage
 

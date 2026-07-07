@@ -335,8 +335,8 @@ internal static class AgentsSamples
         {
             Name = "Agent_Step01_FileBasedSkills",
             ProjectPath = "samples/02-agents/AgentSkills/Agent_Step01_FileBasedSkills",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             MustContain =
             [
                 "Converting units with file-based skills",
@@ -354,8 +354,8 @@ internal static class AgentsSamples
         {
             Name = "Agent_Step06_McpBasedSkills",
             ProjectPath = "samples/02-agents/AgentSkills/Agent_Step06_McpBasedSkills",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             MustContain =
             [
                 "Discovering MCP-based skills",
@@ -701,7 +701,7 @@ internal static class AgentsSamples
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
             [
-                "The output should contain a list of countries or information about countries that use the EUR currency.",
+                "The output should contain the current EUR exchange rate against USD and GBP as numeric values.",
                 "The output should not contain error messages or stack traces.",
             ],
         },

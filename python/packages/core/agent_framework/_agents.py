@@ -33,6 +33,7 @@ from ._sessions import (
     HistoryProvider,
     InMemoryHistoryProvider,
     PerServiceCallHistoryPersistingMiddleware,
+    ServiceSessionId,
     SessionContext,
     is_local_history_conversation_id,
 )
@@ -248,7 +249,12 @@ class SupportsAgentRun(Protocol):
 
                     return AgentSession(session_id=session_id)
 
-                def get_session(self, service_session_id: str, *, session_id: str | None = None):
+                def get_session(
+                    self,
+                    service_session_id: str | ServiceSessionId,
+                    *,
+                    session_id: str | None = None,
+                ):
                     from agent_framework import AgentSession
 
                     return AgentSession(service_session_id=service_session_id, session_id=session_id)
@@ -324,7 +330,12 @@ class SupportsAgentRun(Protocol):
         """Creates a new conversation session."""
         ...
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+    def get_session(
+        self,
+        service_session_id: str | ServiceSessionId,
+        *,
+        session_id: str | None = None,
+    ) -> AgentSession:
         """Gets or creates a session for a service-managed session ID."""
         ...
 
@@ -448,7 +459,12 @@ class BaseAgent(SerializationMixin):
         """
         return AgentSession(session_id=session_id)
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+    def get_session(
+        self,
+        service_session_id: str | ServiceSessionId,
+        *,
+        session_id: str | None = None,
+    ) -> AgentSession:
         """Get a session for a service-managed session ID.
 
         Only use this to create a session continuing that session id from a service.
@@ -464,6 +480,41 @@ class BaseAgent(SerializationMixin):
             A new AgentSession instance with service_session_id set.
         """
         return AgentSession(session_id=session_id, service_session_id=service_session_id)
+
+    def _get_chat_conversation_id(self, session: AgentSession | None) -> str | None:
+        """Get the chat conversation id to forward to generic chat clients.
+
+        Args:
+            session: The active session for this run.
+
+        Returns:
+            The conversation id when it is a string, otherwise None.
+
+        Raises:
+            AgentInvalidRequestException: If the session contains a structured
+                service_session_id that this generic chat path cannot forward.
+        """
+        service_session_id = session.service_session_id if session is not None else None
+        if service_session_id is None:
+            return None
+        if isinstance(service_session_id, str):
+            return service_session_id
+        raise AgentInvalidRequestException(
+            "This agent expects a string service_session_id for provider conversation continuation. "
+            "Received a structured service_session_id; use a compatible agent/session shape for this provider."
+        )
+
+    def _get_otel_conversation_id(self, session: AgentSession | None) -> str | None:
+        """Get the OTel conversation id for ``gen_ai.conversation.id``.
+
+        Args:
+            session: The active session for this run.
+
+        Returns:
+            A string conversation id, or None when no string id is available.
+        """
+        service_session_id = session.service_session_id if session else None
+        return service_session_id if isinstance(service_session_id, str) else None
 
     async def _run_after_providers(
         self,
@@ -833,8 +884,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             return []
 
         # A live service-managed session id takes precedence over the resolved conversation id.
-        if session and session.service_session_id:
-            conversation_id = session.service_session_id
+        # Structured values are validated by _get_chat_conversation_id before generic forwarding.
+        session_conversation_id = self._get_chat_conversation_id(session)
+        if session_conversation_id:
+            conversation_id = session_conversation_id
         # Without service-side storage the middleware persists locally and drives the function
         # loop with a local sentinel, which cannot be reconciled with an existing service-managed
         # conversation. When the service stores history, an existing conversation id is expected.
@@ -1219,12 +1272,15 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # Resolve conversation_id from the same combined view so an agent-level default is honored
         # when the runtime omits it (a live session id still takes precedence below).
         effective_conversation_id = effective_options.get("conversation_id")
+        session_conversation_id = self._get_chat_conversation_id(session)
         # Auto-inject InMemoryHistoryProvider when session is provided, no context providers
         # registered, and no service-side storage indicators
         if (
             session is not None
-            and not self.context_providers
-            and not session.service_session_id
+            and not any(
+                provider.load_messages for provider in self.context_providers if isinstance(provider, HistoryProvider)
+            )
+            and not session_conversation_id
             and not effective_conversation_id
             and not service_stores_history
         ):
@@ -1313,7 +1369,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         # Build options dict from run() options merged with provided options
         run_opts: dict[str, Any] = {
-            "conversation_id": active_session.service_session_id
+            "conversation_id": self._get_chat_conversation_id(active_session)
             if active_session
             else opts.pop("conversation_id", None),
             "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),

@@ -108,7 +108,6 @@ async def main():
 
     async with httpx.AsyncClient(
         auth=ToolboxAuth(token_provider),
-        headers={"Foundry-Features": "Toolboxes=V1Preview"},
         timeout=120.0,
     ) as http_client:
         toolbox = MCPStreamableHTTPTool(

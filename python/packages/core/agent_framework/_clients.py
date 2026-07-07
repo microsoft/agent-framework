@@ -980,7 +980,13 @@ class BaseEmbeddingClient(SerializationMixin, ABC, Generic[EmbeddingInputT, Embe
 
 def _apply_get_response_docstrings() -> None:
     """Align layered chat-client docstrings with the lowest public implementation."""
-    from ._middleware import ChatMiddlewareLayer
+    try:
+        from ._middleware import ChatMiddlewareLayer
+    except ImportError as exc:
+        if "partially initialized module 'agent_framework._middleware'" in str(exc):
+            return
+        raise
+
     from ._tools import FunctionInvocationLayer
     from .observability import ChatTelemetryLayer
 
