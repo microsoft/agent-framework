@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -842,6 +844,90 @@ public class HarnessAgentTests
 
         // Assert
         Assert.NotNull(agent.GetService<OpenTelemetryAgent>());
+    }
+
+    /// <summary>
+    /// Verify that the inner agent's ChatClient pipeline includes OpenTelemetryChatClient when
+    /// OpenTelemetry is enabled, so model calls are traced in addition to the agent-level
+    /// <see cref="OpenTelemetryAgent"/> wrapper.
+    /// </summary>
+    [Fact]
+    public void Pipeline_IncludesOpenTelemetryChatClientWhenEnabled()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var options = CreateAllDisabledOptions();
+        options.DisableOpenTelemetry = false;
+
+        // Act
+        var agent = new HarnessAgent(chatClient, options);
+        var innerAgent = agent.GetService<ChatClientAgent>();
+
+        // Assert
+        Assert.NotNull(innerAgent);
+        Assert.NotNull(innerAgent!.ChatClient.GetService<OpenTelemetryChatClient>());
+    }
+
+    /// <summary>
+    /// Verify that the inner agent's ChatClient pipeline excludes OpenTelemetryChatClient when
+    /// OpenTelemetry is disabled.
+    /// </summary>
+    [Fact]
+    public void Pipeline_ExcludesOpenTelemetryChatClientWhenDisabled()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+
+        // Act
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
+        var innerAgent = agent.GetService<ChatClientAgent>();
+
+        // Assert
+        Assert.NotNull(innerAgent);
+        Assert.Null(innerAgent!.ChatClient.GetService<OpenTelemetryChatClient>());
+    }
+
+    /// <summary>
+    /// Verify that the chat-client-level OpenTelemetry instrumentation emits a chat span under the
+    /// configured <see cref="HarnessAgentOptions.OpenTelemetrySourceName"/>, proving both that the
+    /// ChatClient pipeline is instrumented and that the source name is propagated.
+    /// </summary>
+    [Fact]
+    public async Task OpenTelemetry_ChatClientEmitsChatSpanUnderConfiguredSourceNameAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == sourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activities.Enqueue,
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var mockClient = new Mock<IChatClient>();
+        mockClient
+            .Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Hello!")));
+
+        var options = CreateAllDisabledOptions();
+        options.DisableOpenTelemetry = false;
+        options.OpenTelemetrySourceName = sourceName;
+
+        var agent = new HarnessAgent(mockClient.Object, options);
+        var session = await agent.CreateSessionAsync();
+
+        // Act
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert
+        Assert.Contains(
+            activities,
+            a => string.Equals(a.GetTagItem("gen_ai.operation.name") as string, "chat", StringComparison.Ordinal));
     }
 
     #endregion

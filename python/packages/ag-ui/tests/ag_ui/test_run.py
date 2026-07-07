@@ -20,14 +20,22 @@ from ag_ui.core import (
 )
 from agent_framework import AgentResponseUpdate, Content, Message, ResponseStream
 from agent_framework.exceptions import AgentInvalidResponseException
+from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
+from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import (
+    PendingApprovalEntry,
+    PendingApprovalKey,
     _build_safe_metadata,
+    _canonical_approval_resume_messages,
     _create_state_context_message,
     _inject_state_context,
+    _make_pending_approval_entry,
     _normalize_response_stream,
+    _pending_approval_key,
     _resume_to_tool_messages,
     _should_suppress_intermediate_snapshot,
+    run_agent_stream,
 )
 from agent_framework_ag_ui._run_common import (
     FlowState,
@@ -544,7 +552,7 @@ def test_emit_content_usage_emits_custom_usage_event():
 
 
 def test_emit_approval_request_populates_interrupt_metadata():
-    """Approval requests should populate FlowState interrupts for RUN_FINISHED metadata."""
+    """Approval requests should populate canonical interrupt metadata for RUN_FINISHED."""
     flow = FlowState(message_id="msg-1")
     function_call = Content.from_function_call(call_id="call_123", name="write_doc", arguments={"content": "x"})
     approval_content = Content.from_function_approval_request(id="approval_1", function_call=function_call)
@@ -554,7 +562,18 @@ def test_emit_approval_request_populates_interrupt_metadata():
     assert flow.waiting_for_approval is True
     assert len(flow.interrupts) == 1
     assert flow.interrupts[0]["id"] == "call_123"
-    assert flow.interrupts[0]["value"]["type"] == "function_approval_request"
+    assert flow.interrupts[0]["reason"] == "tool_call"
+    assert flow.interrupts[0]["toolCallId"] == "call_123"
+    assert flow.interrupts[0]["message"] == "Approve running write_doc?"
+    assert flow.interrupts[0]["responseSchema"]["required"] == ["accepted"]
+    assert flow.interrupts[0]["responseSchema"]["properties"]["accepted"]["type"] == "boolean"
+    assert flow.interrupts[0]["responseSchema"]["properties"]["content"]["type"] == "string"
+    assert flow.interrupts[0]["metadata"]["agent_framework"]["type"] == "function_approval_request"
+    assert flow.interrupts[0]["metadata"]["agent_framework"]["function_call"] == {
+        "call_id": "call_123",
+        "name": "write_doc",
+        "arguments": {"content": "x"},
+    }
 
 
 def test_emit_approval_request_accumulates_multiple_interrupts():
@@ -578,6 +597,58 @@ def test_emit_approval_request_accumulates_multiple_interrupts():
     assert interrupt_ids == {"call_1", "call_2", "call_3"}
 
 
+async def test_predictive_confirmation_run_finished_interrupt_links_tool_call():
+    """Tool-bound confirmation pauses should advertise canonical interrupt routing."""
+    agent = StubAgent(
+        updates=[
+            AgentResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_write_doc",
+                        name="write_doc",
+                        arguments={"content": "Draft"},
+                    )
+                ],
+                role="assistant",
+            )
+        ]
+    )
+    config = AgentConfig(
+        predict_state_config={"document": {"tool": "write_doc", "tool_argument": "content"}},
+        require_confirmation=True,
+    )
+
+    events = [
+        event
+        async for event in run_agent_stream(
+            {
+                "run_id": "run-confirm",
+                "thread_id": "thread-confirm",
+                "messages": [{"role": "user", "content": "Write a draft"}],
+            },
+            agent,
+            config,
+        )
+    ]
+    run_finished = [event for event in events if getattr(event, "type", None) == "RUN_FINISHED"]
+    assert len(run_finished) == 1
+    dumped = run_finished[0].model_dump(by_alias=True, exclude_none=True)
+
+    assert "interrupt" not in dumped
+    interrupt = dumped["outcome"]["interrupts"][0]
+    assert interrupt["reason"] == "tool_call"
+    assert interrupt["toolCallId"] == "call_write_doc"
+    assert interrupt["message"] == "Approve the proposed changes from write_doc?"
+    assert interrupt["responseSchema"]["properties"]["accepted"]["type"] == "boolean"
+    assert interrupt["responseSchema"]["properties"]["steps"]["type"] == "array"
+    assert interrupt["metadata"]["agent_framework"]["confirmation_tool_call_id"] == interrupt["id"]
+    assert interrupt["metadata"]["agent_framework"]["function_call"] == {
+        "call_id": "call_write_doc",
+        "name": "write_doc",
+        "arguments": {"content": "Draft"},
+    }
+
+
 def test_resume_to_tool_messages_from_interrupts_payload():
     """Resume payload interrupt responses map to tool messages."""
     resume = {
@@ -593,6 +664,72 @@ def test_resume_to_tool_messages_from_interrupts_payload():
     assert messages[0]["toolCallId"] == "req_1"
     assert '"accepted": true' in messages[0]["content"]
     assert messages[1]["content"] == "plain value"
+
+
+def test_resume_to_tool_messages_skips_cancelled_entries():
+    """Cancelled generic resume entries must not become fabricated tool messages."""
+    resume = [
+        {"interruptId": "req_1", "status": "cancelled"},
+        {"interruptId": "req_2", "status": "resolved", "payload": "plain value"},
+    ]
+
+    messages = _resume_to_tool_messages(resume)
+
+    assert messages == [{"role": "tool", "toolCallId": "req_2", "content": "plain value"}]
+
+
+def test_canonical_approval_resume_does_not_mutate_arguments_until_batch_validates():
+    """Edited approval arguments are committed only after every resume entry validates."""
+    pending_entry = _make_pending_approval_entry(
+        "get_weather",
+        '{"city":"Seattle"}',
+        request_id="call_a",
+        interrupt_id="call_a",
+    )
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
+        _pending_approval_key("thread-weather", "call_a"): pending_entry,
+        _pending_approval_key("thread-weather", "call_b"): _make_pending_approval_entry(
+            "get_weather",
+            '{"city":"Portland"}',
+            request_id="call_b",
+            interrupt_id="call_b",
+        ),
+    }
+
+    messages, handled_ids, cancelled_ids, error = _canonical_approval_resume_messages(
+        [
+            {"interruptId": "call_a", "status": "resolved", "payload": {"accepted": True, "city": "Portland"}},
+            {"interruptId": "call_b", "status": "resolved", "payload": "not an object"},
+        ],
+        pending_approvals,
+        "thread-weather",
+    )
+
+    assert messages == []
+    assert handled_ids == {"call_a", "call_b"}
+    assert cancelled_ids == set()
+    assert error is not None
+    assert error.code == "APPROVAL_RESUME_INVALID"
+    assert pending_entry["arguments"] == '{"city":"Seattle"}'
+
+
+def test_pending_approval_registry_scans_exact_thread_keys_with_colons():
+    """A thread id that prefixes another thread id must not inherit its pending approval contract."""
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
+        _pending_approval_key("tenant:thread", "call_1"): _make_pending_approval_entry(
+            "get_weather",
+            '{"city":"Seattle"}',
+            request_id="call_1",
+            interrupt_id="call_1",
+        )
+    }
+
+    _, _, _, unrelated_error = _canonical_approval_resume_messages(None, pending_approvals, "tenant")
+    _, _, _, owning_error = _canonical_approval_resume_messages(None, pending_approvals, "tenant:thread")
+
+    assert unrelated_error is None
+    assert owning_error is not None
+    assert owning_error.code == "APPROVAL_RESUME_REQUIRED"
 
 
 def test_extract_resume_payload_prefers_top_level_resume():
@@ -620,13 +757,16 @@ def test_extract_resume_payload_reads_forwarded_command_resume():
 
 
 def test_build_run_finished_event_with_interrupt():
-    """RUN_FINISHED helper should preserve interrupt payloads."""
+    """RUN_FINISHED helper should emit canonical interrupt outcomes."""
     event = _build_run_finished_event("run-1", "thread-1", interrupts=[{"id": "req_1", "value": {"x": 1}}])
-    dumped = event.model_dump()
+    dumped = event.model_dump(by_alias=True, exclude_none=True)
 
-    assert dumped["run_id"] == "run-1"
-    assert dumped["thread_id"] == "thread-1"
-    assert dumped["interrupt"] == [{"id": "req_1", "value": {"x": 1}}]
+    assert dumped["runId"] == "run-1"
+    assert dumped["threadId"] == "thread-1"
+    assert "interrupt" not in dumped
+    assert dumped["outcome"]["type"] == "interrupt"
+    assert dumped["outcome"]["interrupts"][0]["id"] == "req_1"
+    assert dumped["outcome"]["interrupts"][0]["metadata"]["agent_framework"]["value"] == {"x": 1}
 
 
 def test_extract_approved_state_updates_no_handler():
@@ -981,12 +1121,17 @@ async def test_run_agent_stream_accumulates_multiple_confirm_interrupts():
     ]
     assert finished_events, f"Expected RUN_FINISHED event. Types: {[getattr(e, 'type', None) for e in events]}"
     finished = finished_events[-1]
-    interrupt = getattr(finished, "interrupt", None)
-    assert interrupt is not None, "Expected interrupt metadata in RUN_FINISHED"
+    dumped = finished.model_dump(by_alias=True, exclude_none=True)
+    assert "interrupt" not in dumped
+    outcome = dumped.get("outcome")
+    assert isinstance(outcome, dict)
+    assert outcome.get("type") == "interrupt"
+    interrupt = outcome.get("interrupts")
+    assert isinstance(interrupt, list), "Expected interrupt metadata in RUN_FINISHED.outcome"
     assert len(interrupt) == 2, f"Expected 2 interrupts (one per tool), got {len(interrupt)}"
 
     # Verify both tool calls are represented in interrupt metadata
-    interrupt_tool_names = {i["value"]["function_call"]["name"] for i in interrupt}
+    interrupt_tool_names = {i["metadata"]["agent_framework"]["value"]["function_call"]["name"] for i in interrupt}
     assert interrupt_tool_names == {"generate_tasks", "generate_notes"}
 
 
