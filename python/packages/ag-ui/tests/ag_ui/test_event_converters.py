@@ -2,7 +2,10 @@
 
 """Tests for AG-UI event converter."""
 
+import logging
 from typing import Any, cast
+
+import pytest
 
 from agent_framework_ag_ui._event_converters import AGUIEventConverter
 
@@ -284,6 +287,30 @@ class TestAGUIEventConverter:
         assert update.additional_properties is not None
         assert update.additional_properties["outcome"] == {"type": "success"}
         assert "interrupts" not in update.additional_properties
+
+    def test_run_finished_event_with_non_dict_outcome_preserves_and_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Malformed non-object outcome metadata is preserved but logged."""
+        converter = AGUIEventConverter()
+        converter.thread_id = "thread_123"
+        converter.run_id = "run_456"
+
+        event = {
+            "type": "RUN_FINISHED",
+            "threadId": "thread_123",
+            "runId": "run_456",
+            "outcome": "malformed",
+        }
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework_ag_ui._event_converters"):
+            update = converter.convert_event(event)
+
+        assert update is not None
+        assert update.additional_properties is not None
+        assert update.additional_properties["outcome"] == "malformed"
+        assert "interrupts" not in update.additional_properties
+        assert "RUN_FINISHED outcome should be an object" in caplog.text
 
     def test_run_error_event(self) -> None:
         """Test conversion of RUN_ERROR event."""

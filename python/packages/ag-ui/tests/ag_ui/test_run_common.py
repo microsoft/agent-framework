@@ -2,6 +2,8 @@
 
 """Tests for _run_common.py edge cases."""
 
+import logging
+
 import pytest
 from ag_ui.core import EventType
 from agent_framework import Content
@@ -153,6 +155,19 @@ class TestRunFinishedEvent:
                 }
             ],
         }
+
+    def test_build_run_finished_event_logs_when_interrupts_all_drop(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Interrupted input that canonicalizes to no interrupts is logged."""
+        with caplog.at_level(logging.WARNING, logger="agent_framework_ag_ui._run_common"):
+            event = _build_run_finished_event(
+                "run-1",
+                "thread-1",
+                interrupts=[{"reason": "input_required", "message": "Need input"}],
+            )
+
+        dumped = event.model_dump(by_alias=True, exclude_none=True)
+        assert "outcome" not in dumped
+        assert "1 interrupt(s) present but none carried an id/interruptId" in caplog.text
 
 
 class TestThreadSnapshotReconstruction:

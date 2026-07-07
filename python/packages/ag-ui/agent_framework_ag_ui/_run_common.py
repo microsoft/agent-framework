@@ -440,6 +440,12 @@ def _build_run_finished_event(
                 thread_id=thread_id,
                 outcome=RunFinishedInterruptOutcome(interrupts=canonical_interrupts),
             )
+        logger.warning(
+            "run %s: %d interrupt(s) present but none carried an id/interruptId; "
+            "emitting RUN_FINISHED with no interrupt outcome",
+            run_id,
+            len(interrupts),
+        )
     return RunFinishedEvent(run_id=run_id, thread_id=thread_id)
 
 

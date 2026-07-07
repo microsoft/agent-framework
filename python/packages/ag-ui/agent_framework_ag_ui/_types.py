@@ -5,11 +5,11 @@
 from __future__ import annotations
 
 import sys
-from typing import Any, Generic
+from typing import Annotated, Any, Generic
 
 from ag_ui.core import Interrupt, ResumeEntry
 from agent_framework import ChatOptions
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, BeforeValidator, Field
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -23,6 +23,50 @@ else:
 
 AGUIChatOptionsT = TypeVar("AGUIChatOptionsT", bound=TypedDict, default="AGUIChatOptions", covariant=True)  # type: ignore[valid-type]
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
+
+
+def _coerce_legacy_resume_entry(value: Any) -> Any:  # noqa: ANN401
+    if not isinstance(value, dict):
+        return value
+
+    interrupt_id = value.get("interruptId") or value.get("interrupt_id") or value.get("id") or value.get("toolCallId")
+    if not interrupt_id:
+        return value
+
+    if "payload" in value:
+        payload = value.get("payload")
+    elif "value" in value:
+        payload = value.get("value")
+    elif "response" in value:
+        payload = value.get("response")
+    else:
+        payload = {
+            key: item
+            for key, item in value.items()
+            if key not in {"id", "interruptId", "interrupt_id", "toolCallId", "type", "status"}
+        }
+
+    entry: dict[str, Any] = {"interruptId": str(interrupt_id), "status": value.get("status", "resolved")}
+    if payload is not None:
+        entry["payload"] = payload
+    return entry
+
+
+def _coerce_legacy_resume(value: Any) -> Any:  # noqa: ANN401
+    if value is None:
+        return value
+    if isinstance(value, dict):
+        if "interrupts" in value:
+            value = value["interrupts"]
+        elif "interrupt" in value:
+            value = value["interrupt"]
+        elif any(key in value for key in ("interruptId", "interrupt_id", "id", "toolCallId")):
+            value = [value]
+        else:
+            return value
+    if not isinstance(value, list):
+        return value
+    return [_coerce_legacy_resume_entry(entry) for entry in value]
 
 
 class PredictStateConfig(TypedDict):
@@ -91,7 +135,7 @@ class AGUIRequest(BaseModel):
         validation_alias=AliasChoices("availableInterrupts", "available_interrupts"),
         description="Canonical AG-UI interrupts that can be resumed by the server",
     )
-    resume: Any | None = Field(
+    resume: Annotated[list[ResumeEntry], BeforeValidator(_coerce_legacy_resume)] | None = Field(
         None,
         description="Resume payload for continuing interrupted runs",
     )

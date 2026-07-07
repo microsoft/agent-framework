@@ -430,9 +430,7 @@ class AGUIChatClient(
 
         converter = AGUIEventConverter()
 
-        available_interrupts = options.get("available_interrupts")
-        if available_interrupts is None:
-            available_interrupts = options.get("availableInterrupts")
+        available_interrupts = options.get("available_interrupts", options.get("availableInterrupts"))
 
         async for event in self._http_service.post_run(
             thread_id=thread_id,

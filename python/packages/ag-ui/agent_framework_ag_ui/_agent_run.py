@@ -468,18 +468,6 @@ def _pending_approval_arguments(entry: PendingApprovalEntry) -> str | None:
     return entry["arguments"]
 
 
-def _pending_approval_request_id(entry: PendingApprovalEntry) -> str | None:
-    if isinstance(entry, str):
-        return None
-    return entry.get("request_id")
-
-
-def _pending_approval_interrupt_id(entry: PendingApprovalEntry) -> str | None:
-    if isinstance(entry, str):
-        return None
-    return entry.get("interrupt_id")
-
-
 def _parse_json_object(value: Any) -> dict[str, Any] | None:
     if isinstance(value, dict):
         return cast(dict[str, Any], value)
@@ -496,7 +484,7 @@ def _thread_has_pending_approvals(
     pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] | None,
     thread_id: str,
 ) -> bool:
-    if pending_approvals is None:
+    if not pending_approvals:
         return False
     return any(key[0] == thread_id for key in pending_approvals)
 
@@ -505,7 +493,7 @@ def _pending_approval_interrupt_ids(
     pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] | None,
     thread_id: str,
 ) -> set[str]:
-    if pending_approvals is None:
+    if not pending_approvals:
         return set()
     interrupt_ids: set[str] = set()
     for key, entry in pending_approvals.items():
@@ -557,12 +545,13 @@ def _pending_approval_alias_keys(
     *ids: str | None,
 ) -> set[PendingApprovalKey]:
     aliases = {item for item in ids if item}
-    request_id = _pending_approval_request_id(entry)
-    interrupt_id = _pending_approval_interrupt_id(entry)
-    if request_id:
-        aliases.add(request_id)
-    if interrupt_id:
-        aliases.add(interrupt_id)
+    if not isinstance(entry, str):
+        request_id = entry.get("request_id")
+        interrupt_id = entry.get("interrupt_id")
+        if request_id:
+            aliases.add(request_id)
+        if interrupt_id:
+            aliases.add(interrupt_id)
     return {_pending_approval_key(thread_id, alias) for alias in aliases}
 
 
