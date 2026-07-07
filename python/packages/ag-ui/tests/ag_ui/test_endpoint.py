@@ -348,6 +348,8 @@ def _build_weather_approval_endpoint() -> tuple[TestClient, StubAgent, list[str]
 
 def _build_mixed_approval_batch_endpoint(
     streaming_chat_client_stub: Any,
+    *,
+    snapshot_store: InMemoryAGUIThreadSnapshotStore | None = None,
 ) -> tuple[TestClient, list[str], list[Message], dict[str, str]]:
     executed: list[str] = []
     messages_received: list[Message] = []
@@ -410,6 +412,8 @@ def _build_mixed_approval_batch_endpoint(
         app,
         AgentFrameworkAgent(agent=agent, require_confirmation=False),
         path="/approval",
+        snapshot_store=snapshot_store,
+        snapshot_scope_resolver=(lambda _request: "tenant-a") if snapshot_store is not None else None,
     )
     return TestClient(app), executed, messages_received, state
 
@@ -604,6 +608,86 @@ async def test_endpoint_agent_approval_resume_releases_already_approved_sibling(
     ]
     replayed_call_ids = [content.call_id for content in replayed_results if content.call_id is not None]
     assert sorted(replayed_call_ids) == ["call_sensitive", "call_weather"]
+
+
+async def test_endpoint_agent_approval_resume_persists_replayable_tool_results(streaming_chat_client_stub):
+    """Approved batches should hydrate with real results under original tool call ids."""
+    client, executed, messages_received, state = _build_mixed_approval_batch_endpoint(
+        streaming_chat_client_stub,
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+
+    pause_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": "thread-mixed-replay",
+            "messages": [{"id": "user-1", "role": "user", "content": "Run both tools"}],
+        },
+    )
+    assert pause_response.status_code == 200
+    pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
+    assert [interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])] == ["call_sensitive"]
+
+    state["phase"] = "resume"
+    resume_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-resume",
+            "threadId": "thread-mixed-replay",
+            "messages": [],
+            "resume": [{"interruptId": "call_sensitive", "status": "resolved", "payload": {"accepted": True}}],
+        },
+    )
+
+    assert resume_response.status_code == 200
+    resume_events = _decode_sse_events(resume_response)
+    live_results = [
+        (event["toolCallId"], event["content"]) for event in resume_events if event.get("type") == "TOOL_CALL_RESULT"
+    ]
+    assert live_results == [
+        ("call_sensitive", "Sensitive action in Seattle"),
+        ("call_weather", "Weather in Seattle"),
+    ]
+    assert executed == ["sensitive:Seattle", "weather:Seattle"]
+
+    hydrate_response = client.post(
+        "/approval",
+        json={"runId": "run-hydrate", "threadId": "thread-mixed-replay", "messages": []},
+    )
+
+    assert hydrate_response.status_code == 200
+    hydrated_messages = _latest_messages_snapshot(hydrate_response)
+    tool_messages = [message for message in hydrated_messages if message.get("role") == "tool"]
+    replayed_results = [
+        (message.get("toolCallId"), message.get("content"))
+        for message in tool_messages
+        if message.get("toolCallId") in {"call_sensitive", "call_weather"}
+    ]
+    assert replayed_results == [
+        ("call_sensitive", "Sensitive action in Seattle"),
+        ("call_weather", "Weather in Seattle"),
+    ]
+    assert not any(message.get("function_approvals") for message in hydrated_messages)
+    assert not any("Tool execution skipped" in str(message.get("content")) for message in hydrated_messages)
+
+    state["phase"] = "next"
+    next_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-next",
+            "threadId": "thread-mixed-replay",
+            "messages": [{"id": "user-2", "role": "user", "content": "Continue"}],
+        },
+    )
+    assert next_response.status_code == 200
+    provider_results = [
+        content for message in messages_received for content in message.contents if content.type == "function_result"
+    ]
+    assert [(content.call_id, content.result) for content in provider_results] == [
+        ("call_sensitive", "Sensitive action in Seattle"),
+        ("call_weather", "Weather in Seattle"),
+    ]
 
 
 async def test_endpoint_agent_approval_resume_surfaces_queued_tool_approval(streaming_chat_client_stub):

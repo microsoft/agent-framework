@@ -1320,6 +1320,72 @@ def _clean_resolved_approvals_from_snapshot(
             )
 
 
+def _snapshot_tool_call_ids(message: Mapping[str, Any]) -> list[str]:
+    """Return assistant tool call ids from a snapshot message."""
+    tool_calls = message.get("tool_calls") or message.get("toolCalls")
+    if not isinstance(tool_calls, list):
+        return []
+    call_ids: list[str] = []
+    for tool_call in tool_calls:
+        if not isinstance(tool_call, Mapping):
+            continue
+        call_id = tool_call.get("id")
+        if call_id:
+            call_ids.append(str(call_id))
+    return call_ids
+
+
+def _resolved_tool_result_snapshot_messages(resolved_messages: list[Message]) -> dict[str, dict[str, Any]]:
+    """Build replayable AG-UI tool messages from resolved approval results."""
+    result_by_call_id: dict[str, dict[str, Any]] = {}
+    for msg in resolved_messages:
+        if get_role_value(msg) != "tool":
+            continue
+        function_results = [
+            content for content in msg.contents or [] if content.type == "function_result" and content.call_id
+        ]
+        for content in function_results:
+            call_id = str(content.call_id)
+            result_by_call_id[call_id] = {
+                "id": msg.message_id if msg.message_id and len(function_results) == 1 else generate_event_id(),
+                "role": "tool",
+                "toolCallId": call_id,
+                "content": _stringify_tool_result(content.result if content.result is not None else ""),
+            }
+    return result_by_call_id
+
+
+def _merge_resolved_approval_results_into_snapshot(
+    snapshot_messages: list[dict[str, Any]],
+    resolved_messages: list[Message],
+) -> None:
+    """Persist approval-resolved tool results under their original tool call ids."""
+    result_by_call_id = _resolved_tool_result_snapshot_messages(resolved_messages)
+    if not result_by_call_id:
+        snapshot_messages[:] = [message for message in snapshot_messages if not message.get("function_approvals")]
+        return
+
+    merged_messages: list[dict[str, Any]] = []
+    for message in snapshot_messages:
+        if message.get("function_approvals"):
+            continue
+        role = normalize_agui_role(message.get("role", ""))
+        if role == "tool":
+            tool_call_id = message.get("toolCallId") or message.get("tool_call_id")
+            if tool_call_id and str(tool_call_id) in result_by_call_id:
+                continue
+        merged_messages.append(message)
+        if role != "assistant":
+            continue
+        for call_id in _snapshot_tool_call_ids(message):
+            result_message = result_by_call_id.pop(call_id, None)
+            if result_message is not None:
+                merged_messages.append(result_message)
+
+    merged_messages.extend(result_by_call_id.values())
+    snapshot_messages[:] = merged_messages
+
+
 def _build_messages_snapshot(
     flow: FlowState,
     snapshot_messages: list[dict[str, Any]],
@@ -1646,6 +1712,8 @@ async def run_agent_stream(
     # Defense-in-depth: replace approval payloads in snapshot with actual tool results
     # so CopilotKit does not re-send stale approval content on subsequent turns.
     _clean_resolved_approvals_from_snapshot(snapshot_messages, messages)
+    if resolved_approval_results or any(message.get("function_approvals") for message in snapshot_messages):
+        _merge_resolved_approval_results_into_snapshot(snapshot_messages, messages)
 
     # Feature #3: Emit StateSnapshotEvent for approved state-changing tools before agent runs
     approved_state_updates = _extract_approved_state_updates(messages, predictive_handler)
