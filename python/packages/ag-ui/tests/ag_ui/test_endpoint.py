@@ -174,6 +174,19 @@ def test_add_endpoint_keepalive_default_is_enabled() -> None:
     assert parameter.default == 15
 
 
+def test_add_endpoint_docstring_describes_keepalive_transport_behavior() -> None:
+    """The public endpoint docs describe keepalive as transport comments, not AG-UI events."""
+    docstring = add_agent_framework_fastapi_endpoint.__doc__
+
+    assert docstring is not None
+    normalized_docstring = " ".join(docstring.split())
+    assert "keepalive_seconds" in normalized_docstring
+    assert "Defaults to 15" in normalized_docstring
+    assert "None disables" in normalized_docstring
+    assert "SSE comments" in normalized_docstring
+    assert "do not change AG-UI events" in normalized_docstring
+
+
 def test_keepalive_option_is_endpoint_owned() -> None:
     """Keepalive is endpoint transport configuration, not runner configuration."""
     assert "keepalive_seconds" not in signature(AgentFrameworkAgent).parameters

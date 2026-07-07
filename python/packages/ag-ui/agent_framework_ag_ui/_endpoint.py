@@ -113,8 +113,9 @@ def add_agent_framework_fastapi_endpoint(
             explicit Snapshot Scope resolver.
         snapshot_scope_resolver: Optional resolver for the application-defined Snapshot Scope. Required whenever
             a snapshot store is configured because an AG-UI Thread id is not an authorization boundary.
-        keepalive_seconds: Optional endpoint SSE keepalive interval. Positive values enable keepalive; None disables
-            it.
+        keepalive_seconds: Endpoint SSE keepalive interval in seconds. Defaults to 15. Positive values emit fixed
+            SSE comments while the stream is open. None disables keepalive and preserves the non-keepalive response
+            path. Keepalive comments are transport traffic and do not change AG-UI events.
     """
     _validate_keepalive_seconds(keepalive_seconds)
 
