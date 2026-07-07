@@ -609,6 +609,16 @@ def _save_tool_approval_state(
     approval_state_store.evict_oldest()
 
 
+def _clear_tool_approval_state(
+    approval_state_store: InMemoryAGUIApprovalStateStore | None,
+    thread_id: str,
+) -> None:
+    """Discard queued ToolApprovalMiddleware state for a cancelled approval flow."""
+    if approval_state_store is None:
+        return
+    approval_state_store.tool_approval_states.pop(thread_id, None)
+
+
 def _register_server_generated_approval_response(
     response: Content,
     pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] | None,
@@ -1674,17 +1684,15 @@ async def run_agent_stream(
     )
     if resume_error is not None:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-        if (
-            getattr(resume_error, "code", None) == "APPROVAL_RESUME_CANCELLED"
-            and config.snapshot_store is not None
-            and snapshot_scope is not None
-        ):
-            await _clear_thread_snapshot_interrupt(
-                snapshot_store=config.snapshot_store,
-                scope=snapshot_scope,
-                thread_id=thread_id,
-                interrupt_ids=cancelled_resume_ids or None,
-            )
+        if getattr(resume_error, "code", None) == "APPROVAL_RESUME_CANCELLED":
+            _clear_tool_approval_state(approval_state_store, approval_thread_id)
+            if config.snapshot_store is not None and snapshot_scope is not None:
+                await _clear_thread_snapshot_interrupt(
+                    snapshot_store=config.snapshot_store,
+                    scope=snapshot_scope,
+                    thread_id=thread_id,
+                    interrupt_ids=cancelled_resume_ids or None,
+                )
         yield resume_error
         return
     resume_messages = _resume_to_tool_messages(resume_payload, exclude_interrupt_ids=handled_resume_ids)

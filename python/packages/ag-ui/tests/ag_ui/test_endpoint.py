@@ -758,6 +758,63 @@ async def test_endpoint_agent_approval_resume_surfaces_queued_tool_approval(stre
     assert [content.call_id for content in replayed_results] == ["call_second"]
 
 
+async def test_endpoint_agent_approval_cancel_discards_queued_tool_approval(streaming_chat_client_stub):
+    """Cancelling a queued approval batch must not replay stale approval prompts on the next user turn."""
+    client, executed, messages_received, state = _build_tool_approval_queue_endpoint(streaming_chat_client_stub)
+    pause_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": "thread-queued-cancel",
+            "messages": [{"role": "user", "content": "Run both tools"}],
+        },
+    )
+    assert pause_response.status_code == 200
+    pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
+    assert [interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])] == ["call_first"]
+    assert executed == []
+
+    state["phase"] = "resume"
+    cancel_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-cancel",
+            "threadId": "thread-queued-cancel",
+            "messages": [],
+            "resume": [{"interruptId": "call_first", "status": "cancelled"}],
+        },
+    )
+
+    assert cancel_response.status_code == 200
+    cancel_events = _decode_sse_events(cancel_response)
+    run_errors = [event for event in cancel_events if event.get("type") == "RUN_ERROR"]
+    assert len(run_errors) == 1
+    assert run_errors[0]["code"] == "APPROVAL_RESUME_CANCELLED"
+    assert executed == []
+    assert messages_received == []
+
+    next_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-next",
+            "threadId": "thread-queued-cancel",
+            "messages": [{"role": "user", "content": "Fresh request"}],
+        },
+    )
+
+    assert next_response.status_code == 200
+    next_events = _decode_sse_events(next_response)
+    next_finished = [event for event in next_events if event.get("type") == "RUN_FINISHED"]
+    assert "outcome" not in next_finished[-1]
+    assert not [
+        event
+        for event in next_events
+        if event.get("type") == "TOOL_CALL_START" and event.get("toolCallId") == "call_second"
+    ]
+    assert executed == []
+    assert [(message.role, message.text) for message in messages_received] == [("user", "Fresh request")]
+
+
 async def test_endpoint_agent_approval_resume_processes_collected_auto_approved_response(streaming_chat_client_stub):
     """Auto-approved harness approval responses should survive the AG-UI pause and produce tool results."""
     client, executed, messages_received, state = _build_tool_approval_auto_endpoint(streaming_chat_client_stub)
