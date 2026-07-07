@@ -41,7 +41,6 @@ class AgentResponseFormat(BaseModel):
     status: str
     output: str
     error: str
-    fix: str
 
 
 @dataclass
