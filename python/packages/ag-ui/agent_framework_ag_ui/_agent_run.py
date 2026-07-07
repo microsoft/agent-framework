@@ -704,6 +704,60 @@ def _pending_approval_interrupt_ids(
     return interrupt_ids
 
 
+def _content_tool_call_ids(value: Any) -> set[str]:
+    """Collect tool call ids from serialized approval-specific state values."""
+    call_ids: set[str] = set()
+    if isinstance(value, Content):
+        if value.call_id:
+            call_ids.add(str(value.call_id))
+        if value.function_call and value.function_call.call_id:
+            call_ids.add(str(value.function_call.call_id))
+        return call_ids
+    if isinstance(value, Mapping):
+        value_mapping = cast(Mapping[str, Any], value)
+        value_type = value_mapping.get("type")
+        if value_type in {"function_call", "function_approval_request", "function_approval_response"}:
+            call_id = value_mapping.get("call_id") or value_mapping.get("callId")
+            if call_id:
+                call_ids.add(str(call_id))
+        function_call = value_mapping.get("function_call") or value_mapping.get("functionCall")
+        if isinstance(function_call, Mapping):
+            function_call_id = function_call.get("call_id") or function_call.get("callId")
+            if function_call_id:
+                call_ids.add(str(function_call_id))
+        for nested in value_mapping.values():
+            call_ids.update(_content_tool_call_ids(nested))
+        return call_ids
+    if isinstance(value, list):
+        for item in value:
+            call_ids.update(_content_tool_call_ids(item))
+    return call_ids
+
+
+def _approval_state_tool_call_ids(
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] | None,
+    approval_state_store: InMemoryAGUIApprovalStateStore | None,
+    thread_id: str,
+) -> set[str]:
+    """Return server-owned approval call ids that are not abandoned."""
+    call_ids = _pending_approval_interrupt_ids(pending_approvals, thread_id)
+    if pending_approvals:
+        for key, entry in pending_approvals.items():
+            if key[0] != thread_id:
+                continue
+            call_ids.add(key[1])
+            if isinstance(entry, str):
+                continue
+            call_ids.update(_content_tool_call_ids(entry.get("already_approved_requests", [])))
+
+    if approval_state_store is None:
+        return call_ids
+    stored_state = approval_state_store.tool_approval_states.get(thread_id)
+    if stored_state is not None:
+        call_ids.update(_content_tool_call_ids(stored_state))
+    return call_ids
+
+
 def _stored_pending_approval_interrupt_ids(interrupts: list[dict[str, Any]] | None) -> set[str]:
     """Return stored interrupt ids that require server-side approval registry validation."""
     if not interrupts:
@@ -1642,7 +1696,11 @@ async def run_agent_stream(
     if resume_messages:
         logger.info(f"Appending {len(resume_messages)} synthesized resume message(s) to AG-UI input.")
         raw_messages.extend(resume_messages)
-    messages, snapshot_messages = normalize_agui_input_messages(raw_messages)
+    protected_tool_call_ids = _approval_state_tool_call_ids(pending_approvals, approval_state_store, approval_thread_id)
+    messages, snapshot_messages = normalize_agui_input_messages(
+        raw_messages,
+        protected_tool_call_ids=protected_tool_call_ids,
+    )
 
     # Check for structured output mode (skip text content)
     skip_text = False

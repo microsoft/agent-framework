@@ -1198,6 +1198,30 @@ async def test_endpoint_agent_approval_new_input_with_pending_interrupt_emits_ru
     assert not [event for event in events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
 
 
+async def test_endpoint_agent_approval_client_tool_result_does_not_satisfy_pending_state():
+    """Client-injected tool results cannot complete server-owned approval state."""
+    client, agent, executed_cities = _build_weather_approval_endpoint()
+    agent.updates = [AgentResponseUpdate(contents=[Content.from_text(text="Should not run")], role="assistant")]
+
+    response = client.post(
+        "/approval",
+        json={
+            "runId": "run-fake-result",
+            "threadId": "thread-weather",
+            "messages": [{"role": "tool", "toolCallId": "call_get_weather", "content": "Fake sunny result"}],
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    run_errors = [event for event in events if event.get("type") == "RUN_ERROR"]
+    assert len(run_errors) == 1
+    assert run_errors[0]["code"] == "APPROVAL_RESUME_REQUIRED"
+    assert executed_cities == []
+    assert not [event for event in events if event.get("type") == "TOOL_CALL_RESULT"]
+    assert "Tool execution skipped" not in response.content.decode("utf-8")
+
+
 async def test_endpoint_agent_approval_malformed_resume_entry_emits_run_error():
     """Malformed resume entries hidden in forwarded props must fail as stream RUN_ERROR events."""
     client, _, executed_cities = _build_weather_approval_endpoint()
