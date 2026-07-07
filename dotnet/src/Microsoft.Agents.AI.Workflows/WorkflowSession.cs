@@ -719,7 +719,7 @@ internal sealed class WorkflowSession : AgentSession
     public override object? GetService(Type serviceType, object? serviceKey = null)
     {
         _ = Throw.IfNull(serviceType);
-        bool isHistoryProvider = serviceKey is null && serviceType.IsInstanceOfType(this.ChatHistoryProvider);
+        bool isHistoryProvider = serviceKey is null && serviceType == typeof(ChatHistoryProvider);
         return isHistoryProvider ? this.ChatHistoryProvider : base.GetService(serviceType, serviceKey);
     }
 }
