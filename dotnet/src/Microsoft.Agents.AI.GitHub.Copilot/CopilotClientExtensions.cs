@@ -1,12 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using GitHub.Copilot;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.GitHub.Copilot;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
-namespace GitHub.Copilot.SDK;
+namespace Microsoft.Agents.AI.GitHub.Copilot;
 
 /// <summary>
 /// Provides extension methods for <see cref="CopilotClient"/>

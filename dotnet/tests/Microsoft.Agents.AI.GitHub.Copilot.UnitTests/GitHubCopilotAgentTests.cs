@@ -1,9 +1,10 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using GitHub.Copilot.SDK;
+using GitHub.Copilot;
+using GitHub.Copilot.Rpc;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.GitHub.Copilot.UnitTests;
@@ -17,7 +18,7 @@ public sealed class GitHubCopilotAgentTests
     public void Constructor_WithCopilotClient_InitializesPropertiesCorrectly()
     {
         // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions());
         const string TestId = "test-id";
         const string TestName = "test-name";
         const string TestDescription = "test-description";
@@ -42,7 +43,7 @@ public sealed class GitHubCopilotAgentTests
     public void Constructor_WithDefaultParameters_UsesBaseProperties()
     {
         // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions());
 
         // Act
         var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
@@ -58,7 +59,7 @@ public sealed class GitHubCopilotAgentTests
     public async Task CreateSessionAsync_ReturnsGitHubCopilotAgentSessionAsync()
     {
         // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions());
         var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
 
         // Act
@@ -73,7 +74,7 @@ public sealed class GitHubCopilotAgentTests
     public async Task CreateSessionAsync_WithSessionId_ReturnsSessionWithSessionIdAsync()
     {
         // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions());
         var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
         const string TestSessionId = "test-session-id";
 
@@ -90,7 +91,7 @@ public sealed class GitHubCopilotAgentTests
     public void Constructor_WithTools_InitializesCorrectly()
     {
         // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions());
         List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
 
         // Act
@@ -105,12 +106,14 @@ public sealed class GitHubCopilotAgentTests
     public void CopySessionConfig_CopiesAllProperties()
     {
         // Arrange
-        List<AIFunction> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
+        ICollection<AIFunctionDeclaration> tools = new List<AIFunctionDeclaration> { AIFunctionFactory.Create(() => "test", "TestFunc", "Test function") };
         var hooks = new SessionHooks();
         var infiniteSessions = new InfiniteSessionConfig();
         var systemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "Be helpful" };
-        PermissionRequestHandler permissionHandler = (_, _) => Task.FromResult(new PermissionRequestResult());
-        UserInputHandler userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
+#pragma warning disable GHCP001
+        Func<PermissionRequest, PermissionInvocation, Task<PermissionDecision>> permissionHandler = (_, _) => Task.FromResult(new PermissionDecision());
+#pragma warning restore GHCP001
+        Func<UserInputRequest, UserInputInvocation, Task<UserInputResponse>> userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
         var mcpServers = new Dictionary<string, McpServerConfig> { ["server1"] = new McpStdioServerConfig() };
 
         var source = new SessionConfig
@@ -122,7 +125,7 @@ public sealed class GitHubCopilotAgentTests
             AvailableTools = ["tool1", "tool2"],
             ExcludedTools = ["tool3"],
             WorkingDirectory = "/workspace",
-            ConfigDir = "/config",
+            ConfigDirectory = "/config",
             Hooks = hooks,
             InfiniteSessions = infiniteSessions,
             OnPermissionRequest = permissionHandler,
@@ -142,26 +145,27 @@ public sealed class GitHubCopilotAgentTests
         Assert.Equal(new List<string> { "tool1", "tool2" }, result.AvailableTools);
         Assert.Equal(new List<string> { "tool3" }, result.ExcludedTools);
         Assert.Equal("/workspace", result.WorkingDirectory);
-        Assert.Equal("/config", result.ConfigDir);
+        Assert.Equal("/config", result.ConfigDirectory);
         Assert.Same(hooks, result.Hooks);
         Assert.Same(infiniteSessions, result.InfiniteSessions);
         Assert.Same(permissionHandler, result.OnPermissionRequest);
         Assert.Same(userInputHandler, result.OnUserInputRequest);
         Assert.Same(mcpServers, result.McpServers);
         Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
-        Assert.True(result.Streaming);
     }
 
     [Fact]
     public void CopyResumeSessionConfig_CopiesAllProperties()
     {
         // Arrange
-        List<AIFunction> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
+        ICollection<AIFunctionDeclaration> tools = new List<AIFunctionDeclaration> { AIFunctionFactory.Create(() => "test", "TestFunc", "Test function") };
         var hooks = new SessionHooks();
         var infiniteSessions = new InfiniteSessionConfig();
         var systemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "Be helpful" };
-        PermissionRequestHandler permissionHandler = (_, _) => Task.FromResult(new PermissionRequestResult());
-        UserInputHandler userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
+#pragma warning disable GHCP001
+        Func<PermissionRequest, PermissionInvocation, Task<PermissionDecision>> permissionHandler = (_, _) => Task.FromResult(new PermissionDecision());
+#pragma warning restore GHCP001
+        Func<UserInputRequest, UserInputInvocation, Task<UserInputResponse>> userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
         var mcpServers = new Dictionary<string, McpServerConfig> { ["server1"] = new McpStdioServerConfig() };
 
         var source = new SessionConfig
@@ -173,7 +177,7 @@ public sealed class GitHubCopilotAgentTests
             AvailableTools = ["tool1", "tool2"],
             ExcludedTools = ["tool3"],
             WorkingDirectory = "/workspace",
-            ConfigDir = "/config",
+            ConfigDirectory = "/config",
             Hooks = hooks,
             InfiniteSessions = infiniteSessions,
             OnPermissionRequest = permissionHandler,
@@ -193,14 +197,13 @@ public sealed class GitHubCopilotAgentTests
         Assert.Equal(new List<string> { "tool1", "tool2" }, result.AvailableTools);
         Assert.Equal(new List<string> { "tool3" }, result.ExcludedTools);
         Assert.Equal("/workspace", result.WorkingDirectory);
-        Assert.Equal("/config", result.ConfigDir);
+        Assert.Equal("/config", result.ConfigDirectory);
         Assert.Same(hooks, result.Hooks);
         Assert.Same(infiniteSessions, result.InfiniteSessions);
         Assert.Same(permissionHandler, result.OnPermissionRequest);
         Assert.Same(userInputHandler, result.OnUserInputRequest);
         Assert.Same(mcpServers, result.McpServers);
         Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
-        Assert.True(result.Streaming);
     }
 
     [Fact]
@@ -218,8 +221,7 @@ public sealed class GitHubCopilotAgentTests
         Assert.Null(result.OnUserInputRequest);
         Assert.Null(result.Hooks);
         Assert.Null(result.WorkingDirectory);
-        Assert.Null(result.ConfigDir);
-        Assert.True(result.Streaming);
+        Assert.Null(result.ConfigDirectory);
     }
 
     [Fact]
@@ -233,7 +235,7 @@ public sealed class GitHubCopilotAgentTests
                 Content = "Some streamed content that was already delivered via delta events"
             }
         };
-        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        CopilotClient copilotClient = new(new CopilotClientOptions());
         const string TestId = "agent-id";
         var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, tools: null);
         AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(assistantMessage);
