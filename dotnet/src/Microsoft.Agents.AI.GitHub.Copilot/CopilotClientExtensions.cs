@@ -2,7 +2,6 @@
 
 using System.Collections.Generic;
 using GitHub.Copilot;
-using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
