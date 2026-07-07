@@ -42,8 +42,11 @@ class InMemoryAGUIApprovalStateStore:
             raise ValueError("max_entries must be greater than 0.")
         self.max_entries = max_entries
         self.pending_approvals: OrderedDict[tuple[str, str], Any] = OrderedDict()
+        self.tool_approval_states: OrderedDict[str, dict[str, Any]] = OrderedDict()
 
     def evict_oldest(self) -> None:
         """Evict oldest pending approval entries until the store is within bounds."""
         while len(self.pending_approvals) > self.max_entries:
             self.pending_approvals.popitem(last=False)
+        while len(self.tool_approval_states) > self.max_entries:
+            self.tool_approval_states.popitem(last=False)

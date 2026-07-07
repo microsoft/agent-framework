@@ -138,6 +138,10 @@ class AgentFrameworkAgent:
             AG-UI events
         """
         async for event in run_agent_stream(
-            input_data, self.agent, self.config, pending_approvals=self._pending_approvals
+            input_data,
+            self.agent,
+            self.config,
+            pending_approvals=self._pending_approvals,
+            approval_state_store=self._approval_state_store,
         ):
             yield event

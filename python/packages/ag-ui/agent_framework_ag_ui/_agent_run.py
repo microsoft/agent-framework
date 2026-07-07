@@ -44,7 +44,7 @@ from agent_framework._tools import (
 from agent_framework._types import ResponseStream
 from agent_framework.exceptions import AgentInvalidResponseException
 
-from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY, approval_state_thread_id
+from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY, InMemoryAGUIApprovalStateStore, approval_state_thread_id
 from ._message_adapters import normalize_agui_input_messages
 from ._orchestration._predictive_state import PredictiveStateHandler
 from ._orchestration._tooling import collect_server_tools, merge_tools, register_additional_client_tools
@@ -89,6 +89,7 @@ logger = logging.getLogger(__name__)
 
 # Keys that are internal to AG-UI orchestration and should not be passed to chat clients
 AG_UI_INTERNAL_METADATA_KEYS = {"ag_ui_thread_id", "ag_ui_run_id", "current_state", "forwarded_props"}
+_COLLECTED_APPROVAL_RESPONSES_KEY = "collected_approval_responses"
 
 
 def _build_safe_metadata(thread_metadata: dict[str, Any] | None) -> dict[str, Any]:
@@ -549,6 +550,119 @@ def _stored_already_approved_requests_for_visible_approval(
             seen_request_ids.add(dedupe_key)
             stored_requests.append(request)
     return stored_requests
+
+
+def _content_from_approval_state(value: Any) -> Content | None:
+    """Restore approval-specific Content values from server-owned Approval State."""
+    if isinstance(value, Content):
+        return value
+    if isinstance(value, Mapping):
+        return Content.from_dict(cast(Mapping[str, Any], value))
+    return None
+
+
+def _serialized_tool_approval_state(value: Any) -> dict[str, Any] | None:
+    """Return a JSON-safe copy of the core tool-approval state bag."""
+    if isinstance(value, Mapping):
+        return copy.deepcopy(dict(cast(Mapping[str, Any], value)))
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        raw_state = to_dict(exclude={"type"})
+        if isinstance(raw_state, Mapping):
+            return copy.deepcopy(dict(cast(Mapping[str, Any], raw_state)))
+    logger.warning("Ignoring unsupported tool approval state type: %s", type(value).__name__)
+    return None
+
+
+def _restore_tool_approval_state(
+    session: AgentSession,
+    approval_state_store: InMemoryAGUIApprovalStateStore | None,
+    thread_id: str,
+) -> None:
+    """Restore only core tool-approval state into the per-run AgentSession."""
+    if approval_state_store is None:
+        return
+    stored_state = approval_state_store.tool_approval_states.get(thread_id)
+    if stored_state is None:
+        return
+    approval_state_store.tool_approval_states.move_to_end(thread_id)
+    session.state[_TOOL_APPROVAL_STATE_KEY] = copy.deepcopy(stored_state)
+
+
+def _save_tool_approval_state(
+    session: AgentSession,
+    approval_state_store: InMemoryAGUIApprovalStateStore | None,
+    thread_id: str,
+) -> None:
+    """Persist only approval-specific ToolApprovalMiddleware state server-side."""
+    if approval_state_store is None:
+        return
+    raw_state = session.state.get(_TOOL_APPROVAL_STATE_KEY)
+    if raw_state is None:
+        approval_state_store.tool_approval_states.pop(thread_id, None)
+        return
+    serialized_state = _serialized_tool_approval_state(raw_state)
+    if serialized_state is None:
+        return
+    approval_state_store.tool_approval_states[thread_id] = serialized_state
+    approval_state_store.tool_approval_states.move_to_end(thread_id)
+    approval_state_store.evict_oldest()
+
+
+def _register_server_generated_approval_response(
+    response: Content,
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] | None,
+    thread_id: str,
+) -> None:
+    """Register a server-owned approval response so normal validation can consume it."""
+    if pending_approvals is None or response.function_call is None or not response.function_call.name:
+        return
+    response_id = response.id or response.function_call.call_id
+    if not response_id:
+        return
+    entry = _make_pending_approval_entry(
+        response.function_call.name,
+        canonical_function_arguments(response.function_call),
+        request_id=str(response.id) if response.id else None,
+        interrupt_id=str(response.function_call.call_id) if response.function_call.call_id else None,
+    )
+    _register_pending_approval_entry(
+        pending_approvals,
+        thread_id,
+        entry,
+        str(response_id),
+        str(response.function_call.call_id) if response.function_call.call_id else None,
+    )
+
+
+def _pop_collected_tool_approval_response_messages(
+    session: AgentSession,
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] | None,
+    thread_id: str,
+) -> list[Message]:
+    """Pop server-collected auto-approved responses into provider-visible messages."""
+    raw_state = session.state.get(_TOOL_APPROVAL_STATE_KEY)
+    if not isinstance(raw_state, Mapping):
+        return []
+
+    state = dict(cast(Mapping[str, Any], raw_state))
+    raw_responses = state.get(_COLLECTED_APPROVAL_RESPONSES_KEY)
+    if not isinstance(raw_responses, list):
+        return []
+
+    responses: list[Content] = []
+    for raw_response in raw_responses:
+        response = _content_from_approval_state(raw_response)
+        if response is None or response.type != "function_approval_response":
+            continue
+        _register_server_generated_approval_response(response, pending_approvals, thread_id)
+        responses.append(response)
+
+    state[_COLLECTED_APPROVAL_RESPONSES_KEY] = []
+    session.state[_TOOL_APPROVAL_STATE_KEY] = state
+    if not responses:
+        return []
+    return [Message(role="user", contents=responses)]
 
 
 def _parse_json_object(value: Any) -> dict[str, Any] | None:
@@ -1332,6 +1446,7 @@ async def run_agent_stream(
     agent: SupportsAgentRun,
     config: AgentConfig,
     pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] | None = None,
+    approval_state_store: InMemoryAGUIApprovalStateStore | None = None,
 ) -> AsyncGenerator[BaseEvent]:
     """Run agent and yield AG-UI events.
 
@@ -1346,6 +1461,8 @@ async def run_agent_stream(
             requests.  Keys are ``(thread_id, request_id)``, values are
             function names.  When provided, approval responses are validated
             against this registry to prevent bypass, spoofing, and replay.
+        approval_state_store: Optional server-side Approval State store used to
+            preserve approval-only middleware state across AG-UI requests.
 
     Yields:
         AG-UI events
@@ -1489,6 +1606,7 @@ async def run_agent_stream(
         session = AgentSession(session_id=thread_id, service_session_id=supplied_thread_id)
     else:
         session = AgentSession(session_id=thread_id)
+    _restore_tool_approval_state(session, approval_state_store, approval_thread_id)
 
     # Inject metadata for AG-UI orchestration (Feature #2: Azure-safe truncation)
     base_metadata: dict[str, Any] = {
@@ -1520,6 +1638,7 @@ async def run_agent_stream(
     # Resolve approval responses (execute approved tools, replace approvals with results)
     # This must happen before running the agent so it sees the tool results
     tools_for_execution = tools if tools is not None else server_tools
+    messages.extend(_pop_collected_tool_approval_response_messages(session, pending_approvals, approval_thread_id))
     resolved_approval_results = await _resolve_approval_responses(
         messages, tools_for_execution, agent, run_kwargs, pending_approvals, approval_thread_id
     )
@@ -1559,6 +1678,7 @@ async def run_agent_stream(
             state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
             interrupt=None,
         )
+        _save_tool_approval_state(session, approval_state_store, approval_thread_id)
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id)
         return
 
@@ -1856,4 +1976,5 @@ async def run_agent_stream(
         state=latest_state_snapshot,
         interrupt=flow.interrupts or None,
     )
+    _save_tool_approval_state(session, approval_state_store, approval_thread_id)
     yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=flow.interrupts)
