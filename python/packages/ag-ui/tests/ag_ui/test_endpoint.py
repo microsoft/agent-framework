@@ -214,6 +214,38 @@ async def test_endpoint_keepalive_enabled_emits_static_comment_during_silent_gap
     assert "RUN_FINISHED" in event_types
 
 
+async def test_endpoint_keepalive_disabled_preserves_streaming_response_shape(streaming_chat_client_stub):
+    """Disabled keepalive keeps the original SSE data frames without transport comments."""
+    app = FastAPI()
+
+    async def stream_fn(messages: Any, options: Any, **kwargs: Any):
+        del messages, options, kwargs
+        await asyncio.sleep(0.05)
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done")])
+
+    agent = Agent(name="test", instructions="Test agent", client=streaming_chat_client_stub(stream_fn))
+
+    add_agent_framework_fastapi_endpoint(app, agent, path="/no-keepalive", keepalive_seconds=None)
+
+    client = TestClient(app)
+    response = client.post("/no-keepalive", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["connection"] == "keep-alive"
+    assert response.headers["x-accel-buffering"] == "no"
+
+    content = response.content.decode("utf-8")
+    assert ": keepalive" not in content
+    assert "data: data:" not in content
+
+    event_types = [event.get("type") for event in _decode_sse_events(response)]
+    assert "RUN_STARTED" in event_types
+    assert "TEXT_MESSAGE_CONTENT" in event_types
+    assert "RUN_FINISHED" in event_types
+
+
 @pytest.mark.parametrize("keepalive_seconds", [0, -1, -0.5])
 def test_add_endpoint_rejects_non_positive_keepalive_interval(build_chat_client, keepalive_seconds: float) -> None:
     """Invalid keepalive intervals fail immediately during endpoint registration."""
