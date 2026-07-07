@@ -107,6 +107,12 @@ def _normalize_tools(
     return normalize_tools(tools)
 
 
+def _get_tool_name(tool: Any) -> str | None:  # pyright: ignore[reportUnusedFunction]
+    from ._tools import _get_tool_name as get_tool_name  # pyright: ignore[reportPrivateUsage]
+
+    return get_tool_name(tool)
+
+
 def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Merge two options dicts, with override values taking precedence.
 
