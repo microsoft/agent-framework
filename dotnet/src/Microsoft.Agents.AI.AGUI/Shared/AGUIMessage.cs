@@ -18,5 +18,5 @@ internal abstract class AGUIMessage
     public string Role { get; set; } = string.Empty;
 
     [JsonPropertyName("content")]
-    public string Content { get; set; } = string.Empty;
+    public AGUIMessageContent Content { get; set; } = string.Empty;
 }

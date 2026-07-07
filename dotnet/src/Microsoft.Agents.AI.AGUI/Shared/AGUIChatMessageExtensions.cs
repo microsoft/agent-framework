@@ -37,7 +37,7 @@ internal static class AGUIChatMessageExtensions
 
             if (pendingContents is not null && !isAssistantWithToolCalls)
             {
-                yield return new ChatMessage(ChatRole.Assistant, pendingContents) { MessageId = pendingId };
+                yield return CreateChatMessage(AGUIChatContentRole.Assistant, pendingContents, pendingId);
                 pendingContents = null;
                 pendingId = null;
             }
@@ -49,20 +49,21 @@ internal static class AGUIChatMessageExtensions
                 case AGUIToolMessage toolMessage:
                 {
                     object? result;
-                    if (string.IsNullOrEmpty(toolMessage.Content))
+                    string serializedContent = toolMessage.Content;
+                    if (string.IsNullOrEmpty(serializedContent))
                     {
-                        result = toolMessage.Content;
+                        result = serializedContent;
                     }
                     else
                     {
                         // Try to deserialize as JSON, but fall back to string if it fails
                         try
                         {
-                            result = JsonSerializer.Deserialize(toolMessage.Content, AGUIJsonSerializerContext.Default.JsonElement);
+                            result = JsonSerializer.Deserialize(serializedContent, AGUIJsonSerializerContext.Default.JsonElement);
                         }
                         catch (JsonException)
                         {
-                            result = toolMessage.Content;
+                            result = serializedContent;
                         }
                     }
 
@@ -89,7 +90,7 @@ internal static class AGUIChatMessageExtensions
                     }
                     else if (!string.IsNullOrEmpty(reasoningMessage.EncryptedValue))
                     {
-                        contents.Add(new TextReasoningContent("")
+                        contents.Add(new TextReasoningContent(string.Empty)
                         {
                             ProtectedData = reasoningMessage.EncryptedValue
                         });
@@ -104,13 +105,13 @@ internal static class AGUIChatMessageExtensions
 
                 case AGUIAssistantMessage assistantMessage when assistantMessage.ToolCalls is { Length: > 0 }:
                 {
-                    pendingContents ??= new List<AIContent>();
+                    pendingContents ??= [];
                     pendingId ??= message.Id;
 
-                    if (!string.IsNullOrEmpty(assistantMessage.Content))
-                    {
-                        pendingContents.Add(new TextContent(assistantMessage.Content));
-                    }
+                    AddChatMessageContents(
+                        assistantMessage.Content,
+                        pendingContents,
+                        includeEmptyText: false);
 
                     foreach (var toolCall in assistantMessage.ToolCalls)
                     {
@@ -133,19 +134,22 @@ internal static class AGUIChatMessageExtensions
 
                 default:
                 {
-                    string content = message switch
+                    List<AIContent> chatContents = GetChatMessageContents(message.Content, includeEmptyText: true).ToList();
+                    if (chatContents.Count == 1 && chatContents[0] is TextContent textContent)
                     {
-                        AGUIDeveloperMessage dev => dev.Content,
-                        AGUISystemMessage sys => sys.Content,
-                        AGUIUserMessage user => user.Content,
-                        AGUIAssistantMessage asst => asst.Content,
-                        _ => string.Empty
-                    };
+                        yield return new ChatMessage(role, textContent.Text)
+                        {
+                            MessageId = message.Id
+                        };
+                    }
+                    else
+                    {
+                        yield return new ChatMessage(role, chatContents)
+                        {
+                            MessageId = message.Id
+                        };
+                    }
 
-                    yield return new ChatMessage(role, content)
-                    {
-                        MessageId = message.Id
-                    };
                     break;
                 }
             }
@@ -154,7 +158,7 @@ internal static class AGUIChatMessageExtensions
         // Flush remaining pending assistant-tool-call entry at end of stream.
         if (pendingContents is not null)
         {
-            yield return new ChatMessage(ChatRole.Assistant, pendingContents) { MessageId = pendingId };
+            yield return CreateChatMessage(AGUIChatContentRole.Assistant, pendingContents, pendingId);
         }
     }
 
@@ -188,11 +192,24 @@ internal static class AGUIChatMessageExtensions
             }
             else
             {
+                var content = CreateAGUIMessageContent(message.Contents);
                 yield return message.Role.Value switch
                 {
-                    AGUIRoles.Developer => new AGUIDeveloperMessage { Id = message.MessageId, Content = message.Text ?? string.Empty },
-                    AGUIRoles.System => new AGUISystemMessage { Id = message.MessageId, Content = message.Text ?? string.Empty },
-                    AGUIRoles.User => new AGUIUserMessage { Id = message.MessageId, Content = message.Text ?? string.Empty },
+                    AGUIRoles.Developer => new AGUIDeveloperMessage
+                    {
+                        Id = message.MessageId,
+                        Content = content
+                    },
+                    AGUIRoles.System => new AGUISystemMessage
+                    {
+                        Id = message.MessageId,
+                        Content = content
+                    },
+                    AGUIRoles.User => new AGUIUserMessage
+                    {
+                        Id = message.MessageId,
+                        Content = content
+                    },
                     _ => throw new InvalidOperationException($"Unknown role: {message.Role.Value}")
                 };
             }
@@ -228,7 +245,7 @@ internal static class AGUIChatMessageExtensions
     private static AGUIAssistantMessage? MapAssistantMessage(JsonSerializerOptions jsonSerializerOptions, ChatMessage message)
     {
         List<AGUIToolCall>? toolCalls = null;
-        string? textContent = null;
+        var messageContent = CreateAGUIMessageContent(message.Contents);
 
         foreach (var content in message.Contents)
         {
@@ -249,27 +266,113 @@ internal static class AGUIChatMessageExtensions
                     }
                 });
             }
-            else if (content is TextContent textContentItem)
+        }
+
+        if (toolCalls is null && messageContent.IsText && string.IsNullOrEmpty(messageContent.Text))
+        {
+            return null;
+        }
+
+        return new AGUIAssistantMessage
+        {
+            Id = message.MessageId,
+            Content = messageContent,
+            ToolCalls = toolCalls?.Count > 0 ? toolCalls.ToArray() : null
+        };
+    }
+
+    private static AGUIMessageContent CreateAGUIMessageContent(IEnumerable<AIContent> chatContents)
+    {
+        List<AGUIMessageContentBlock> contentBlocks = [];
+
+        foreach (var content in chatContents)
+        {
+            if (TryCreateMessageContentBlock(content, out var block))
             {
-                textContent = textContentItem.Text;
+                contentBlocks.Add(block);
             }
         }
 
-        // Create message with tool calls and/or text content
-        if (toolCalls?.Count > 0 || !string.IsNullOrEmpty(textContent))
+        if (contentBlocks.Count == 0)
         {
-            return new AGUIAssistantMessage
-            {
-                Id = message.MessageId,
-                Content = textContent ?? string.Empty,
-                ToolCalls = toolCalls?.Count > 0 ? toolCalls.ToArray() : null
-            };
+            return new AGUIMessageContent(string.Empty);
         }
 
-        return null;
+        return contentBlocks.All(block => string.Equals(block.Type, "text", StringComparison.OrdinalIgnoreCase))
+            ? new AGUIMessageContent(string.Concat(contentBlocks.Select(block => block.Text ?? string.Empty)))
+            : new AGUIMessageContent(contentBlocks);
     }
 
-    private static IEnumerable<AGUIToolMessage> MapToolMessages(JsonSerializerOptions jsonSerializerOptions, ChatMessage message)
+    private static bool TryCreateMessageContentBlock(AIContent content, out AGUIMessageContentBlock block)
+    {
+        switch (content)
+        {
+            case TextContent textContent:
+                block = new AGUIMessageContentBlock { Type = "text", Text = textContent.Text };
+                return true;
+
+            case UriContent uriContent:
+                string? uri = uriContent.Uri?.ToString();
+                block = BuildMediaContentBlock(
+                    uriContent.MediaType ?? "application/octet-stream",
+                    uri ?? string.Empty,
+                    new AGUIMessageContentSource
+                    {
+                        Type = "url",
+                        Value = uri ?? string.Empty,
+                        MimeType = uriContent.MediaType
+                    });
+                return true;
+
+            case DataContent dataContent when dataContent.Uri is { } dataUri && dataContent.Data.IsEmpty:
+                {
+                    var url = dataUri;
+                    block = BuildMediaContentBlock(
+                        ResolveMediaType(dataContent.MediaType),
+                        url,
+                        new AGUIMessageContentSource
+                        {
+                            Type = "url",
+                            Value = url,
+                            MimeType = ResolveMediaType(dataContent.MediaType)
+                        });
+                    return true;
+                }
+
+            case DataContent dataContent:
+                {
+                    string base64Data = Convert.ToBase64String(dataContent.Data.ToArray());
+                    block = BuildMediaContentBlock(
+                        ResolveMediaType(dataContent.MediaType),
+                        base64Data,
+                        new AGUIMessageContentSource
+                        {
+                            Type = "data",
+                            Value = base64Data,
+                            MimeType = ResolveMediaType(dataContent.MediaType)
+                        },
+                        dataContent.Name);
+                    return true;
+                }
+
+            case HostedFileContent hostedFileContent:
+                block = new AGUIMessageContentBlock
+                {
+                    Type = "document",
+                    Id = hostedFileContent.FileId,
+                    MimeType = ResolveMediaType(hostedFileContent.MediaType),
+                    Filename = hostedFileContent.Name,
+                    Source = null,
+                };
+                return true;
+
+            default:
+                block = new AGUIMessageContentBlock();
+                return false;
+        }
+    }
+
+    private static IEnumerable<AGUIMessage> MapToolMessages(JsonSerializerOptions jsonSerializerOptions, ChatMessage message)
     {
         foreach (var content in message.Contents)
         {
@@ -287,6 +390,211 @@ internal static class AGUIChatMessageExtensions
         }
     }
 
+    private static List<AIContent> GetChatMessageContents(AGUIMessageContent content, bool includeEmptyText)
+    {
+        var chatContents = new List<AIContent>();
+
+        if (content.IsText)
+        {
+            if (includeEmptyText || !string.IsNullOrEmpty(content.Text))
+            {
+                chatContents.Add(new TextContent(content.Text));
+            }
+
+            return chatContents;
+        }
+
+        if (content.Blocks is { Length: > 0 } blocks)
+        {
+            foreach (var block in blocks)
+            {
+                if (TryConvertContentBlockToAIContent(block, out var aiContent))
+                {
+                    chatContents.Add(aiContent);
+                }
+            }
+
+            return chatContents;
+        }
+
+        if (includeEmptyText)
+        {
+            chatContents.Add(new TextContent(string.Empty));
+        }
+
+        return chatContents;
+    }
+
+    private static void AddChatMessageContents(
+        AGUIMessageContent content,
+        List<AIContent> contents,
+        bool includeEmptyText)
+    {
+        contents.AddRange(GetChatMessageContents(content, includeEmptyText));
+    }
+
+    private static bool TryConvertContentBlockToAIContent(
+        AGUIMessageContentBlock block,
+        out AIContent aiContent)
+    {
+        aiContent = null!;
+
+        var type = (block.Type ?? string.Empty).Trim();
+        var mediaType = Coalesce(block.MimeType, block.Source?.MimeType);
+
+        return type switch
+        {
+            var t when string.Equals(t, "text", StringComparison.OrdinalIgnoreCase) => TryCreateTextContent(block, out aiContent),
+            var t when string.Equals(t, "image", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(t, "audio", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(t, "video", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(t, "document", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(t, "file", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(t, "binary", StringComparison.OrdinalIgnoreCase) => TryCreateMediaContent(block, mediaType, out aiContent),
+            _ => TryCreateTextContent(block, out aiContent)
+        };
+    }
+
+    private static bool TryCreateTextContent(AGUIMessageContentBlock block, out AIContent aiContent)
+    {
+        aiContent = new TextContent(block.Text ?? string.Empty);
+        return true;
+    }
+
+    private static bool TryCreateMediaContent(
+        AGUIMessageContentBlock block,
+        string mediaType,
+        out AIContent aiContent)
+    {
+        aiContent = null!;
+
+        var source = block.Source;
+        var sourceType = (source?.Type ?? string.Empty).Trim();
+        var sourceValue = Coalesce(source?.Value, block.Url);
+        var sourceData = Coalesce(block.Data, string.Equals(sourceType, "data", StringComparison.OrdinalIgnoreCase) ? source?.Value : null);
+
+        if (string.IsNullOrWhiteSpace(mediaType))
+        {
+            mediaType = "application/octet-stream";
+        }
+
+        if (string.Equals(sourceType, "url", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(sourceValue))
+        {
+            aiContent = new UriContent(sourceValue!, mediaType);
+            return true;
+        }
+
+        if (string.Equals(sourceType, "data", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(sourceData))
+        {
+            try
+            {
+                aiContent = new DataContent(Convert.FromBase64String(sourceData), mediaType);
+                return true;
+            }
+            catch (FormatException)
+            {
+            }
+        }
+
+        if (!string.IsNullOrEmpty(block.Id) &&
+            string.IsNullOrEmpty(sourceType) &&
+            string.IsNullOrEmpty(sourceValue) &&
+            string.IsNullOrEmpty(sourceData))
+        {
+            HostedFileContent hostedFileContent = new(block.Id);
+            if (!string.IsNullOrEmpty(block.MimeType))
+            {
+                hostedFileContent.MediaType = block.MimeType;
+            }
+
+            if (!string.IsNullOrEmpty(block.Filename))
+            {
+                hostedFileContent.Name = block.Filename;
+            }
+
+            aiContent = hostedFileContent;
+            return true;
+        }
+
+        return TryCreateTextContent(block, out aiContent);
+    }
+
+    private static AGUIMessageContentBlock BuildMediaContentBlock(
+        string mediaType,
+        string value,
+        AGUIMessageContentSource source,
+        string? filename = null)
+    {
+        return new AGUIMessageContentBlock
+        {
+            Type = ResolveContentType(mediaType),
+            Url = value,
+            MimeType = mediaType,
+            Filename = filename,
+            Source = source
+        };
+    }
+
+    private static string ResolveContentType(string mediaType)
+    {
+        if (string.IsNullOrWhiteSpace(mediaType))
+        {
+            return "document";
+        }
+
+        return mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+            ? "image"
+            : mediaType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase)
+            ? "audio"
+            : mediaType.StartsWith("video/", StringComparison.OrdinalIgnoreCase)
+            ? "video"
+            : "document";
+    }
+
+    private static string ResolveMediaType(params string?[] mediaTypes)
+    {
+        foreach (var mediaType in mediaTypes)
+        {
+            if (!string.IsNullOrWhiteSpace(mediaType))
+            {
+                return mediaType;
+            }
+        }
+
+        return "application/octet-stream";
+    }
+
+    private static string Coalesce(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static ChatMessage CreateChatMessage(AGUIChatContentRole role, List<AIContent> contents, string? messageId)
+    {
+        return role switch
+        {
+            AGUIChatContentRole.Assistant when contents.Count == 1 && contents[0] is TextContent textContent =>
+                new ChatMessage(ChatRole.Assistant, textContent.Text)
+                {
+                    MessageId = messageId
+                },
+            _ => new ChatMessage(ChatRole.Assistant, contents)
+            {
+                MessageId = messageId
+            }
+        };
+    }
+
     public static ChatRole MapChatRole(string role) =>
         string.Equals(role, AGUIRoles.System, StringComparison.OrdinalIgnoreCase) ? ChatRole.System :
         string.Equals(role, AGUIRoles.User, StringComparison.OrdinalIgnoreCase) ? ChatRole.User :
@@ -295,4 +603,10 @@ internal static class AGUIChatMessageExtensions
         string.Equals(role, AGUIRoles.Tool, StringComparison.OrdinalIgnoreCase) ? ChatRole.Tool :
         string.Equals(role, AGUIRoles.Reasoning, StringComparison.OrdinalIgnoreCase) ? ChatRole.Assistant :
         throw new InvalidOperationException($"Unknown chat role: {role}");
+}
+
+internal enum AGUIChatContentRole
+{
+    Unknown,
+    Assistant
 }

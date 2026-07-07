@@ -226,7 +226,7 @@ public sealed class AGUIChatMessageExtensionsTests
         AGUIMessage aguiMessage = Assert.Single(aguiMessages);
         Assert.Equal(AGUIRoles.Tool, aguiMessage.Role);
         Assert.Equal("call_123", ((AGUIToolMessage)aguiMessage).ToolCallId);
-        Assert.NotEmpty(((AGUIToolMessage)aguiMessage).Content);
+        Assert.NotEmpty((string)((AGUIToolMessage)aguiMessage).Content);
         // Content should be serialized JSON
         Assert.Contains("temperature", ((AGUIToolMessage)aguiMessage).Content);
         Assert.Contains("72", ((AGUIToolMessage)aguiMessage).Content);
@@ -288,6 +288,93 @@ public sealed class AGUIChatMessageExtensionsTests
         FunctionResultContent result = Assert.IsType<FunctionResultContent>(message.Contents[0]);
         Assert.Equal("call_abc", result.CallId);
         Assert.NotNull(result.Result);
+    }
+
+    [Fact]
+    public void AsChatMessages_WithContentBlocks_ConvertsToChatContents()
+    {
+        // Arrange
+        const string ImageUrl = "https://example.com/image.png";
+        AGUIMessageContent userContent = new(
+            new[]
+            {
+                new AGUIMessageContentBlock
+                {
+                    Type = "text",
+                    Text = "Here is an image:"
+                },
+                new AGUIMessageContentBlock
+                {
+                    Type = "image",
+                    Source = new AGUIMessageContentSource
+                    {
+                        Type = "url",
+                        Value = ImageUrl,
+                        MimeType = "image/png"
+                    }
+                }
+            });
+
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIUserMessage
+            {
+                Id = "msg1",
+                Content = userContent
+            }
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        ChatMessage chatMessage = Assert.Single(chatMessages);
+        Assert.Equal(ChatRole.User, chatMessage.Role);
+        List<AIContent> contents = [.. chatMessage.Contents];
+        Assert.Equal(2, contents.Count);
+        var textContent = Assert.IsType<TextContent>(contents[0]);
+        Assert.Equal("Here is an image:", textContent.Text);
+        var imageContent = Assert.IsType<UriContent>(contents[1]);
+        Assert.Equal(ImageUrl, imageContent.Uri?.ToString());
+        Assert.Equal("image/png", imageContent.MediaType);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithMixedChatContents_ConvertsToContentBlocks()
+    {
+        // Arrange
+        List<ChatMessage> chatMessages =
+        [
+            new ChatMessage(ChatRole.User,
+            [
+                new TextContent("Here is an image: "),
+                new UriContent("https://example.com/image.png", "image/png")
+            ])
+            {
+                MessageId = "msg1"
+            }
+        ];
+
+        // Act
+        AGUIMessage aguiMessage = chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).Single();
+
+        // Assert
+        var userMessage = Assert.IsType<AGUIUserMessage>(aguiMessage);
+        Assert.Equal("msg1", userMessage.Id);
+        Assert.False(userMessage.Content.IsText);
+        Assert.NotNull(userMessage.Content.Blocks);
+        Assert.Equal(2, userMessage.Content.Blocks.Length);
+
+        AGUIMessageContentBlock textBlock = userMessage.Content.Blocks[0];
+        Assert.Equal("text", textBlock.Type);
+        Assert.Equal("Here is an image: ", textBlock.Text);
+
+        AGUIMessageContentBlock imageBlock = userMessage.Content.Blocks[1];
+        Assert.Equal("image", imageBlock.Type);
+        Assert.NotNull(imageBlock.Source);
+        Assert.Equal("url", imageBlock.Source!.Type);
+        Assert.Equal("https://example.com/image.png", imageBlock.Source.Value);
+        Assert.Equal("image/png", imageBlock.Source.MimeType);
     }
 
     [Fact]

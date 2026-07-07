@@ -65,6 +65,57 @@ public sealed class AGUIJsonSerializerContextTests
     }
 
     [Fact]
+    public void RunAgentInput_Deserializes_FromJsonWithContentBlocks()
+    {
+        // Arrange
+        const string Json = """
+            {
+                "threadId": "thread1",
+                "runId": "run1",
+                "messages": [
+                    {
+                        "id": "m1",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Hello"
+                            },
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "url",
+                                    "value": "https://example.com/hero.png",
+                                    "mimeType": "image/png"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+            """;
+
+        // Act
+        RunAgentInput? input = JsonSerializer.Deserialize(Json, AGUIJsonSerializerContext.Default.RunAgentInput);
+
+        // Assert
+        Assert.NotNull(input);
+        AGUIMessage message = Assert.Single(input.Messages);
+        var userMessage = Assert.IsType<AGUIUserMessage>(message);
+        Assert.False(userMessage.Content.IsText);
+        Assert.NotNull(userMessage.Content.Blocks);
+        Assert.Equal(2, userMessage.Content.Blocks.Length);
+        Assert.Equal("text", userMessage.Content.Blocks[0].Type);
+        Assert.Equal("Hello", userMessage.Content.Blocks[0].Text);
+        var imageBlock = Assert.IsType<AGUIMessageContentBlock>(userMessage.Content.Blocks[1]);
+        Assert.Equal("image", imageBlock.Type);
+        Assert.NotNull(imageBlock.Source);
+        Assert.Equal("url", imageBlock.Source!.Type);
+        Assert.Equal("https://example.com/hero.png", imageBlock.Source.Value);
+        Assert.Equal("image/png", imageBlock.Source.MimeType);
+    }
+
+    [Fact]
     public void RunAgentInput_Deserializes_FromJsonWithReasoningMessages()
     {
         // Arrange
@@ -105,6 +156,57 @@ public sealed class AGUIJsonSerializerContextTests
         Assert.Equal("I need to consider this.", reasoningMessage.Content);
         Assert.Equal("ErgDCkgIDB...", reasoningMessage.EncryptedValue);
         Assert.IsType<AGUIAssistantMessage>(messages[2]);
+    }
+
+    [Fact]
+    public void RunAgentInput_Serializes_ContentArrayFromMessageBlocks()
+    {
+        // Arrange
+        RunAgentInput input = new()
+        {
+            ThreadId = "thread1",
+            RunId = "run1",
+            Messages =
+            [
+                new AGUIUserMessage
+                {
+                    Id = "m1",
+                    Content = new AGUIMessageContent(
+                        new[]
+                        {
+                            new AGUIMessageContentBlock
+                            {
+                                Type = "text",
+                                Text = "Hello"
+                            },
+                            new AGUIMessageContentBlock
+                            {
+                                Type = "image",
+                                Source = new AGUIMessageContentSource
+                                {
+                                    Type = "url",
+                                    Value = "https://example.com/hero.png",
+                                    MimeType = "image/png"
+                                }
+                            }
+                        })
+                }
+            ]
+        };
+
+        // Act
+        string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
+        JsonElement root = JsonElement.Parse(json);
+
+        // Assert
+        Assert.True(root.TryGetProperty("messages", out JsonElement messages));
+        JsonElement firstMessage = messages[0];
+        JsonElement content = firstMessage.GetProperty("content");
+        Assert.Equal(JsonValueKind.Array, content.ValueKind);
+        Assert.Equal("Hello", content[0].GetProperty("text").GetString());
+        Assert.Equal("image", content[1].GetProperty("type").GetString());
+        Assert.Equal("url", content[1].GetProperty("source").GetProperty("type").GetString());
+        Assert.Equal("https://example.com/hero.png", content[1].GetProperty("source").GetProperty("value").GetString());
     }
 
     [Fact]
@@ -647,7 +749,7 @@ public sealed class AGUIJsonSerializerContextTests
         Assert.NotNull(deserialized);
         Assert.Equal(original.Id, deserialized.Id);
         Assert.Equal(original.Role, deserialized.Role);
-        Assert.Equal(((AGUIAssistantMessage)original).Content, ((AGUIAssistantMessage)deserialized).Content);
+        Assert.Equal(((AGUIAssistantMessage)original).Content.ToString(), ((AGUIAssistantMessage)deserialized).Content.ToString());
     }
 
     [Fact]
