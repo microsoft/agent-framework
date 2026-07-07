@@ -12,8 +12,8 @@ var existingFoundryResourceGroup = builder.AddParameter("existingFoundryResource
 foundry.AsExisting(existingFoundryName, existingFoundryResourceGroup);
 
 // Add the writer agent service
-var writerAgent = builder.AddProject<Projects.WriterAgent>("writer-agent")
-    .WithHttpHealthCheck("/health")
+var writerAgent = builder.AddProject<Projects.WriterAgent>("writer-agent", launchProfileName: "https")
+    .WithHttpHealthCheck("/health", endpointName: "https")
     .WithReference(foundry).WaitFor(foundry);
 
 // Add the editor agent service

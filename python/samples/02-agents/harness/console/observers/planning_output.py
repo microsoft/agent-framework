@@ -135,7 +135,17 @@ class PlanningOutputObserver(ConsoleObserver):
         from agent_framework import get_agent_mode
 
         try:
-            current_mode = get_agent_mode(session)
+            # Thread the provider's own configuration (source id, default mode, and the set of
+            # available modes) so this read matches what the provider resolves in ``before_run``.
+            # ``get_agent_mode`` persists the resolved default into session state, so reading with
+            # the built-in default here would wrongly store ``plan`` and override the provider's
+            # configured default (e.g. ``execute``) before the agent ever runs.
+            current_mode = get_agent_mode(
+                session,
+                source_id=self._mode_provider.source_id,
+                default_mode=self._mode_provider.default_mode,
+                available_modes=self._mode_provider.available_modes,
+            )
         except (AttributeError, TypeError):
             return True  # No mode provider → treat as planning
         return current_mode.lower() == self._plan_mode_name.lower()
@@ -218,7 +228,12 @@ class PlanningOutputObserver(ConsoleObserver):
             if selection == approve_option:
                 from agent_framework import set_agent_mode
 
-                set_agent_mode(session, self._execution_mode_name)
+                set_agent_mode(
+                    session,
+                    self._execution_mode_name,
+                    source_id=self._mode_provider.source_id,
+                    available_modes=self._mode_provider.available_modes,
+                )
                 exec_color = self._mode_colors.get(self._execution_mode_name)
                 ux.set_mode(self._execution_mode_name, exec_color)
                 ux.append_info_line(

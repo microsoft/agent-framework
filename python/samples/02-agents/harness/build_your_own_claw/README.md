@@ -1,11 +1,12 @@
-# Build your own agent harness and claw — Python samples
+# Build your own claw and agent harness — Python samples
 
-Runnable Python samples for the [**"Build your own agent harness and claw with Microsoft Agent Framework"** blog](https://devblogs.microsoft.com/agent-framework/build-your-own-claw-and-agent-harness-with-microsoft-agent-framework)
+Runnable Python samples for the [**"Build your own claw and agent harness with Microsoft Agent Framework"** blog](https://devblogs.microsoft.com/agent-framework/build-your-own-claw-and-agent-harness-with-microsoft-agent-framework)
 series. Each step builds a personal finance / investing assistant on top of
 `create_harness_agent`, reusing the shared harness `console` package in the parent `harness/`
 directory.
 
 - **Part 1 — `claw_step01_meet_your_claw.py`** — the minimal harness.
+- **Part 2 — `claw_step02_working_with_data.py`** — file access, approvals, and durable memory.
 
 ## Prerequisites
 
@@ -58,4 +59,60 @@ The sample starts an interactive loop. Try these in order:
    `/todos` to see the list and `/mode` to inspect the current mode.
 
 ---
+
+## Part 2 — Working with your data, safely
+
+Teaches the assistant to work with *your* data safely.
+
+### What this sample demonstrates
+
+- **File access** — the agent reads a pre-populated `working/portfolio.csv` and writes reports
+  with the `file_access_*` tools. File access is on by default; the sample points its store at the
+  sample's `working/` folder via `create_harness_agent(file_access_store=...)`.
+- **Approvals** — file-access tools require approval by default, but the sample wires the built-in
+  `read_only_tools_auto_approval_rule` so reads/lists/searches are frictionless while saving and
+  deleting still pause for approval. The `place_trade` tool is marked
+  `approval_mode="always_require"`, so the harness asks you to approve or deny before any trade
+  runs. The trade is simulated.
+- **Durable memory, two ways:**
+  - **File memory** (coarse-grained, explicit) — the agent reads/writes files such as
+    `watchlist.md`. File memory is on by default; its files live on disk under
+    `{cwd}/agent-file-memory/<session-id>/`, so they persist across runs on this machine. A new
+    session starts empty; use `/session-export` and `/session-import` to preserve the session id so a
+    relaunch re-links to its memory files (no fixed folder or owner id required).
+  - **Foundry memory** (fine-grained, automatic) — Microsoft Foundry extracts durable facts from
+    the conversation. Opt-in; see below.
+
+### Additional environment variables (optional — enable Foundry memory)
+
+```bash
+export FOUNDRY_MEMORY_STORE="claw-finance-memory"
+export FOUNDRY_EMBEDDING_MODEL="text-embedding-3-small"
+```
+
+When these are not set, the sample runs with file memory only and prints a note.
+
+### Running
+
+```bash
+uv run python/samples/02-agents/harness/build_your_own_claw/claw_step02_working_with_data.py
+```
+
+### What to expect
+
+Try these in order (the sample starts in **execute** mode — quick lookups don't need a plan):
+
+1. `What's in my portfolio?` — the agent reads `portfolio.csv` with the file_access tools.
+2. `Write me a short report on my portfolio and save it.` — the agent writes a Markdown file under
+   `working/`; saving is a write, so **you are prompted to approve** before the file is created.
+3. `I'm a conservative investor saving for a house in two years.` — a durable fact (recalled later
+   by Foundry memory when enabled).
+4. `Buy 10 shares of MSFT.` — the agent calls `place_trade`; **you are prompted to approve or
+   deny** before it runs.
+5. `Add SPY to my watchlist.` — saved to `watchlist.md` in file memory.
+
+Foundry memory (when enabled) recalls facts about you in any new session. File memory (the
+watchlist) lives on disk keyed by session id, so `/session-export` before you quit and
+`/session-import` after relaunching to re-link the relaunched session to its files, then ask
+*"What's on my watchlist?"* or *"What do you know about me?"*.
 

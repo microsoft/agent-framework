@@ -585,20 +585,37 @@ class MCPTool:
         self,
         mcp_type: types.CallToolResult,
     ) -> list[Content]:
-        """Parse an MCP CallToolResult into a list of Content items."""
+        """Parse an MCP CallToolResult into a list of Content items.
+
+        If the server attached a ``_meta`` payload to the tool result (e.g. for
+        Information Flow Control labels under the ``ifc`` key), a copy of that
+        payload is stamped onto each produced :class:`Content` instance under
+        ``additional_properties["_meta"]``.  Downstream layers (such as
+        :class:`agent_framework.security.SecureMCPToolProxy`) consume this key
+        to derive per-item security labels.
+        The sentinel is intentionally generic so any MCP server's ``_meta``
+        keys (current or future) can be interpreted by higher-level code.
+        """
         from mcp import types
+
+        raw_meta = mcp_type.meta
+        meta: dict[str, Any] | None = dict(raw_meta) if isinstance(raw_meta, Mapping) else None
+        # Stamp the server ``_meta`` payload directly via additional_properties on
+        # each newly constructed Content; empty when the server provided no meta.
+        additional_kwargs: dict[str, Any] = {"additional_properties": {"_meta": meta}} if meta else {}
 
         result: list[Content] = []
         for item in mcp_type.content:
             match item:
                 case types.TextContent():
-                    result.append(Content.from_text(item.text))
+                    result.append(Content.from_text(item.text, **additional_kwargs))
                 case types.ImageContent() | types.AudioContent():
                     decoded = base64.b64decode(item.data)
                     result.append(
                         Content.from_data(
                             data=decoded,
                             media_type=item.mimeType,
+                            **additional_kwargs,
                         )
                     )
                 case types.ResourceLink():
@@ -606,12 +623,13 @@ class MCPTool:
                         Content.from_uri(
                             uri=str(item.uri),
                             media_type=item.mimeType,
+                            **additional_kwargs,
                         )
                     )
                 case types.EmbeddedResource():
                     match item.resource:
                         case types.TextResourceContents():
-                            result.append(Content.from_text(item.resource.text))
+                            result.append(Content.from_text(item.resource.text, **additional_kwargs))
                         case types.BlobResourceContents():
                             blob = item.resource.blob
                             mime = item.resource.mimeType or "application/octet-stream"
@@ -621,16 +639,17 @@ class MCPTool:
                                 Content.from_uri(
                                     uri=blob,
                                     media_type=mime,
+                                    **additional_kwargs,
                                 )
                             )
                 case _:
-                    result.append(Content.from_text(str(item)))
+                    result.append(Content.from_text(str(item), **additional_kwargs))
 
         if mcp_type.structuredContent is not None:
             result.append(Content.from_text(json.dumps(mcp_type.structuredContent, default=str)))
 
         if not result:
-            result.append(Content.from_text("null"))
+            result.append(Content.from_text("null", **additional_kwargs))
         return result
 
     def _parse_content_from_mcp(

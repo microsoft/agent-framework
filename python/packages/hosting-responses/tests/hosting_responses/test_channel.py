@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message
+from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ServiceSessionId
 from agent_framework_hosting import (
     AgentFrameworkHost,
     HostedRunResult,
@@ -65,7 +65,7 @@ class _FakeAgent:
     def create_session(self, *, session_id: str | None = None) -> Any:
         return {"session_id": session_id}
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> Any:
+    def get_session(self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None) -> Any:
         return {"service_session_id": service_session_id, "session_id": session_id}
 
     def run(self, messages: Any = None, *, stream: bool = False, **kwargs: Any) -> Any:

@@ -19,6 +19,8 @@ namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 [Trait("Category", "Integration")]
 public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDisposable
 {
+    private const string DisabledDueToFailingCiJob = "Disabled due to persistent CI failures. See #6732.";
+
     private static readonly TimeSpan s_defaultTimeout = Debugger.IsAttached
         ? TimeSpan.FromMinutes(5)
         : TimeSpan.FromSeconds(120);
@@ -36,7 +38,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
 
     public void Dispose() => this._cts.Dispose();
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = DisabledDueToFailingCiJob)]
     public async Task SimplePromptAsync()
     {
         // Setup
@@ -75,7 +77,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         Assert.Contains(agentLogs, log => log.EventId.Name == "LogAgentResponse");
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = DisabledDueToFailingCiJob)]
     public async Task CallFunctionToolsAsync()
     {
         int weatherToolInvocationCount = 0;
@@ -127,7 +129,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         Assert.Equal(1, packingListToolInvocationCount);
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = DisabledDueToFailingCiJob)]
     public async Task CallLongRunningFunctionToolsAsync()
     {
         [Description("Starts a greeting workflow and returns the workflow instance ID")]

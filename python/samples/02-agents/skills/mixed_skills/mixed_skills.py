@@ -23,6 +23,7 @@ from agent_framework import (
     InMemorySkillsSource,
     SkillFrontmatter,
     SkillsProvider,
+    ToolApprovalMiddleware,
 )
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
@@ -213,20 +214,25 @@ async def main() -> None:
         )
     )
 
-    # Run the agent
+    # Run the agent. All skill tools require approval by default; auto-approve
+    # them so the sample runs unattended. See the script_approval /
+    # skills_auto_approval samples for approval handling.
     async with Agent(
         client=client,
         instructions="You are a helpful assistant that can convert units, volumes, and temperatures.",
         context_providers=[skills_provider],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[SkillsProvider.all_tools_auto_approval_rule])],
     ) as agent:
         # Ask the agent to use all three skills
         print("Converting with mixed skills (file + code + class)")
         print("-" * 60)
+        session = agent.create_session()
         response = await agent.run(
             "I need three conversions: "
             "1) How many kilometers is a marathon (26.2 miles)? "
             "2) How many liters is a 5-gallon bucket? "
-            "3) What is 98.6°F in Celsius?"
+            "3) What is 98.6°F in Celsius?",
+            session=session,
         )
         print(f"Agent: {response}\n")
 

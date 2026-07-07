@@ -9,7 +9,7 @@ integrations, many of which are lazy-loaded from optional packages.
 """
 
 import importlib.metadata
-from typing import Final
+from typing import TYPE_CHECKING, Any, Final
 
 try:
     _version = importlib.metadata.version(__name__)
@@ -99,6 +99,7 @@ from ._harness._file_access import (
     FileAccessProvider,
     FileSearchMatch,
     FileSearchResult,
+    FileStoreEntry,
     FileSystemAgentFileStore,
     InMemoryAgentFileStore,
 )
@@ -111,6 +112,7 @@ from ._harness._loop import (
     AgentLoopMiddleware,
     JudgeVerdict,
     background_tasks_running,
+    background_tasks_running_message,
     todos_remaining,
     todos_remaining_message,
 )
@@ -173,12 +175,14 @@ from ._sessions import (
     FileHistoryProvider,
     HistoryProvider,
     InMemoryHistoryProvider,
+    ServiceSessionId,
     SessionContext,
     register_state_type,
 )
 from ._settings import SecretString, load_settings
 from ._skills import (
     AggregatingSkillsSource,
+    CachingSkillsSource,
     ClassSkill,
     DeduplicatingSkillsSource,
     DelegatingSkillsSource,
@@ -197,9 +201,11 @@ from ._skills import (
     SkillFrontmatter,
     SkillResource,
     SkillScript,
+    SkillScriptArgumentParser,
     SkillScriptRunner,
     SkillsProvider,
     SkillsSource,
+    SkillsSourceContext,
 )
 from ._telemetry import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -264,6 +270,7 @@ from ._workflows._agent_executor import (
 )
 from ._workflows._agent_utils import resolve_agent_id
 from ._workflows._checkpoint import (
+    CheckpointID,
     CheckpointStorage,
     FileCheckpointStorage,
     InMemoryCheckpointStorage,
@@ -307,7 +314,6 @@ from ._workflows._functional import (
     workflow,
 )
 from ._workflows._request_info_mixin import response_handler
-from ._workflows._runner import Runner
 from ._workflows._runner_context import (
     InProcRunnerContext,
     RunnerContext,
@@ -394,6 +400,7 @@ __all__ = [
     "BaseAgent",
     "BaseChatClient",
     "BaseEmbeddingClient",
+    "CachingSkillsSource",
     "Case",
     "CharacterEstimatorTokenizer",
     "ChatAndFunctionMiddlewareTypes",
@@ -405,6 +412,7 @@ __all__ = [
     "ChatResponse",
     "ChatResponseUpdate",
     "CheckResult",
+    "CheckpointID",
     "CheckpointStorage",
     "ClassSkill",
     "CompactionProvider",
@@ -445,6 +453,7 @@ __all__ = [
     "FileSkill",
     "FileSkillScript",
     "FileSkillsSource",
+    "FileStoreEntry",
     "FileSystemAgentFileStore",
     "FilteringSkillsSource",
     "FinalT",
@@ -503,15 +512,18 @@ __all__ = [
     "SamplingApprovalCallback",
     "SecretString",
     "SelectiveToolCallCompactionStrategy",
+    "ServiceSessionId",
     "SessionContext",
     "SingleEdgeGroup",
     "Skill",
     "SkillFrontmatter",
     "SkillResource",
     "SkillScript",
+    "SkillScriptArgumentParser",
     "SkillScriptRunner",
     "SkillsProvider",
     "SkillsSource",
+    "SkillsSourceContext",
     "SlidingWindowStrategy",
     "StepWrapper",
     "SubWorkflowRequestMessage",
@@ -576,6 +588,7 @@ __all__ = [
     "annotate_message_groups",
     "apply_compaction",
     "background_tasks_running",
+    "background_tasks_running_message",
     "chat_middleware",
     "create_always_approve_tool_response",
     "create_always_approve_tool_with_arguments_response",
@@ -618,3 +631,20 @@ __all__ = [
     "validate_workflow_graph",
     "workflow",
 ]
+
+if TYPE_CHECKING:
+    from ._workflows._runner import Runner
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily resolve deprecated public names, emitting a ``DeprecationWarning``.
+
+    ``Runner`` remains importable from ``agent_framework`` for backward
+    compatibility but is deprecated and slated for removal from the public API.
+    """
+    if name == "Runner":
+        from ._workflows._runner import Runner, warn_runner_deprecated
+
+        warn_runner_deprecated()
+        return Runner
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

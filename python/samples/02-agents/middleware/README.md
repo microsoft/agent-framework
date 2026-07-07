@@ -39,3 +39,12 @@ uv run samples/02-agents/middleware/usage_tracking_middleware.py
 ```
 
 The sample forces a tool call so you can see middleware output for each inner model call in both non-streaming and streaming modes.
+
+## Security Considerations
+
+`AgentLoopMiddleware.with_judge` (used by `agent_loop_middleware_judge.py` and
+`agent_loop_middleware_report.py`) is an explicit opt-in to sending the original request and the
+agent's latest response to a second, external judge chat client on every iteration. A compromised
+or malicious judge endpoint could exfiltrate that data, or return a manipulated verdict/gap
+analysis that gets fed back into the loop as feedback — a form of indirect prompt injection. Only
+configure a judge client that points at a service you trust as much as the primary model.

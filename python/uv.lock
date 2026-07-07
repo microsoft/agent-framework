@@ -116,7 +116,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework"
-version = "1.9.0"
+version = "1.10.0"
 source = { virtual = "." }
 dependencies = [
     { name = "agent-framework-core", extra = ["all"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -192,7 +192,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-ag-ui"
-version = "1.0.0rc5"
+version = "1.0.0rc7"
 source = { editable = "packages/ag-ui" }
 dependencies = [
     { name = "ag-ui-protocol", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -209,9 +209,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag-ui-protocol", specifier = ">=0.1.16,<0.2" },
+    { name = "ag-ui-protocol", specifier = ">=0.1.19,<0.2" },
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "fastapi", specifier = ">=0.115.0,<0.133.1" },
+    { name = "fastapi", specifier = ">=0.115.0,<0.138.1" },
     { name = "httpx", marker = "extra == 'dev'", specifier = "==0.28.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.1.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0,<1" },
@@ -220,7 +220,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "agent-framework-anthropic"
-version = "1.0.0b260618"
+version = "1.0.0b260630"
 source = { editable = "packages/anthropic" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -235,7 +235,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-azure-ai-search"
-version = "1.0.0b260521"
+version = "1.0.0b260630"
 source = { editable = "packages/azure-ai-search" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -245,7 +245,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "azure-search-documents", specifier = ">=11.7.0b2,<11.7.0b3" },
+    { name = "azure-search-documents", specifier = ">=12.0.0,<13" },
 ]
 
 [[package]]
@@ -286,7 +286,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-azurefunctions"
-version = "1.0.0b260609"
+version = "1.0.0b260630"
 source = { editable = "packages/azurefunctions" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -308,7 +308,7 @@ dev = []
 
 [[package]]
 name = "agent-framework-bedrock"
-version = "1.0.0b260604"
+version = "1.0.0b260630"
 source = { editable = "packages/bedrock" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -370,7 +370,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-core"
-version = "1.9.0"
+version = "1.10.0"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "opentelemetry-api", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -479,7 +479,7 @@ dev = [{ name = "types-pyyaml", specifier = "==6.0.12.20260518" }]
 
 [[package]]
 name = "agent-framework-devui"
-version = "1.0.0b260528"
+version = "1.0.0b260630"
 source = { editable = "packages/devui" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -504,7 +504,7 @@ dev = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-orchestrations", marker = "extra == 'dev'", editable = "packages/orchestrations" },
-    { name = "fastapi", specifier = ">=0.115.0,<0.133.1" },
+    { name = "fastapi", specifier = ">=0.115.0,<0.138.1" },
     { name = "openai", specifier = ">=1.99.0,<3" },
     { name = "opentelemetry-sdk", specifier = ">=1.39.0,<2" },
     { name = "pytest", marker = "extra == 'all'", specifier = "==9.1.0" },
@@ -517,7 +517,7 @@ provides-extras = ["dev", "all"]
 
 [[package]]
 name = "agent-framework-durabletask"
-version = "1.0.0b260521"
+version = "1.0.0b260630"
 source = { editable = "packages/durabletask" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -544,7 +544,7 @@ dev = [{ name = "types-python-dateutil", specifier = "==2.9.0.20260518" }]
 
 [[package]]
 name = "agent-framework-foundry"
-version = "1.8.2"
+version = "1.10.0"
 source = { editable = "packages/foundry" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -565,22 +565,24 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-foundry-hosting"
-version = "1.0.0a260618"
+version = "1.0.0a260630"
 source = { editable = "packages/foundry_hosting" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-agentserver-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-agentserver-invocations", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-agentserver-responses", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "mcp", extra = ["ws"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "azure-ai-agentserver-core", specifier = ">=2.0.0b3,<3" },
-    { name = "azure-ai-agentserver-invocations", specifier = ">=1.0.0b3,<2" },
-    { name = "azure-ai-agentserver-responses", specifier = ">=1.0.0b7,<2" },
+    { name = "azure-ai-agentserver-core", specifier = ">=2.0.0b7,<3" },
+    { name = "azure-ai-agentserver-invocations", specifier = ">=1.0.0b6,<2" },
+    { name = "azure-ai-agentserver-responses", specifier = ">=1.0.0b8,<2" },
+    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "mcp", specifier = ">=1.24.0,<2" },
 ]
 
@@ -603,7 +605,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-gemini"
-version = "1.0.0a260609"
+version = "1.0.0a260630"
 source = { editable = "packages/gemini" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -613,12 +615,12 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "google-genai", specifier = ">=1.65.0,<2.0.0" },
+    { name = "google-genai", specifier = ">=1.65.0,<3.0.0" },
 ]
 
 [[package]]
 name = "agent-framework-github-copilot"
-version = "1.0.0rc1"
+version = "1.0.0rc2"
 source = { editable = "packages/github_copilot" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -633,7 +635,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hosting"
-version = "1.0.0a260424"
+version = "1.0.0a260625"
 source = { editable = "packages/hosting" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -667,7 +669,7 @@ dev = [{ name = "httpx", specifier = ">=0.28.1" }]
 
 [[package]]
 name = "agent-framework-hosting-responses"
-version = "1.0.0a260424"
+version = "1.0.0a260625"
 source = { editable = "packages/hosting-responses" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -684,7 +686,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hosting-telegram"
-version = "1.0.0a260424"
+version = "1.0.0a260625"
 source = { editable = "packages/hosting-telegram" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -701,7 +703,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hyperlight"
-version = "1.0.0b260521"
+version = "1.0.0b260630"
 source = { editable = "packages/hyperlight" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -715,7 +717,7 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "hyperlight-sandbox", specifier = ">=0.4.0,<0.5" },
     { name = "hyperlight-sandbox-backend-wasm", marker = "(python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version < '3.14' and platform_machine == 'AMD64' and sys_platform == 'win32')", specifier = ">=0.4.0,<0.5" },
-    { name = "hyperlight-sandbox-python-guest", specifier = ">=0.4.0,<0.5" },
+    { name = "hyperlight-sandbox-python-guest", specifier = ">=0.4.0,<0.6" },
 ]
 
 [[package]]
@@ -847,7 +849,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-ollama"
-version = "1.0.0b260521"
+version = "1.0.0b260630"
 source = { editable = "packages/ollama" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -862,7 +864,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-openai"
-version = "1.8.2"
+version = "1.10.0"
 source = { editable = "packages/openai" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -888,7 +890,7 @@ requires-dist = [{ name = "agent-framework-core", editable = "packages/core" }]
 
 [[package]]
 name = "agent-framework-purview"
-version = "1.0.0b260521"
+version = "1.0.0b260630"
 source = { editable = "packages/purview" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -926,7 +928,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-tools"
-version = "1.0.0a260424"
+version = "1.0.0a260630"
 source = { editable = "packages/tools" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1273,7 +1275,7 @@ wheels = [
 
 [[package]]
 name = "azure-ai-agentserver-core"
-version = "2.0.0b6"
+version = "2.0.0b7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "hypercorn", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1282,26 +1284,26 @@ dependencies = [
     { name = "opentelemetry-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "starlette", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/97/41/5baa816ac74f16d4720e05bd6e9787e54474689efd1bea0ae1a419dd57d5/azure_ai_agentserver_core-2.0.0b6.tar.gz", hash = "sha256:f75258d94208e107cda7ec1b200df80bc7e882ebec2b7805f31795af6cf8def0", size = 47211, upload-time = "2026-06-12T13:50:51.183Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9a/6c/5e3a796274e70e899eac739bc4e81e7645de6e5146fb18b1a5b3d79297e5/azure_ai_agentserver_core-2.0.0b7.tar.gz", hash = "sha256:272265f7ab6dcda3cb518a5028394b6684992e0abde9cfc2dfc2e851a289eab7", size = 52702, upload-time = "2026-06-28T14:29:52.329Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/03/6b638d565d9e13b31fdffe7ad9ea4761c07f30616ab3d30f2b5737c4d936/azure_ai_agentserver_core-2.0.0b6-py3-none-any.whl", hash = "sha256:4c05e52a8d90f809cf24d9a6fff9371b897a1f1f1b66d69afbbb875734c4a3ce", size = 31891, upload-time = "2026-06-12T13:50:52.213Z" },
+    { url = "https://files.pythonhosted.org/packages/73/be/63747c3b1c6c7a41672568f34a41a7d54005201a7db552d928d64ea4f367/azure_ai_agentserver_core-2.0.0b7-py3-none-any.whl", hash = "sha256:9177be59054eb6644018ef8c82afa7de22379f65a2d9bf7382ba6bc4cd50f2ef", size = 35182, upload-time = "2026-06-28T14:29:53.348Z" },
 ]
 
 [[package]]
 name = "azure-ai-agentserver-invocations"
-version = "1.0.0b5"
+version = "1.0.0b6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-ai-agentserver-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/eb/cb/af9ba5d06d47249769279737280b82d4dbb9cafb7bc19df60053f183060f/azure_ai_agentserver_invocations-1.0.0b5.tar.gz", hash = "sha256:ddb300131375eb4755f64a7843784b341f21d26d2a80329218288a310dbebf24", size = 57965, upload-time = "2026-06-12T13:50:39.613Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0d/f4/c4ff1399795dd92fd56290ac3a1014817125e7fd44eb5a205fce043f0b46/azure_ai_agentserver_invocations-1.0.0b6.tar.gz", hash = "sha256:b8c04aa71dc42491f75443c5123d7ecf9c40318e35a05bb056e9786e98585fbd", size = 60512, upload-time = "2026-06-28T14:52:25.808Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d3/b9/8126693dec15df6a15508a7a30e259801dd70114c4b5f96ff457f2d89e76/azure_ai_agentserver_invocations-1.0.0b5-py3-none-any.whl", hash = "sha256:295923c2ece93afe053186fac90c9774199c3062b1ad323161c5084508577ec0", size = 19382, upload-time = "2026-06-12T13:50:40.568Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/46/ba7e11ab9dfdcdacd9e7d9cc824a03ee9dfcf9c46a5dc7a92028637da48c/azure_ai_agentserver_invocations-1.0.0b6-py3-none-any.whl", hash = "sha256:d264d9ad76a218097c1f3cce157698c972bb24a49c11cab934fe5db429fae6c5", size = 20266, upload-time = "2026-06-28T14:52:26.821Z" },
 ]
 
 [[package]]
 name = "azure-ai-agentserver-responses"
-version = "1.0.0b7"
+version = "1.0.0b8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1309,9 +1311,9 @@ dependencies = [
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "isodate", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f1/53/febb6f3453f5dc1e0b6dc47d4e5198b64605d1f83c847255946f74bc300e/azure_ai_agentserver_responses-1.0.0b7.tar.gz", hash = "sha256:2f67cdfc0219cb0ab86800dadb1cfdb40ab4aa0413dae7ffa5ea4ea84eec3eb0", size = 419032, upload-time = "2026-05-25T12:48:38.81Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/31/1f/7e7563705100f2d21c952a44d5a2e93a8193cc0a6013941bac9f52ad8874/azure_ai_agentserver_responses-1.0.0b8.tar.gz", hash = "sha256:bc0365fd70b7dabf9c9394dac5bbab08f772b59f865319d401cfde317b6832ef", size = 450099, upload-time = "2026-06-28T14:52:32.155Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/94/48825357e009f7db3b6b5d0a9344a7ab3304e32f06f50328b2393e3b06cb/azure_ai_agentserver_responses-1.0.0b7-py3-none-any.whl", hash = "sha256:efb5271f24a297bacde9769359308e54e870f66ad4d3b4826ae97a77e40e94d4", size = 268063, upload-time = "2026-05-25T12:48:40.817Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/0d/bb14df13b7d3d57decc72c0908677e229efcb24cad2ccce0c16fa736edce/azure_ai_agentserver_responses-1.0.0b8-py3-none-any.whl", hash = "sha256:4243de685ffb3c3a3c11c4f07e0156b20ea7f37aecfe6e8eec53f776734b3808", size = 269273, upload-time = "2026-06-28T14:52:33.533Z" },
 ]
 
 [[package]]
@@ -1357,15 +1359,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b9/d8/24342aea74fe75b0a8378b6eff665b9c1cb63f855c1a96f70a0095e474a2/azure_ai_projects-2.2.0.tar.gz", hash = "sha256:58ee31bb031cfb004051145c545294bb0d32de679c670c312ef384845bd72cef", size = 668496, upload-time = "2026-05-30T00:20:59.099Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/40/cf/90f27a2b48c9b748f84194b07e565f900e7f0ce0500da9b9f067dca599d3/azure_ai_projects-2.2.0-py3-none-any.whl", hash = "sha256:8f89bdaca4df1bd479d3bd2bd0f19a0905d60be6d17b84a69e8fabd82eac5906", size = 344307, upload-time = "2026-05-30T00:21:00.672Z" },
-]
-
-[[package]]
-name = "azure-common"
-version = "1.1.28"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/3e/71/f6f71a276e2e69264a97ad39ef850dca0a04fce67b12570730cb38d0ccac/azure-common-1.1.28.zip", hash = "sha256:4ac0cd3214e36b6a1b6a442686722a5d8cc449603aa833f3f0f40bda836704a3", size = 20914, upload-time = "2022-02-03T19:39:44.373Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/62/55/7f118b9c1b23ec15ca05d15a578d8207aa1706bc6f7c87218efffbbf875d/azure_common-1.1.28-py2.py3-none-any.whl", hash = "sha256:5c12d3dcf4ec20599ca6b0d3e09e86e146353d443e7fcc050c9a19c1f9df20ad", size = 14462, upload-time = "2022-02-03T19:39:42.417Z" },
 ]
 
 [[package]]
@@ -1496,17 +1489,16 @@ wheels = [
 
 [[package]]
 name = "azure-search-documents"
-version = "11.7.0b2"
+version = "12.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "azure-common", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "isodate", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f9/ba/bde0f03e0a742ba3bbcc929f91ed2f3b1420c2bb84c9a7f878f3b87ebfce/azure_search_documents-11.7.0b2.tar.gz", hash = "sha256:b6e039f8038ff2210d2057e704e867c6e29bb46bfcd400da4383e45e4b8bb189", size = 423956, upload-time = "2025-11-14T20:09:32.876Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/dc/bb4db263381aa5b29414e280a8535a343d877a3831a501ef39332174c85c/azure_search_documents-12.0.0.tar.gz", hash = "sha256:8e6d73ec0ed1623083435b757e34324db65d72d4e09cca061a59fc7e90c8ddbc", size = 386222, upload-time = "2026-05-01T20:28:22.269Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/26/ed4498374f9088818278ac225f2bea688b4ec979d81bf83a5355c8c366af/azure_search_documents-11.7.0b2-py3-none-any.whl", hash = "sha256:f82117b321344a84474269ed26df194c24cca619adc024d981b1b86aee3c6f05", size = 432037, upload-time = "2025-11-14T20:09:34.347Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/b1/4869a064dbb79fb4ecac684de51a8f8f7a93a315f3f9cc4bf8a65cc413cd/azure_search_documents-12.0.0-py3-none-any.whl", hash = "sha256:d88114e4179cd753845711042380a4571e7faa8619addf5e017928ebe37fc0d1", size = 352117, upload-time = "2026-05-01T20:28:23.989Z" },
 ]
 
 [[package]]
@@ -3326,7 +3318,7 @@ wheels = [
 
 [[package]]
 name = "huggingface-hub"
-version = "1.20.1"
+version = "1.21.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -3340,9 +3332,9 @@ dependencies = [
     { name = "typer", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e6/7e/fad82ad491b226e832d2da90a1a59f36acd4526cda8c726f639834754aa4/huggingface_hub-1.20.1.tar.gz", hash = "sha256:9f6d63bfbeab2d2a8357200a9bc4f18cd2c8bfac9579f792f5922e77bf6471d0", size = 859910, upload-time = "2026-06-18T22:06:53.348Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8f/77/ce3331f40cb2d021fe9b24c46c41e72faf74493621138e5eddac12bf5e1c/huggingface_hub-1.21.0.tar.gz", hash = "sha256:a44f222cd8f2f7c2eade30b5e7a04cac984a3235fa61ea87a0a5a31db77d561f", size = 861572, upload-time = "2026-06-25T13:09:26.356Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8e/b5/ff8516e74b459da3dce9567540c39f2d305ee7a2655109f6802873ff1588/huggingface_hub-1.20.1-py3-none-any.whl", hash = "sha256:274448a45c1ba6f112fe2fb168ead05574c654faa156904157a84085cfae14bd", size = 719837, upload-time = "2026-06-18T22:06:51.486Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/85/b505a99a133d9f99d21af182af416e9baef70bdeef019983479651e494c2/huggingface_hub-1.21.0-py3-none-any.whl", hash = "sha256:eadaa3678c512c82aea69e8675d90a184861e68de32f1105668628b4dce0e7cd", size = 721078, upload-time = "2026-06-25T13:09:24.402Z" },
 ]
 
 [[package]]
@@ -3872,7 +3864,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.87.4"
+version = "1.87.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -3888,9 +3880,9 @@ dependencies = [
     { name = "tiktoken", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "tokenizers", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cb/49/03c3b7be519d75e9dc7d7df4009b424aa5edabf34a10da88ebfd00f1f1d7/litellm-1.87.4.tar.gz", hash = "sha256:ef8add2f84e684ea4064cd7428e9538077fc2fed761c223c10d1c58ad6c90838", size = 15466911, upload-time = "2026-06-20T21:48:03.651Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a8/d2/60a60c0cdc0d630f20c65e1a03a424aa2486b52f151a355d5c1052c185c7/litellm-1.87.5.tar.gz", hash = "sha256:a12721c97f6928f69920e9fddc8fa05f1c08c19b825002b6f2e8fb731cc5aa64", size = 15501148, upload-time = "2026-06-24T18:26:35.001Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/09/ed/796fc350784ccc9c93a13675cc8adee7e13b025d4840f605b5b8dab0a556/litellm-1.87.4-py3-none-any.whl", hash = "sha256:103bc1c7c2e87c8869fd6859d651970a51cb44d191f9befd10919fb16535f5f7", size = 17118707, upload-time = "2026-06-20T21:48:00.009Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/cb/12700dfe8a7b3fbaea8e9fac17d0cfaab59c42bfe34b5523598e559caf9c/litellm-1.87.5-py3-none-any.whl", hash = "sha256:e586a1f4edc5e4949983c5a6d762252a7c240d3046d8aa85b877b3ea9a5fac60", size = 17167142, upload-time = "2026-06-24T18:26:31.65Z" },
 ]
 
 [package.optional-dependencies]
