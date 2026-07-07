@@ -111,6 +111,9 @@ def add_agent_framework_fastapi_endpoint(
             connection during long silent model runs (e.g. reasoning models). Defaults to 15. Set to None
             or 0 to disable.
     """
+    if keepalive_seconds is not None and keepalive_seconds < 0:
+        raise ValueError("keepalive_seconds must be >= 0 (use 0 or None to disable).")
+
     protocol_runner: AgentFrameworkAgent | AgentFrameworkWorkflow
     if isinstance(agent, AgentFrameworkWorkflow):
         protocol_runner = agent
@@ -178,7 +181,7 @@ def add_agent_framework_fastapi_endpoint(
 
                 # Producer task keeps the generator in a stable asyncio.Context (required for
                 # ContextVar.reset() in OTel hooks). See issue #6941.
-                queue: asyncio.Queue[Any] = asyncio.Queue()
+                queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
                 producer_error: dict[str, BaseException] = {}
 
                 async def _producer() -> None:
