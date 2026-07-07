@@ -10,7 +10,7 @@ import os
 # warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from textwrap import dedent
 
-from agent_framework import Agent, ClassSkill, SkillFrontmatter, SkillsProvider
+from agent_framework import Agent, ClassSkill, SkillFrontmatter, SkillsProvider, ToolApprovalMiddleware
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -119,15 +119,21 @@ async def main() -> None:
     # Instantiate the class-based skill and pass it to the provider
     unit_converter = UnitConverterSkill()
 
+    # All skill tools require approval by default; auto-approve them so the
+    # sample runs unattended. See the script_approval / skills_auto_approval
+    # samples for interactive and selective approval handling.
     async with Agent(
         client=client,
         instructions="You are a helpful assistant that can convert units.",
         context_providers=[SkillsProvider(unit_converter)],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[SkillsProvider.all_tools_auto_approval_rule])],
     ) as agent:
         print("Converting units with class-based skills")
         print("-" * 60)
+        session = agent.create_session()
         response = await agent.run(
-            "How many kilometers is a marathon (26.2 miles)? And how many pounds is 75 kilograms?"
+            "How many kilometers is a marathon (26.2 miles)? And how many pounds is 75 kilograms?",
+            session=session,
         )
         print(f"Agent: {response}\n")
 

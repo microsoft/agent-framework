@@ -22,7 +22,7 @@ async def test_workflow_wrapper_rejects_workflow_and_factory_at_once() -> None:
     @executor(id="start")
     async def start(message: Any, ctx: WorkflowContext) -> None:
         del message
-        await ctx.yield_output("ok")
+        await ctx.yield_output("ok")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     workflow = WorkflowBuilder(start_executor=start).build()
     with pytest.raises(ValueError, match="workflow_factory"):

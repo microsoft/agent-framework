@@ -344,8 +344,8 @@ class TestDurableAgentStateUsage:
             "total_token_count": 300,
         }
         # Add provider-specific fields (UsageDetails is a TypedDict but allows extra keys)
-        usage_details["prompt_tokens"] = 100  # type: ignore[typeddict-unknown-key]
-        usage_details["completion_tokens"] = 200  # type: ignore[typeddict-unknown-key]
+        usage_details["prompt_tokens"] = 100  # type: ignore[typeddict-unknown-key] # ty: ignore[invalid-key]
+        usage_details["completion_tokens"] = 200  # type: ignore[typeddict-unknown-key] # ty: ignore[invalid-key]
 
         usage = DurableAgentStateUsage.from_usage(usage_details)
 

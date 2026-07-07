@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -61,7 +62,7 @@ def test_register_additional_client_tools_assigns_when_configured() -> None:
     agent = Agent(client=mock_chat_client)
 
     tools = [DummyTool("x")]
-    register_additional_client_tools(agent, tools)
+    register_additional_client_tools(cast(Any, agent), tools)
 
     assert mock_chat_client.function_invocation_configuration["additional_tools"] == tools
 
@@ -73,7 +74,7 @@ def test_collect_server_tools_includes_mcp_tools_when_connected() -> None:
     mock_mcp = MockMCPTool([mcp_function1, mcp_function2], is_connected=True)
 
     agent = _create_chat_agent_with_tool("regular_tool")
-    agent.mcp_tools = [mock_mcp]
+    agent.mcp_tools = [cast(Any, mock_mcp)]
 
     tools = collect_server_tools(agent)
 
@@ -90,7 +91,7 @@ def test_collect_server_tools_excludes_mcp_tools_when_not_connected() -> None:
     mock_mcp = MockMCPTool([mcp_function], is_connected=False)
 
     agent = _create_chat_agent_with_tool("regular_tool")
-    agent.mcp_tools = [mock_mcp]
+    agent.mcp_tools = [cast(Any, mock_mcp)]
 
     tools = collect_server_tools(agent)
 
@@ -117,7 +118,7 @@ def test_collect_server_tools_with_mcp_tools_via_public_property() -> None:
     mock_mcp = MockMCPTool([mcp_function], is_connected=True)
 
     agent = _create_chat_agent_with_tool("regular_tool")
-    agent.mcp_tools = [mock_mcp]
+    agent.mcp_tools = [cast(Any, mock_mcp)]
 
     # Verify the public property works
     assert agent.mcp_tools == [mock_mcp]
@@ -135,7 +136,7 @@ def test_collect_server_tools_raises_on_duplicate_agent_and_mcp_tool_names() -> 
     mock_mcp = MockMCPTool([duplicate_tool], is_connected=True, name="docs-mcp")
 
     agent = _create_chat_agent_with_tool("regular_tool")
-    agent.mcp_tools = [mock_mcp]
+    agent.mcp_tools = [cast(Any, mock_mcp)]
 
     with pytest.raises(ValueError, match="Duplicate tool name 'regular_tool'"):
         collect_server_tools(agent)
@@ -151,7 +152,7 @@ def test_collect_server_tools_no_default_options() -> None:
         pass
 
     agent = MockAgent()
-    tools = collect_server_tools(agent)
+    tools = collect_server_tools(cast(Any, agent))
     assert tools == []
 
 
@@ -175,7 +176,7 @@ def test_register_additional_client_tools_no_chat_client() -> None:
     tools = [DummyTool("x")]
 
     # Should not raise
-    register_additional_client_tools(agent, tools)
+    register_additional_client_tools(cast(Any, agent), tools)
 
 
 def test_merge_tools_no_client_tools() -> None:

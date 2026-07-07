@@ -86,7 +86,7 @@ async def report_loop(client: FoundryChatClient, editor_client: FoundryChatClien
     #    builds the ``should_continue`` predicate; ``max_iterations`` caps planning + one-todo-per-turn
     #    drafting + the final assembly turn.
     todo_loop = AgentLoopMiddleware(
-        todos_remaining(todo_provider),
+        todos_remaining(),
         max_iterations=8,
     )
 

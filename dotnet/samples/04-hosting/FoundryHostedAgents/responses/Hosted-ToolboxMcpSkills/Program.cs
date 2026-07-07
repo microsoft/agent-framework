@@ -7,9 +7,16 @@
 // AgentSkillsProviderBuilder.UseMcpSkills().
 //
 // Required environment variables:
-//   FOUNDRY_PROJECT_ENDPOINT         - Azure AI Foundry project endpoint
-//   FOUNDRY_TOOLBOX_NAME              - Name of the Foundry Toolbox to connect to
-//   FOUNDRY_MODEL    - Model deployment name (default: gpt-5)
+//   FOUNDRY_PROJECT_ENDPOINT         - Foundry project endpoint
+//   TOOLBOX_NAME                     - Name of the Foundry Toolbox to connect to
+//
+// Optional:
+//   FOUNDRY_MODEL                    - Model deployment name (default: gpt-5)
+//
+// NOTE: All FOUNDRY_* and AGENT_* env-var prefixes (other than the platform-injected ones
+// listed above) are reserved by the Foundry container platform and rejected at agent-create.
+// Use TOOLBOX_NAME, not FOUNDRY_TOOLBOX_NAME, for the sample-owned toolbox name so it
+// survives deployment.
 
 using System.Net.Http.Headers;
 using Azure.AI.Projects;
@@ -27,8 +34,8 @@ Env.TraversePath().Load();
 var projectEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 var deployment = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5";
-var toolboxName = Environment.GetEnvironmentVariable("FOUNDRY_TOOLBOX_NAME")
-    ?? throw new InvalidOperationException("FOUNDRY_TOOLBOX_NAME is not set.");
+var toolboxName = Environment.GetEnvironmentVariable("TOOLBOX_NAME")
+    ?? throw new InvalidOperationException("TOOLBOX_NAME is not set.");
 
 // Build the Toolbox MCP URL from the project endpoint and toolbox name.
 var toolboxMcpServerUrl = $"{projectEndpoint.TrimEnd('/')}/toolboxes/{toolboxName}/mcp?api-version=v1";
@@ -84,7 +91,6 @@ AIAgent agent = new AIProjectClient(new Uri(projectEndpoint), credential)
 // ── Build the host ───────────────────────────────────────────────────────────
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
-builder.Services.AddDevTemporaryLocalContributorSetup(); // Local Docker debugging only - must not be used in production.
 
 var app = builder.Build();
 app.MapFoundryResponses();

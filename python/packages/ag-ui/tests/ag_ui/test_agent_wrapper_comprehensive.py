@@ -695,7 +695,7 @@ async def test_agent_with_use_service_session_is_false(streaming_chat_client_stu
     events: list[Any] = []
     async for event in wrapper.run(input_data):
         events.append(event)
-    assert request_service_session_id is None  # type: ignore[attr-defined] (service_session_id should be set)
+    assert request_service_session_id is None  # type: ignore[attr-defined]  # service_session_id should be set
 
 
 async def test_agent_with_use_service_session_is_true(streaming_chat_client_stub):
@@ -724,7 +724,7 @@ async def test_agent_with_use_service_session_is_true(streaming_chat_client_stub
         captured_service_session_id = session.service_session_id if session else None
         return original_run(*args, **kwargs)
 
-    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
 
     events: list[Any] = []
     async for event in wrapper.run(input_data):

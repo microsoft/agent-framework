@@ -19,9 +19,9 @@ from agent_framework.observability import EmbeddingTelemetryLayer
 from ollama import AsyncClient
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 
 logger = logging.getLogger("agent_framework.ollama")
@@ -120,7 +120,7 @@ class RawOllamaEmbeddingClient(
         self,
         values: Sequence[str],
         *,
-        options: OllamaEmbeddingOptionsT | None = None,  # type: ignore
+        options: OllamaEmbeddingOptionsT | None = None,
     ) -> GeneratedEmbeddings[list[float], OllamaEmbeddingOptionsT]:
         """Call the Ollama embed API.
 
@@ -156,7 +156,7 @@ class RawOllamaEmbeddingClient(
             Embedding(
                 vector=list(emb),
                 dimensions=len(emb),
-                model=response.get("model") or model,  # type: ignore[assignment]
+                model=response.get("model") or model,
             )
             for emb in response.get("embeddings", [])
         ]

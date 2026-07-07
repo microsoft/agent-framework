@@ -3,16 +3,18 @@
 using System;
 using System.ClientModel.Primitives;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using Azure.AI.AgentServer.Responses;
 using Azure.Core;
-using Azure.Identity;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -21,7 +23,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// Extension methods for registering agent-framework agents as Foundry Hosted Agents
 /// using the Azure AI Responses Server SDK.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class FoundryHostingExtensions
 {
     /// <summary>
@@ -122,31 +124,43 @@ public static class FoundryHostingExtensions
     /// <para>
     /// Example:
     /// <code>
-    /// builder.Services.AddFoundryToolboxes("my-toolbox", "another-toolbox");
+    /// builder.Services.AddFoundryToolboxes(credential, "my-toolbox", "another-toolbox");
     /// </code>
     /// </para>
     /// </remarks>
     /// <param name="services">The service collection.</param>
+    /// <param name="credential">The <see cref="TokenCredential"/> used to authenticate with the Foundry Toolboxes MCP proxy.</param>
     /// <param name="toolboxNames">Names of the Foundry toolboxes to connect to.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryToolboxes(
         this IServiceCollection services,
+        TokenCredential credential,
         params string[] toolboxNames)
-        => services.AddFoundryToolboxes(configureOptions: null, toolboxNames);
+        => services.AddFoundryToolboxes(credential, configureOptions: null, toolboxNames);
 
     /// <summary>
     /// Registers the Foundry Toolbox service with additional options configuration.
     /// </summary>
     /// <param name="services">The service collection.</param>
+    /// <param name="credential">The <see cref="TokenCredential"/> used to authenticate with the Foundry Toolboxes MCP proxy.</param>
     /// <param name="configureOptions">Callback to further configure <see cref="FoundryToolboxOptions"/> (e.g. set <see cref="FoundryToolboxOptions.StrictMode"/>).</param>
     /// <param name="toolboxNames">Names of the Foundry toolboxes to pre-register at startup.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryToolboxes(
         this IServiceCollection services,
+        TokenCredential credential,
         Action<FoundryToolboxOptions>? configureOptions,
         params string[] toolboxNames)
     {
         ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(credential);
+
+        if (services.Any(d => d.ServiceType == typeof(FoundryToolboxService)))
+        {
+            throw new InvalidOperationException(
+                $"{nameof(FoundryToolboxService)} is already registered. " +
+                $"Call {nameof(AddFoundryToolboxes)} only once per service collection.");
+        }
 
         services.Configure<FoundryToolboxOptions>(opt =>
         {
@@ -161,22 +175,20 @@ public static class FoundryHostingExtensions
             configureOptions?.Invoke(opt);
         });
 
-        // Register DefaultAzureCredential as the default TokenCredential if not already registered
-        services.TryAddSingleton<TokenCredential>(_ => new DefaultAzureCredential());
-
-        // Register FoundryToolboxService as a singleton so it can be injected into the handler
-        services.TryAddSingleton<FoundryToolboxService>();
-
-        // AddHostedService uses TryAddEnumerable internally, so calling AddFoundryToolboxes
-        // multiple times will not invoke StartAsync twice on the same singleton.
+        // Register FoundryToolboxService as a singleton, injecting the caller-provided credential
+        // directly rather than resolving TokenCredential from DI.
+        services.AddSingleton(sp => new FoundryToolboxService(
+            sp.GetRequiredService<IOptions<FoundryToolboxOptions>>(),
+            credential: credential,
+            sp.GetService<ILogger<FoundryToolboxService>>()));
         services.AddHostedService(sp => sp.GetRequiredService<FoundryToolboxService>());
 
         // Register the toolbox health check on the same /readiness pipeline that
         // MapFoundryResponses maps. This gates the Foundry hosted runtime's readiness
         // probe (per container-image-spec.md §3.1) on the outcome of the pre-registered
         // toolbox connections opened in FoundryToolboxService.StartAsync.
-        // AddCheck<T>(name, ...) does NOT dedupe by name, so guard against duplicate
-        // registration when AddFoundryToolboxes is called multiple times.
+        // AddCheck<T>(name, ...) does NOT dedupe by name, so guard against a host that
+        // already registered a health check with this name.
         const string HealthCheckName = "foundry-toolbox";
         services.AddHealthChecks();
         services.Configure<HealthCheckServiceOptions>(opts =>

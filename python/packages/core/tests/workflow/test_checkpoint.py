@@ -79,8 +79,8 @@ def test_workflow_checkpoint_custom_values():
         workflow_name="test-workflow-456",
         graph_signature_hash="test-hash-456",
         timestamp=custom_timestamp,
-        messages={"executor1": [{"data": "test"}]},  # type: ignore[arg-type]  # raw dict for serialization test
-        pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type]  # raw dict for serialization test
+        messages={"executor1": [{"data": "test"}]},  # type: ignore[arg-type, list-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
+        pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type, dict-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
         state={"key": "value"},
         iteration_count=5,
         metadata={"test": True},
@@ -104,7 +104,7 @@ def test_workflow_checkpoint_to_dict():
         checkpoint_id="test-id",
         workflow_name="test-workflow",
         graph_signature_hash="test-hash",
-        messages={"executor1": [{"data": "test"}]},  # type: ignore[arg-type]  # raw dict for serialization test
+        messages={"executor1": [{"data": "test"}]},  # type: ignore[arg-type, list-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
         state={"key": "value"},
         iteration_count=5,
     )
@@ -162,8 +162,8 @@ async def test_memory_checkpoint_storage_save_and_load():
     checkpoint = WorkflowCheckpoint(
         workflow_name="test-workflow",
         graph_signature_hash="test-hash",
-        messages={"executor1": [{"data": "hello"}]},  # type: ignore[arg-type]  # raw dict for serialization test
-        pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type]  # raw dict for serialization test
+        messages={"executor1": [{"data": "hello"}]},  # type: ignore[arg-type, list-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
+        pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type, dict-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
     )
 
     # Save checkpoint
@@ -301,7 +301,7 @@ async def test_workflow_checkpoint_chaining_via_previous_checkpoint_id():
 
     class FinishExecutor(Executor):
         @handler
-        async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:
+        async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
             await ctx.yield_output(message + "-done")
 
     storage = InMemoryCheckpointStorage()
@@ -334,6 +334,97 @@ async def test_workflow_checkpoint_chaining_via_previous_checkpoint_id():
         assert checkpoints[i].previous_checkpoint_id == checkpoints[i - 1].checkpoint_id, (
             f"Checkpoint {i} should chain to checkpoint {i - 1}"
         )
+
+
+async def test_workflow_checkpoint_ancestry_preserved_after_resume():
+    """Resuming from a checkpoint must preserve ancestry: future checkpoints chain back to the resumed one."""
+    from typing_extensions import Never
+
+    from agent_framework import WorkflowBuilder, WorkflowContext, handler
+    from agent_framework._workflows._executor import Executor
+
+    class StartExecutor(Executor):
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message, target_id="middle")
+
+    class MiddleExecutor(Executor):
+        @handler
+        async def process(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message + "-processed", target_id="finish")
+
+    class FinishExecutor(Executor):
+        @handler
+        async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
+            await ctx.yield_output(message + "-done")
+
+    storage = InMemoryCheckpointStorage()
+
+    def _build_workflow() -> Any:
+        start = StartExecutor(id="start")
+        middle = MiddleExecutor(id="middle")
+        finish = FinishExecutor(id="finish")
+        return (
+            WorkflowBuilder(
+                name="resume-ancestry-test",
+                max_iterations=10,
+                start_executor=start,
+                checkpoint_storage=storage,
+            )
+            .add_edge(start, middle)
+            .add_edge(middle, finish)
+            .build()
+        )
+
+    # First run: produce an initial chain of checkpoints
+    workflow = _build_workflow()
+    workflow_name = workflow.name
+    _ = [event async for event in workflow.run("hello", stream=True)]
+
+    initial_checkpoints = sorted(await storage.list_checkpoints(workflow_name=workflow_name), key=lambda c: c.timestamp)
+    assert len(initial_checkpoints) >= 3, (
+        f"Need at least 3 initial checkpoints to pick a middle one, got {len(initial_checkpoints)}"
+    )
+    initial_ids = {cp.checkpoint_id for cp in initial_checkpoints}
+
+    # Pick an intermediate checkpoint to resume from (not the first, not the last)
+    resume_from = initial_checkpoints[len(initial_checkpoints) // 2]
+
+    # Resume on a fresh workflow instance (same graph signature) and run to completion
+    resumed_workflow = _build_workflow()
+    assert resumed_workflow.name == workflow_name
+    _ = [event async for event in resumed_workflow.run(checkpoint_id=resume_from.checkpoint_id, stream=True)]
+
+    # Inspect new checkpoints created after resuming
+    all_checkpoints = sorted(await storage.list_checkpoints(workflow_name=workflow_name), key=lambda c: c.timestamp)
+    new_checkpoints = [cp for cp in all_checkpoints if cp.checkpoint_id not in initial_ids]
+    assert new_checkpoints, "Resuming from an intermediate checkpoint should produce new checkpoints"
+
+    # The very first checkpoint created after resuming must chain back to the resumed checkpoint
+    assert new_checkpoints[0].previous_checkpoint_id == resume_from.checkpoint_id, (
+        "First post-resume checkpoint must chain to the checkpoint that was resumed from; "
+        f"got previous_checkpoint_id={new_checkpoints[0].previous_checkpoint_id!r}, "
+        f"expected {resume_from.checkpoint_id!r}"
+    )
+
+    # Subsequent post-resume checkpoints must continue chaining
+    for i in range(1, len(new_checkpoints)):
+        assert new_checkpoints[i].previous_checkpoint_id == new_checkpoints[i - 1].checkpoint_id, (
+            f"Post-resume checkpoint {i} should chain to checkpoint {i - 1}"
+        )
+
+    # Walking the chain backwards from the most recent checkpoint must reach the original root
+    # without breaks (i.e. the full ancestry across the resume boundary is intact).
+    checkpoints_by_id = {cp.checkpoint_id: cp for cp in all_checkpoints}
+    chain: list[str] = []
+    cursor: str | None = new_checkpoints[-1].checkpoint_id
+    while cursor is not None:
+        chain.append(cursor)
+        cursor = checkpoints_by_id[cursor].previous_checkpoint_id
+    # Chain must include the resumed-from checkpoint and terminate at the original root
+    assert resume_from.checkpoint_id in chain
+    assert chain[-1] == initial_checkpoints[0].checkpoint_id
+    assert checkpoints_by_id[chain[-1]].previous_checkpoint_id is None
 
 
 async def test_memory_checkpoint_storage_roundtrip_json_native_types():
@@ -596,7 +687,7 @@ async def test_memory_checkpoint_storage_roundtrip_pending_request_info_events()
     checkpoint = WorkflowCheckpoint(
         workflow_name="test-workflow",
         graph_signature_hash="test-hash",
-        pending_request_info_events=pending_events,
+        pending_request_info_events=pending_events,  # type: ignore[arg-type]
     )
 
     await storage.save(checkpoint)
@@ -777,9 +868,9 @@ async def test_file_checkpoint_storage_save_and_load():
         checkpoint = WorkflowCheckpoint(
             workflow_name="test-workflow",
             graph_signature_hash="test-hash",
-            messages={"executor1": [{"data": "hello", "source_id": "test", "target_id": None}]},  # type: ignore[arg-type]  # raw dict for serialization test
+            messages={"executor1": [{"data": "hello", "source_id": "test", "target_id": None}]},  # type: ignore[arg-type, list-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
             state={"key": "value"},
-            pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type]  # raw dict for serialization test
+            pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type, dict-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
         )
 
         # Save checkpoint
@@ -905,9 +996,9 @@ async def test_file_checkpoint_storage_json_serialization():
         checkpoint = WorkflowCheckpoint(
             workflow_name="test-workflow",
             graph_signature_hash="test-hash",
-            messages={"executor1": [{"data": {"nested": {"value": 42}}, "source_id": "test", "target_id": None}]},  # type: ignore[arg-type]  # raw dict for serialization test
+            messages={"executor1": [{"data": {"nested": {"value": 42}}, "source_id": "test", "target_id": None}]},  # type: ignore[arg-type, list-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
             state={"list": [1, 2, 3], "dict": {"a": "b", "c": {"d": "e"}}, "bool": True, "null": None},
-            pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type]  # raw dict for serialization test
+            pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type, dict-item]  # ty: ignore[invalid-argument-type]  # raw dict for serialization test
         )
 
         # Save and load
@@ -1272,7 +1363,7 @@ async def test_file_checkpoint_storage_roundtrip_pending_request_info_events():
         checkpoint = WorkflowCheckpoint(
             workflow_name="test-workflow",
             graph_signature_hash="test-hash",
-            pending_request_info_events=pending_events,
+            pending_request_info_events=pending_events,  # type: ignore[arg-type]
         )
 
         await storage.save(checkpoint)

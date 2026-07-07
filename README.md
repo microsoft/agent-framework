@@ -6,7 +6,7 @@
 [![MS Learn Documentation](https://img.shields.io/badge/MS%20Learn-Documentation-blue)](https://learn.microsoft.com/en-us/agent-framework/)
 [![PyPI](https://img.shields.io/pypi/v/agent-framework)](https://pypi.org/project/agent-framework/)
 [![NuGet](https://img.shields.io/nuget/v/Microsoft.Agents.AI)](https://www.nuget.org/profiles/MicrosoftAgentFramework/)
-[![GitHub stars](https://img.shields.io/github/stars/microsoft/agent-framework?style=social)](https://github.com/microsoft/agent-framework/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/microsoft/agent-framework?style=social)](https://github.com/microsoft/agent-framework)
 
 
 Microsoft Agent Framework (MAF) is an open, multi-language framework for building **production-grade AI agents and multi-agent workflows** in **.NET and Python**.

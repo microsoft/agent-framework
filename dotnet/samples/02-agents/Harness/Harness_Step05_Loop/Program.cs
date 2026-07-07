@@ -116,7 +116,7 @@ async Task TodoLoopAsync()
         {
             var todoProvider = context.Agent.GetService<TodoProvider>()
                 ?? throw new InvalidOperationException("The agent did not expose a TodoProvider.");
-            var remaining = await todoProvider.GetRemainingTodosAsync(context.Session).ConfigureAwait(false);
+            var remaining = await todoProvider.GetRemainingTodosAsync(context.Session, cancellationToken).ConfigureAwait(false);
             return remaining.Count > 0
                 ? LoopEvaluation.Continue($"Not all todos are complete yet ({remaining.Count} remaining). Please complete the remaining todo items.")
                 : LoopEvaluation.Stop();

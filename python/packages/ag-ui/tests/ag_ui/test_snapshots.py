@@ -151,10 +151,10 @@ async def test_in_memory_snapshot_store_rejects_invalid_keys() -> None:
     with pytest.raises(ValueError):
         await store.save(scope="tenant-a", thread_id="", snapshot=snapshot)
     with pytest.raises(TypeError):
-        await store.save(scope=123, thread_id="thread-1", snapshot=snapshot)  # type: ignore[arg-type]
+        await store.save(scope=123, thread_id="thread-1", snapshot=snapshot)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     with pytest.raises(ValueError):
         await store.get(scope="tenant-a", thread_id="")
     with pytest.raises(TypeError):
-        await store.delete(scope=None, thread_id="thread-1")  # type: ignore[arg-type]
+        await store.delete(scope=None, thread_id="thread-1")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     with pytest.raises(ValueError):
         await store.clear(scope="")
