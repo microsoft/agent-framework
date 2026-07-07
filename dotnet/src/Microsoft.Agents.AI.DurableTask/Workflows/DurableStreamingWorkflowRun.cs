@@ -429,7 +429,7 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
                 ? execIdElem.GetString() ?? string.Empty
                 : root.TryGetProperty("sourceId", out JsonElement srcIdElem)
                     ? srcIdElem.GetString() ?? string.Empty
-                    : string.Empty;
+                    : throw new JsonException("WorkflowOutputEvent is missing required 'executorId' (or legacy 'sourceId') property.");
             object? outputData = GetDataProperty(root);
             return new WorkflowOutputEvent(outputData!, outputExecutorId);
         }
