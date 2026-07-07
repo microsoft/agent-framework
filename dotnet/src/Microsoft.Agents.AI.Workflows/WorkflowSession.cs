@@ -715,7 +715,7 @@ internal sealed class WorkflowSession : AgentSession
         public Dictionary<string, ExternalRequest>? PendingRequests { get; } = pendingRequests;
     }
 
-    //// <inheritdoc/>
+    /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null)
     {
         _ = Throw.IfNull(serviceType);
