@@ -2264,7 +2264,7 @@ class SkillsProvider(ContextProvider):
             forwarded_kwargs["disable_read_skill_resource_approval"] = True
         if disable_run_skill_script_approval:
             forwarded_kwargs["disable_run_skill_script_approval"] = True
-        if cache_refresh_interval is not None:
+        if cache_refresh_interval is not None and not disable_caching:
             forwarded_kwargs["cache_refresh_interval"] = cache_refresh_interval
         return cls(
             source,
@@ -3766,8 +3766,9 @@ class CachingSkillsSource(DelegatingSkillsSource):
 
     Concurrency: concurrent callers for the same cache key share a single
     in-flight fetch, so the inner source is queried at most once per key even
-    under concurrent access.  If the fetch fails (or is cancelled), the cache
-    is left empty so the next call retries.
+    under concurrent access.  If a fetch fails (or is cancelled), the cache is
+    not updated, so the next call retries: an initial failure leaves the cache
+    empty, and a refresh failure (see below) keeps the previously cached list.
 
     Refresh interval: by default a cached list never expires and the inner
     source is queried only once per key. Pass a *refresh_interval* to treat a

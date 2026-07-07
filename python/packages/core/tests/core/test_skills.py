@@ -6135,25 +6135,32 @@ class TestDisableCaching:
 
     async def test_cache_refresh_interval_threaded_into_builtin_caching(self) -> None:
         """cache_refresh_interval is applied to the built-in CachingSkillsSource."""
-        from agent_framework import CachingSkillsSource
+        from agent_framework import CachingSkillsSource, DeduplicatingSkillsSource
 
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
         provider = SkillsProvider([skill], cache_refresh_interval=timedelta(minutes=5))
-        caching = provider._source.inner_source  # pyright: ignore[reportPrivateUsage]
+        source = provider._source  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(source, DeduplicatingSkillsSource)
+        caching = source.inner_source
         assert isinstance(caching, CachingSkillsSource)
         assert caching._refresh_interval == timedelta(minutes=5)  # pyright: ignore[reportPrivateUsage]
 
     async def test_cache_refresh_interval_defaults_to_none(self) -> None:
         """Without cache_refresh_interval, the built-in cache never expires."""
+        from agent_framework import CachingSkillsSource, DeduplicatingSkillsSource
+
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
         provider = SkillsProvider([skill])
-        caching = provider._source.inner_source  # pyright: ignore[reportPrivateUsage]
+        source = provider._source  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(source, DeduplicatingSkillsSource)
+        caching = source.inner_source
+        assert isinstance(caching, CachingSkillsSource)
         assert caching._refresh_interval is None  # pyright: ignore[reportPrivateUsage]
         assert provider._cache_refresh_interval is None  # pyright: ignore[reportPrivateUsage]
 
     async def test_from_paths_threads_cache_refresh_interval(self, tmp_path: Path) -> None:
         """from_paths applies cache_refresh_interval to the file-discovery cache."""
-        from agent_framework import CachingSkillsSource
+        from agent_framework import CachingSkillsSource, DeduplicatingSkillsSource
 
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
@@ -6162,9 +6169,63 @@ class TestDisableCaching:
             encoding="utf-8",
         )
         provider = SkillsProvider.from_paths(tmp_path, cache_refresh_interval=timedelta(minutes=10))
-        caching = provider._source.inner_source  # pyright: ignore[reportPrivateUsage]
+        source = provider._source  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(source, DeduplicatingSkillsSource)
+        caching = source.inner_source
         assert isinstance(caching, CachingSkillsSource)
         assert caching._refresh_interval == timedelta(minutes=10)  # pyright: ignore[reportPrivateUsage]
+
+    async def test_from_paths_disable_caching_ignores_refresh_interval(self, tmp_path: Path) -> None:
+        """With disable_caching=True, from_paths neither caches nor forwards the refresh interval."""
+        from agent_framework import CachingSkillsSource, DeduplicatingSkillsSource
+
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: Test skill.\n---\nBody.",
+            encoding="utf-8",
+        )
+        provider = SkillsProvider.from_paths(
+            tmp_path, disable_caching=True, cache_refresh_interval=timedelta(minutes=10)
+        )
+        source = provider._source  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(source, DeduplicatingSkillsSource)
+        assert not isinstance(source.inner_source, CachingSkillsSource)
+        assert provider._cache_refresh_interval is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_from_paths_legacy_subclass_with_disable_caching_and_interval(self, tmp_path: Path) -> None:
+        """A legacy subclass __init__ still works when both disable_caching and an interval are passed.
+
+        Because from_paths does not forward cache_refresh_interval when caching is disabled, a
+        subclass whose __init__ predates the kwarg does not receive an unexpected keyword argument.
+        """
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: A test skill.\n---\nBody.", encoding="utf-8"
+        )
+
+        class LegacySkillsProvider(SkillsProvider):
+            def __init__(
+                self,
+                source: Any,
+                *,
+                instruction_template: str | None = None,
+                disable_caching: bool = False,
+                source_id: str | None = None,
+            ) -> None:
+                super().__init__(
+                    source,
+                    instruction_template=instruction_template,
+                    disable_caching=disable_caching,
+                    source_id=source_id,
+                )
+
+        # Must not raise TypeError even though the subclass __init__ lacks cache_refresh_interval.
+        provider = LegacySkillsProvider.from_paths(
+            str(tmp_path), disable_caching=True, cache_refresh_interval=timedelta(minutes=10)
+        )
+        assert isinstance(provider, LegacySkillsProvider)
 
 
 # ---------------------------------------------------------------------------
