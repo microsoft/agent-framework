@@ -12,11 +12,6 @@ deciders: eavanvalkenburg
 Agent Framework needs to help applications expose agents and workflows over external protocols such as OpenAI
 Responses, Telegram, Activity Protocol, and future transports.
 
-The first version of this ADR chose a host/channel model: channel packages contributed routes, middleware, commands,
-lifecycle callbacks, hooks, and protocol dispatch to a common host object. That design was accepted before it was
-released. Implementation experiments showed that the most valuable part is narrower: translating protocol-native
-payloads into Agent Framework inputs and translating Agent Framework results back to protocol-native payloads.
-
 FastAPI, Starlette, Azure Functions, Django, Telegram SDKs, Bot Framework SDKs, and other app frameworks already own
 route registration, dependency injection, middleware, authentication, background tasks, lifecycle, and native client
 calls. Agent Framework should not duplicate those surfaces unless a specific hosting environment requires it.
@@ -188,6 +183,19 @@ The app chooses which helper to call for that route and deployment. For example:
 
 Keep these helpers outside `responses_to_run(...)`, `telegram_to_run(...)`, and other run-input parsers. That makes the
 trust boundary visible: using a request-derived key is a different decision than using a platform-provided isolation key.
+
+The application builder is also responsible for deciding whether the hosting environment is **persistent** (for example,
+a long-running container or web app) or **transient** (for example, Azure Functions, Foundry Hosted Agents, or any
+environment where process memory is not a reliable continuity boundary). That decision controls which state mechanisms are
+safe to use:
+
+- persistent single-process apps may use in-memory state for local development or simple deployments, while still needing
+  durable state for multi-replica continuity;
+- transient apps must not rely on in-memory `SessionStore` state between calls and need a durable session store or a
+  service-owned continuation id;
+- workflow hosts must choose an explicit `CheckpointStorage` and, when they need per-session resume, a durable
+  `session_id -> checkpoint_id` cursor because in-process workflow state and in-memory checkpoint cursors do not survive
+  transient execution.
 
 A `SessionStore` stores `session_id -> AgentSession`, but it does not create sessions. `AgentState` resolves the agent
 target and creates the session on first use:
