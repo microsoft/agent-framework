@@ -139,7 +139,7 @@ The application builder owns the trust boundary. Protocol helper packages can pa
 ids or operations, but they do not authenticate callers, authorize access to state, or decide which side effects are
 allowed.
 
-Application code that uses these helpers must:
+Application code that uses these helpers are responsible for:
 
 - authenticate the caller through the app's normal mechanism before using protocol-provided ids;
 - authorize any caller-supplied session, checkpoint, task, context, conversation, thread, or response id before loading
@@ -157,7 +157,7 @@ For Foundry specifically, helpers may read values established by Foundry hosting
 request headers as trusted Foundry isolation when the app is running outside Foundry. Implementations must test that
 non-Foundry requests do not accept spoofable isolation headers as platform-provided keys.
 
-For durable workflow checkpointing, the checkpoint boundary must be at least as specific as the authorized session/tenant
+For workflow checkpointing, the checkpoint boundary must be at least as specific as the authorized session/tenant
 boundary. A shared storage lookup such as "latest checkpoint for workflow name" is safe only when the storage is already
 scoped to the authorized session. In a shared durable store, map the authorized `session_id` to a checkpoint id or other
 cursor and load that specific checkpoint.
@@ -269,21 +269,37 @@ Protocol helper packages should not own checkpoint layout, route lifecycle, or d
 
 ## Non-goals for v1
 
-The following remain outside the v1 contract:
+The following remain outside the v1 protocol-helper contract. Some are deliberately app-owned in v1; others are possible
+future framework work only after a separate design.
 
-- cross-channel identity linking (`IdentityLinker`, `local_identity_link`, or `agent-framework-hosting-entra`);
-- identity allowlists or authorization policy (`IdentityAllowlist`, `AuthPolicy`);
-- response routing beyond the originating protocol (`ResponseTarget`, active channel, specific linked channel,
-  `all_linked`);
-- push or payload codecs (`ChannelPush`, `ChannelPushCodec`);
-- background/continuation delivery;
-- durable task runners (`DurableTaskRunner`, `InProcessTaskRunner`);
-- retry/replay policy (`RetryPolicy`);
-- fan-out, multicast, or all-linked delivery;
-- confidentiality tiers and `LinkPolicy`;
-- a host-level multi-agent router.
+### App-owned in v1
 
-These areas are follow-up enhancements covered by [ADR-0028](0028-hosting-linking-multicast-enhancements.md). They are
+The app builder owns these concerns with normal web-framework, SDK, platform, or application code:
+
+- authentication, authorization policy, and allowlists;
+- deciding whether identities across protocols map to the same `session_id`;
+- non-originating sends using native SDK clients;
+- background work, durable execution, retry, and replay when app code owns the work;
+- routing between multiple agents.
+
+This is easier in the protocol-helper model than it was in the host/channel model: app code already owns the native SDK
+clients, route handlers, authenticated caller context, session id selection, and outbound send calls. An app can link
+channels by choosing the same authorized `session_id` for multiple protocols, and can do non-originating delivery by
+calling the destination protocol's native client directly. That does not make a reusable framework feature safe by
+default; it just means the app-specific version no longer has to fight a host abstraction.
+
+### Future framework work
+
+The following require a reviewed identity, storage, delivery, replay, and observability model before becoming reusable
+framework features:
+
+- reusable cross-channel identity linking;
+- framework-owned proactive or non-originating delivery;
+- fan-out, multicast, selected-channel, active-channel, or all-linked delivery;
+- framework-owned delivery observability, dead-letter handling, and replay semantics;
+- cross-channel confidentiality and link policy.
+
+These possible framework enhancements are tracked by [ADR-0028](0028-hosting-linking-multicast-enhancements.md). They are
 not prerequisites for shipping or using the v1 protocol-helper surface. ADR-0028 was written against the earlier
 host/channel framing and must be revised to align with this protocol-helper and execution-state boundary before those
 enhancements are implemented.
