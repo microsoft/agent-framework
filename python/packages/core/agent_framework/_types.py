@@ -2782,6 +2782,27 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         return self.text
 
 
+def _build_agent_response_from_chat_response(  # pyright: ignore[reportUnusedFunction]
+    response: ChatResponse[Any],
+    *,
+    response_format: StructuredResponseFormat = None,
+    suppress_response_id: bool = False,
+) -> AgentResponse[Any]:
+    """Build the AgentResponse wrapper for a completed ChatResponse."""
+    return AgentResponse(
+        messages=response.messages,
+        response_id=None if suppress_response_id else response.response_id,
+        created_at=response.created_at,
+        finish_reason=cast(FinishReasonLiteral | FinishReason | None, response.finish_reason),
+        usage_details=response.usage_details,
+        value=response.value,
+        response_format=response_format,
+        continuation_token=response.continuation_token,
+        raw_representation=response,
+        additional_properties=response.additional_properties,
+    )
+
+
 # region AgentResponseUpdate
 
 

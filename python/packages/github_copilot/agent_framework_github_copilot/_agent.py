@@ -9,12 +9,7 @@ import logging
 import sys
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
-from typing import Any, ClassVar, Generic, Literal, TypedDict, overload
-
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
+from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
 
 from agent_framework import (
     AgentMiddlewareLayer,
@@ -29,6 +24,7 @@ from agent_framework import (
     Message,
     ResponseStream,
     SessionContext,
+    UsageDetails,
     normalize_messages,
 )
 from agent_framework._settings import load_settings
@@ -36,6 +32,15 @@ from agent_framework._tools import FunctionTool, ToolTypes
 from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import AgentException
 from agent_framework.observability import AgentTelemetryLayer
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # pragma: no cover
 
 try:
     from copilot import CopilotClient, CopilotSession, RuntimeConnection
@@ -49,7 +54,7 @@ try:
         SessionHooks,
         SystemMessageConfig,
     )
-    from copilot.session_events import PermissionRequest, SessionEvent, SessionEventType
+    from copilot.session_events import AssistantUsageData, PermissionRequest, SessionEvent, SessionEventType
     from copilot.tools import Tool as CopilotTool
     from copilot.tools import ToolInvocation, ToolResult
 except ImportError as _copilot_import_error:
@@ -57,12 +62,6 @@ except ImportError as _copilot_import_error:
         "GitHubCopilotAgent requires the 'github-copilot-sdk' package, which is only available on Python 3.11+. "
         "Please use Python 3.11 or later."
     ) from _copilot_import_error
-
-if sys.version_info >= (3, 13):
-    from typing import TypeVar  # pragma: no cover
-else:
-    from typing_extensions import TypeVar  # pragma: no cover
-
 
 DEFAULT_TIMEOUT_SECONDS: float = 60.0
 """Default timeout in seconds for Copilot requests."""
@@ -547,6 +546,27 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             )
         return self._run_impl(messages=messages, session=session, options=options)
 
+    @staticmethod
+    def _parse_usage_details_from_copilot(data: AssistantUsageData) -> UsageDetails | None:
+        total_token_count = (
+            data.input_tokens + data.output_tokens
+            if data.input_tokens is not None and data.output_tokens is not None
+            else None
+        )
+        usage_details = UsageDetails(**{
+            key: value
+            for key, value in {
+                "input_token_count": data.input_tokens,
+                "output_token_count": data.output_tokens,
+                "total_token_count": total_token_count,
+                "cache_read_input_token_count": data.cache_read_tokens,
+                "cache_creation_input_token_count": data.cache_write_tokens,
+                "reasoning_output_token_count": data.reasoning_tokens,
+            }.items()
+            if value is not None
+        })
+        return usage_details or None
+
     async def _run_impl(
         self,
         messages: AgentRunInputs | None = None,
@@ -586,6 +606,23 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             opts["tools"] = existing + list(session_context.tools)
 
         copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
+        usage_details: UsageDetails | None = None
+        finish_reason: str | None = None
+        model: str | None = None
+
+        def usage_event_handler(event: SessionEvent) -> None:
+            nonlocal usage_details, finish_reason, model
+            if event.type != SessionEventType.ASSISTANT_USAGE:
+                return
+            if isinstance(event.data, AssistantUsageData):
+                usage_details = self._parse_usage_details_from_copilot(event.data)
+                finish_reason = event.data.finish_reason or None
+                model = event.data.model or None
+            else:
+                logger.warning(
+                    "Ignoring GitHub Copilot assistant usage event with unexpected payload type: %s",
+                    type(event.data).__name__,
+                )
 
         # Build the prompt from the full set of messages in the session context,
         # so that any context/history provider-injected messages are included.
@@ -594,10 +631,13 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         if session_context.instructions:
             prompt = "\n".join(session_context.instructions) + "\n" + prompt
 
+        unsubscribe = copilot_session.on(usage_event_handler)
         try:
             response_event = await copilot_session.send_and_wait(prompt, timeout=timeout)
         except Exception as ex:
             raise AgentException(f"GitHub Copilot request failed: {ex}") from ex
+        finally:
+            unsubscribe()
 
         response_messages: list[Message] = []
         response_id: str | None = None
@@ -619,7 +659,13 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 )
             response_id = message_id
 
-        response = AgentResponse(messages=response_messages, response_id=response_id)
+        response = AgentResponse(
+            messages=response_messages,
+            response_id=response_id,
+            finish_reason=cast(Any, finish_reason),
+            usage_details=usage_details,
+            additional_properties={"model": model} if model else None,
+        )
         session_context._response = response  # type: ignore[assignment]
         await self._run_after_providers(session=session, context=session_context)
         return response
@@ -702,6 +748,26 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                         contents=[Content.from_text(data.delta_content)],
                         response_id=data.message_id,
                         message_id=data.message_id,
+                        raw_representation=event,
+                    )
+                    queue.put_nowait(update)
+            elif event.type == SessionEventType.ASSISTANT_USAGE:
+                if not isinstance(event.data, AssistantUsageData):
+                    logger.warning(
+                        "Ignoring GitHub Copilot assistant usage event with unexpected payload type: %s",
+                        type(event.data).__name__,
+                    )
+                    return
+                usage_details = self._parse_usage_details_from_copilot(event.data)
+                finish_reason = event.data.finish_reason or None
+                model = event.data.model or None
+                if usage_details or finish_reason or model:
+                    update = AgentResponseUpdate(
+                        contents=[Content.from_usage(usage_details, raw_representation=event.data)]
+                        if usage_details
+                        else None,
+                        finish_reason=cast(Any, finish_reason),
+                        additional_properties={"model": model} if model else None,
                         raw_representation=event,
                     )
                     queue.put_nowait(update)

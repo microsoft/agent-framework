@@ -122,6 +122,24 @@ class _ResponseIdRecordingHistoryProvider(_RecordingHistoryProvider):
         await super().after_run(agent=agent, session=session, context=context, state=state)
 
 
+class _ResponseMetadataRecordingHistoryProvider(_RecordingHistoryProvider):
+    def __init__(self, source_id: str = "recording_response_metadata") -> None:
+        super().__init__(source_id=source_id)
+        self.responses: list[AgentResponse] = []
+
+    async def after_run(
+        self,
+        *,
+        agent: SupportsAgentRun,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        if context.response:
+            self.responses.append(context.response)
+        await super().after_run(agent=agent, session=session, context=context, state=state)
+
+
 def test_agent_session_type(agent_session: AgentSession) -> None:
     assert isinstance(agent_session, AgentSession)
 
@@ -491,6 +509,64 @@ async def test_chat_agent_persists_history_per_service_call(
     assert provider_state["save_call_count"] == 2
     assert stored_messages[-1].text == "It is sunny in Seattle."
     assert session.service_session_id is None
+
+
+async def test_per_service_call_history_provider_receives_full_agent_response_metadata(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    provider = _ResponseMetadataRecordingHistoryProvider()
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        return f"Weather in {location}: sunny"
+
+    session = AgentSession()
+    session.state[provider.source_id] = {"messages": []}
+    first_response = ChatResponse(
+        messages=Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="call_1",
+                    name="lookup_weather",
+                    arguments='{"location": "Seattle"}',
+                )
+            ],
+        ),
+        response_id="resp_call_1",
+        created_at="2026-07-07T12:02:00Z",
+        finish_reason="tool_calls",
+        usage_details={"input_token_count": 5, "output_token_count": 1, "total_token_count": 6},
+        continuation_token=cast(Any, {"token": "psc-next"}),
+        additional_properties={"provider": "psc-test"},
+    )
+    final_response = ChatResponse(
+        messages=Message(role="assistant", contents=["It is sunny in Seattle."]),
+        response_id="resp_call_2",
+        finish_reason="stop",
+        usage_details={"input_token_count": 6, "output_token_count": 4, "total_token_count": 10},
+    )
+    chat_client_base.run_responses = [first_response, final_response]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[lookup_weather],
+        context_providers=[provider],
+        require_per_service_call_history_persistence=True,
+    )
+
+    result = await agent.run("What's the weather in Seattle?", session=session)
+
+    assert result.text == "It is sunny in Seattle."
+    assert len(provider.responses) == 2
+    captured = provider.responses[0]
+    assert captured.response_id is None
+    assert captured.created_at == "2026-07-07T12:02:00Z"
+    assert captured.finish_reason == "tool_calls"
+    assert captured.usage_details == {"input_token_count": 5, "output_token_count": 1, "total_token_count": 6}
+    assert captured.continuation_token == {"token": "psc-next"}
+    assert captured.additional_properties == {"provider": "psc-test"}
+    assert captured.raw_representation is first_response
 
 
 async def test_chat_agent_persists_history_per_service_call_streaming(
@@ -1180,6 +1256,111 @@ async def test_chat_agent_context_providers_after_run(
 
     assert mock_provider.after_run_called
     assert mock_provider.last_service_session_id == "test-thread-id"
+
+
+async def test_context_provider_receives_full_agent_response_non_streaming(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Context providers should see the same full AgentResponse returned by non-streaming runs."""
+    captured_response: AgentResponse | None = None
+
+    class CapturingContextProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="capture_response")
+
+        async def after_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            nonlocal captured_response
+            captured_response = context.response
+
+    raw_response = ChatResponse(
+        messages=[Message(role="assistant", contents=[Content.from_text('{"answer": "ok"}')])],
+        response_id="resp_full",
+        created_at="2026-07-07T12:00:00Z",
+        finish_reason="stop",
+        usage_details={"input_token_count": 3, "output_token_count": 2, "total_token_count": 5},
+        continuation_token=cast(Any, {"token": "next"}),
+        additional_properties={"provider": "test"},
+    )
+    chat_client_base.run_responses = [raw_response]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    agent = Agent(client=chat_client_base, context_providers=[CapturingContextProvider()])
+
+    response = await agent.run(
+        "Hello",
+        options={"response_format": {"type": "object", "properties": {"answer": {"type": "string"}}}},
+    )
+
+    assert captured_response is response
+    assert response.response_id == "resp_full"
+    assert response.created_at == "2026-07-07T12:00:00Z"
+    assert response.finish_reason == "stop"
+    assert response.usage_details == {"input_token_count": 3, "output_token_count": 2, "total_token_count": 5}
+    assert response.value == {"answer": "ok"}
+    assert response.continuation_token == {"token": "next"}
+    assert response.additional_properties == {"provider": "test"}
+    assert response.raw_representation is raw_response
+
+
+async def test_context_provider_receives_full_agent_response_streaming(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Context providers should see the same full AgentResponse finalized by streaming runs."""
+    captured_response: AgentResponse | None = None
+    raw_update = ChatResponseUpdate(
+        contents=[
+            Content.from_text('{"answer": "ok"}'),
+            Content.from_usage({"input_token_count": 4, "output_token_count": 3, "total_token_count": 7}),
+        ],
+        role="assistant",
+        response_id="resp_stream_full",
+        created_at="2026-07-07T12:01:00Z",
+        finish_reason="stop",
+        continuation_token=cast(Any, {"token": "stream-next"}),
+        additional_properties={"provider": "stream-test"},
+    )
+
+    class CapturingContextProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="capture_stream_response")
+
+        async def after_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            nonlocal captured_response
+            captured_response = context.response
+
+    chat_client_base.streaming_responses = [[raw_update]]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    agent = Agent(client=chat_client_base, context_providers=[CapturingContextProvider()])
+
+    stream = agent.run(
+        "Hello",
+        stream=True,
+        options={"response_format": {"type": "object", "properties": {"answer": {"type": "string"}}}},
+    )
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert captured_response is response
+    assert response.response_id == "resp_stream_full"
+    assert response.created_at == "2026-07-07T12:01:00Z"
+    assert response.finish_reason == "stop"
+    assert response.usage_details == {"input_token_count": 4, "output_token_count": 3, "total_token_count": 7}
+    assert response.value == {"answer": "ok"}
+    assert response.continuation_token == {"token": "stream-next"}
+    assert response.additional_properties == {"provider": "stream-test"}
+    assert response.raw_representation == [raw_update]
 
 
 async def test_chat_agent_context_providers_messages_adding(

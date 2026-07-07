@@ -23,6 +23,7 @@ from agent_framework import (
     Message,
     ResponseStream,
     ToolTypes,
+    UsageDetails,
     load_settings,
     normalize_messages,
     normalize_tools,
@@ -377,6 +378,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         self._default_options = opts
         self._started = False
         self._current_session_id: str | None = None
+        self._structured_output: Any = None
 
     def _normalize_tools(
         self,
@@ -685,8 +687,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         Returns:
             An AgentResponse with structured_output set as value if present.
         """
-        structured_output = getattr(self, "_structured_output", None)
-        return AgentResponse.from_updates(updates, value=structured_output)
+        return AgentResponse.from_updates(updates, value=self._structured_output)
 
     @overload
     def run(
@@ -823,6 +824,34 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                     raise AgentException(f"Claude API error: {error_msg}")
                 session_id = message.session_id
                 structured_output = message.structured_output
+                usage = message.usage or {}
+                input_tokens = usage.get("input_tokens")
+                output_tokens = usage.get("output_tokens")
+                total_token_count = (
+                    input_tokens + output_tokens
+                    if isinstance(input_tokens, int) and isinstance(output_tokens, int)
+                    else None
+                )
+                usage_details = UsageDetails(**{
+                    key: value
+                    for key, value in {
+                        "input_token_count": input_tokens,
+                        "output_token_count": output_tokens,
+                        "total_token_count": total_token_count,
+                        "cache_creation_input_token_count": usage.get("cache_creation_input_tokens"),
+                        "cache_read_input_token_count": usage.get("cache_read_input_tokens"),
+                    }.items()
+                    if isinstance(value, int)
+                })
+                finish_reason = message.stop_reason
+                if usage_details or finish_reason:
+                    yield AgentResponseUpdate(
+                        contents=[Content.from_usage(usage_details, raw_representation=message)]
+                        if usage_details
+                        else None,
+                        finish_reason=cast(Any, finish_reason),
+                        raw_representation=message,
+                    )
 
         # Update session with session ID
         if session_id:

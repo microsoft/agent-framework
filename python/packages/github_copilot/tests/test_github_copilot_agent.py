@@ -27,6 +27,7 @@ from agent_framework import (
 from agent_framework.exceptions import AgentException
 from copilot.session import PermissionHandler, PreToolUseHookInput
 from copilot.session_events import (
+    AssistantUsageData,
     Data,
     SessionEvent,
     SessionEventType,
@@ -439,6 +440,56 @@ class TestGitHubCopilotAgentRun:
 
         assert isinstance(response, AgentResponse)
 
+    async def test_run_captures_assistant_usage_event(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test non-streaming run captures assistant usage metadata from session events."""
+        usage_data = AssistantUsageData(
+            model="claude-sonnet-4-5",
+            input_tokens=120,
+            output_tokens=40,
+            cache_read_tokens=7,
+            cache_write_tokens=3,
+            reasoning_tokens=11,
+            finish_reason="stop",
+        )
+        usage_event = SessionEvent(
+            data=usage_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.ASSISTANT_USAGE,
+        )
+        usage_handler: Any = None
+
+        def mock_on(handler: Any) -> Any:
+            nonlocal usage_handler
+            usage_handler = handler
+            return lambda: None
+
+        async def mock_send_and_wait(*args: Any, **kwargs: Any) -> SessionEvent:
+            usage_handler(usage_event)
+            return assistant_message_event
+
+        mock_session.on = mock_on
+        mock_session.send_and_wait = AsyncMock(side_effect=mock_send_and_wait)
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        response = await agent.run("Hello")
+
+        assert response.finish_reason == "stop"
+        assert response.usage_details == {
+            "input_token_count": 120,
+            "output_token_count": 40,
+            "total_token_count": 160,
+            "cache_read_input_token_count": 7,
+            "cache_creation_input_token_count": 3,
+            "reasoning_output_token_count": 11,
+        }
+        assert response.additional_properties["model"] == "claude-sonnet-4-5"
+
     async def test_run_empty_response(
         self,
         mock_client: MagicMock,
@@ -500,6 +551,50 @@ class TestGitHubCopilotAgentRunStreaming:
         assert isinstance(responses[0], AgentResponseUpdate)
         assert responses[0].role == "assistant"
         assert responses[0].contents[0].text == "Hello"
+
+    async def test_run_streaming_captures_assistant_usage_event(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test streaming final response includes assistant usage metadata."""
+        usage_data = AssistantUsageData(
+            model="gpt-5.1-mini",
+            input_tokens=10,
+            output_tokens=4,
+            finish_reason="stop",
+        )
+        usage_event = SessionEvent(
+            data=usage_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.ASSISTANT_USAGE,
+        )
+        events = [assistant_delta_event, usage_event, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        stream = agent.run("Hello", stream=True)
+        async for _ in stream:
+            pass
+        response = await stream.get_final_response()
+
+        assert response.text == "Hello"
+        assert response.finish_reason == "stop"
+        assert response.usage_details == {
+            "input_token_count": 10,
+            "output_token_count": 4,
+            "total_token_count": 14,
+        }
+        assert response.additional_properties["model"] == "gpt-5.1-mini"
 
     async def test_run_streaming_with_session(
         self,
