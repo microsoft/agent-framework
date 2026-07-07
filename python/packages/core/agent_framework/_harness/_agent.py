@@ -401,6 +401,9 @@ def create_harness_agent(
             (default), they require approval. Ignored when disable_file_access is True.
         skills_provider: Custom SkillsProvider instance for code-defined skills.
             Can be combined with ``skills_paths`` to aggregate file and code-based skills.
+            **Security:** if the provider is configured with an external skill source (e.g.
+            :class:`~agent_framework.MCPSkillsSource`), the skill content it loads is untrusted input
+            — only enable sources you trust; see :class:`~agent_framework.SkillsSource`.
         skills_paths: Paths for file-based skill discovery (looks for SKILL.md files).
             Accepts a single ``str`` or :class:`~pathlib.Path`, or a sequence of
             ``str | Path``. Can be combined with ``skills_provider``. When neither
@@ -410,6 +413,10 @@ def create_harness_agent(
             When provided, a ``BackgroundAgentsProvider`` is automatically included,
             enabling the agent to start, monitor, and retrieve results from background tasks.
             Each agent must have a non-empty, unique name (case-insensitive).
+            **Security:** supplied agents receive text input from this agent and their output is fed
+            back into its context, so only supply agents you have vetted and trust — see
+            :class:`~agent_framework.BackgroundAgentsProvider` for the exfiltration and
+            prompt-injection risks of untrusted agents.
         background_agents_instructions: Optional instruction override for the
             ``BackgroundAgentsProvider``. May include ``{background_agents}`` placeholder
             which will be replaced with the agent listing.
