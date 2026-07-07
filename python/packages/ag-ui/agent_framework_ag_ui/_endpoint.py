@@ -8,14 +8,16 @@ import copy
 import logging
 from collections.abc import AsyncGenerator, Sequence
 from inspect import isawaitable
-from typing import Any
+from typing import Any, cast
 
 from ag_ui.core import RunErrorEvent
 from ag_ui.encoder import EventEncoder
 from agent_framework import SupportsAgentRun, Workflow
 from fastapi import FastAPI, HTTPException
 from fastapi.params import Depends
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
+from sse_starlette.event import ServerSentEvent
+from sse_starlette.sse import EventSourceResponse
 
 from ._agent import AgentFrameworkAgent
 from ._snapshots import (
@@ -28,6 +30,8 @@ from ._types import AGUIRequest
 from ._workflow import AgentFrameworkWorkflow
 
 logger = logging.getLogger(__name__)
+
+_KEEPALIVE_COMMENT = "keepalive"
 
 
 def _get_snapshot_store(
@@ -138,7 +142,7 @@ def add_agent_framework_fastapi_endpoint(
     )
 
     @app.post(path, tags=tags or ["AG-UI"], dependencies=dependencies, response_model=None)  # type: ignore[arg-type]
-    async def agent_endpoint(request_body: AGUIRequest) -> StreamingResponse:
+    async def agent_endpoint(request_body: AGUIRequest) -> Response:
         """Handle AG-UI agent requests.
 
         Note: Function is accessed via FastAPI's decorator registration,
@@ -170,7 +174,14 @@ def add_agent_framework_fastapi_endpoint(
             )
             logger.info(f"Received request at {path}: {input_data.get('run_id', 'no-run-id')}")
 
-            async def event_generator() -> AsyncGenerator[str]:
+            keepalive_enabled = keepalive_seconds is not None
+
+            def prepare_frame(encoded: str) -> str | bytes:
+                if keepalive_enabled:
+                    return encoded.encode("utf-8")
+                return encoded
+
+            async def event_generator() -> AsyncGenerator[str | bytes]:
                 encoder = EventEncoder()
                 event_count = 0
                 try:
@@ -194,7 +205,7 @@ def add_agent_framework_fastapi_endpoint(
                                 code=type(encode_error).__name__,
                             )
                             try:
-                                yield encoder.encode(run_error)
+                                yield prepare_frame(encoder.encode(run_error))
                             except Exception:
                                 logger.exception("[%s] Failed to encode RUN_ERROR event", path)
                             return
@@ -204,7 +215,7 @@ def add_agent_framework_fastapi_endpoint(
                             if len(encoded) > 200
                             else f"[{path}] Encoded as: {encoded}"
                         )
-                        yield encoded
+                        yield prepare_frame(encoded)
 
                     logger.info(f"[{path}] Completed streaming {event_count} events")
                 except Exception as stream_error:
@@ -214,18 +225,27 @@ def add_agent_framework_fastapi_endpoint(
                         code=type(stream_error).__name__,
                     )
                     try:
-                        yield encoder.encode(run_error)
+                        yield prepare_frame(encoder.encode(run_error))
                     except Exception:
                         logger.exception("[%s] Failed to encode RUN_ERROR event", path)
 
+            headers = {
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            }
+            if keepalive_seconds is not None:
+                return EventSourceResponse(
+                    event_generator(),
+                    ping=cast(int, keepalive_seconds),
+                    ping_message_factory=lambda: ServerSentEvent(comment=_KEEPALIVE_COMMENT),
+                    headers=headers,
+                    media_type="text/event-stream",
+                )
             return StreamingResponse(
                 event_generator(),
                 media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",
-                },
+                headers=headers,
             )
         except Exception as e:
             logger.error(f"Error in agent endpoint: {e}", exc_info=True)

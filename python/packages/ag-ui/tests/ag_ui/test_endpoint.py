@@ -2,6 +2,7 @@
 
 """Tests for FastAPI endpoint creation (_endpoint.py)."""
 
+import asyncio
 import json
 from inspect import signature
 from typing import Any, cast
@@ -177,6 +178,40 @@ def test_keepalive_option_is_endpoint_owned() -> None:
     """Keepalive is endpoint transport configuration, not runner configuration."""
     assert "keepalive_seconds" not in signature(AgentFrameworkAgent).parameters
     assert "keepalive_seconds" not in signature(AgentFrameworkWorkflow).parameters
+
+
+async def test_endpoint_keepalive_enabled_emits_static_comment_during_silent_gap(streaming_chat_client_stub):
+    """Enabled keepalive sends static SSE comments without changing AG-UI data frames."""
+    app = FastAPI()
+
+    async def stream_fn(messages: Any, options: Any, **kwargs: Any):
+        del messages, options, kwargs
+        await asyncio.sleep(0.05)
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done")])
+
+    agent = Agent(name="test", instructions="Test agent", client=streaming_chat_client_stub(stream_fn))
+
+    add_agent_framework_fastapi_endpoint(app, agent, path="/keepalive", keepalive_seconds=0.01)
+
+    client = TestClient(app)
+    response = client.post("/keepalive", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["connection"] == "keep-alive"
+    assert response.headers["x-accel-buffering"] == "no"
+
+    content = response.content.decode("utf-8")
+    comments = [line for line in content.splitlines() if line.startswith(":")]
+    assert comments
+    assert set(comments) == {": keepalive"}
+    assert "data: data:" not in content
+
+    event_types = [event.get("type") for event in _decode_sse_events(response)]
+    assert "RUN_STARTED" in event_types
+    assert "TEXT_MESSAGE_CONTENT" in event_types
+    assert "RUN_FINISHED" in event_types
 
 
 @pytest.mark.parametrize("keepalive_seconds", [0, -1, -0.5])
