@@ -16,8 +16,8 @@ from agent_framework_hosting_responses import (
     parse_responses_identity,
     parse_responses_request,
     responses_from_run,
+    responses_from_streaming_run,
     responses_session_id,
-    responses_stream_from_run,
     responses_to_run,
 )
 
@@ -275,7 +275,7 @@ class TestResponsesRunHelpers:
 
         assert "conversation" not in payload
 
-    async def test_responses_stream_from_run(self) -> None:
+    async def test_responses_from_streaming_run(self) -> None:
         async def updates() -> AsyncIterator[AgentResponseUpdate]:
             yield AgentResponseUpdate(contents=[Content.from_text("hel")], role="assistant")
             yield AgentResponseUpdate(contents=[Content.from_text("lo")], role="assistant")
@@ -287,7 +287,7 @@ class TestResponsesRunHelpers:
 
         events = [
             event
-            async for event in responses_stream_from_run(
+            async for event in responses_from_streaming_run(
                 stream,
                 response_id="resp_new",
                 session_id="conv_1",
