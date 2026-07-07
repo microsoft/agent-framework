@@ -7,9 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- **agent-framework-azure-ai-search**: Add opt-in query source credential forwarding for agentic Azure AI Search retrieval ([#6915](https://github.com/microsoft/agent-framework/pull/6915))
-
 ## [1.10.0] - 2026-06-30
 
 ### Added
