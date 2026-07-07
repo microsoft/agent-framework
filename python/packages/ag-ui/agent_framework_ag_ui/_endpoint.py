@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import copy
 import logging
 from collections.abc import AsyncGenerator, Sequence
@@ -82,6 +84,7 @@ def add_agent_framework_fastapi_endpoint(
     dependencies: Sequence[Depends] | None = None,
     snapshot_store: AGUIThreadSnapshotStore | None = None,
     snapshot_scope_resolver: SnapshotScopeResolver | None = None,
+    keepalive_seconds: int | None = 15,
 ) -> None:
     """Add an AG-UI endpoint to a FastAPI app.
 
@@ -103,6 +106,10 @@ def add_agent_framework_fastapi_endpoint(
             explicit Snapshot Scope resolver.
         snapshot_scope_resolver: Optional resolver for the application-defined Snapshot Scope. Required whenever
             a snapshot store is configured because an AG-UI Thread id is not an authorization boundary.
+        keepalive_seconds: Interval in seconds between SSE keepalive comments emitted during idle gaps in the
+            event stream. Prevents reverse proxies and browser runtimes from closing an otherwise-healthy
+            connection during long silent model runs (e.g. reasoning models). Defaults to 15. Set to None
+            or 0 to disable.
     """
     protocol_runner: AgentFrameworkAgent | AgentFrameworkWorkflow
     if isinstance(agent, AgentFrameworkWorkflow):
@@ -163,8 +170,46 @@ def add_agent_framework_fastapi_endpoint(
             async def event_generator() -> AsyncGenerator[str]:
                 encoder = EventEncoder()
                 event_count = 0
+                keepalive_interval = keepalive_seconds if keepalive_seconds else None
+
+                # Sentinels used to signal end-of-stream and errors across the queue.
+                done_sentinel = object()
+                error_sentinel = object()
+
+                # Producer task keeps the generator in a stable asyncio.Context (required for
+                # ContextVar.reset() in OTel hooks). See issue #6941.
+                queue: asyncio.Queue[Any] = asyncio.Queue()
+                producer_error: dict[str, BaseException] = {}
+
+                async def _producer() -> None:
+                    try:
+                        async for evt in protocol_runner.run(input_data):
+                            await queue.put(evt)
+                    except BaseException as producer_exc:  # noqa: BLE001
+                        producer_error["exc"] = producer_exc
+                        await queue.put(error_sentinel)
+                    else:
+                        await queue.put(done_sentinel)
+
+                producer_task = asyncio.create_task(_producer(), name=f"ag-ui-event-producer:{path}")
+
                 try:
-                    async for event in protocol_runner.run(input_data):
+                    while True:
+                        if keepalive_interval:
+                            try:
+                                item = await asyncio.wait_for(queue.get(), timeout=keepalive_interval)
+                            except asyncio.TimeoutError:
+                                yield ": keepalive\n\n"
+                                continue
+                        else:
+                            item = await queue.get()
+
+                        if item is done_sentinel:
+                            break
+                        if item is error_sentinel:
+                            raise producer_error["exc"]
+
+                        event = item
                         event_count += 1
                         event_type_name = getattr(event, "type", type(event).__name__)
                         # Log important events at INFO level
@@ -207,6 +252,11 @@ def add_agent_framework_fastapi_endpoint(
                         yield encoder.encode(run_error)
                     except Exception:
                         logger.exception("[%s] Failed to encode RUN_ERROR event", path)
+                finally:
+                    if not producer_task.done():
+                        producer_task.cancel()
+                    with contextlib.suppress(BaseException):
+                        await producer_task
 
             return StreamingResponse(
                 event_generator(),

@@ -2,6 +2,7 @@
 
 """Tests for FastAPI endpoint creation (_endpoint.py)."""
 
+import asyncio
 import json
 from typing import Any, cast
 
@@ -1286,6 +1287,78 @@ async def test_endpoint_streaming_error_emits_run_error_event():
 
     assert "RUN_STARTED" in event_types
     assert "RUN_ERROR" in event_types
+
+
+class _SlowStreamWorkflow(AgentFrameworkWorkflow):
+    """Workflow that emits RUN_STARTED, waits, then finishes.
+
+    Used to exercise the SSE keepalive path: while the generator is parked on
+    the sleep, no real events flow and any idle timeout in the transport would
+    close the connection unless a keepalive comment is emitted.
+    """
+
+    def __init__(self, silent_seconds: float) -> None:
+        super().__init__()
+        self._silent_seconds = silent_seconds
+
+    async def run(self, input_data: dict[str, Any]):  # type: ignore[override]
+        del input_data
+        yield RunStartedEvent(run_id="run-1", thread_id="thread-1")
+        await asyncio.sleep(self._silent_seconds)
+
+
+async def test_endpoint_emits_sse_keepalive_during_idle_gap():
+    """During a silent run the endpoint should interleave `: keepalive` comments."""
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        _SlowStreamWorkflow(silent_seconds=1.3),
+        path="/keepalive",
+        keepalive_seconds=1,
+    )
+    client = TestClient(app)
+    response = client.post("/keepalive", json={"messages": [{"role": "user", "content": "Hi"}]})
+
+    assert response.status_code == 200
+    content = response.content.decode("utf-8")
+    # At least one keepalive comment must appear during the silent 1.3s window
+    # (with keepalive_seconds=1 the timer should fire at least once).
+    assert ": keepalive" in content, f"expected keepalive comment in stream, got: {content!r}"
+    # And the real event must still be present and parseable.
+    event_types = [json.loads(line[6:]).get("type") for line in content.split("\n") if line.startswith("data: ")]
+    assert "RUN_STARTED" in event_types
+
+
+async def test_endpoint_no_keepalive_when_disabled():
+    """Setting keepalive_seconds=None (or 0) must disable keepalive comments."""
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        _SlowStreamWorkflow(silent_seconds=0.4),
+        path="/no-keepalive",
+        keepalive_seconds=None,
+    )
+    client = TestClient(app)
+    response = client.post("/no-keepalive", json={"messages": [{"role": "user", "content": "Hi"}]})
+
+    assert response.status_code == 200
+    content = response.content.decode("utf-8")
+    assert ": keepalive" not in content
+
+
+async def test_endpoint_no_keepalive_when_stream_is_fast(build_chat_client):
+    """Fast streams should not have keepalive comments interleaved."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+    add_agent_framework_fastapi_endpoint(app, agent, path="/fast", keepalive_seconds=30)
+
+    client = TestClient(app)
+    response = client.post("/fast", json={"messages": [{"role": "user", "content": "Hi"}]})
+
+    assert response.status_code == 200
+    content = response.content.decode("utf-8")
+    # Fast synthetic stream finishes well under the 30s keepalive interval.
+    assert ": keepalive" not in content
 
 
 async def test_endpoint_with_dependencies_blocks_unauthorized(build_chat_client):
