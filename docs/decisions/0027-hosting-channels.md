@@ -384,11 +384,11 @@ import os
 
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_hosting import AgentState  # pyright: ignore[reportAttributeAccessIssue]
-from agent_framework_hosting_responses import create_response_id, responses_from_run, responses_session_id, responses_to_run  # pyright: ignore[reportAttributeAccessIssue]
+from agent_framework_hosting import AgentState
+from agent_framework_hosting_responses import create_response_id, responses_from_run, responses_session_id, responses_to_run
 from fastapi import Body, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
-
+s
 
 app = FastAPI()
 agent = Agent(
@@ -449,8 +449,8 @@ import os
 
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_hosting import AgentState  # pyright: ignore[reportAttributeAccessIssue]
-from agent_framework_hosting_responses import create_response_id, responses_from_run, responses_session_id, responses_to_run  # pyright: ignore[reportAttributeAccessIssue]
+from agent_framework_hosting import AgentState
+from agent_framework_hosting_responses import create_response_id, responses_from_run, responses_session_id, responses_to_run
 from django.http import HttpRequest, HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
 from django.views import View
 
