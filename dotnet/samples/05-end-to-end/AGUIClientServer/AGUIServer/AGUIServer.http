@@ -15,3 +15,34 @@ Content-Type: application/json
   ],
   "context": {}
 }
+
+### Send a file content message (AG-UI DataContent-style upload)
+POST {{host}}/
+Content-Type: application/json
+
+{
+  "threadId": "thread_file_001",
+  "runId": "run_file_001",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Please read this uploaded file content and summarize."
+        },
+        {
+          "type": "document",
+          "filename": "hello.txt",
+          "mimeType": "text/plain",
+          "source": {
+            "type": "data",
+            "mimeType": "text/plain",
+            "value": "SGVsbG8gZnJvbSBBR1VJIHNhbXBsZS4="
+          }
+        }
+      ]
+    }
+  ],
+  "context": []
+}
