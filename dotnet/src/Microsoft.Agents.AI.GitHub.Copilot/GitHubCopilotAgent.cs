@@ -74,7 +74,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         string? id = null,
         string? name = null,
         string? description = null,
-        IList<AITool>? tools = null,
+        IList<AIFunctionDeclaration>? tools = null,
         string? instructions = null)
         : this(
             copilotClient,
@@ -434,9 +434,9 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         };
     }
 
-    private static SessionConfig? GetSessionConfig(IList<AITool>? tools, string? instructions)
+    private static SessionConfig? GetSessionConfig(IList<AIFunctionDeclaration>? tools, string? instructions)
     {
-        List<AIFunctionDeclaration>? mappedTools = tools is { Count: > 0 } ? tools.OfType<AIFunctionDeclaration>().ToList() : null;
+        List<AIFunctionDeclaration>? mappedTools = tools is { Count: > 0 } ? tools.ToList() : null;
         SystemMessageConfig? systemMessage = instructions is not null ? new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = instructions } : null;
 
         if (mappedTools is null && systemMessage is null)
