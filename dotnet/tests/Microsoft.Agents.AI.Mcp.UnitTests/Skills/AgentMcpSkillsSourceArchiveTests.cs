@@ -539,6 +539,73 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         Assert.Empty(skills);
     }
 
+    [Fact]
+    public async Task GetSkillsAsync_ConcurrentCalls_ReconcilesArchiveDirectorySafelyAsync()
+    {
+        // Arrange - a fixed extraction directory means every concurrent call reconciles the same
+        // on-disk location. The per-instance lock must serialize that reconcile/extract/read work so
+        // that no call observes a half-extracted or mid-prune directory.
+        await using var server = new InMemoryMcpServer(builder => builder.WithResources<TwoSkillServer>());
+        await using var client = await server.CreateClientAsync();
+        var options = new AgentMcpSkillsSourceOptions { ArchiveSkillsDirectory = this._extractionRoot };
+        var source = new AgentMcpSkillsSource(client, options);
+        var context = TestAgentSkillsSourceContextFactory.Create();
+
+        // Act - hammer the source from many threads at once.
+        var tasks = Enumerable.Range(0, 20)
+            .Select(_ => Task.Run(() => source.GetSkillsAsync(context)))
+            .ToArray();
+        var results = await Task.WhenAll(tasks);
+
+        // Assert - every call returns both skills with intact content.
+        foreach (var skills in results)
+        {
+            Assert.Equal(2, skills.Count);
+
+            var byName = skills.ToDictionary(s => s.Frontmatter.Name);
+            Assert.Contains("Content A.", await byName["skill-a"].GetContentAsync());
+            Assert.Contains("Content B.", await byName["skill-b"].GetContentAsync());
+        }
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ArchiveUpdatedBetweenCalls_ReturnsUpdatedContentAsync()
+    {
+        // Arrange - a mutable server whose archive body the test can change to simulate the skill
+        // being republished. Because the loader re-extracts under its reconcile lock on every call,
+        // a query issued after the update (and any calls queued behind the lock) must observe the
+        // new content, never a stale pre-update snapshot.
+        MutableSkillServer.Body = "Version one.";
+        await using var server = new InMemoryMcpServer(builder => builder.WithResources<MutableSkillServer>());
+        await using var client = await server.CreateClientAsync();
+        var options = new AgentMcpSkillsSourceOptions { ArchiveSkillsDirectory = this._extractionRoot };
+        var source = new AgentMcpSkillsSource(client, options);
+        var context = TestAgentSkillsSourceContextFactory.Create();
+
+        // Act - the initial load observes the original content.
+        var before = await source.GetSkillsAsync(context);
+
+        // The skill is republished with new content.
+        MutableSkillServer.Body = "Version two.";
+
+        // Fire many post-update calls at once; they serialize behind the reconcile lock.
+        var tasks = Enumerable.Range(0, 10)
+            .Select(_ => Task.Run(() => source.GetSkillsAsync(context)))
+            .ToArray();
+        var afterResults = await Task.WhenAll(tasks);
+
+        // Assert - the first load saw the old content.
+        Assert.Contains("Version one.", await Assert.Single(before).GetContentAsync());
+
+        // Every post-update call sees the new content and not the stale pre-update body.
+        foreach (var skills in afterResults)
+        {
+            var content = await Assert.Single(skills).GetContentAsync();
+            Assert.Contains("Version two.", content);
+            Assert.DoesNotContain("Version one.", content);
+        }
+    }
+
     public void Dispose()
     {
         try
@@ -743,6 +810,28 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         [McpServerResource(UriTemplate = "skill://archives/skill-b.zip", Name = "skill-b", MimeType = "application/zip")]
         public static BlobResourceContents SkillB() => BlobResourceContents.FromBytes(
             BuildZip(("SKILL.md", SkillBMd)), "skill://archives/skill-b.zip", "application/zip");
+    }
+
+    [McpServerResourceType]
+    private sealed class MutableSkillServer
+    {
+        // Toggled by the test to simulate the server republishing the skill with new content.
+        public static volatile string Body = "Version one.";
+
+        [McpServerResource(UriTemplate = "skill://index.json", Name = "index", MimeType = "application/json")]
+        public static string Index() => ArchiveIndex("archived-skill", "skill://archives/archived-skill.zip");
+
+        [McpServerResource(UriTemplate = "skill://archives/archived-skill.zip", Name = "archive", MimeType = "application/zip")]
+        public static BlobResourceContents Archive() => BlobResourceContents.FromBytes(
+            BuildZip(("SKILL.md", $$"""
+                ---
+                name: archived-skill
+                description: A skill delivered as an archive.
+                ---
+                {{Body}}
+                """)),
+            "skill://archives/archived-skill.zip",
+            "application/zip");
     }
 
     [McpServerResourceType]

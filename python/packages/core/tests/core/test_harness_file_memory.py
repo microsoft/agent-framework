@@ -425,16 +425,33 @@ async def test_memory_replace() -> None:
 
 
 async def test_memory_replace_lines() -> None:
-    """``file_memory_replace_lines`` replaces whole 1-based lines and rejects bad input."""
+    """``file_memory_replace_lines`` applies literal 1-based line edits and rejects bad input."""
     provider = FileMemoryProvider(store=InMemoryAgentFileStore())
     _, tools = await _prepare(provider)
-    await tools["file_memory_write"].invoke(arguments={"file_name": "a.md", "content": "one\ntwo\nthree"})
 
+    async def write(content: str) -> None:
+        await tools["file_memory_write"].invoke(arguments={"file_name": "a.md", "content": content})
+
+    async def current() -> str:
+        return _text(await tools["file_memory_read"].invoke(arguments={"file_name": "a.md"}))
+
+    # Literal replacement: the caller supplies the trailing newline.
+    await write("one\ntwo\nthree")
     done = await tools["file_memory_replace_lines"].invoke(
-        arguments={"file_name": "a.md", "edits": [{"line_number": 2, "new_line": "TWO"}]}
+        arguments={"file_name": "a.md", "edits": [{"line_number": 2, "new_line": "TWO\n"}]}
     )
     assert "1 line" in _text(done)
-    assert _text(await tools["file_memory_read"].invoke(arguments={"file_name": "a.md"})) == "one\nTWO\nthree"
+    assert await current() == "one\nTWO\nthree"
+
+    # Empty new_line deletes a line; embedded newlines expand one line into several.
+    await write("a\nb\nc\n")
+    await tools["file_memory_replace_lines"].invoke(
+        arguments={
+            "file_name": "a.md",
+            "edits": [{"line_number": 1, "new_line": ""}, {"line_number": 2, "new_line": "b1\nb2\n"}],
+        }
+    )
+    assert await current() == "b1\nb2\nc\n"
 
     oor = await tools["file_memory_replace_lines"].invoke(
         arguments={"file_name": "a.md", "edits": [{"line_number": 9, "new_line": "x"}]}
@@ -446,3 +463,17 @@ async def test_memory_replace_lines() -> None:
         arguments={"file_name": "memories.md", "edits": [{"line_number": 1, "new_line": "x"}]}
     )
     assert "reserved for internal use" in _text(reserved)
+
+    # Empty edits list -> failure surfaced to the caller.
+    await write("one\ntwo")
+    empty = await tools["file_memory_replace_lines"].invoke(arguments={"file_name": "a.md", "edits": []})
+    assert "At least one line edit" in _text(empty)
+
+    # Duplicate line numbers -> failure surfaced to the caller.
+    dup = await tools["file_memory_replace_lines"].invoke(
+        arguments={
+            "file_name": "a.md",
+            "edits": [{"line_number": 1, "new_line": "x"}, {"line_number": 1, "new_line": "y"}],
+        }
+    )
+    assert "Duplicate" in _text(dup)

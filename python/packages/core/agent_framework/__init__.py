@@ -175,12 +175,14 @@ from ._sessions import (
     FileHistoryProvider,
     HistoryProvider,
     InMemoryHistoryProvider,
+    ServiceSessionId,
     SessionContext,
     register_state_type,
 )
 from ._settings import SecretString, load_settings
 from ._skills import (
     AggregatingSkillsSource,
+    CachingSkillsSource,
     ClassSkill,
     DeduplicatingSkillsSource,
     DelegatingSkillsSource,
@@ -397,6 +399,7 @@ __all__ = [
     "BaseAgent",
     "BaseChatClient",
     "BaseEmbeddingClient",
+    "CachingSkillsSource",
     "Case",
     "CharacterEstimatorTokenizer",
     "ChatAndFunctionMiddlewareTypes",
@@ -508,6 +511,7 @@ __all__ = [
     "SamplingApprovalCallback",
     "SecretString",
     "SelectiveToolCallCompactionStrategy",
+    "ServiceSessionId",
     "SessionContext",
     "SingleEdgeGroup",
     "Skill",

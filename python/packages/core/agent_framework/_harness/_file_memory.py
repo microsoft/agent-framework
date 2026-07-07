@@ -177,10 +177,19 @@ class _ReplaceInput(BaseModel):
 
 
 class _LineEdit(BaseModel):
-    """A single whole-line replacement for ``file_memory_replace_lines``."""
+    """A single literal line replacement for ``file_memory_replace_lines``."""
 
     line_number: Annotated[int, Field(description="1-based line number to replace.")]
-    new_line: Annotated[str, Field(description="Replacement content for the whole line (no trailing newline).")]
+    new_line: Annotated[
+        str,
+        Field(
+            description=(
+                "Literal replacement text for the line, including any trailing newline you want to keep "
+                "(the editor does not add one). Set to an empty string to delete the line entirely, "
+                "including its line break."
+            )
+        ),
+    ]
 
 
 class _ReplaceLinesInput(BaseModel):
@@ -189,7 +198,7 @@ class _ReplaceLinesInput(BaseModel):
     file_name: Annotated[str, Field(description="Name of the memory file to modify.")]
     edits: Annotated[
         list[_LineEdit],
-        Field(description="List of 1-based line numbers and their replacement content."),
+        Field(description="List of 1-based line numbers and their literal replacement text."),
     ]
 
 
@@ -436,7 +445,7 @@ class FileMemoryProvider(ContextProvider):
 
         @tool(name="file_memory_replace_lines", schema=_ReplaceLinesInput, approval_mode="never_require")
         async def file_memory_replace_lines(file_name: str, edits: list[_LineEdit]) -> str:
-            """Replace whole lines in a memory file. Provide a list of edits, each with a 1-based line_number and the new_line content. Fails on out-of-range or duplicate line numbers."""  # noqa: E501
+            """Replace lines in a memory file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers."""  # noqa: E501
             try:
                 normalized = _normalize_relative_path(file_name)
             except ValueError as exc:

@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// A skill source decorator that removes duplicate skills by name, keeping only the first occurrence.
 /// </summary>
-internal sealed partial class DeduplicatingAgentSkillsSource : DelegatingAgentSkillsSource
+public sealed partial class DeduplicatingAgentSkillsSource : DelegatingAgentSkillsSource
 {
     private readonly ILogger<DeduplicatingAgentSkillsSource> _logger;
 

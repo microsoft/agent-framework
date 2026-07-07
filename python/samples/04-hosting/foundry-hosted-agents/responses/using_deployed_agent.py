@@ -124,7 +124,7 @@ async def main() -> None:
                 if chunk.text:
                     print(chunk.text, end="", flush=True)
         finally:
-            if session.service_session_id is not None:
+            if isinstance(session.service_session_id, str):
                 await project_client.beta.agents.delete_session(
                     agent_name=agent_name,
                     session_id=session.service_session_id,

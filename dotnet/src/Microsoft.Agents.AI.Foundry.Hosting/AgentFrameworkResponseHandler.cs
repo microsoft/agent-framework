@@ -83,23 +83,34 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var isolationKeyProvider = this._serviceProvider.GetService<HostedSessionIsolationKeyProvider>()
             ?? s_defaultIsolationKeyProvider;
         var resolvedHostedContext = await isolationKeyProvider.GetKeysAsync(context, request, cancellationToken).ConfigureAwait(false);
-        if (resolvedHostedContext is null)
+        if (resolvedHostedContext is null && FoundryEnvironment.IsHosted)
         {
-            // Reached only when the container is NOT hosted by Foundry (local development without a
-            // fallback provider), or in the unexpected case of a 2.0.0 request that carried a call id
-            // but no x-agent-user-id. Hosted 1.0.0 requests are already handled above.
+            // Hosted by Foundry yet the provider produced no user identity. Protocol 1.0.0 (no call id)
+            // was already turned into a clear 501 above, so this is the unexpected case of a 2.0.0
+            // request that carried a call id but no x-agent-user-id, or a custom provider that returned
+            // null in production. Reject rather than silently persist an unscoped, cross-user session.
             throw new InvalidOperationException(
                 $"The registered {nameof(HostedSessionIsolationKeyProvider)} returned null for the current request. " +
                 "Ensure the Foundry platform is providing the x-agent-user-id header, " +
                 "or register a custom provider that supplies fallback values for local development.");
         }
 
+        // When resolvedHostedContext is null here the container is NOT hosted by Foundry (local
+        // development: docker run / dotnet run outside the platform, so no x-agent-user-id header).
+        // Per-user isolation simply does not apply in that case: the request proceeds with a null user
+        // id (the session store treats null as "no user partition") and no hosted context is stamped or
+        // validated. This lets contributors run the image locally without registering a fallback
+        // provider, while production stays strict because FoundryEnvironment.IsHosted is true there.
+        var resolvedUserId = resolvedHostedContext?.UserId;
+
         // 3. Load or create a new session from the interaction.
         // Map the request to a stable MAF AgentSession key: conversation_id when present, else the
         // partition embedded in previous_response_id (chains converge), else the minted response id
         // (cold start). Container session id is intentionally not used — it spans many conversations.
-        // The session store partitions persisted state per user via resolvedHostedContext.UserId so one
-        // user can never observe another user's session, even with a forged conversation id.
+        // The session store partitions persisted state per user via resolvedUserId so one user can
+        // never observe another user's session, even with a forged conversation id. Locally
+        // (resolvedUserId is null) there is no user to partition on, so the session is unscoped/shared
+        // by design — per-user isolation applies only when a user identity was resolved (hosted).
         var conversationId = request.GetConversationId();
         var sessionConversationId = HostedConversationKey.Resolve(
             conversationId, request.PreviousResponseId, context.ResponseId);
@@ -107,7 +118,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var chatClientAgent = agent.GetService<ChatClientAgent>();
 
         AgentSession? session = !string.IsNullOrWhiteSpace(sessionConversationId)
-            ? await sessionStore.GetSessionAsync(agent, sessionConversationId, resolvedHostedContext.UserId, cancellationToken).ConfigureAwait(false)
+            ? await sessionStore.GetSessionAsync(agent, sessionConversationId, resolvedUserId, cancellationToken).ConfigureAwait(false)
                 : chatClientAgent is not null
                 ? await chatClientAgent.CreateSessionAsync(cancellationToken).ConfigureAwait(false)
                 : await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
@@ -119,7 +130,9 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var platformCallId = context.PlatformContext?.CallId;
         HostedCallContext.CallId = platformCallId;
 
-        if (session is not null)
+        // Stamp/validate the hosted identity only when one was resolved. Locally (non-hosted) there is
+        // no user identity, so there is nothing to partition or tamper-check and the session is shared.
+        if (session is not null && resolvedHostedContext is not null)
         {
             var existingHostedContext = session.GetHostedContext();
             if (existingHostedContext is null)
@@ -434,7 +447,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             // persisted session per end user, mirroring the load above so multi-turn continuity is preserved.
             if (session is not null && !string.IsNullOrWhiteSpace(sessionConversationId))
             {
-                await sessionStore.SaveSessionAsync(agent, sessionConversationId, session, resolvedHostedContext.UserId, cancellationToken).ConfigureAwait(false);
+                await sessionStore.SaveSessionAsync(agent, sessionConversationId, session, resolvedUserId, cancellationToken).ConfigureAwait(false);
             }
         }
     }

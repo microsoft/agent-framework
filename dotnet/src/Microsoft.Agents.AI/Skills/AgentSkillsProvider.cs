@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Security;
 using System.Text;
@@ -12,7 +11,6 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -31,9 +29,16 @@ namespace Microsoft.Agents.AI;
 /// <item><description><strong>Read resources</strong> — supplementary content is read on demand via the <c>read_skill_resource</c> tool.</description></item>
 /// <item><description><strong>Run scripts</strong> — scripts are executed via the <c>run_skill_script</c> tool (when scripts exist).</description></item>
 /// </list>
+/// <para>
+/// The provider can optionally own the lifetime of its underlying <see cref="AgentSkillsSource"/>. When
+/// constructed via one of the convenience constructors (skill paths or in-memory skills) or via
+/// <see cref="AgentSkillsProviderBuilder"/>, the source pipeline is created internally and owned by the
+/// provider, so disposing the provider disposes the pipeline. When constructed from a caller-supplied
+/// <see cref="AgentSkillsSource"/>, ownership is controlled by the <c>ownsSource</c> constructor
+/// parameter and defaults to the caller retaining ownership.
+/// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed partial class AgentSkillsProvider : AIContextProvider
+public sealed partial class AgentSkillsProvider : AIContextProvider, IDisposable
 {
     /// <summary>The name of the tool that loads a skill.</summary>
     public const string LoadSkillToolName = "load_skill";
@@ -65,10 +70,11 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The tools exposed by <see cref="AgentSkillsProvider"/> always require approval. Add this rule to
+    /// This rule only applies when approval is enabled for the matching tools in
+    /// <see cref="AgentSkillsProviderOptions"/>. When the read-only skill tools require approval, add this rule to
     /// <see cref="ToolApprovalAgentOptions.AutoApprovalRules"/> to automatically approve only the tools
     /// that read skill content, while still prompting for script execution
-    /// (<see cref="RunSkillScriptToolName"/>).
+    /// (<see cref="RunSkillScriptToolName"/>) if it also requires approval.
     /// </para>
     /// <para>
     /// The rule matches on the tool name, returning <see langword="true"/> for read-only skill tools
@@ -84,9 +90,10 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The tools exposed by <see cref="AgentSkillsProvider"/> always require approval. Add this rule to
+    /// This rule only applies when approval is enabled for the matching tools in
+    /// <see cref="AgentSkillsProviderOptions"/>. When skill tools require approval, add this rule to
     /// <see cref="ToolApprovalAgentOptions.AutoApprovalRules"/> to automatically approve every skill
-    /// tool without prompting the user.
+    /// tool that requires approval without prompting the user.
     /// </para>
     /// <para>
     /// The rule matches on the tool name, returning <see langword="true"/> for any skill tool
@@ -120,8 +127,10 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         """;
 
     private readonly AgentSkillsSource _source;
+    private readonly bool _ownsSource;
     private readonly AgentSkillsProviderOptions? _options;
     private readonly ILogger<AgentSkillsProvider> _logger;
+    private bool _disposed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentSkillsProvider"/> class
@@ -165,7 +174,8 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
                     new AgentFileSkillsSource(skillPaths, scriptRunner, fileOptions, loggerFactory)),
                 loggerFactory),
             options,
-            loggerFactory)
+            loggerFactory,
+            ownsSource: true)
     {
     }
 
@@ -196,7 +206,8 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
                     new AgentInMemorySkillsSource(Throw.IfNull(skills))),
                 loggerFactory),
             options,
-            loggerFactory)
+            loggerFactory,
+            ownsSource: true)
     {
     }
 
@@ -208,9 +219,15 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     /// <param name="source">The skill source providing skills.</param>
     /// <param name="options">Optional configuration.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
-    public AgentSkillsProvider(AgentSkillsSource source, AgentSkillsProviderOptions? options = null, ILoggerFactory? loggerFactory = null)
+    /// <param name="ownsSource">
+    /// <see langword="true"/> to transfer ownership of <paramref name="source"/> to the provider so that it is
+    /// disposed when the provider is disposed; <see langword="false"/> (the default) to leave ownership with the
+    /// caller. Set this to <see langword="true"/> only when the provider is the sole owner of the source.
+    /// </param>
+    public AgentSkillsProvider(AgentSkillsSource source, AgentSkillsProviderOptions? options = null, ILoggerFactory? loggerFactory = null, bool ownsSource = false)
     {
         this._source = Throw.IfNull(source);
+        this._ownsSource = ownsSource;
         this._options = options;
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<AgentSkillsProvider>();
 
@@ -236,25 +253,53 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         };
     }
 
+    /// <summary>
+    /// Releases the resources used by this provider. When the provider owns its underlying
+    /// <see cref="AgentSkillsSource"/> (see the <c>ownsSource</c> constructor parameter), the source is
+    /// disposed as well.
+    /// </summary>
+    public void Dispose()
+    {
+        if (this._disposed)
+        {
+            return;
+        }
+
+        this._disposed = true;
+
+        if (this._ownsSource)
+        {
+            this._source.Dispose();
+        }
+    }
+
     private IList<AIFunction> BuildTools(IList<AgentSkill> skills)
     {
         return
         [
-            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(
+            this.WrapWithApprovalIfRequired(AIFunctionFactory.Create(
                 (string skillName, CancellationToken cancellationToken) => this.LoadSkillAsync(skills, skillName, cancellationToken),
                 name: LoadSkillToolName,
-                description: "Loads the full content of a specific skill")),
-            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(
+                description: "Loads the full content of a specific skill"),
+                this._options?.DisableLoadSkillApproval is not true),
+            this.WrapWithApprovalIfRequired(AIFunctionFactory.Create(
                 (string skillName, string resourceName, IServiceProvider? serviceProvider, CancellationToken cancellationToken = default) =>
                     this.ReadSkillResourceAsync(skills, skillName, resourceName, serviceProvider, cancellationToken),
                 name: ReadSkillResourceToolName,
-                description: "Reads a resource associated with a skill, such as references, assets, or dynamic data.")),
-            new ApprovalRequiredAIFunction(AIFunctionFactory.Create(
+                description: "Reads a resource associated with a skill, such as references, assets, or dynamic data."),
+                this._options?.DisableReadSkillResourceApproval is not true),
+            this.WrapWithApprovalIfRequired(AIFunctionFactory.Create(
                 (string skillName, string scriptName, JsonElement? arguments = null, IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default) =>
                     this.RunSkillScriptAsync(skills, skillName, scriptName, arguments, serviceProvider, cancellationToken),
                 name: RunSkillScriptToolName,
-                description: "Runs a script associated with a skill.")),
+                description: "Runs a script associated with a skill."),
+                this._options?.DisableRunSkillScriptApproval is not true),
         ];
+    }
+
+    private AIFunction WrapWithApprovalIfRequired(AIFunction function, bool requireApproval)
+    {
+        return requireApproval ? new ApprovalRequiredAIFunction(function) : function;
     }
 
     private string? BuildSkillsInstructions(IList<AgentSkill> skills)

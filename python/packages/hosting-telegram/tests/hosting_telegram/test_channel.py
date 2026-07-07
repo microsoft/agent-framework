@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
-from agent_framework import Content, Message
+from agent_framework import Content, Message, ServiceSessionId
 from agent_framework_hosting import (
     AgentFrameworkHost,
     ChannelCommand,
@@ -114,7 +114,7 @@ class _FakeAgent:
     def create_session(self, *, session_id: str | None = None) -> Any:
         return {"session_id": session_id}
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> Any:
+    def get_session(self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None) -> Any:
         return {"service_session_id": service_session_id, "session_id": session_id}
 
     def run(self, messages: Any = None, *, stream: bool = False, **kwargs: Any) -> Any:

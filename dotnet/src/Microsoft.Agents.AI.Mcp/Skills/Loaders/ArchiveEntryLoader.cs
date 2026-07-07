@@ -25,7 +25,7 @@ namespace Microsoft.Agents.AI;
 /// inside an archive are surfaced as readable resources only; they are never discovered as
 /// executable scripts.
 /// </remarks>
-internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader
+internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDisposable
 {
     /// <summary>
     /// The default maximum size, in bytes, of a downloaded archive resource.
@@ -36,6 +36,11 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader
     private readonly AgentMcpSkillsSourceOptions? _options;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger _logger;
+
+    // Serializes the reconcile -> extract -> read sequence so concurrent loads never mutate the
+    // shared on-disk directory (or the _archiveSkillsDirectory field) at the same time.
+    private readonly SemaphoreSlim _reconcileGate = new(1, 1);
+
     private string? _archiveSkillsDirectory;
 
     public ArchiveEntryLoader(McpClient client, AgentMcpSkillsSourceOptions? options, ILoggerFactory loggerFactory)
@@ -55,33 +60,52 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader
         // Filter out entries that are missing required fields or have invalid names.
         var archiveEntries = this.FilterValidEntries(entries);
 
-        // Determine the target directory from prior state or caller-supplied options.
-        var archiveSkillsDirectory = this._archiveSkillsDirectory ?? this._options?.ArchiveSkillsDirectory;
-
-        // Reconcile on-disk state with the current set of advertised skills.
-        this.ReconcileArchiveSkillDirectories(archiveSkillsDirectory, archiveEntries);
-
-        if (archiveEntries.Count == 0)
+        // The reconcile -> extract -> read sequence mutates a shared on-disk directory and the
+        // _archiveSkillsDirectory field, so it must run as a single critical section. Concurrent
+        // callers wait here and execute one at a time, keeping the directory consistent.
+        await this._reconcileGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            return [];
+            // Determine the target directory from prior state or caller-supplied options.
+            var archiveSkillsDirectory = this._archiveSkillsDirectory ?? this._options?.ArchiveSkillsDirectory;
+
+            // Reconcile on-disk state with the current set of advertised skills.
+            this.ReconcileArchiveSkillDirectories(archiveSkillsDirectory, archiveEntries);
+
+            if (archiveEntries.Count == 0)
+            {
+                return [];
+            }
+
+            // Resolve or generate the skills directory and ensure it exists on disk.
+            this._archiveSkillsDirectory = archiveSkillsDirectory ?? Path.Combine(Directory.GetCurrentDirectory(), Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(this._archiveSkillsDirectory);
+
+            // Download and extract each archive entry into its own subdirectory.
+            var skillDirectories = new List<string>(archiveEntries.Count);
+
+            foreach (var entry in archiveEntries)
+            {
+                skillDirectories.AddRange(await this.TryDownloadAndExtractSkillAsync(entry, this._archiveSkillsDirectory, cancellationToken).ConfigureAwait(false));
+            }
+
+            // Delegate discovery of extracted content to a file-based skills source.
+            AgentFileSkillsSource fileSource = this.CreateFileSkillsSource(skillDirectories);
+
+            return await fileSource.GetSkillsAsync(context, cancellationToken).ConfigureAwait(false);
         }
-
-        // Resolve or generate the skills directory and ensure it exists on disk.
-        this._archiveSkillsDirectory = archiveSkillsDirectory ?? Path.Combine(Directory.GetCurrentDirectory(), Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(this._archiveSkillsDirectory);
-
-        // Download and extract each archive entry into its own subdirectory.
-        var skillDirectories = new List<string>(archiveEntries.Count);
-
-        foreach (var entry in archiveEntries)
+        finally
         {
-            skillDirectories.AddRange(await this.TryDownloadAndExtractSkillAsync(entry, this._archiveSkillsDirectory, cancellationToken).ConfigureAwait(false));
+            this._reconcileGate.Release();
         }
+    }
 
-        // Delegate discovery of extracted content to a file-based skills source.
-        AgentFileSkillsSource fileSource = this.CreateFileSkillsSource(skillDirectories);
-
-        return await fileSource.GetSkillsAsync(context, cancellationToken).ConfigureAwait(false);
+    /// <summary>
+    /// Releases the resources used by this loader.
+    /// </summary>
+    public void Dispose()
+    {
+        this._reconcileGate.Dispose();
     }
 
     /// <summary>

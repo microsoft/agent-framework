@@ -2,6 +2,9 @@
 
 This directory contains samples that demonstrate how to use hosted [Agent Framework](https://github.com/microsoft/agent-framework) agents with different capabilities and configurations on Foundry using the Foundry Hosting Agent service. Each sample includes a README with instructions on how to set up, run, and interact with the agent.
 
+> [IMPORTANT] Migrating from Protocol version 1.0.0 to 2.0.0: Foundry Hosting Agents service has been updated to use Protocol version 2.0.0. If your application is using Protocol version 1.0.0, please upgrade to Protocol version 2.0.0 in your `agent.manifest.yaml` or `agent.yaml` and upgrade to the latest `agent-framework-foundry-hosting` package. `agent-framework-foundry-hosting==1.0.0a260625` is the last version that supports Protocol version 1.0.0.
+>
+> The `agent-framework-foundry-hosting` Python API surface is intended to remain stable, but protocol 1.0.0 and 2.0.0 are incompatible.
 ## Samples
 
 ### Responses API
