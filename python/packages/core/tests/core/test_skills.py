@@ -48,8 +48,6 @@ from agent_framework._skills import (
 
 from .conftest import MockAgent, MockAgentSession
 
-pytestmark = pytest.mark.filterwarnings(r"ignore:\[SKILLS\].*:FutureWarning")
-
 # Cross-platform absolute path prefix for tests
 _ABS = "C:\\skills" if os.name == "nt" else "/skills"
 
@@ -1010,10 +1008,10 @@ class TestSymlinkDetection:
 # ---------------------------------------------------------------------------
 
 
-class TestSkillsExperimentalStage:
-    """Tests for the experimental stage annotations applied to skills APIs."""
+class TestSkillsStableStage:
+    """Tests confirming the skills APIs are stable (no experimental annotation)."""
 
-    def test_docstrings_include_experimental_warning(self) -> None:
+    def test_docstrings_omit_experimental_warning(self) -> None:
         assert SkillResource.__doc__ is not None
         assert SkillScript.__doc__ is not None
         assert Skill.__doc__ is not None
@@ -1021,31 +1019,24 @@ class TestSkillsExperimentalStage:
         assert SkillsProvider.__doc__ is not None
         assert SkillScript.parameters_schema.__doc__ is not None
 
-        assert ".. warning:: Experimental" in SkillResource.__doc__
-        assert ".. warning:: Experimental" in SkillScript.__doc__
-        assert ".. warning:: Experimental" in Skill.__doc__
-        assert ".. warning:: Experimental" in SkillScriptRunner.__doc__
-        assert ".. warning:: Experimental" in SkillsProvider.__doc__
+        assert ".. warning:: Experimental" not in SkillResource.__doc__
+        assert ".. warning:: Experimental" not in SkillScript.__doc__
+        assert ".. warning:: Experimental" not in Skill.__doc__
+        assert ".. warning:: Experimental" not in SkillScriptRunner.__doc__
+        assert ".. warning:: Experimental" not in SkillsProvider.__doc__
         assert ".. warning:: Experimental" not in SkillScript.parameters_schema.__doc__
 
-    def test_feature_metadata_is_set(self) -> None:
-        assert getattr(SkillResource, "__feature_stage__", None) == "experimental"
-        assert getattr(SkillScript, "__feature_stage__", None) == "experimental"
-        assert getattr(Skill, "__feature_stage__", None) == "experimental"
-        assert getattr(SkillsProvider, "__feature_stage__", None) == "experimental"
-        feature_ids: list[str | None] = [
-            getattr(SkillResource, "__feature_id__", None),
-            getattr(SkillScript, "__feature_id__", None),
-            getattr(Skill, "__feature_id__", None),
-            getattr(SkillsProvider, "__feature_id__", None),
-        ]
-        assert all(isinstance(feature_id, str) and feature_id for feature_id in feature_ids)
-        assert len(set(feature_ids)) == 1
+    def test_feature_metadata_is_absent(self) -> None:
+        assert getattr(SkillResource, "__feature_stage__", None) is None
+        assert getattr(SkillScript, "__feature_stage__", None) is None
+        assert getattr(Skill, "__feature_stage__", None) is None
+        assert getattr(SkillsProvider, "__feature_stage__", None) is None
         assert getattr(SkillScriptRunner, "__feature_stage__", None) is None
+        assert getattr(SkillResource, "__feature_id__", None) is None
+        assert getattr(SkillScript, "__feature_id__", None) is None
+        assert getattr(Skill, "__feature_id__", None) is None
+        assert getattr(SkillsProvider, "__feature_id__", None) is None
         assert getattr(SkillScriptRunner, "__feature_id__", None) is None
-        assert SkillScript.parameters_schema.fget is not None  # type: ignore[attr-defined]
-        assert not hasattr(SkillScript.parameters_schema.fget, "__feature_stage__")  # type: ignore[attr-defined]
-        assert not hasattr(SkillScript.parameters_schema.fget, "__feature_id__")  # type: ignore[attr-defined]
 
 
 class TestSkillResource:
