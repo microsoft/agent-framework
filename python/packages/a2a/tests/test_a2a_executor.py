@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 from asyncio import CancelledError
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -199,8 +200,8 @@ class TestA2AExecutorExecute:
         response_message = Message(role="assistant", contents=[Content.from_text(text="Hello back")])
         response = MagicMock(spec=AgentResponse)
         response.messages = [response_message]
-        executor._agent.run = AsyncMock(return_value=response)
-        executor._agent.create_session = MagicMock()
+        cast(Any, executor._agent).run = AsyncMock(return_value=response)
+        cast(Any, executor._agent).create_session = MagicMock()
 
         with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
             mock_updater = MagicMock()
@@ -218,8 +219,8 @@ class TestA2AExecutorExecute:
             mock_updater.submit.assert_called_once()
             mock_updater.start_work.assert_called_once()
             mock_updater.complete.assert_called_once()
-            executor._agent.create_session.assert_called_once()
-            executor._agent.run.assert_called_once()
+            cast(Any, executor._agent.create_session).assert_called_once()
+            cast(Any, executor._agent.run).assert_called_once()
 
     async def test_execute_creates_task_when_not_exists(
         self,
@@ -241,8 +242,8 @@ class TestA2AExecutorExecute:
         response_message = Message(role="assistant", contents=[Content.from_text(text="Response")])
         response = MagicMock(spec=AgentResponse)
         response.messages = [response_message]
-        executor._agent.run = AsyncMock(return_value=response)
-        executor._agent.create_session = MagicMock()
+        cast(Any, executor._agent).run = AsyncMock(return_value=response)
+        cast(Any, executor._agent).create_session = MagicMock()
 
         with patch("agent_framework_a2a._a2a_executor.new_task_from_user_message") as mock_new_task:
             mock_task = MagicMock(spec=Task)
@@ -325,8 +326,8 @@ class TestA2AExecutorExecute:
         mock_request_context.context_id = "ctx-123"
         mock_request_context.message = MagicMock()
 
-        executor._agent.run = AsyncMock(side_effect=CancelledError())
-        executor._agent.create_session = MagicMock()
+        cast(Any, executor._agent).run = AsyncMock(side_effect=CancelledError())
+        cast(Any, executor._agent).create_session = MagicMock()
 
         with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
             mock_updater = MagicMock()
@@ -361,8 +362,8 @@ class TestA2AExecutorExecute:
         mock_request_context.message = MagicMock()
 
         error_message = "Test error"
-        executor._agent.run = AsyncMock(side_effect=ValueError(error_message))
-        executor._agent.create_session = MagicMock()
+        cast(Any, executor._agent).run = AsyncMock(side_effect=ValueError(error_message))
+        cast(Any, executor._agent).create_session = MagicMock()
 
         with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
             mock_updater = MagicMock()
@@ -410,11 +411,11 @@ class TestA2AExecutorExecute:
         response_message2 = Message(role="assistant", contents=[Content.from_text(text="Second")])
         response = MagicMock(spec=AgentResponse)
         response.messages = [response_message1, response_message2]
-        executor._agent.run = AsyncMock(return_value=response)
-        executor._agent.create_session = MagicMock()
+        cast(Any, executor._agent).run = AsyncMock(return_value=response)
+        cast(Any, executor._agent).create_session = MagicMock()
 
         # Mock handle_events
-        executor.handle_events = AsyncMock()
+        cast(Any, executor).handle_events = AsyncMock()
 
         with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
             mock_updater = MagicMock()
@@ -428,7 +429,7 @@ class TestA2AExecutorExecute:
             await executor.execute(mock_request_context, mock_event_queue)
 
             # Assert
-            assert executor.handle_events.call_count == 2
+            assert cast(Any, executor.handle_events).call_count == 2
 
     async def test_execute_passes_query_to_run(
         self,
@@ -451,8 +452,8 @@ class TestA2AExecutorExecute:
         response_message = Message(role="assistant", contents=[Content.from_text(text="Response")])
         response = MagicMock(spec=AgentResponse)
         response.messages = [response_message]
-        executor._agent.run = AsyncMock(return_value=response)
-        executor._agent.create_session = MagicMock()
+        cast(Any, executor._agent).run = AsyncMock(return_value=response)
+        cast(Any, executor._agent).create_session = MagicMock()
 
         with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
             mock_updater = MagicMock()
@@ -467,7 +468,7 @@ class TestA2AExecutorExecute:
             await executor.execute(mock_request_context, mock_event_queue)
 
             # Assert
-            executor._agent.run.assert_called_once_with(
+            cast(Any, executor._agent.run).assert_called_once_with(
                 query_text, session=executor._agent.create_session(), stream=False
             )
 
@@ -566,14 +567,14 @@ class TestA2AExecutorHandleEvents:
         response_message = Message(role="assistant", contents=[Content.from_text(text="Response")])
         response = MagicMock(spec=AgentResponse)
         response.messages = response_message  # Not a list
-        executor._agent.run = AsyncMock(return_value=response)
-        executor.handle_events = AsyncMock()
+        cast(Any, executor._agent).run = AsyncMock(return_value=response)
+        cast(Any, executor).handle_events = AsyncMock()
 
         # Act
         await executor._run(query, session, mock_updater)
 
         # Assert
-        executor.handle_events.assert_called_once_with(response_message, mock_updater)
+        cast(Any, executor.handle_events).assert_called_once_with(response_message, mock_updater)
 
     @fixture
     def mock_updater(self) -> MagicMock:
@@ -808,7 +809,7 @@ class TestA2AExecutorHandleEvents:
             message_id="msg-1",
         )
         mock_updater.add_artifact = AsyncMock()
-        streamed_artifact_ids = set()
+        streamed_artifact_ids: set[str] = set()
 
         # Act
         await executor.handle_events(update, mock_updater, streamed_artifact_ids=streamed_artifact_ids)
@@ -844,7 +845,7 @@ class TestA2AExecutorHandleEvents:
         """Test handling messages with unsupported content types."""
         # Arrange
         message = Message(
-            contents=[Content(type="unknown", text="Some text")],
+            contents=[Content(type=cast(Any, "unknown"), text="Some text")],  # type: ignore[arg-type]
             role="assistant",
         )
 
@@ -884,9 +885,9 @@ class TestA2AExecutorIntegration:
         response_message.role = "assistant"
         response_message.additional_properties = None
 
-        executor._agent.run = AsyncMock(return_value=response)
-        executor._agent.create_session = MagicMock()
-        executor.handle_events = AsyncMock()
+        cast(Any, executor._agent).run = AsyncMock(return_value=response)
+        cast(Any, executor._agent).create_session = MagicMock()
+        cast(Any, executor).handle_events = AsyncMock()
 
         with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
             mock_updater = MagicMock()
@@ -902,5 +903,5 @@ class TestA2AExecutorIntegration:
             # Assert
             mock_updater.submit.assert_called_once()
             mock_updater.start_work.assert_called_once()
-            executor.handle_events.assert_called_once()
+            cast(Any, executor.handle_events).assert_called_once()
             mock_updater.complete.assert_called_once()

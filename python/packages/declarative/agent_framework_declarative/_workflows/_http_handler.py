@@ -181,7 +181,7 @@ class DefaultHttpRequestHandler:
             params=params,
             headers=headers or None,
             content=content,
-            timeout=timeout,  # type: ignore[arg-type]
+            timeout=timeout,
         )
 
         # Preserve multi-value headers (e.g. multiple Set-Cookie) as list[str].

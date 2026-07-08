@@ -5,7 +5,8 @@
     <RootNamespace>Microsoft.Agents.AI.Foundry.Hosting</RootNamespace>
     <VersionSuffix>preview</VersionSuffix>
     <Title>Microsoft Agent Framework for Foundry Hosted Agents</Title>
-    <Description>Provides Microsoft Agent Framework support for hosting Foundry Agents with the Azure AI Agent Service.</Description>
+    <Description>Provides Microsoft Agent Framework support for hosting Foundry Agents with the Azure AI Agent Service. Breaking change: this version targets the Foundry Responses container protocol v2.0 only and is not compatible with v1; use an earlier release for the v1 protocol definition.</Description>
+    <PackageReleaseNotes>Breaking change: this release migrates Foundry hosting to the Azure.AI.AgentServer 2.0 (Responses container protocol v2.0) surface. It is only compatible with responses protocol v2.0. Use a previous release for the v1 protocol definition. See docs/decisions/0030-hosted-platform-context-agentserver-2.0.md.</PackageReleaseNotes>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -13,7 +14,7 @@
     <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
     <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
     <InjectSharedRedaction>true</InjectSharedRedaction>
-    <NoWarn>$(NoWarn);OPENAI001;MEAI001;NU1903</NoWarn> <!-- NU1903: Microsoft.Bcl.Memory 9.0.4 transitive vulnerability via Azure SDK; awaiting upstream fix -->
+    <NoWarn>$(NoWarn);OPENAI001;MEAI001;MAAI001;NU1903</NoWarn> <!-- NU1903: Microsoft.Bcl.Memory 9.0.4 transitive vulnerability via Azure SDK; awaiting upstream fix -->
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
 
@@ -32,7 +33,6 @@
   <ItemGroup>
     <PackageReference Include="Azure.AI.AgentServer.Responses" />
     <PackageReference Include="Azure.AI.Projects" />
-    <PackageReference Include="Azure.Identity" />
     <PackageReference Include="ModelContextProtocol" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
   </ItemGroup>

@@ -33,7 +33,7 @@ from agent_framework._workflows._workflow_context import WorkflowContext
 
 from ._orchestration_request_info import AgentApprovalExecutor
 from ._participant_output_config import (
-    _MISSING,  # pyright: ignore[reportPrivateUsage]
+    UNSET,
     _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
     _coerce_intermediate_output_from,  # pyright: ignore[reportPrivateUsage]
     _ParticipantIntermediateOutputSelection,  # pyright: ignore[reportPrivateUsage]
@@ -99,7 +99,7 @@ class SequentialBuilder:
         participants: Sequence[SupportsAgentRun | Executor],
         checkpoint_storage: CheckpointStorage | None = None,
         chain_only_agent_responses: bool = False,
-        output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, _MISSING),
+        output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, UNSET),
         intermediate_output_from: _ParticipantIntermediateOutputSelection = None,
     ) -> None:
         """Initialize the SequentialBuilder.

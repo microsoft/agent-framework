@@ -33,7 +33,7 @@ IConfigurationRoot configuration = new ConfigurationBuilder()
 
 string? apiKey = configuration["OPENAI_API_KEY"];
 string model = configuration["OPENAI_CHAT_MODEL_NAME"] ?? "gpt-5.4-mini";
-string? endpoint = configuration["AZURE_AI_PROJECT_ENDPOINT"];
+string? endpoint = configuration["FOUNDRY_PROJECT_ENDPOINT"];
 string[] agentUrls = (builder.Configuration["urls"] ?? "http://localhost:5000").Split(';');
 
 var invoiceQueryPlugin = new InvoiceQuery();
@@ -100,6 +100,15 @@ else
 {
     throw new ArgumentException("Either A2AServer:ApiKey or A2AServer:ConnectionString & agentName must be provided");
 }
+
+// IMPORTANT: In production, register a SessionIsolationKeyProvider to isolate sessions by authenticated caller.
+// Without this, contextId alone is the session key — any caller who knows a contextId can access that session.
+// Example using claims-based identity:
+// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+
+// By default, NoopAgentSessionStore is used — sessions are not persisted across requests.
+// To enable multi-turn conversations, register a session store explicitly, e.g.:
+// builder.Services.AddKeyedSingleton<AgentSessionStore>(hostA2AAgent.Name, new InMemoryAgentSessionStore());
 
 builder.AddA2AServer(hostA2AAgent);
 

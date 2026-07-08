@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -92,10 +92,23 @@ def _is_reasoning_only_assistant(message: Message) -> bool:
     return all(content.type == "text_reasoning" for content in message.contents)
 
 
-def _ensure_message_ids(messages: list[Message]) -> None:
+def _ensure_message_ids(
+    messages: list[Message], *, id_offset: int = 0, reserved_ids: Iterable[str] | None = None
+) -> None:
+    existing_ids: set[str] = set(reserved_ids) if reserved_ids is not None else set()
+    existing_ids.update(message.message_id for message in messages if message.message_id)
     for index, message in enumerate(messages):
-        if not message.message_id:
-            message.message_id = f"msg_{index}"
+        if message.message_id:
+            continue
+        candidate = f"msg_{id_offset + index}"
+        if candidate in existing_ids:
+            counter = id_offset + len(messages)
+            candidate = f"msg_{counter}"
+            while candidate in existing_ids:
+                counter += 1
+                candidate = f"msg_{counter}"
+        message.message_id = candidate
+        existing_ids.add(candidate)
 
 
 def _group_id_for(message: Message, group_index: int) -> str:
@@ -104,14 +117,27 @@ def _group_id_for(message: Message, group_index: int) -> str:
     return f"group_index_{group_index}"
 
 
-def group_messages(messages: list[Message]) -> list[dict[str, Any]]:
+def group_messages(
+    messages: list[Message], *, id_offset: int = 0, reserved_ids: Iterable[str] | None = None
+) -> list[dict[str, Any]]:
     """Compute group spans and metadata for annotation.
+
+    Args:
+        messages: The messages (or a slice of them) to group.
+
+    Keyword Args:
+        id_offset: Absolute starting index used when auto-assigning ``message_id``
+            values, so incremental annotation of a list slice produces ids that
+            stay unique across the full list.
+        reserved_ids: Message ids that already exist outside ``messages`` (for
+            example in a preserved prefix). Auto-assigned ids are guaranteed not
+            to collide with these, preventing duplicate ids across the full list.
 
     Returns:
         Ordered list of lightweight span dicts with keys:
         ``group_id``, ``kind``, ``start_index``, ``end_index``, ``has_reasoning``.
     """
-    _ensure_message_ids(messages)
+    _ensure_message_ids(messages, id_offset=id_offset, reserved_ids=reserved_ids)
     spans: list[dict[str, Any]] = []
     i = 0
     group_index = 0
@@ -439,7 +465,8 @@ def annotate_message_groups(
         if previous_group_index is not None:
             group_index_offset = previous_group_index + 1
 
-    spans = group_messages(messages[start_index:])
+    reserved_ids = {message.message_id for message in messages[:start_index] if message.message_id}
+    spans = group_messages(messages[start_index:], id_offset=start_index, reserved_ids=reserved_ids)
     for span_index, span in enumerate(spans):
         group_id = str(span["group_id"])
         kind = _coerce_group_kind(span["kind"])
@@ -928,6 +955,17 @@ class SummarizationStrategy:
     ``target_count`` (subject to atomic group boundaries). It writes trace
     metadata in both directions: summary -> original message/group IDs and
     original -> summary ID.
+
+    Security considerations:
+        Unlike strategies that only remove or reorder existing messages (which carry no additional
+        risk), this strategy calls out to an LLM to produce replacement summary content that
+        permanently becomes part of chat history and is trusted the same as any other assistant
+        message going forward. Using it is an explicit opt-in — it must be constructed with a
+        summarization ``client``. A compromised or malicious summarization service could therefore
+        return a summary containing unsafe instructions, which become a persistent part of the
+        conversation — a form of indirect prompt injection that survives beyond the turn in which it
+        was introduced. Only point ``client`` at a summarization service you trust as much as the
+        primary model.
     """
 
     def __init__(
@@ -942,7 +980,10 @@ class SummarizationStrategy:
 
         Keyword Args:
             client: A chat client compatible with ``SupportsChatGetResponse``
-                used to generate summary text.
+                used to generate summary text. **Security:** its output permanently replaces the
+                original messages in chat history, so only use a summarization service you trust as
+                much as the primary model — see the class-level security considerations for the
+                indirect-prompt-injection risk of an untrusted summarizer.
             target_count: Target number of included non-system messages to
                 retain after summarization. Must be greater than 0.
             threshold: Extra included non-system messages allowed above

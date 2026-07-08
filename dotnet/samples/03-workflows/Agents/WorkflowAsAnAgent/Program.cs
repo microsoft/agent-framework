@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
@@ -37,13 +37,13 @@ public static class Program
 {
     private static async Task Main()
     {
-        // Set up the Azure OpenAI client
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
-        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
+        // Set up the Azure AI Foundry client
+        var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+        var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
+        AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
         // Create the workflow and turn it into an agent
-        var workflow = WorkflowFactory.BuildWorkflow(chatClient);
+        var workflow = WorkflowFactory.BuildWorkflow(aiProjectClient, deploymentName);
         var agent = workflow.AsAIAgent("workflow-agent", "Workflow Agent");
         var session = await agent.CreateSessionAsync();
 
@@ -77,7 +77,6 @@ public static class Program
                     // skip updates that don't have a message ID or text
                     continue;
                 }
-                Console.Clear();
 
                 if (!buffer.TryGetValue(update.MessageId, out List<AgentResponseUpdate>? value))
                 {

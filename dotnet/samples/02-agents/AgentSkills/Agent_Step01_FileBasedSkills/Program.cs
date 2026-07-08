@@ -9,14 +9,13 @@
 //
 // This sample uses a unit-converter skill that converts between miles, kilometers, pounds, and kilograms.
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI.Responses;
 
 // --- Configuration ---
-string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // --- Skills Provider ---
 // Discovers skills from the 'skills' directory containing SKILL.md files.
@@ -26,18 +25,30 @@ var skillsProvider = new AgentSkillsProvider(
     SubprocessScriptRunner.RunAsync);
 
 // --- Agent Setup ---
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetResponsesClient()
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
     .AsAIAgent(new ChatClientAgentOptions
     {
         Name = "UnitConverterAgent",
         ChatOptions = new()
         {
+            ModelId = deploymentName,
             Instructions = "You are a helpful assistant that can convert units.",
         },
         AIContextProviders = [skillsProvider],
-    },
-    model: deploymentName);
+    })
+    .AsBuilder()
+    .UseToolApproval(new ToolApprovalAgentOptions
+    {
+        // NOTE: Auto-approving all skill tools is done here for simplicity in
+        // this demonstration. In production, you should prompt the user before
+        // allowing script execution. See Agent_Step07_SkillsAutoApproval for a
+        // walkthrough of the full approval flow.
+        AutoApprovalRules = [AgentSkillsProvider.AllToolsAutoApprovalRule],
+    })
+    .Build();
 
 // --- Example: Unit conversion ---
 Console.WriteLine("Converting units with file-based skills");

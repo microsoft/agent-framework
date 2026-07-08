@@ -12,11 +12,14 @@ using Microsoft.Agents.AI.Foundry.Hosting;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-var projectEndpoint = new Uri(Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set."));
+var projectEndpoint = new Uri(Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set."));
 var agentName = Environment.GetEnvironmentVariable("AGENT_NAME")
     ?? throw new InvalidOperationException("AGENT_NAME is not set.");
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Use a chained credential: try a temporary dev token first (for local Docker debugging),
 // then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity running in foundry).
 TokenCredential credential = new ChainedTokenCredential(
@@ -34,7 +37,6 @@ FoundryAgent agent = aiProjectClient.AsAIAgent(agentRecord);
 // Host the agent as a Foundry Hosted Agent using the Responses API.
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
-builder.Services.AddDevTemporaryLocalContributorSetup(); // Local Docker debugging only - must not be used in production.
 
 var app = builder.Build();
 app.MapFoundryResponses();

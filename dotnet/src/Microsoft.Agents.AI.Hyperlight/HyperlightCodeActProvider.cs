@@ -59,6 +59,7 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
     private readonly Dictionary<string, AIFunction> _tools = new(StringComparer.Ordinal);
     private readonly Dictionary<string, FileMount> _fileMounts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, AllowedDomain> _allowedDomains = new(StringComparer.Ordinal);
+    private Guid _toolRegistryVersion;
     private bool _disposed;
 
     /// <summary>
@@ -116,9 +117,16 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
         lock (this._gate)
         {
             this.ThrowIfDisposed();
+            var changed = false;
             foreach (var tool in tools.Where(t => t is not null))
             {
                 this._tools[tool.Name] = tool;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                this._toolRegistryVersion = Guid.NewGuid();
             }
         }
     }
@@ -272,7 +280,8 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
                 this._tools.Values.ToList(),
                 this._fileMounts.Values.ToList(),
                 this._allowedDomains.Values.ToList(),
-                this._options.HostInputDirectory);
+                this._options.HostInputDirectory,
+                this._toolRegistryVersion);
         }
 
         var approvalRequired = ComputeApprovalRequired(this._options.ApprovalMode, snapshot.Tools);

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
@@ -13,11 +14,6 @@ using ExecutorFactoryFunc = System.Func<Microsoft.Agents.AI.Workflows.ExecutorCo
                                         System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Specialized.HandoffAgentExecutor>>;
 
 namespace Microsoft.Agents.AI.Workflows;
-
-internal static class DiagnosticConstants
-{
-    public const string ExperimentalFeatureDiagnostic = "MAAIW001";
-}
 
 /// <inheritdoc/>
 [ExcludeFromCodeCoverage] // This is obsolete, and 1:1 equivalent to HandoffWorkflowBuilder (no "s")
@@ -29,7 +25,6 @@ public sealed class HandoffsWorkflowBuilder(AIAgent initialAgent) : HandoffWorkf
 }
 
 /// <inheritdoc/>
-[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public sealed class HandoffWorkflowBuilder(AIAgent initialAgent) : HandoffWorkflowBuilderCore<HandoffWorkflowBuilder>(initialAgent)
 {
 }
@@ -37,8 +32,8 @@ public sealed class HandoffWorkflowBuilder(AIAgent initialAgent) : HandoffWorkfl
 /// <summary>
 /// Provides a builder for specifying the handoff relationships between agents and building the resulting workflow.
 /// </summary>
-[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
-public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkflowBuilderCore<TBuilder>
+public class HandoffWorkflowBuilderCore<TBuilder> : OrchestrationBuilderBase<TBuilder>
+    where TBuilder : HandoffWorkflowBuilderCore<TBuilder>
 {
     /// <summary>
     /// The prefix for function calls that trigger handoffs to other agents; the full name is then `{FunctionPrefix}&lt;agent_id&gt;`,
@@ -54,8 +49,22 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
     private bool _emitAgentResponseUpdateEvents;
     private HandoffToolCallFilteringBehavior _toolCallFilteringBehavior = HandoffToolCallFilteringBehavior.HandoffOnly;
     private bool _returnToPrevious;
-    private string? _name;
-    private string? _description;
+
+    // Autonomous mode configuration. When enabled, an agent's response that doesn't include a
+    // handoff triggers another invocation of that same agent with the continuation prompt, up to
+    // the configured turn limit per workflow turn. Optional per-agent overrides may further restrict
+    // which agents have autonomous mode enabled, or override the turn limit / continuation prompt
+    // on a per-agent basis.
+    private bool _autonomousMode;
+    private int _autonomousTurnLimit = HandoffWorkflowBuilderDefaults.DefaultAutonomousTurnLimit;
+    private string _autonomousContinuationPrompt = HandoffWorkflowBuilderDefaults.DefaultAutonomousContinuationPrompt;
+    private HashSet<string>? _autonomousEnabledAgentIds;
+    private readonly Dictionary<string, int> _autonomousTurnLimitsByAgentId = [];
+    private readonly Dictionary<string, string> _autonomousContinuationPromptsByAgentId = [];
+
+    // Termination condition. Evaluated after an agent response that does not request a handoff;
+    // if true, the workflow ends (and the autonomous loop, if any, terminates).
+    private Func<IReadOnlyList<ChatMessage>, ValueTask<bool>>? _terminationCondition;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="HandoffsWorkflowBuilder"/> class with no handoff relationships.
@@ -96,20 +105,6 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
     public TBuilder WithHandoffInstructions(string? instructions)
     {
         this.HandoffInstructions = instructions ?? DefaultHandoffInstructions;
-        return (TBuilder)this;
-    }
-
-    /// <inheritdoc cref="WorkflowBuilder.WithName(string)"/>
-    public TBuilder WithName(string name)
-    {
-        this._name = name;
-        return (TBuilder)this;
-    }
-
-    /// <inheritdoc cref="WorkflowBuilder.WithDescription(string)"/>
-    public TBuilder WithDescription(string description)
-    {
-        this._description = description;
         return (TBuilder)this;
     }
 
@@ -258,12 +253,204 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
         return (TBuilder)this;
     }
 
-    private Dictionary<string, ExecutorBinding> CreateExecutorBindings(WorkflowBuilder builder)
+    /// <summary>
+    /// Adds the specified <paramref name="agents"/> as participants in the handoff workflow without
+    /// defining handoff relationships for them.
+    /// </summary>
+    /// <param name="agents">The agents to add as participants.</param>
+    /// <returns>The updated builder instance.</returns>
+    /// <remarks>
+    /// Use this method when you want a participant to be part of the workflow but you have not
+    /// explicitly defined handoff edges via <see cref="WithHandoff(AIAgent, AIAgent, string?)"/>.
+    /// When no handoffs are explicitly defined (default handoffs), all registered participants are
+    /// automatically wired so that every agent can hand off to every other agent.
+    /// </remarks>
+    public TBuilder AddParticipants(params IEnumerable<AIAgent> agents)
+    {
+        Throw.IfNull(agents);
+
+        foreach (AIAgent agent in agents)
+        {
+            if (agent is null)
+            {
+                Throw.ArgumentNullException(nameof(agents), "One or more agents are null.");
+            }
+
+            this._allAgents.Add(agent);
+        }
+
+        return (TBuilder)this;
+    }
+
+    /// <summary>
+    /// Enables autonomous mode for the handoff workflow.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// In autonomous mode, an agent whose response does not include a handoff is invoked again with
+    /// a continuation prompt, up to a configured turn limit. The autonomous loop for a given agent
+    /// ends when the agent invokes a handoff tool, the configured termination condition fires, or
+    /// the per-agent turn limit is reached — at which point the workflow yields control back to the
+    /// caller.
+    /// </para>
+    /// <para>
+    /// <b>Per-agent turn counting.</b> Autonomous-turn counters are tracked independently per agent
+    /// in the shared handoff state. A counter is incremented each time the End executor loops
+    /// control back to its source agent, and reset to zero in three cases: (1) when that agent
+    /// requests a handoff, (2) when its autonomous loop terminates (limit reached, termination
+    /// fires, or autonomous mode disabled for that agent), and (3) at the start of every fresh user
+    /// turn. As a consequence, if agent A loops twice and then hands off to B, A's counter resets
+    /// to zero; should control later return to A within the same user turn, A starts a new
+    /// autonomous run from zero.
+    /// </para>
+    /// </remarks>
+    /// <param name="turnLimit">
+    /// The default maximum number of autonomous continuation iterations per agent per workflow
+    /// turn. Applies to agents not listed in <paramref name="agentTurnLimits"/>. If
+    /// <see langword="null"/>, defaults to
+    /// <see cref="HandoffWorkflowBuilderDefaults.DefaultAutonomousTurnLimit"/> (50).
+    /// </param>
+    /// <param name="continuationPrompt">
+    /// The default user-role prompt fed to an agent on each autonomous continuation. Applies to
+    /// agents not listed in <paramref name="agentContinuationPrompts"/>. If <see langword="null"/>,
+    /// defaults to <see cref="HandoffWorkflowBuilderDefaults.DefaultAutonomousContinuationPrompt"/>.
+    /// </param>
+    /// <param name="agents">
+    /// Optional allow-list restricting autonomous mode to a specific subset of agents. If
+    /// <see langword="null"/> or empty, autonomous mode is enabled for <i>every</i> participant.
+    /// Agents not in the allow-list always yield control back to the caller after a single
+    /// invocation (when they do not request a handoff).
+    /// </param>
+    /// <param name="agentTurnLimits">
+    /// Optional per-agent turn-limit overrides. Each entry's key is the agent and its value the
+    /// turn limit that overrides <paramref name="turnLimit"/> for that agent. Agents not present
+    /// fall back to the default.
+    /// </param>
+    /// <param name="agentContinuationPrompts">
+    /// Optional per-agent continuation-prompt overrides. Each entry's key is the agent and its
+    /// value the continuation prompt used for that agent. Agents not present fall back to the
+    /// default.
+    /// </param>
+    /// <returns>The updated builder instance.</returns>
+    public TBuilder WithAutonomousMode(
+        int? turnLimit = null,
+        string? continuationPrompt = null,
+        IEnumerable<AIAgent>? agents = null,
+        IReadOnlyDictionary<AIAgent, int>? agentTurnLimits = null,
+        IReadOnlyDictionary<AIAgent, string>? agentContinuationPrompts = null)
+    {
+        if (turnLimit is { } limit && limit <= 0)
+        {
+            Throw.ArgumentOutOfRangeException(nameof(turnLimit), "Turn limit must be greater than zero.");
+        }
+
+        this._autonomousMode = true;
+        this._autonomousTurnLimit = turnLimit ?? HandoffWorkflowBuilderDefaults.DefaultAutonomousTurnLimit;
+        this._autonomousContinuationPrompt = continuationPrompt ?? HandoffWorkflowBuilderDefaults.DefaultAutonomousContinuationPrompt;
+
+        // Allow-list: null or empty means every participant has autonomous mode enabled. A non-empty
+        // list restricts autonomous mode to exactly those agents.
+        this._autonomousEnabledAgentIds = null;
+        if (agents is not null)
+        {
+            HashSet<string> ids = [];
+            foreach (AIAgent agent in agents)
+            {
+                Throw.IfNull(agent, $"{nameof(agents)} element");
+                ids.Add(agent.Id);
+            }
+
+            if (ids.Count > 0)
+            {
+                this._autonomousEnabledAgentIds = ids;
+            }
+        }
+
+        this._autonomousTurnLimitsByAgentId.Clear();
+        if (agentTurnLimits is not null)
+        {
+            foreach (KeyValuePair<AIAgent, int> kvp in agentTurnLimits)
+            {
+                Throw.IfNull(kvp.Key, $"{nameof(agentTurnLimits)} key");
+                if (kvp.Value <= 0)
+                {
+                    Throw.ArgumentOutOfRangeException(
+                        nameof(agentTurnLimits),
+                        $"Turn limit for agent '{kvp.Key.Name ?? kvp.Key.Id}' must be greater than zero.");
+                }
+
+                this._autonomousTurnLimitsByAgentId[kvp.Key.Id] = kvp.Value;
+            }
+        }
+
+        this._autonomousContinuationPromptsByAgentId.Clear();
+        if (agentContinuationPrompts is not null)
+        {
+            foreach (KeyValuePair<AIAgent, string> kvp in agentContinuationPrompts)
+            {
+                Throw.IfNull(kvp.Key, $"{nameof(agentContinuationPrompts)} key");
+                Throw.IfNullOrEmpty(kvp.Value, $"{nameof(agentContinuationPrompts)} value");
+
+                this._autonomousContinuationPromptsByAgentId[kvp.Key.Id] = kvp.Value;
+            }
+        }
+
+        return (TBuilder)this;
+    }
+
+    /// <summary>
+    /// Sets a synchronous termination condition for the handoff workflow.
+    /// </summary>
+    /// <param name="terminationCondition">
+    /// A predicate that receives the current conversation and returns <see langword="true"/> if the
+    /// workflow should terminate (preventing further autonomous continuation). The synchronous
+    /// predicate is wrapped and forwarded to the async overload.
+    /// </param>
+    /// <returns>The updated builder instance.</returns>
+    /// <remarks>
+    /// The termination condition is evaluated after the agent produces a response that does not
+    /// request a handoff. When it returns <see langword="true"/>, the workflow ends without invoking
+    /// another autonomous continuation.
+    /// </remarks>
+    public TBuilder WithTerminationCondition(Func<IReadOnlyList<ChatMessage>, bool> terminationCondition)
+    {
+        Throw.IfNull(terminationCondition);
+
+        return this.WithTerminationCondition(
+            messages => new ValueTask<bool>(terminationCondition(messages)));
+    }
+
+    /// <summary>
+    /// Sets an asynchronous termination condition for the handoff workflow.
+    /// </summary>
+    /// <param name="terminationCondition">
+    /// A predicate that receives the current conversation and asynchronously returns
+    /// <see langword="true"/> if the workflow should terminate (preventing further autonomous
+    /// continuation).
+    /// </param>
+    /// <returns>The updated builder instance.</returns>
+    /// <remarks>
+    /// The termination condition is evaluated after the agent produces a response that does not
+    /// request a handoff. When it returns <see langword="true"/>, the workflow ends without invoking
+    /// another autonomous continuation.
+    /// </remarks>
+    public TBuilder WithTerminationCondition(Func<IReadOnlyList<ChatMessage>, ValueTask<bool>> terminationCondition)
+    {
+        Throw.IfNull(terminationCondition);
+
+        this._terminationCondition = terminationCondition;
+        return (TBuilder)this;
+    }
+
+    private Dictionary<string, ExecutorBinding> CreateExecutorBindings(WorkflowBuilder builder, Dictionary<AIAgent, HashSet<HandoffTarget>> effectiveTargets)
     {
         HandoffAgentExecutorOptions options = new(this.HandoffInstructions,
                                                   this._emitAgentResponseEvents,
                                                   this._emitAgentResponseUpdateEvents,
-                                                  this._toolCallFilteringBehavior);
+                                                  this._toolCallFilteringBehavior)
+        {
+            TerminationCondition = this._terminationCondition,
+        };
 
         // There are two types of ids being used in this method, and it is critical that we are clear about
         // which one we are using, and where.
@@ -277,7 +464,7 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
 
         ExecutorBinding CreateFactoryBinding(AIAgent agent)
         {
-            if (!this._targets.TryGetValue(agent, out HashSet<HandoffTarget>? handoffs))
+            if (!effectiveTargets.TryGetValue(agent, out HashSet<HandoffTarget>? handoffs))
             {
                 handoffs = new();
             }
@@ -287,10 +474,16 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
             {
                 foreach (HandoffTarget handoff in handoffs)
                 {
-                    sb.AddCase<HandoffState>(state => state?.RequestedHandoffTargetAgentId == handoff.Target.Id, // Use AgentId for target matching
+                    // Each handoff case also requires the turn to NOT be terminated; otherwise the
+                    // turn falls through to the default branch, which routes to HandoffEndExecutor.
+                    string targetAgentId = handoff.Target.Id;
+                    sb.AddCase<HandoffState>(state => state?.RequestedHandoffTargetAgentId == targetAgentId // Use AgentId for target matching
+                                                  && state.IsTerminated != true,
                                              HandoffAgentExecutor.IdFor(handoff.Target)); // Use ExecutorId in for routing at the workflow level
                 }
 
+                // Default branch catches: (a) turns with no handoff requested, and (b) terminated turns
+                // (whose handoff cases have been excluded above via the !IsTerminated guard).
                 sb.WithDefault(HandoffEndExecutor.ExecutorId);
             });
 
@@ -309,6 +502,47 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
         }
     }
 
+    private Dictionary<AIAgent, HashSet<HandoffTarget>> BuildDefaultHandoffTargets()
+    {
+        // Default handoffs: when the caller has not explicitly registered any handoffs via
+        // WithHandoff/WithHandoffs, every registered participant is wired to hand off to every other
+        // participant.
+        // The handoff "reason" is derived from the target agent's description/name/instructions,
+        // matching the resolution rules used in WithHandoff(). If no reason can be derived, we throw —
+        // same contract as the explicit handoff path.
+        Dictionary<AIAgent, HashSet<HandoffTarget>> defaultTargets = [];
+
+        foreach (AIAgent source in this._allAgents)
+        {
+            HashSet<HandoffTarget> targets = [];
+            foreach (AIAgent target in this._allAgents)
+            {
+                if (AIAgentIDEqualityComparer.Instance.Equals(source, target))
+                {
+                    continue;
+                }
+
+                string? reason = (string.IsNullOrWhiteSpace(target.Description) ? null : target.Description)
+                              ?? (string.IsNullOrWhiteSpace(target.Name) ? null : $"handoff to {target.Name}")
+                              ?? target.GetService<ChatClientAgent>()?.Instructions;
+
+                if (string.IsNullOrWhiteSpace(reason))
+                {
+                    Throw.InvalidOperationException(
+                        $"Cannot build default handoffs: target agent '{(string.IsNullOrWhiteSpace(target.Name) ? target.Id : target.Name)}' " +
+                        "has no description, name, or instructions from which to derive a handoff reason. Either provide one of these " +
+                        "on the agent, or define handoffs explicitly via WithHandoff/WithHandoffs.");
+                }
+
+                targets.Add(new HandoffTarget(target, reason));
+            }
+
+            defaultTargets[source] = targets;
+        }
+
+        return defaultTargets;
+    }
+
     /// <summary>
     /// Builds a <see cref="Workflow"/> composed of agents that operate via handoffs, with the next
     /// agent to process messages selected by the current agent.
@@ -317,11 +551,25 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
     public Workflow Build()
     {
         HandoffStartExecutor start = new(this._returnToPrevious);
-        HandoffEndExecutor end = new(this._returnToPrevious);
+        HandoffEndExecutor end = new(
+            returnToPrevious: this._returnToPrevious,
+            autonomousMode: this._autonomousMode,
+            autonomousTurnLimit: this._autonomousTurnLimit,
+            autonomousContinuationPrompt: this._autonomousContinuationPrompt,
+            autonomousEnabledAgentIds: this._autonomousEnabledAgentIds,
+            autonomousTurnLimitsByAgentId: this._autonomousTurnLimitsByAgentId,
+            autonomousContinuationPromptsByAgentId: this._autonomousContinuationPromptsByAgentId);
         WorkflowBuilder builder = new(start);
 
+        // Default handoffs: when the caller has not explicitly registered any handoffs via
+        // WithHandoff/WithHandoffs, every registered participant is wired to hand off to every other
+        // participant.
+        Dictionary<AIAgent, HashSet<HandoffTarget>> effectiveTargets = this._targets.Count == 0
+            ? this.BuildDefaultHandoffTargets()
+            : this._targets;
+
         // Create an factory-based ExecutorBinding for each agent.
-        Dictionary<string, ExecutorBinding> executors = this.CreateExecutorBindings(builder);
+        Dictionary<string, ExecutorBinding> executors = this.CreateExecutorBindings(builder, effectiveTargets);
 
         // Connect the start executor to the initial agent (or use dynamic routing when ReturnToPrevious is enabled).
         if (this._returnToPrevious)
@@ -346,16 +594,46 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
             builder.AddEdge(start, executors[this._initialAgent.Id]);
         }
 
-        if (!string.IsNullOrWhiteSpace(this._name))
+        // Autonomous-mode loop-back: when enabled, the End executor may emit a HandoffState targeting
+        // the source agent (carrying the synthesized continuation prompt in the shared conversation).
+        // A switch downstream of End routes that message back to the matching agent executor.
+        if (this._autonomousMode)
         {
-            builder.WithName(this._name);
+            builder.AddSwitch(end, sb =>
+            {
+                foreach (AIAgent agent in this._allAgents)
+                {
+                    string agentId = agent.Id;
+                    sb.AddCase<HandoffState>(state => state?.RequestedHandoffTargetAgentId == agentId, executors[agentId]);
+                }
+            });
         }
 
-        if (!string.IsNullOrWhiteSpace(this._description))
+        // Ensure the end executor is bound regardless of whether it ends up as an output
+        // designation source — the user may take full control of output designations.
+        builder.BindExecutor(end);
+
+        // Build the AIAgent -> ExecutorBinding map the base helper expects.
+        Dictionary<AIAgent, ExecutorBinding> agentMap = new(AIAgentIDEqualityComparer.Instance);
+        foreach (AIAgent agent in this._allAgents)
         {
-            builder.WithDescription(this._description);
+            agentMap[agent] = executors[agent.Id];
         }
 
-        return builder.WithOutputFrom(end).Build();
+        this.ApplyMetadata(builder);
+        this.ApplyOutputDesignations(builder, agentMap, "handoff", () =>
+        {
+            // Defaults (matches Python's Handoff orchestration):
+            //   end                  -> terminal output
+            //   every handoff agent  -> intermediate output
+            builder.WithOutputFrom(end);
+            List<ExecutorBinding> agentBindings = [.. executors.Values];
+            if (agentBindings.Count > 0)
+            {
+                builder.WithIntermediateOutputFrom(agentBindings);
+            }
+        });
+
+        return builder.Build();
     }
 }

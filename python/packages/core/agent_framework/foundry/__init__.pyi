@@ -4,12 +4,12 @@
 # Install the relevant packages for full type support.
 
 from agent_framework_anthropic import AnthropicFoundryClient, RawAnthropicFoundryClient
-from agent_framework_azure_contentunderstanding import (  # pyright: ignore[reportMissingImports]
-    AnalysisSection,  # pyright: ignore[reportUnknownVariableType]
-    ContentUnderstandingContextProvider,  # pyright: ignore[reportUnknownVariableType]
-    DocumentStatus,  # pyright: ignore[reportUnknownVariableType]
-    FileSearchBackend,  # pyright: ignore[reportUnknownVariableType]
-    FileSearchConfig,  # pyright: ignore[reportUnknownVariableType]
+from agent_framework_azure_contentunderstanding import (
+    AnalysisSection,
+    ContentUnderstandingContextProvider,
+    DocumentStatus,
+    FileSearchBackend,
+    FileSearchConfig,
 )
 from agent_framework_foundry import (
     FoundryAgent,
@@ -20,6 +20,7 @@ from agent_framework_foundry import (
     FoundryEmbeddingSettings,
     FoundryEvals,
     FoundryMemoryProvider,
+    GeneratedEvaluatorRef,
     RawFoundryAgent,
     RawFoundryAgentChatClient,
     RawFoundryChatClient,
@@ -52,6 +53,7 @@ __all__ = [
     "FoundryLocalClient",
     "FoundryLocalSettings",
     "FoundryMemoryProvider",
+    "GeneratedEvaluatorRef",
     "RawAnthropicFoundryClient",
     "RawFoundryAgent",
     "RawFoundryAgentChatClient",
