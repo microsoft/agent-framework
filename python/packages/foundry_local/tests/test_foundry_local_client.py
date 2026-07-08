@@ -4,7 +4,7 @@ import inspect
 from unittest.mock import MagicMock, patch
 
 import pytest
-from agent_framework import SupportsChatGetResponse
+from agent_framework import Agent, SupportsChatGetResponse
 from agent_framework._settings import load_settings
 from agent_framework.exceptions import SettingNotFoundError
 from agent_framework.foundry import FoundryLocalClient
@@ -65,6 +65,17 @@ def test_foundry_local_client_init(mock_foundry_local_manager: MagicMock) -> Non
         assert client.model == "test-model-id"
         assert client.manager is mock_foundry_local_manager
         assert isinstance(client, SupportsChatGetResponse)
+
+
+def test_agent_accepts_foundry_local_client(mock_foundry_local_manager: MagicMock) -> None:
+    with patch(
+        "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
+        return_value=mock_foundry_local_manager,
+    ):
+        client = FoundryLocalClient(model="test-model-id")
+
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
 
 
 def test_foundry_local_client_get_response_uses_explicit_runtime_buckets() -> None:

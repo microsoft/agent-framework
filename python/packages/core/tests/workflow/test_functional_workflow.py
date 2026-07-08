@@ -261,8 +261,8 @@ class TestHITL:
         """ctx is injected by parameter name even without a RunContext annotation."""
 
         @workflow  # pyright: ignore[reportUnknownArgumentType]
-        async def review_wf(doc: str, ctx) -> str:  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
-            feedback: str = await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        async def review_wf(doc: str, ctx) -> str:  # pyright: ignore[reportMissingParameterType, reportUnknownParameterType]
+            feedback: str = await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
             return f"Final: {feedback}"
 
         result1 = await review_wf.run("my doc")
@@ -412,7 +412,7 @@ class TestStreaming:
         @workflow
         async def wf(x: int, ctx: RunContext) -> int:
             nonlocal streaming_flag
-            streaming_flag = ctx.is_streaming()
+            streaming_flag = ctx.is_streaming()  # type: ignore[assignment]
             return x
 
         stream = wf.run(1, stream=True)
@@ -984,7 +984,7 @@ class TestRecoveryAfterErrors:
     async def test_step_sync_function_raises(self):
         with pytest.raises(TypeError, match="async functions"):
 
-            @step  # pyright: ignore[reportArgumentType]
+            @step  # type: ignore[arg-type, call-overload]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]  # pyright: ignore[reportArgumentType]
             def not_async(x: int) -> int:  # pyright: ignore[reportUnusedFunction]
                 return x
 
@@ -1185,7 +1185,7 @@ class TestRequestInfoInStep:
         @step
         async def capture_ctx(x: int) -> int:
             nonlocal captured_ctx
-            captured_ctx = get_run_context()
+            captured_ctx = get_run_context()  # type: ignore[assignment]
             return x
 
         @workflow
@@ -1719,7 +1719,7 @@ class TestFunctionalWorkflowExperimentalStage:
         ]
 
         for symbol in symbols:
-            assert symbol.__feature_stage__ == "experimental"
-            assert symbol.__feature_id__ == ExperimentalFeature.FUNCTIONAL_WORKFLOWS.value
+            assert symbol.__feature_stage__ == "experimental"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            assert symbol.__feature_id__ == ExperimentalFeature.FUNCTIONAL_WORKFLOWS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             assert symbol.__doc__ is not None
             assert ".. warning:: Experimental" in symbol.__doc__

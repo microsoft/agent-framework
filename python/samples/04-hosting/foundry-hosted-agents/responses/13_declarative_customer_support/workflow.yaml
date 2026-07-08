@@ -1,0 +1,89 @@
+# A multi-turn customer-support triage workflow defined declaratively.
+#
+# Each user message re-runs the workflow with the full conversation history
+# available to the invoked agents via Conversation.messages. The TriageAgent
+# decides on every turn whether to ask a follow-up question, route to a
+# technical specialist, route to a billing specialist, or close the ticket
+# with a general response.
+
+kind: Workflow
+trigger:
+  kind: OnConversationStart
+  id: customer_support_triage
+  actions:
+
+    # Look at the full conversation so far and decide what to do.
+    # The agent's structured response drives the routing below.
+    # autoSend=false keeps the raw structured JSON out of the user-facing
+    # output stream — the ConditionGroup below is what produces the reply.
+    - kind: InvokeAzureAgent
+      id: triage
+      agent:
+        name: TriageAgent
+      output:
+        autoSend: false
+        responseObject: Local.Triage
+
+    # Branch on the triage decision.
+    - kind: ConditionGroup
+      id: route
+      conditions:
+
+        # Not enough information yet — ask the user a targeted follow-up.
+        - condition: =Local.Triage.NeedsClarification
+          id: ask_followup
+          actions:
+            - kind: SendActivity
+              id: send_followup
+              activity:
+                text: =Local.Triage.ClarificationQuestion
+            - kind: GotoAction
+              id: end_after_followup
+              actionId: all_done
+
+        # Technical issue — hand off to the technical specialist.
+        # autoSend streams the agent's reply directly to the caller.
+        - condition: =Local.Triage.Category = "Technical"
+          id: route_technical
+          actions:
+            - kind: SendActivity
+              id: log_technical
+              activity:
+                text: "Connecting you with technical support..."
+            - kind: InvokeAzureAgent
+              id: tech_support
+              agent:
+                name: TechSupportAgent
+              output:
+                autoSend: true
+            - kind: GotoAction
+              id: end_after_technical
+              actionId: all_done
+
+        # Billing issue — hand off to the billing specialist.
+        - condition: =Local.Triage.Category = "Billing"
+          id: route_billing
+          actions:
+            - kind: SendActivity
+              id: log_billing
+              activity:
+                text: "Connecting you with billing support..."
+            - kind: InvokeAzureAgent
+              id: billing_support
+              agent:
+                name: BillingAgent
+              output:
+                autoSend: true
+            - kind: GotoAction
+              id: end_after_billing
+              actionId: all_done
+
+      # Default: a general question or chit-chat — send the triage reply.
+      elseActions:
+        - kind: SendActivity
+          id: send_general
+          activity:
+            text: =Local.Triage.Reply
+
+    - kind: EndWorkflow
+      id: all_done

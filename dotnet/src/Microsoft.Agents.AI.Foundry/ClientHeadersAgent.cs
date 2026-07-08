@@ -35,7 +35,7 @@ internal sealed class ClientHeadersAgent : DelegatingAIAgent
     }
 
     /// <inheritdoc/>
-    protected override Task<AgentResponse> RunCoreAsync(
+    protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentSession? session = null,
         AgentRunOptions? options = null,
@@ -44,13 +44,15 @@ internal sealed class ClientHeadersAgent : DelegatingAIAgent
         var snapshot = TrySnapshot(options);
         if (snapshot is not null)
         {
-            // AsyncLocal mutations made inside an awaited async method do not leak back to the
-            // caller after the method returns, so we do not need an explicit restore step here.
-            // See ClientHeadersScope remarks.
+            // This method is async, so the runtime restores the caller's ExecutionContext (and
+            // therefore the previous ClientHeadersScope.Current value) when the returned task
+            // completes. Awaiting the inner call is what establishes that async-method boundary,
+            // so the per-run scope set here cannot carry into a later run on the same async flow.
+            // See ClientHeadersScope remarks. The streaming path relies on the same behavior.
             ClientHeadersScope.Current = snapshot;
         }
 
-        return this.InnerAgent.RunAsync(messages, session, options, cancellationToken);
+        return await this.InnerAgent.RunAsync(messages, session, options, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>

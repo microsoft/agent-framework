@@ -24,12 +24,14 @@ updates:
       - ".NET"
       - "dependencies"
 
-  # Maintain dependencies for python
+  # Maintain dependencies for python.
+  # TODO: Remove these Python Dependabot entries after we have confidence in the
+  # Python dependency-maintenance workflow.
   - package-ecosystem: "pip"
     directory: "python/"
     schedule:
       interval: "weekly"
-      day: "monday"
+      day: "thursday"
     labels:
       - "python"
       - "dependencies"
@@ -37,7 +39,7 @@ updates:
     directory: "python/"
     schedule:
       interval: "weekly"
-      day: "monday"
+      day: "thursday"
     labels:
       - "python"
       - "dependencies"

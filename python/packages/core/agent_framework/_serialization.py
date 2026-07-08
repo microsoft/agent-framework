@@ -606,13 +606,13 @@ class SerializationMixin:
         """
         # for from_dict
         if value and (type_ := value.get("type")) and isinstance(type_, str):
-            return type_  # type:ignore[no-any-return]
+            return type_
         # for todict when defined per instance
         if (type_ := getattr(cls, "type", None)) and isinstance(type_, str):
-            return type_  # type:ignore[no-any-return]
+            return type_
         # for both when defined on class.
         if (type_ := getattr(cls, "TYPE", None)) and isinstance(type_, str):
-            return type_  # type:ignore[no-any-return]
+            return type_
         # Fallback and default
         # Convert class name to snake_case
         return _CAMEL_TO_SNAKE_PATTERN.sub("_", cls.__name__).lower()
@@ -636,7 +636,7 @@ def make_json_safe(obj: Any) -> Any:
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
     if is_dataclass(obj) and not isinstance(obj, type):
-        return make_json_safe(asdict(obj))  # type: ignore[arg-type]
+        return make_json_safe(asdict(obj))
     if callable(getattr(obj, "model_dump", None)):
         try:
             return make_json_safe(obj.model_dump())  # type: ignore[no-any-return]
@@ -657,5 +657,5 @@ def make_json_safe(obj: Any) -> Any:
     if isinstance(obj, (list, tuple)):
         return [make_json_safe(item) for item in obj]  # type: ignore[misc]
     if hasattr(obj, "__dict__"):
-        return {key: make_json_safe(value) for key, value in vars(obj).items()}  # type: ignore[misc]
+        return {key: make_json_safe(value) for key, value in vars(obj).items()}
     return str(obj)

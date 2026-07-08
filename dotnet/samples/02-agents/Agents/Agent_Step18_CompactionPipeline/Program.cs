@@ -1,32 +1,34 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use a CompactionProvider with a compaction pipeline
-// as an AIContextProvider for an agent's in-run context management. The pipeline chains multiple
-// compaction strategies from gentle to aggressive:
-//   1. ToolResultCompactionStrategy - Collapses old tool-call groups into concise summaries
-//   2. SummarizationCompactionStrategy - LLM-compresses older conversation spans
-//   3. SlidingWindowCompactionStrategy - Keeps only the most recent N user turns
-//   4. TruncationCompactionStrategy - Emergency token-budget backstop
+// Compaction Pipeline — Progressive context management strategies
+//
+// This sample demonstrates how to use a CompactionProvider with a compaction
+// pipeline as an AIContextProvider for in-run context management. The pipeline
+// chains multiple compaction strategies from gentle to aggressive:
+//   1. ToolResultCompactionStrategy — Collapses old tool-call groups into summaries
+//   2. SummarizationCompactionStrategy — LLM-compresses older conversation spans
+//   3. SlidingWindowCompactionStrategy — Keeps only the most recent N user turns
+//   4. TruncationCompactionStrategy — Emergency token-budget backstop
 
 using System.ComponentModel;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AzureOpenAIClient openAIClient = new(new Uri(endpoint), new DefaultAzureCredential());
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create a chat client for the agent and a separate one for the summarization strategy.
 // Using the same model for simplicity; in production, use a smaller/cheaper model for summarization.
-IChatClient agentChatClient = openAIClient.GetChatClient(deploymentName).AsIChatClient();
-IChatClient summarizerChatClient = openAIClient.GetChatClient(deploymentName).AsIChatClient();
+IChatClient agentChatClient = aiProjectClient.GetProjectOpenAIClient().GetResponsesClient().AsIChatClient(deploymentName);
+IChatClient summarizerChatClient = aiProjectClient.GetProjectOpenAIClient().GetResponsesClient().AsIChatClient(deploymentName);
 
 // Define a tool the agent can use, so we can see tool-result compaction in action.
 [Description("Look up the current price of a product by name.")]
@@ -70,6 +72,7 @@ AIAgent agent =
                         """
                         You are a helpful, but long winded, shopping assistant.
                         Help the user look up prices and compare products.
+                        You MUST use the LookupPrice tool for every price question — never answer price questions from memory.
                         When responding, Be sure to be extra descriptive and use as
                         many words as possible without sounding ridiculous.
                         """,

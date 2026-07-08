@@ -12,7 +12,7 @@ using OpenAI.Chat;
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHttpClient().AddLogging();
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolverChain.Add(AGUIServerSerializerContext.Default));
-builder.Services.AddAGUI();
+builder.Services.AddAGUIServer();
 
 string endpoint = builder.Configuration["AZURE_OPENAI_ENDPOINT"] ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 string deploymentName = builder.Configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT_NAME is not set.");
@@ -49,8 +49,9 @@ var agent = new AzureOpenAIClient(
                 AGUIServerSerializerContext.Default.Options)
         ]);
 
-// When running in production, make sure to use an SessionIsolationKeyProvider, e.g. ClaimsIdentity-based
-// if using Claims-based Identity for Authentication/Authorization
+// WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,
+// make sure to also register a SessionIsolationKeyProvider to scope sessions by principal in multi-user
+// deployments, e.g.:
 // builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 
 // Register the agent with the host and configure it to use an in-memory session store
@@ -62,6 +63,6 @@ builder
 WebApplication app = builder.Build();
 
 // Map the AG-UI agent endpoint
-app.MapAGUI(AgentName, "/");
+app.MapAGUIServer(AgentName, "/");
 
 await app.RunAsync();

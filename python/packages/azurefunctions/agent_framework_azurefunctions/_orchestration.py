@@ -29,7 +29,7 @@ CompoundActionConstructor: TypeAlias = Callable[[list[Any]], Any] | None
 if TYPE_CHECKING:
     from azure.durable_functions import DurableOrchestrationContext
 
-    class _TypedCompoundTask(CompoundTask):  # type: ignore[misc]
+    class _TypedCompoundTask(CompoundTask):
         _first_error: Any
 
         def __init__(
@@ -44,7 +44,7 @@ else:
     _TypedCompoundTask = CompoundTask
 
 
-class PreCompletedTask(TaskBase):  # type: ignore[misc]
+class PreCompletedTask(TaskBase):
     """A simple task that is already completed with a result.
 
     Used for fire-and-forget mode where we want to return immediately

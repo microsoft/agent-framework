@@ -33,9 +33,9 @@ class AgentFrameworkException(Exception):
         if log_level is not None:
             logger.log(log_level, message, exc_info=inner_exception)
         if inner_exception:
-            super().__init__(message, inner_exception, *args)  # type: ignore
+            super().__init__(message, inner_exception, *args)
         else:
-            super().__init__(message, *args)  # type: ignore
+            super().__init__(message, *args)
 
 
 # region Agent Exceptions
