@@ -14,6 +14,7 @@ Instructions for AI coding agents working in the Python codebase.
 - `python-feature-lifecycle` — package vs feature lifecycle stages, decorators, enums, and promotion guidance
 - `python-package-management` — monorepo structure, lazy loading, versioning, new packages
 - `python-samples` — sample file structure, PEP 723, documentation guidelines
+- `pull-requests` — writing PR descriptions (template) and handling/resolving PR review comments
 - `agent-framework-py-release` — Python release PR workflow, CHANGELOG-driven package bumps, lifecycle version rules, and dependency-floor validation
 
 ## Maintaining Documentation
@@ -69,6 +70,8 @@ python/
 
 - `agent-framework-core` contains core abstractions and OpenAI/Azure OpenAI built-in
 - Provider packages (`foundry`, `anthropic`, etc.) extend core with specific integrations
+- The root `agent_framework` public API is lazy-loaded from `packages/core/agent_framework/__init__.py` and
+  described for type checkers in `packages/core/agent_framework/__init__.pyi`; keep both plus `__all__` in sync.
 - Core uses lazy loading via `__getattr__` in provider folders (e.g., `agent_framework/azure/`)
 
 ## Package Documentation

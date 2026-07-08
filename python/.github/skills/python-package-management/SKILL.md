@@ -70,8 +70,6 @@ uv run poe add-dependency-and-validate-bounds --package core --dependency "<depe
 - Prefer targeted lock updates with `uv lock --upgrade-package <dependency-name>` to reduce `uv.lock` merge conflicts.
 - Use `add-dependency-and-validate-bounds` for package-scoped dependency additions plus bound validation in one command.
 - Use `upgrade-dev-dependencies` for repo-wide dev tooling refreshes; it repins dev dependencies, refreshes `uv.lock`, and reruns `check`, `typing`, and `test`.
-- Preserve package-specific upper-bound formatting when changing only a floor. In particular, `gemini` uses
-  `agent-framework-core>=<floor>,<2.0`; do not rewrite the `<2.0` cap to `<2` when raising its floor.
 
 ## Lazy Loading Pattern
 

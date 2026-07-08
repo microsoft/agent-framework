@@ -21,8 +21,7 @@ If the user explicitly states which packages to bump (or hands over a PR list pe
 ## Lifecycle tiers and version rules
 
 Use `python/.github/skills/python-package-management/SKILL.md` as the source of truth for lifecycle
-version patterns, date-stamp cutoffs, classifier alignment, internal dependency updates, and package-specific
-dependency bound notes.
+version patterns, date-stamp cutoffs, classifier alignment, and internal dependency updates.
 
 For release work, derive the live tier map at release time from `python/PACKAGE_STATUS.md` and the actual
 `version =` lines in each `pyproject.toml`. Do not hardcode counts — packages move between tiers.
@@ -41,8 +40,8 @@ If the user states target versions or a date explicitly, use exactly what they s
 ## Non-negotiable rules
 
 - **CHANGELOG-driven bumps**: only packages mentioned in the new CHANGELOG section get version bumps. Exceptions: root follows core (==pin); user-opted cohort bump on betas.
-- **Follow `python-package-management` for package versioning and dependency-bound rules** — do not introduce
-  release-skill-local exceptions.
+- **Follow `python-package-management` for package lifecycle and versioning rules** — do not duplicate those
+  rules in this release workflow.
 - **No `Co-Authored-By` trailer** on any commit.
 - **Use `uv run`** for all Python/poe commands (`uv run poe ...`, `uv run pytest ...`).
 - **Never rename an existing CHANGELOG section header** during a new release cut. Only INSERT a new section above existing ones.
@@ -282,8 +281,7 @@ Only relevant when `core` itself bumped this cycle. Two policies, pick one expli
 - **Conservative (default)**: raise `agent-framework-core>=X.Y.Z` to the new core version on every non-core package that is ALSO bumping this cycle. Leaves packages-not-bumped at their existing floor.
 - **Strict per-upstream-doc**: only raise the floor on packages that actually consume a new core API introduced in the bump. This requires per-package code inspection. Use only when the user is comfortable letting `validate-dependency-bounds-test` (lower-resolution pass) catch any mistakes.
 
-Follow the dependency-bound notes in `python-package-management` when touching floors, including any
-package-specific upper-bound formatting. Replace ONLY the `>=OLD` half:
+When raising a core floor, replace only the `>=OLD` half of the bound you intend to change:
 
 ```bash
 file="python/packages/<pkg>/pyproject.toml"
@@ -351,15 +349,13 @@ The push output includes a `Create a pull request for '<branch>' on GitHub by vi
   do not infer a local timezone from the user's current shell.
 - **`Co-Authored-By` trailer.** Never add it. Rewrite/amend if it slipped in.
 - **Stale inventory in this skill.** Always read `python/PACKAGE_STATUS.md` for the live tier map. Do not trust a hardcoded list.
-- **Package-specific dependency bound formatting.** Follow the dependency-bound notes in
-  `python-package-management` when touching package floors or caps.
 - **Divergent origin vs upstream.** If the release tags from `upstream/main` but `origin/main` is behind, check both — warn if they differ and offer to sync.
 - **`--pre` README cleanup on promotion.** When a package is promoted to `released` in this cycle, grep for `pip install agent-framework-<pkg> --pre` in READMEs and drop the `--pre` flag.
 - **RC counter inflation.** Do not increment `1.0.0rcN` without a CHANGELOG entry for that package. The counter tracks iterations, not calendar.
 
 ## References
 
-- Package lifecycle and dependency source of truth: `python/.github/skills/python-package-management/SKILL.md`
+- Package lifecycle and versioning source of truth: `python/.github/skills/python-package-management/SKILL.md`
 - Lifecycle source of truth: `python/PACKAGE_STATUS.md`
 - Validator: `python/scripts/dependencies/validate_dependency_bounds.py` (runs `lowest-direct` and `highest` resolution smoke tests; catches floors/caps that don't match the code)
 - Poe task definitions: `python/pyproject.toml` `[tool.poe.tasks]`
