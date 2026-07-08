@@ -1481,10 +1481,13 @@ async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGet
         )
     )
 
-    assert captured_session is parent_session
-    assert captured_session is not None
+    # Child receives a separate AgentSession (not the parent object) to isolate
+    # service_session_id, but shares the same state dict and session_id.
+    assert captured_session is not parent_session
     assert captured_session.session_id == "parent-session-123"
+    assert captured_session.state is parent_session.state
     assert captured_session.state["shared_key"] == "shared_value"
+    assert captured_session.service_session_id is None
 
 
 async def test_chat_agent_as_tool_propagate_session_false_by_default(client: SupportsChatGetResponse) -> None:
