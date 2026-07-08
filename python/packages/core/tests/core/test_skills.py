@@ -5714,7 +5714,7 @@ class TestSkillsSourceContext:
     async def test_refresh_interval_none_never_expires(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """With no refresh_interval, the cache never expires regardless of elapsed time."""
         clock = {"now": 1000.0}
-        monkeypatch.setattr("agent_framework._skills._monotonic", lambda: clock["now"])
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
         inner = _CountingSkillsSource([
             InlineSkill(frontmatter=SkillFrontmatter(name="skill-a", description="A"), instructions="body")
         ])
@@ -5730,7 +5730,7 @@ class TestSkillsSourceContext:
     async def test_refresh_interval_serves_cache_within_interval(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A cached list younger than refresh_interval is served without re-querying."""
         clock = {"now": 1000.0}
-        monkeypatch.setattr("agent_framework._skills._monotonic", lambda: clock["now"])
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
         inner = _CountingSkillsSource([
             InlineSkill(frontmatter=SkillFrontmatter(name="skill-a", description="A"), instructions="body")
         ])
@@ -5746,7 +5746,7 @@ class TestSkillsSourceContext:
     async def test_refresh_interval_refetches_after_expiry(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Once refresh_interval has elapsed, the next call re-queries and replaces the cache."""
         clock = {"now": 1000.0}
-        monkeypatch.setattr("agent_framework._skills._monotonic", lambda: clock["now"])
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
         inner = _CountingSkillsSource([
             InlineSkill(frontmatter=SkillFrontmatter(name="skill-a", description="A"), instructions="body")
         ])
@@ -5763,7 +5763,7 @@ class TestSkillsSourceContext:
     async def test_refresh_interval_zero_always_refetches(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A zero refresh_interval makes every cached result immediately stale."""
         clock = {"now": 1000.0}
-        monkeypatch.setattr("agent_framework._skills._monotonic", lambda: clock["now"])
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
         inner = _CountingSkillsSource([
             InlineSkill(frontmatter=SkillFrontmatter(name="skill-a", description="A"), instructions="body")
         ])
@@ -5777,7 +5777,7 @@ class TestSkillsSourceContext:
     async def test_refresh_interval_failed_refresh_retries(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A failed refresh after expiry propagates and does not overwrite the cache; the next call retries."""
         clock = {"now": 1000.0}
-        monkeypatch.setattr("agent_framework._skills._monotonic", lambda: clock["now"])
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
 
         class FlakyOnRefreshSource(SkillsSource):
             def __init__(self) -> None:

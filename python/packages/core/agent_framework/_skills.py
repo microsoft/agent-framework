@@ -3736,17 +3736,6 @@ class FilteringSkillsSource(DelegatingSkillsSource):
         return [s for s in skills if self._predicate(s, context)]
 
 
-def _monotonic() -> float:
-    """Return a monotonic timestamp in seconds.
-
-    Wrapped in a module-level function (rather than calling
-    :func:`time.monotonic` inline) so tests can monkeypatch the clock to make
-    :class:`CachingSkillsSource` refresh-interval behavior deterministic
-    without real sleeps.
-    """
-    return time.monotonic()
-
-
 @experimental(feature_id=ExperimentalFeature.SKILLS)
 class CachingSkillsSource(DelegatingSkillsSource):
     """Decorator that caches the skills list returned by an inner source.
@@ -3874,7 +3863,7 @@ class CachingSkillsSource(DelegatingSkillsSource):
         if cached is None:
             return None
         if self._refresh_interval is not None:
-            age = _monotonic() - self._cache_timestamps.get(key, 0.0)
+            age = time.monotonic() - self._cache_timestamps.get(key, 0.0)
             if age >= self._refresh_interval.total_seconds():
                 return None
         return cached
@@ -3921,7 +3910,7 @@ class CachingSkillsSource(DelegatingSkillsSource):
 
             skills = await self._inner_source.get_skills(context)
             self._cached_skills[key] = skills
-            self._cache_timestamps[key] = _monotonic()
+            self._cache_timestamps[key] = time.monotonic()
             return skills
 
 
