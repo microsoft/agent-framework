@@ -17,9 +17,6 @@ checkpointing should use the existing `CheckpointStorage` abstraction directly;
 if an app needs per-session resume, keep a small app-owned cursor such as
 `session_id -> checkpoint_id`.
 
-- Existing experimental channel-hosting types remain available while the package
-  is unreleased, but the v1 direction is protocol helpers plus app-owned routes.
-
 Use FastAPI, Starlette, Azure Functions, Django, or another framework for route
 registration, auth, middleware, response construction, and background work.
 

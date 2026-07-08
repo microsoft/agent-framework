@@ -7,10 +7,8 @@ items". An item is either a content part (``input_text`` / ``input_image``
 / ``input_file``) or a message envelope ``{type: "message", role,
 content: [...]}``. We translate that into an Agent Framework ``Message``
 list and remap the generation-control fields the API also carries into
-``ChatOptions``-shaped keys. The result is available to the channel's
-``run_hook``; a default hook strips them before they reach the agent so
-unknown fields from untrusted callers are not forwarded unless the host
-developer explicitly opts in.
+``ChatOptions``-shaped keys. App-owned route code decides which options to
+pass through to ``agent.run(...)`` and which request-owned fields to drop.
 """
 
 from __future__ import annotations
@@ -22,7 +20,7 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any, cast
 
 from agent_framework import AgentResponse, AgentResponseUpdate, ChatOptions, Content, Message, ResponseStream
-from agent_framework_hosting import AgentRunArgs, ChannelIdentity, ChannelSession
+from agent_framework_hosting import AgentRunArgs
 from openai.types.responses import (
     Response as OpenAIResponse,
 )
@@ -47,20 +45,7 @@ _RESPONSES_OPTION_REMAP = {
 }
 # Fields the Responses transport owns; they are consumed separately and must
 # not also appear in options.
-_RESPONSES_TRANSPORT_KEYS = frozenset({"input", "stream", "previous_response_id"})
 _RESPONSES_RUN_TRANSPORT_KEYS = frozenset({"input", "stream", "previous_response_id", "conversation_id"})
-
-
-def parse_responses_identity(body: Mapping[str, Any], channel_name: str) -> ChannelIdentity | None:
-    """Surface the caller as a :class:`ChannelIdentity` so the host can record it.
-
-    OpenAI Responses replaced ``user`` with ``safety_identifier`` — we use
-    that as the native id, falling back to the legacy ``user`` field.
-    """
-    native = body.get("safety_identifier") or body.get("user")
-    if not isinstance(native, str) or not native:
-        return None
-    return ChannelIdentity(channel=channel_name, native_id=native)
 
 
 def _content_from_input_item(item: Mapping[str, Any]) -> Content:
@@ -133,40 +118,6 @@ def messages_from_responses_input(value: Any) -> list[Message]:
     if not messages:
         raise ValueError("`input` produced no messages")
     return messages
-
-
-def parse_responses_request(
-    body: Mapping[str, Any],
-) -> tuple[list[Message], dict[str, Any], ChannelSession | None]:
-    """Translate a Responses-API request body into Agent Framework constructs.
-
-    Returns a triple ``(messages, options, session)`` where:
-
-    - ``messages`` is the parsed conversation.
-    - ``options`` is a ``ChatOptions``-shaped dict with the remapped
-      generation-control fields. Known Responses→ChatOptions renames are
-      applied (e.g. ``max_output_tokens`` → ``max_tokens``); transport/
-      session keys are excluded; ``None``-valued fields are dropped.
-      Unknown fields are forwarded as-is so the channel's ``run_hook``
-      can inspect and filter them. The default ``ResponsesChannel`` strips
-      all options before the agent runs; supply a custom ``run_hook`` to
-      selectively keep fields.
-    - ``session`` is a :class:`ChannelSession` keyed by
-      ``previous_response_id`` when one was supplied, else ``None``.
-    """
-    messages = messages_from_responses_input(body.get("input"))
-
-    options: dict[str, Any] = {}
-    for key, value in body.items():
-        if key in _RESPONSES_TRANSPORT_KEYS or value is None:
-            continue
-        options[_RESPONSES_OPTION_REMAP.get(key, key)] = value
-
-    session: ChannelSession | None = None
-    if (prev := body.get("previous_response_id")) and isinstance(prev, str):
-        session = ChannelSession(isolation_key=prev)
-
-    return messages, options, session
 
 
 def create_response_id() -> str:
@@ -950,8 +901,6 @@ async def responses_from_streaming_run(
 __all__ = [
     "create_response_id",
     "messages_from_responses_input",
-    "parse_responses_identity",
-    "parse_responses_request",
     "responses_from_run",
     "responses_from_streaming_run",
     "responses_session_id",

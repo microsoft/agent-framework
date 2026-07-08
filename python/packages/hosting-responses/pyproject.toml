@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework-hosting-responses"
-description = "OpenAI Responses-shaped channel for agent-framework-hosting."
+description = "OpenAI Responses-shaped helpers for agent-framework-hosting."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"

@@ -13,8 +13,6 @@ from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message
 from agent_framework_hosting_responses import (
     create_response_id,
     messages_from_responses_input,
-    parse_responses_identity,
-    parse_responses_request,
     responses_from_run,
     responses_from_streaming_run,
     responses_session_id,
@@ -111,71 +109,6 @@ class TestMessagesFromResponsesInput:
     def test_image_url_missing_raises(self) -> None:
         with pytest.raises(ValueError, match="image_url"):
             messages_from_responses_input([{"type": "input_image"}])
-
-
-class TestParseResponsesRequest:
-    def test_known_fields_remapped_and_unknown_forwarded(self) -> None:
-        _, opts, _ = parse_responses_request({
-            "input": "hi",
-            "instructions": "be brief",
-            "temperature": 0.4,
-            "top_p": 0.9,
-            "tool_choice": "auto",
-            "max_output_tokens": 256,
-            "parallel_tool_calls": False,
-            "truncation": "auto",
-            "reasoning": {"effort": "low"},
-        })
-        # Known remaps applied.
-        assert opts["max_tokens"] == 256
-        assert opts["allow_multiple_tool_calls"] is False
-        # Straight-through fields present.
-        assert opts["temperature"] == 0.4
-        assert opts["instructions"] == "be brief"
-        assert opts["truncation"] == "auto"
-        # Transport/session keys excluded.
-        for key in ("input", "stream", "previous_response_id"):
-            assert key not in opts
-
-    def test_model_passes_through_transport_keys_excluded(self) -> None:
-        _, opts, _ = parse_responses_request({
-            "input": "x",
-            "model": "gpt-x",
-            "stream": True,
-            "previous_response_id": "r",
-        })
-        for key in ("input", "stream", "previous_response_id"):
-            assert key not in opts
-        # model passes through — not a transport key; run_hook decides what to do with it.
-        assert opts["model"] == "gpt-x"
-
-    def test_none_values_dropped(self) -> None:
-        _, opts, _ = parse_responses_request({"input": "x", "temperature": None})
-        assert "temperature" not in opts
-
-    def test_previous_response_id_becomes_session(self) -> None:
-        _, _, sess = parse_responses_request({"input": "x", "previous_response_id": "resp_42"})
-        assert sess is not None
-        assert sess.isolation_key == "resp_42"
-
-
-class TestParseResponsesIdentity:
-    def test_safety_identifier_preferred(self) -> None:
-        ident = parse_responses_identity({"safety_identifier": "abc", "user": "legacy"}, "responses")
-        assert ident is not None
-        assert ident.native_id == "abc"
-        assert ident.channel == "responses"
-
-    def test_fallback_to_user(self) -> None:
-        ident = parse_responses_identity({"user": "legacy"}, "responses")
-        assert ident is not None
-        assert ident.native_id == "legacy"
-
-    def test_returns_none_when_absent(self) -> None:
-        assert parse_responses_identity({}, "responses") is None
-
-    def test_returns_none_for_non_string(self) -> None:
-        assert parse_responses_identity({"safety_identifier": 42}, "responses") is None
 
 
 class TestResponsesRunHelpers:

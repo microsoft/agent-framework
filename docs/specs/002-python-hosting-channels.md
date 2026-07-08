@@ -22,9 +22,6 @@ The v1 contract is:
 - `agent-framework-hosting` provides small optional state holders for Agent Framework targets;
 - state helpers do not own web apps, route contribution, protocol dispatch, command projection, or native SDK calls.
 
-The old `AgentFrameworkHost` / `Channel` implementation remains present while the package is unreleased, but it is not
-the intended v1 direction. New work should target protocol helpers plus app-owned routes.
-
 ## Goals
 
 - Let apps expose agents and workflows from FastAPI, Starlette, Django, Azure Functions, native SDK webhooks, CLIs, and
@@ -243,11 +240,6 @@ OpenAI Responses output item types supported by Agent Framework content.
 text deltas, and a completed event. The final completed payload is produced through `responses_from_run(...)`; the helper
 also preserves the model id observed on streaming updates when the finalized `AgentResponse` no longer carries raw model
 metadata.
-
-### Compatibility with old channel code
-
-`ResponsesChannel` and the old channel helpers remain present while the package is unreleased. New samples and new code
-should use the helper-first surface.
 
 ## Security responsibilities
 
