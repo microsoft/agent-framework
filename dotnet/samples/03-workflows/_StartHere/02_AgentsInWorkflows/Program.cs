@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
@@ -21,21 +21,21 @@ namespace WorkflowAgentsInWorkflowsSample;
 /// </summary>
 /// <remarks>
 /// Pre-requisites:
-/// - An Azure OpenAI chat completion deployment must be configured.
+/// - An Azure AI Foundry project endpoint and model must be configured.
 /// </remarks>
 public static class Program
 {
     private static async Task Main()
     {
-        // Set up the Azure OpenAI client
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
-        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
+        // Set up the Azure AI Foundry client
+        var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+        var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
+        AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
         // Create agents
-        AIAgent frenchAgent = GetTranslationAgent("French", chatClient);
-        AIAgent spanishAgent = GetTranslationAgent("Spanish", chatClient);
-        AIAgent englishAgent = GetTranslationAgent("English", chatClient);
+        AIAgent frenchAgent = GetTranslationAgent("French", aiProjectClient, deploymentName);
+        AIAgent spanishAgent = GetTranslationAgent("Spanish", aiProjectClient, deploymentName);
+        AIAgent englishAgent = GetTranslationAgent("English", aiProjectClient, deploymentName);
 
         // Build the workflow by adding executors and connecting them
         var workflow = new WorkflowBuilder(frenchAgent)
@@ -75,8 +75,9 @@ public static class Program
     /// Creates a translation agent for the specified target language.
     /// </summary>
     /// <param name="targetLanguage">The target language for translation</param>
-    /// <param name="chatClient">The chat client to use for the agent</param>
+    /// <param name="client">The AI project client to use for the agent</param>
+    /// <param name="model">The model deployment name</param>
     /// <returns>A ChatClientAgent configured for the specified language</returns>
-    private static ChatClientAgent GetTranslationAgent(string targetLanguage, IChatClient chatClient) =>
-        new(chatClient, $"You are a translation assistant that translates the provided text to {targetLanguage}.");
+    private static ChatClientAgent GetTranslationAgent(string targetLanguage, AIProjectClient client, string model) =>
+        client.AsAIAgent(model: model, instructions: $"You are a translation assistant that translates the provided text to {targetLanguage}.");
 }

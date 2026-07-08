@@ -53,4 +53,16 @@ public sealed class AgentSessionIdTests
             AgentSessionId sessionId = entityId;
         });
     }
+
+    // Ensures the 2-arg constructor treats the key as opaque and never re-interprets
+    // it as a serialized session id, so the resulting Name always comes from the first
+    // argument regardless of the key's shape.
+    [Fact]
+    public void ConstructorTreatsKeyAsOpaqueValue()
+    {
+        AgentSessionId sessionId = new("agentA", "@dafx-agentB@some-key");
+
+        Assert.Equal("agentA", sessionId.Name);
+        Assert.Equal("@dafx-agentB@some-key", sessionId.Key);
+    }
 }

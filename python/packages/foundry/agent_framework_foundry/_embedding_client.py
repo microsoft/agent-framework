@@ -23,9 +23,9 @@ from azure.ai.inference.models import ImageEmbeddingInput
 from azure.core.credentials import AzureKeyCredential
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 
 logger = logging.getLogger("agent_framework.foundry")
@@ -205,7 +205,7 @@ class RawFoundryEmbeddingClient(
             ValueError: If model is not provided or an unsupported content type is encountered.
         """
         if not values:
-            return GeneratedEmbeddings([], options=options)  # type: ignore[reportReturnType]
+            return GeneratedEmbeddings([], options=options)
 
         opts: dict[str, Any] = dict(options) if options else {}
 
@@ -307,7 +307,7 @@ class RawFoundryEmbeddingClient(
             [embedding for embedding in embeddings if embedding is not None],
             options=options,
             usage=usage_details,
-        )  # type: ignore[reportReturnType]
+        )
 
 
 class FoundryEmbeddingClient(
@@ -363,7 +363,7 @@ class FoundryEmbeddingClient(
             result = await client.get_embeddings(["hello", image])
     """
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.inference"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.inference"
 
     def __init__(
         self,

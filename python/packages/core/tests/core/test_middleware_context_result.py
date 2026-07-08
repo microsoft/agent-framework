@@ -64,7 +64,7 @@ class TestResultOverrideMiddleware:
         # Verify the overridden response is returned
         assert result is not None
         assert result == override_response
-        assert result.messages[0].text == "overridden response"
+        assert result.messages[0].text == "overridden response"  # ty: ignore[unresolved-attribute]  # type: ignore[union-attr]
         # Verify original handler was called since middleware called next()
         assert handler_called
 
@@ -93,8 +93,8 @@ class TestResultOverrideMiddleware:
             return ResponseStream(_stream())
 
         updates: list[AgentResponseUpdate] = []
-        stream = await pipeline.execute(context, final_handler)
-        async for update in stream:
+        stream = await pipeline.execute(context, final_handler)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        async for update in stream:  # type: ignore[attr-defined, union-attr]  # pyrefly: ignore[not-iterable]  # ty: ignore[not-iterable]
             updates.append(update)
 
         # Verify the overridden response stream is returned
@@ -151,7 +151,7 @@ class TestResultOverrideMiddleware:
 
         # Create Agent with override middleware
         middleware = ChatAgentResponseOverrideMiddleware()
-        agent = Agent(client=mock_chat_client, middleware=[middleware])
+        agent = Agent(client=mock_chat_client, middleware=[middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Test override case
         override_messages = [Message(role="user", contents=["Give me a special response"])]
@@ -187,7 +187,7 @@ class TestResultOverrideMiddleware:
 
         # Create Agent with override middleware
         middleware = ChatAgentStreamOverrideMiddleware()
-        agent = Agent(client=mock_chat_client, middleware=[middleware])
+        agent = Agent(client=mock_chat_client, middleware=[middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Test streaming override case
         override_messages = [Message(role="user", contents=["Give me a custom stream"])]
@@ -248,7 +248,7 @@ class TestResultOverrideMiddleware:
         execute_result = await pipeline.execute(execute_context, final_handler)
 
         assert execute_result is not None
-        assert execute_result.messages[0].text == "executed response"
+        assert execute_result.messages[0].text == "executed response"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         assert handler_called
 
     async def test_function_middleware_conditional_no_next(self, mock_function: FunctionTool) -> None:
@@ -399,7 +399,7 @@ class TestResultObservability:
 
         # Verify response was modified after execution
         assert result is not None
-        assert result.messages[0].text == "modified after execution"
+        assert result.messages[0].text == "modified after execution"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
     async def test_function_middleware_post_execution_override(self, mock_function: FunctionTool) -> None:
         """Test that middleware can override function result after observing execution."""

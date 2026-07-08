@@ -29,10 +29,7 @@ from pydantic import BaseModel
 
 from ._docstrings import apply_layered_docstring
 from ._serialization import SerializationMixin
-from ._tools import (
-    FunctionInvocationConfiguration,
-    ToolTypes,
-)
+from ._tools import ToolTypes
 from ._types import (
     ChatResponse,
     ChatResponseUpdate,
@@ -46,9 +43,9 @@ from ._types import (
 )
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 
 if TYPE_CHECKING:
@@ -346,7 +343,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         response_format: Any | None = None,
     ) -> ChatResponse[Any]:
         """Finalize response updates into a single ChatResponse."""
-        return ChatResponse.from_updates(  # pyright: ignore[reportUnknownVariableType]
+        return ChatResponse.from_updates(
             updates,
             output_format_type=response_format,
         )
@@ -517,7 +514,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             return self._inner_get_response(
                 messages=messages,
                 stream=stream,
-                options=options or {},  # type: ignore[arg-type]
+                options=options or {},
                 **merged_client_kwargs,
             )
 
@@ -580,7 +577,6 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         context_providers: Sequence[Any] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         require_per_service_call_history_persistence: bool = False,
-        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: Mapping[str, Any] | None = None,
@@ -604,11 +600,13 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 and dict literals are accepted without specialized option typing.
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
-            require_per_service_call_history_persistence: Whether to require per-service-call
-                chat history persistence. When enabled, history providers are invoked around
-                each model call instead of once per ``run()`` when the service is not already
-                storing history.
-            function_invocation_configuration: Optional function invocation configuration override.
+            require_per_service_call_history_persistence: When enabled (and a HistoryProvider is
+                present), the provider always persists history after each model call. If the
+                client does not store history server-side, history providers are also loaded and
+                injected around each model call; if it does, provider loading is skipped and the
+                service-managed conversation is the source of truth (persistence still happens
+                after each model call). When no HistoryProvider is present, this flag has no
+                effect (no middleware is installed and nothing is persisted).
             compaction_strategy: Optional agent-level compaction override. When omitted,
                 client-level compaction defaults remain in effect for each call.
             tokenizer: Optional agent-level tokenizer override. When omitted,
@@ -653,8 +651,6 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             "tokenizer": tokenizer,
             "additional_properties": dict(additional_properties) if additional_properties is not None else None,
         }
-        if function_invocation_configuration is not None:
-            agent_kwargs["function_invocation_configuration"] = function_invocation_configuration
 
         return Agent(**agent_kwargs)
 
@@ -806,6 +802,36 @@ class SupportsFileSearchTool(Protocol):
     @staticmethod
     def get_file_search_tool(**kwargs: Any) -> Any:
         """Create a file search tool configuration.
+
+        Keyword Args:
+            **kwargs: Provider-specific configuration options.
+
+        Returns:
+            A tool configuration ready to pass to ChatAgent.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsShellTool(Protocol):
+    """Protocol for clients that support shell tools.
+
+    This protocol enables runtime checking to determine if a client
+    supports executing shell commands.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import SupportsShellTool
+
+            if isinstance(client, SupportsShellTool):
+                tool = client.get_shell_tool(func=shell.as_function())
+                agent = ChatAgent(client, tools=[tool])
+    """
+
+    @staticmethod
+    def get_shell_tool(**kwargs: Any) -> Any:
+        """Create a shell tool configuration.
 
         Keyword Args:
             **kwargs: Provider-specific configuration options.

@@ -1,4 +1,4 @@
-# Evaluation - Foundry Quality
+﻿# Evaluation - Foundry Quality
 
 This sample demonstrates agent evaluation using MEAI quality evaluators (Relevance, Coherence) via `FoundryEvals`.
 
@@ -13,13 +13,13 @@ This sample demonstrates agent evaluation using MEAI quality evaluators (Relevan
 ## Prerequisites
 
 - .NET 10 SDK or later
-- Azure CLI installed and authenticated (`az login`)
+- Azure authentication available to `DefaultAzureCredential` (for local development, run `az login`)
 
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:FOUNDRY_MODEL="gpt-4o-mini"
 ```
 
 ## Run the sample

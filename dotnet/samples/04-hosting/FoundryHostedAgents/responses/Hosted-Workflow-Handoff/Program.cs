@@ -38,6 +38,9 @@ var builder = WebApplication.CreateBuilder(args);
 var endpoint = new Uri(Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set."));
 var deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gpt-4o";
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 var azureClient = new AzureOpenAIClient(endpoint, new ChainedTokenCredential(
     new DevTemporaryTokenCredential(),
     new DefaultAzureCredential()));

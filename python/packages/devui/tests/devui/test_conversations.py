@@ -5,7 +5,7 @@
 from typing import cast
 
 import pytest
-from openai.types.conversations import InputFileContent, InputImageContent, InputTextContent
+from openai.types.conversations import InputTextContent
 
 from agent_framework_devui._conversations import InMemoryConversationStore
 
@@ -312,10 +312,10 @@ async def test_list_items_handles_images_and_files():
     assert text_content.text == "Check this image and PDF"
 
     assert items[0].content[1].type == "input_image"
-    image_content = cast(InputImageContent, items[0].content[1])
+    image_content = items[0].content[1]
     assert image_content.image_url == "data:image/png;base64,iVBORw0KGgo="
     assert image_content.detail == "auto"
 
     assert items[0].content[2].type == "input_file"
-    file_content = cast(InputFileContent, items[0].content[2])
+    file_content = items[0].content[2]
     assert file_content.file_url == "data:application/pdf;base64,JVBERi0="
