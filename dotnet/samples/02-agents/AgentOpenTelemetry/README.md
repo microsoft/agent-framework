@@ -30,14 +30,54 @@ graph TD
 
 ## Configuration
 
-### Microsoft Foundry Setup
-Set the following environment variables:
+Two authentication paths are supported. **Foundry is the recommended default.** When both are configured, Foundry takes precedence.
+
+### Option A — Microsoft Foundry (Recommended)
+
+Uses `DefaultAzureCredential` (Azure CLI, managed identity, etc.). No API key required.
+
+| Variable | Required | Description |
+|---|---|---|
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Your Foundry project endpoint URL |
+| `FOUNDRY_MODEL` | No | Model deployed in your Foundry project. If not set, defaults to `gpt-5-mini` |
+
 ```powershell
-$env:FOUNDRY_PROJECT_ENDPOINT="https://<your-project>.services.ai.azure.com/api/projects/<your-project>"
-$env:FOUNDRY_MODEL="gpt-5.4-mini"  # Optional, defaults to gpt-5.4-mini
+$env:FOUNDRY_PROJECT_ENDPOINT = "https://<your-project>.services.ai.azure.com/api/projects/<your-project>"
+$env:FOUNDRY_MODEL             = "gpt-5-mini"   # if not set, defaults to gpt-5-mini
+az login
 ```
 
-**Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Foundry project.
+**Note**: Option A uses Azure CLI credentials (`DefaultAzureCredential`). Make sure you are logged in with `az login` and have access to the Foundry project before running the demo.
+
+### Option B — Azure OpenAI API Key (Local/Dev Fallback)
+
+Useful when `az login` is not available. All three variables must be set.
+
+| Variable | Required | Description |
+|---|---|---|
+| `AZURE_OPENAI_ENDPOINT` | Yes | Your Azure OpenAI resource endpoint |
+| `AZURE_OPENAI_API_KEY` | Yes | API key for the resource |
+| `AZURE_OPENAI_DEPLOYMENT_NAME` | No | Deployment name. If not set, defaults to `gpt-5-mini` |
+
+```powershell
+$env:AZURE_OPENAI_ENDPOINT        = "https://<resource>.openai.azure.com/"
+$env:AZURE_OPENAI_API_KEY         = "<your-api-key>"
+$env:AZURE_OPENAI_DEPLOYMENT_NAME = "<deployment-name>"   # if not set, defaults to gpt-5-mini
+```
+
+### Observability Options
+
+| Variable | Default | Description |
+|---|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP collector endpoint |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | _(unset)_ | Enables Application Insights export |
+| `OTEL_DEMO_NEW_TRACE_PER_TURN` | `false` | See note below |
+
+**`OTEL_DEMO_NEW_TRACE_PER_TURN`**: By default, each interaction is a child span of the session span, preserving full correlation across the conversation. Set to `true` to make each turn start a new root trace — useful in demo walkthroughs where you want each interaction to appear as a standalone entry in the Aspire Dashboard.
+
+```powershell
+$env:OTEL_DEMO_NEW_TRACE_PER_TURN = "true"   # optional, per-turn root traces
+```
 
 ### [Optional] Application Insights Setup
 Set the following environment variables:
@@ -56,7 +96,7 @@ The easiest way to run the demo is using the provided PowerShell script:
 ```
 
 This script will automatically:
-- ✅ Check prerequisites (Docker, Foundry configuration)
+- ✅ Detect configuration (Foundry preferred; Azure OpenAI API key as fallback)
 - 🔨 Build the console application
 - 🐳 Start the Aspire Dashboard via Docker (with anonymous access)
 - ⏳ Wait for dashboard to be ready (polls port until listening)
@@ -182,7 +222,7 @@ Complete demo startup script that handles everything automatically.
 ```
 
 **Features:**
-- **Automatic configuration detection** - Checks for Foundry configuration
+- **Automatic configuration detection** - Checks for Foundry (preferred) then Azure OpenAI API key fallback
 - **Project building** - Automatically builds projects before running
 - **Error handling** - Provides clear error messages if something goes wrong
 - **Multi-window support** - Opens dashboard in separate window for better experience
@@ -204,7 +244,8 @@ If you encounter port binding errors, try:
 - Ensure your Foundry project endpoint is correctly configured
 - Check that the environment variables are set in the correct terminal session
 - Verify you're logged in with Azure CLI (`az login`) and have access to the Foundry project
-- Ensure the `FOUNDRY_MODEL` value matches an enabled model in your Foundry project
+- Ensure the `FOUNDRY_MODEL` value matches a model deployed in your Foundry project
+- If `az login` is not available (e.g. a dev machine without the Azure CLI), switch to Option B (Azure OpenAI API key) instead
 
 ### Build Issues
 - Ensure you're using .NET 10.0 SDK
