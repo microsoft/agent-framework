@@ -536,6 +536,44 @@ async def test_file_access_provider_all_tools_require_approval(
         assert _tool_by_name(tools, name).approval_mode == "always_require"
 
 
+async def test_file_access_provider_approval_opt_outs(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """The approval opt-out flags flip only the affected tool group to ``never_require``."""
+    readonly_names = (
+        FileAccessProvider.READ_TOOL_NAME,
+        FileAccessProvider.LS_TOOL_NAME,
+        FileAccessProvider.GREP_TOOL_NAME,
+    )
+    write_names = (
+        FileAccessProvider.WRITE_TOOL_NAME,
+        FileAccessProvider.DELETE_TOOL_NAME,
+        FileAccessProvider.REPLACE_TOOL_NAME,
+        FileAccessProvider.REPLACE_LINES_TOOL_NAME,
+    )
+
+    # Disabling read-only approval only affects the read-only tools.
+    tools = await _prepare_access_tools(chat_client_base, disable_readonly_tool_approval=True)
+    for name in readonly_names:
+        assert _tool_by_name(tools, name).approval_mode == "never_require"
+    for name in write_names:
+        assert _tool_by_name(tools, name).approval_mode == "always_require"
+
+    # Disabling write approval only affects the write tools.
+    tools = await _prepare_access_tools(chat_client_base, disable_write_tool_approval=True)
+    for name in readonly_names:
+        assert _tool_by_name(tools, name).approval_mode == "always_require"
+    for name in write_names:
+        assert _tool_by_name(tools, name).approval_mode == "never_require"
+
+    # Disabling both drops approval everywhere.
+    tools = await _prepare_access_tools(
+        chat_client_base, disable_readonly_tool_approval=True, disable_write_tool_approval=True
+    )
+    for name in (*readonly_names, *write_names):
+        assert _tool_by_name(tools, name).approval_mode == "never_require"
+
+
 def test_read_only_tools_auto_approval_rule() -> None:
     """The read-only rule approves only the non-mutating tools."""
     approved = {
@@ -953,11 +991,20 @@ async def test_filesystem_store_rejects_symlinked_intermediate_directory(tmp_pat
 
 
 async def _prepare_access_tools(
-    chat_client_base: SupportsChatGetResponse, *, disable_write_tools: bool = False
+    chat_client_base: SupportsChatGetResponse,
+    *,
+    disable_write_tools: bool = False,
+    disable_readonly_tool_approval: bool = False,
+    disable_write_tool_approval: bool = False,
 ) -> list[object]:
     """Prepare a FileAccessProvider and return its registered tools."""
     session = AgentSession(session_id="session-1")
-    provider = FileAccessProvider(store=InMemoryAgentFileStore(), disable_write_tools=disable_write_tools)
+    provider = FileAccessProvider(
+        store=InMemoryAgentFileStore(),
+        disable_write_tools=disable_write_tools,
+        disable_readonly_tool_approval=disable_readonly_tool_approval,
+        disable_write_tool_approval=disable_write_tool_approval,
+    )
     agent = Agent(client=chat_client_base, context_providers=[provider])
     _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,

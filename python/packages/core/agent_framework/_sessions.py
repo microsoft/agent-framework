@@ -44,6 +44,7 @@ _STATE_TYPE_REGISTRY: dict[str, type] = {}
 
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
+ServiceSessionId: TypeAlias = Mapping[str, Any]
 
 
 def _default_json_dumps(value: Any) -> str:
@@ -176,7 +177,7 @@ class SessionContext:
         self,
         *,
         session_id: str | None = None,
-        service_session_id: str | None = None,
+        service_session_id: str | ServiceSessionId | None = None,
         input_messages: list[Message],
         context_messages: dict[str, list[Message]] | None = None,
         instructions: list[str] | None = None,
@@ -759,7 +760,7 @@ class AgentSession:
         self,
         *,
         session_id: str | None = None,
-        service_session_id: str | None = None,
+        service_session_id: str | ServiceSessionId | None = None,
     ):
         """Initialize the session.
 

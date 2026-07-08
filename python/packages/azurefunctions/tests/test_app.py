@@ -19,10 +19,10 @@ from agent_framework_durabletask import (
     THREAD_ID_HEADER,
     WAIT_FOR_RESPONSE_FIELD,
     WAIT_FOR_RESPONSE_HEADER,
-    WORKFLOW_ORCHESTRATOR_NAME,
     AgentEntity,
     AgentEntityStateProviderMixin,
     DurableAgentState,
+    workflow_orchestrator_name,
 )
 
 from agent_framework_azurefunctions import AgentFunctionApp
@@ -1332,6 +1332,7 @@ class TestAgentFunctionAppWorkflow:
     def test_init_with_workflow_stores_workflow(self) -> None:
         """Test that workflow is stored when provided."""
         mock_workflow = Mock()
+        mock_workflow.name = "test_workflow"
         mock_workflow.executors = {}
 
         with (
@@ -1356,6 +1357,7 @@ class TestAgentFunctionAppWorkflow:
         mock_executor.id = "custom-executor-id"
 
         mock_workflow = Mock()
+        mock_workflow.name = "orders"
         mock_workflow.executors = {"custom-executor-id": mock_executor}
 
         with (
@@ -1365,17 +1367,17 @@ class TestAgentFunctionAppWorkflow:
         ):
             app = AgentFunctionApp(workflow=mock_workflow)
 
-        # The entity is registered under the executor id (the dispatch identity).
+        # The entity is registered under the workflow-scoped dispatch identity.
         setup_entity.assert_called_once()
         call_args = setup_entity.call_args.args
         assert call_args[0] is mock_agent
-        assert call_args[1] == "custom-executor-id"
+        assert call_args[1] == "orders-custom-executor-id"
 
         # Regression guard: the workflow agent must also be tracked on the app's
-        # normal registration surface, keyed by the executor id, so it appears in
-        # ``agents`` and is retrievable via ``get_agent`` (as the constructor documents).
-        assert "custom-executor-id" in app.agents
-        assert app.agents["custom-executor-id"] is mock_agent
+        # normal registration surface, keyed by the scoped id, so it appears in
+        # ``agents`` and is retrievable via ``get_agent``.
+        assert "orders-custom-executor-id" in app.agents
+        assert app.agents["orders-custom-executor-id"] is mock_agent
 
     def test_init_with_workflow_calls_setup_methods(self) -> None:
         """Test that workflow setup methods are called."""
@@ -1383,6 +1385,7 @@ class TestAgentFunctionAppWorkflow:
         mock_executor.id = "TestExecutor"
 
         mock_workflow = Mock()
+        mock_workflow.name = "test_workflow"
         # Include a non-AgentExecutor so _setup_executor_activity is called
         mock_workflow.executors = {"TestExecutor": mock_executor}
 
@@ -1421,6 +1424,7 @@ class TestAgentFunctionAppWorkflow:
         mock_executor.id = "SharedAgent"
 
         mock_workflow = Mock()
+        mock_workflow.name = "shared_flow"
         mock_workflow.executors = {"SharedAgent": mock_executor}
 
         with (
@@ -1434,35 +1438,276 @@ class TestAgentFunctionAppWorkflow:
 
         assert "SharedAgent" in app.agents
 
-    def test_build_status_url(self) -> None:
-        """Test _build_status_url constructs correct URL."""
+    def test_init_with_multiple_workflows_registers_each(self) -> None:
+        """The workflows= list registers each workflow keyed by name."""
+        from agent_framework import Executor
+
+        def _wf(name: str, executor_id: str) -> Mock:
+            ex = Mock(spec=Executor)
+            ex.id = executor_id
+            wf = Mock()
+            wf.name = name
+            wf.executors = {executor_id: ex}
+            return wf
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity") as setup_exec,
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            app = AgentFunctionApp(workflows=[_wf("orders", "router"), _wf("billing", "router")])
+
+        assert set(app.workflows) == {"orders", "billing"}
+        assert app.workflow is None  # ambiguous with >1 workflow
+        assert setup_exec.call_count == 2
+        assert setup_orch.call_count == 2
+
+    def test_init_rejects_duplicate_workflow_name(self) -> None:
+        """Two workflows with the same name are rejected."""
+        from agent_framework import Executor
+
+        def _wf(executor_id: str) -> Mock:
+            ex = Mock(spec=Executor)
+            ex.id = executor_id
+            wf = Mock()
+            wf.name = "orders"
+            wf.executors = {executor_id: ex}
+            return wf
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="already registered"),
+        ):
+            AgentFunctionApp(workflows=[_wf("a"), _wf("b")])
+
+    def test_init_rejects_case_insensitive_duplicate_workflow_name(self) -> None:
+        """Workflow names that differ only by case collide and are rejected.
+
+        The route ownership guard folds case, so hosting both ``orders`` and
+        ``Orders`` would let one workflow's routes reach the other's instances.
+        """
+        from agent_framework import Executor
+
+        def _wf(name: str, executor_id: str) -> Mock:
+            ex = Mock(spec=Executor)
+            ex.id = executor_id
+            wf = Mock()
+            wf.name = name
+            wf.executors = {executor_id: ex}
+            return wf
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="case-insensitively"),
+        ):
+            AgentFunctionApp(workflows=[_wf("orders", "a"), _wf("Orders", "b")])
+
+    def test_init_rejects_mapping_key_mismatch(self) -> None:
+        """A workflows mapping whose key disagrees with Workflow.name is rejected."""
         mock_workflow = Mock()
+        mock_workflow.name = "orders"
         mock_workflow.executors = {}
 
         with (
             patch.object(AgentFunctionApp, "_setup_executor_activity"),
             patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="does not match"),
         ):
-            app = AgentFunctionApp(workflow=mock_workflow)
+            AgentFunctionApp(workflows={"wrong_key": mock_workflow})
 
-        url = app._build_status_url("http://localhost:7071/api/workflow/run", "instance-123")
+    def test_init_rejects_auto_generated_workflow_name(self) -> None:
+        """An auto-generated WorkflowBuilder name is rejected."""
+        import uuid
 
-        assert url == "http://localhost:7071/api/workflow/status/instance-123"
-
-    def test_build_status_url_handles_trailing_slash(self) -> None:
-        """Test _build_status_url handles URLs without /api/ correctly."""
         mock_workflow = Mock()
+        mock_workflow.name = f"WorkflowBuilder-{uuid.uuid4()}"
         mock_workflow.executors = {}
 
         with (
             patch.object(AgentFunctionApp, "_setup_executor_activity"),
             patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="auto-generated"),
         ):
-            app = AgentFunctionApp(workflow=mock_workflow)
+            AgentFunctionApp(workflow=mock_workflow)
 
-        url = app._build_status_url("http://localhost:7071/", "instance-456")
 
-        assert "instance-456" in url
+class TestAgentFunctionAppSubworkflow:
+    """Test recursive registration of nested sub-workflows on the Functions app."""
+
+    @staticmethod
+    def _inner_agent_wf(name: str, executor_id: str) -> tuple[Mock, Mock]:
+        from agent_framework import AgentExecutor
+
+        agent = Mock()
+        agent.name = "InnerAssistant"
+        ex = Mock(spec=AgentExecutor)
+        ex.agent = agent
+        ex.id = executor_id
+        wf = Mock()
+        wf.name = name
+        wf.executors = {executor_id: ex}
+        return wf, agent
+
+    @staticmethod
+    def _outer_wf(name: str, inner: Mock, *, sub_ids: tuple[str, ...] = ("sub",)) -> Mock:
+        from agent_framework import Executor, WorkflowExecutor
+
+        executors: dict[str, Mock] = {}
+        for sid in sub_ids:
+            sub = Mock(spec=WorkflowExecutor)
+            sub.id = sid
+            sub.workflow = inner
+            sub.allow_direct_output = False
+            executors[sid] = sub
+        router = Mock(spec=Executor)
+        router.id = "router"
+        executors["router"] = router
+        wf = Mock()
+        wf.name = name
+        wf.executors = executors
+        return wf
+
+    def test_nested_workflow_registers_both_orchestrations(self) -> None:
+        """An outer workflow registers an orchestration for itself and the inner workflow."""
+        inner, _ = self._inner_agent_wf("inner", "agent_node")
+        outer = self._outer_wf("outer", inner)
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            app = AgentFunctionApp(workflow=outer)
+
+        assert setup_orch.call_count == 2
+        registered = {call.args[0].name for call in setup_orch.call_args_list}
+        assert registered == {"outer", "inner"}
+        # Only the top-level workflow is tracked as an addressable workflow.
+        assert set(app.workflows) == {"outer"}
+
+    def test_nested_workflow_registers_inner_agent_scoped(self) -> None:
+        """The inner workflow's agent entity is registered under the inner-scoped id."""
+        inner, inner_agent = self._inner_agent_wf("inner", "agent_node")
+        outer = self._outer_wf("outer", inner)
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            patch.object(AgentFunctionApp, "_setup_agent_entity") as setup_entity,
+        ):
+            app = AgentFunctionApp(workflow=outer)
+
+        setup_entity.assert_called_once()
+        call_args = setup_entity.call_args.args
+        assert call_args[0] is inner_agent
+        assert call_args[1] == "inner-agent_node"
+        assert "inner-agent_node" in app.agents
+
+    def test_nested_workflow_routes_only_top_level(self) -> None:
+        """HTTP routes are registered only for the top-level workflow."""
+        inner, _ = self._inner_agent_wf("inner", "agent_node")
+        outer = self._outer_wf("outer", inner)
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            patch.object(AgentFunctionApp, "_register_workflow_routes") as routes,
+        ):
+            AgentFunctionApp(workflow=outer)
+
+        routes.assert_called_once()
+        assert routes.call_args.args[0] is outer
+
+    def test_shared_subworkflow_registered_once(self) -> None:
+        """A sub-workflow reused by two nodes registers its orchestration only once."""
+        inner, _ = self._inner_agent_wf("inner", "agent_node")
+        outer = self._outer_wf("outer", inner, sub_ids=("sub_a", "sub_b"))
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            AgentFunctionApp(workflow=outer)
+
+        registered = sorted(call.args[0].name for call in setup_orch.call_args_list)
+        assert registered == ["inner", "outer"]
+
+    def test_nested_workflow_with_invalid_name_is_rejected(self) -> None:
+        """A nested sub-workflow must also have a valid, stable name."""
+        inner, _ = self._inner_agent_wf("has space", "agent_node")
+        outer = self._outer_wf("outer", inner)
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="invalid"),
+        ):
+            AgentFunctionApp(workflow=outer)
+
+    def test_different_subworkflow_sharing_a_name_is_rejected(self) -> None:
+        """Two different sub-workflow instances that share a name collide and are rejected."""
+        inner_a, _ = self._inner_agent_wf("shared", "agent_node")
+        inner_b, _ = self._inner_agent_wf("shared", "other_node")  # different instance, same name
+        from agent_framework import WorkflowExecutor
+
+        sub_a = Mock(spec=WorkflowExecutor)
+        sub_a.id = "a"
+        sub_a.workflow = inner_a
+        sub_b = Mock(spec=WorkflowExecutor)
+        sub_b.id = "b"
+        sub_b.workflow = inner_b
+        outer = Mock()
+        outer.name = "outer"
+        outer.executors = {"a": sub_a, "b": sub_b}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="different workflow"),
+        ):
+            AgentFunctionApp(workflow=outer)
+
+    def test_cross_registration_nested_collision_is_atomic(self) -> None:
+        """A later top-level workflow whose nested child collides aborts before committing it.
+
+        Hosting ``[first, second]`` where ``second``'s nested sub-workflow reuses
+        ``first``'s child name must raise *before* ``second`` registers any primitives,
+        so the app is never left with ``second`` half-configured.
+        """
+        shared_a, _ = self._inner_agent_wf("shared", "agent_node")
+        shared_b, _ = self._inner_agent_wf("shared", "other_node")  # different instance, same name
+        first = self._outer_wf("first", shared_a)
+        second = self._outer_wf("second", shared_b)
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+            pytest.raises(ValueError, match="collides"),
+        ):
+            AgentFunctionApp(workflows=[first, second])
+
+        # Only 'first' and its child 'shared' committed primitives; the collision aborted
+        # before 'second' (or its colliding child) registered anything.
+        registered = {call.args[0].name for call in setup_orch.call_args_list}
+        assert registered == {"first", "shared"}
+        assert "second" not in registered
+
+    def test_executor_id_with_reserved_separator_is_rejected(self) -> None:
+        """An executor id containing the nested-HITL separator is rejected at registration."""
+        from agent_framework import Executor
+
+        ex = Mock(spec=Executor)
+        ex.id = "bad~id"
+        wf = Mock()
+        wf.name = "orders"
+        wf.executors = {"bad~id": ex}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="reserved sub-workflow request separator"),
+        ):
+            AgentFunctionApp(workflow=wf)
 
 
 # NOTE: State snapshot/diff tests were moved to durabletask once the activity
@@ -1519,45 +1764,202 @@ class TestWorkflowOrchestrationScoping:
 
     Both endpoints address durable instances by ID only, but the durable client resolves
     IDs across every orchestration in the task hub (agent entities, user-registered
-    orchestrations, other apps on the same hub). ``_is_workflow_orchestration`` gates the
+    orchestrations, other apps on the same hub). ``_is_owned_orchestration`` gates the
     endpoints so a leaked instance ID for a different orchestration is treated as
     "not found" instead of leaking its status/HITL details or accepting injected events.
     """
 
+    def _app_for(self, workflow_name: str) -> AgentFunctionApp:
+        mock_workflow = Mock()
+        mock_workflow.name = workflow_name
+        mock_workflow.executors = {}
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            return AgentFunctionApp(workflow=mock_workflow)
+
     @pytest.mark.parametrize(
         "name",
         [
-            WORKFLOW_ORCHESTRATOR_NAME,
-            WORKFLOW_ORCHESTRATOR_NAME.upper(),
-            "Workflow_Orchestrator",  # case-insensitive: must match
+            workflow_orchestrator_name("orders"),  # exact dafx-orders
+            workflow_orchestrator_name("orders").upper(),  # case-insensitive: must match
+            "DAFX-orders",  # mixed case prefix
         ],
     )
     def test_accepts_matching_workflow_orchestration(self, name: str) -> None:
+        app = self._app_for("orders")
         status = Mock()
         status.name = name
-        assert AgentFunctionApp._is_workflow_orchestration(status) is True
+        assert app._is_owned_orchestration(status, "orders") is True
 
     def test_rejects_none_status(self) -> None:
         # client.get_status returns None when no instance resolves for the ID.
-        assert AgentFunctionApp._is_workflow_orchestration(None) is False
+        app = self._app_for("orders")
+        assert app._is_owned_orchestration(None, "orders") is False
 
     def test_rejects_status_without_name(self) -> None:
+        app = self._app_for("orders")
         status = Mock()
         status.name = None
-        assert AgentFunctionApp._is_workflow_orchestration(status) is False
+        assert app._is_owned_orchestration(status, "orders") is False
 
     @pytest.mark.parametrize(
         "other_name",
         [
             "SomeUserOrchestration",
-            "dafx-WeatherAgent",
-            "workflow_orchestrator_v2",
+            "dafx-WeatherAgent",  # an agent entity, not this workflow's orchestration
+            "dafx-billing",  # a *different* workflow's orchestration
+            "workflow_orchestrator",  # the deprecated fixed name
         ],
     )
     def test_rejects_other_orchestration_name(self, other_name: str) -> None:
+        app = self._app_for("orders")
         status = Mock()
         status.name = other_name
-        assert AgentFunctionApp._is_workflow_orchestration(status) is False
+        assert app._is_owned_orchestration(status, "orders") is False
+
+
+class TestAgentFunctionAppSubworkflowHitl:
+    """Sub-workflow HITL plumbing: gather nested pending requests and route responses.
+
+    These exercise the host-side helpers the ``workflow/{name}/status`` and
+    ``.../respond`` routes use to support nested sub-workflows behind a single
+    top-level addressing surface (B2 qualified request ids).
+    """
+
+    @staticmethod
+    def _app() -> AgentFunctionApp:
+        mock_workflow = Mock()
+        mock_workflow.name = "orders"
+        mock_workflow.executors = {}
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            return AgentFunctionApp(workflow=mock_workflow)
+
+    @staticmethod
+    def _client(by_instance: dict[str, dict | None]) -> AsyncMock:
+        """An AsyncMock durable client whose get_status returns a per-instance custom status."""
+
+        async def _get_status(instance_id: str) -> Mock | None:
+            if instance_id not in by_instance:
+                return None
+            status = Mock()
+            status.custom_status = by_instance[instance_id]
+            return status
+
+        client = AsyncMock()
+        client.get_status.side_effect = _get_status
+        return client
+
+    async def test_gather_returns_top_level_requests_unqualified(self) -> None:
+        app = self._app()
+        client = self._client({})
+        custom_status = {"pending_requests": {"top-1": {"source_executor_id": "outer"}}}
+
+        gathered = await app._gather_pending_hitl_requests(client, custom_status)
+
+        assert gathered == [("top-1", {"source_executor_id": "outer"})]
+
+    async def test_gather_qualifies_nested_requests(self) -> None:
+        app = self._app()
+        client = self._client({"child-1": {"pending_requests": {"inner-1": {"source_executor_id": "inner"}}}})
+        parent_status = {
+            "pending_requests": {"top-1": {"source_executor_id": "outer"}},
+            "subworkflows": {"sub": ["child-1"]},
+        }
+
+        gathered = await app._gather_pending_hitl_requests(client, parent_status)
+
+        ids = {qid for qid, _ in gathered}
+        assert ids == {"top-1", "sub~0~inner-1"}
+
+    async def test_gather_accumulates_deep_path(self) -> None:
+        app = self._app()
+        client = self._client({
+            "child-1": {"subworkflows": {"leaf": ["child-2"]}},
+            "child-2": {"pending_requests": {"deep": {"source_executor_id": "leaf_node"}}},
+        })
+        parent_status = {"subworkflows": {"mid": ["child-1"]}}
+
+        gathered = await app._gather_pending_hitl_requests(client, parent_status)
+
+        assert [qid for qid, _ in gathered] == ["mid~0~leaf~0~deep"]
+
+    async def test_resolve_unqualified_targets_same_instance(self) -> None:
+        app = self._app()
+        client = self._client({})
+
+        resolved = await app._resolve_hitl_target(client, "parent", "req-1")
+
+        assert resolved == ("parent", "req-1")
+
+    async def test_resolve_qualified_targets_child_instance(self) -> None:
+        app = self._app()
+        client = self._client({"parent": {"subworkflows": {"sub": ["child-1"]}}})
+
+        resolved = await app._resolve_hitl_target(client, "parent", "sub~0~req-9")
+
+        assert resolved == ("child-1", "req-9")
+
+    async def test_resolve_deeply_qualified_targets_leaf(self) -> None:
+        app = self._app()
+        client = self._client({
+            "parent": {"subworkflows": {"mid": ["child-1"]}},
+            "child-1": {"subworkflows": {"leaf": ["child-2"]}},
+        })
+
+        resolved = await app._resolve_hitl_target(client, "parent", "mid~0~leaf~0~deep")
+
+        assert resolved == ("child-2", "deep")
+
+    async def test_resolve_unknown_subworkflow_returns_none(self) -> None:
+        app = self._app()
+        client = self._client({"parent": {"state": "running"}})  # no subworkflows map
+
+        resolved = await app._resolve_hitl_target(client, "parent", "sub~0~req-9")
+
+        assert resolved is None
+
+    async def test_multiple_children_of_one_executor_stay_addressable(self) -> None:
+        app = self._app()
+        client = self._client({
+            "parent": {"subworkflows": {"sub": ["child-1", "child-2"]}},
+            "child-1": {"pending_requests": {"r1": {"source_executor_id": "a"}}},
+            "child-2": {"pending_requests": {"r2": {"source_executor_id": "b"}}},
+        })
+        parent_status = {"subworkflows": {"sub": ["child-1", "child-2"]}}
+
+        gathered = await app._gather_pending_hitl_requests(client, parent_status)
+        assert {qid for qid, _ in gathered} == {"sub~0~r1", "sub~1~r2"}
+
+        # The second child (ordinal 1) resolves distinctly, not shadowed by the first.
+        resolved = await app._resolve_hitl_target(client, "parent", "sub~1~r2")
+        assert resolved == ("child-2", "r2")
+
+    async def test_nested_double_colon_leaf_round_trips(self) -> None:
+        app = self._app()
+        client = self._client({
+            "parent": {"subworkflows": {"sub": ["child-1"]}},
+            "child-1": {"pending_requests": {"auto::0": {"request_id": "auto::0", "source_executor_id": "fn"}}},
+        })
+        parent_status = {"subworkflows": {"sub": ["child-1"]}}
+
+        gathered = await app._gather_pending_hitl_requests(client, parent_status)
+        assert [qid for qid, _ in gathered] == ["sub~0~auto::0"]
+
+        resolved = await app._resolve_hitl_target(client, "parent", "sub~0~auto::0")
+        assert resolved == ("child-1", "auto::0")
+
+    async def test_top_level_double_colon_leaf_is_not_nested(self) -> None:
+        app = self._app()
+        client = self._client({})
+
+        resolved = await app._resolve_hitl_target(client, "parent", "auto::0")
+
+        assert resolved == ("parent", "auto::0")
 
 
 if __name__ == "__main__":

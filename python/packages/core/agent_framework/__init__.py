@@ -175,6 +175,7 @@ from ._sessions import (
     FileHistoryProvider,
     HistoryProvider,
     InMemoryHistoryProvider,
+    ServiceSessionId,
     SessionContext,
     register_state_type,
 )
@@ -204,6 +205,7 @@ from ._skills import (
     SkillScriptRunner,
     SkillsProvider,
     SkillsSource,
+    SkillsSourceContext,
 )
 from ._telemetry import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -510,6 +512,7 @@ __all__ = [
     "SamplingApprovalCallback",
     "SecretString",
     "SelectiveToolCallCompactionStrategy",
+    "ServiceSessionId",
     "SessionContext",
     "SingleEdgeGroup",
     "Skill",
@@ -520,6 +523,7 @@ __all__ = [
     "SkillScriptRunner",
     "SkillsProvider",
     "SkillsSource",
+    "SkillsSourceContext",
     "SlidingWindowStrategy",
     "StepWrapper",
     "SubWorkflowRequestMessage",

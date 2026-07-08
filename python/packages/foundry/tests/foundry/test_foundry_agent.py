@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pytest
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentSession,
     ChatContext,
@@ -107,6 +108,20 @@ def test_raw_foundry_agent_chat_client_init_with_agent_name() -> None:
     assert client.agent_name == "test-agent"
     assert client.agent_version == "1.0"
     mock_project.get_openai_client.assert_called_once_with()
+
+
+def test_agent_accepts_raw_foundry_agent_chat_client() -> None:
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+        agent_version="1.0",
+    )
+
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
 
 
 def test_raw_foundry_agent_chat_client_init_passes_agent_name_when_preview_enabled() -> None:

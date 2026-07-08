@@ -955,6 +955,17 @@ class SummarizationStrategy:
     ``target_count`` (subject to atomic group boundaries). It writes trace
     metadata in both directions: summary -> original message/group IDs and
     original -> summary ID.
+
+    Security considerations:
+        Unlike strategies that only remove or reorder existing messages (which carry no additional
+        risk), this strategy calls out to an LLM to produce replacement summary content that
+        permanently becomes part of chat history and is trusted the same as any other assistant
+        message going forward. Using it is an explicit opt-in — it must be constructed with a
+        summarization ``client``. A compromised or malicious summarization service could therefore
+        return a summary containing unsafe instructions, which become a persistent part of the
+        conversation — a form of indirect prompt injection that survives beyond the turn in which it
+        was introduced. Only point ``client`` at a summarization service you trust as much as the
+        primary model.
     """
 
     def __init__(
@@ -969,7 +980,10 @@ class SummarizationStrategy:
 
         Keyword Args:
             client: A chat client compatible with ``SupportsChatGetResponse``
-                used to generate summary text.
+                used to generate summary text. **Security:** its output permanently replaces the
+                original messages in chat history, so only use a summarization service you trust as
+                much as the primary model — see the class-level security considerations for the
+                indirect-prompt-injection risk of an untrusted summarizer.
             target_count: Target number of included non-system messages to
                 retain after summarization. Must be greater than 0.
             threshold: Extra included non-system messages allowed above
