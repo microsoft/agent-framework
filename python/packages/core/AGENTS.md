@@ -6,7 +6,8 @@ The foundation package containing all core abstractions, types, and built-in Ope
 
 ```
 agent_framework/
-├── __init__.py          # Public API exports
+├── __init__.py          # Lazy runtime public API exports
+├── __init__.pyi         # Public API typing surface for lazy root exports
 ├── security.py          # Public security primitives, middleware, and tools
 ├── _agents.py           # Agent implementations
 ├── _clients.py          # Chat client base classes and protocols
@@ -23,6 +24,17 @@ agent_framework/
 ```
 
 ## Core Classes
+
+### Root Public API (`__init__.py` / `__init__.pyi`)
+
+- `agent_framework.__init__` uses lazy module-level `__getattr__` for most public exports to keep cold
+  `import agent_framework` lightweight.
+- Keep `_LAZY_MODULE_EXPORTS`, `_LAZY_EXPORTS`, the explicit runtime `__all__`, and `__init__.pyi` synchronized
+  whenever adding, removing, or moving a root public export.
+- Runtime `__all__` is still required for `from agent_framework import *`; the `.pyi` file is for type checkers
+  and editors and does not replace runtime exports.
+- Public deprecation behavior for a lazy export belongs in the owning module. The root package should delegate via
+  the normal lazy export map instead of carrying one-off branches.
 
 ### Agents (`_agents.py`)
 

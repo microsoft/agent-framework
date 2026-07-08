@@ -62,9 +62,7 @@ class TestSubworkflowComposition:
 
     def test_negative_review_runs_through_subworkflow(self) -> None:
         """A negative review also completes the composed pipeline end-to-end."""
-        output = self._run(
-            "Disappointed. The device stopped working after two weeks and support never replied."
-        )
+        output = self._run("Disappointed. The device stopped working after two weeks and support never replied.")
 
         assert output is not None
         assert "sentiment" in str(output).lower()

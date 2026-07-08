@@ -25,12 +25,9 @@ from datetime import datetime
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
-from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from ._serialization import SerializationMixin
-from ._tools import ToolTypes
-from ._tools import normalize_tools as _normalize_tools
 from .exceptions import AdditionItemMismatch, ContentError
 
 if sys.version_info >= (3, 13):
@@ -39,6 +36,11 @@ else:
     from typing_extensions import TypeVar  # pragma: no cover
 
 logger = logging.getLogger("agent_framework")
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from ._tools import ToolTypes
 
 
 # region Content Parsing Utilities
@@ -298,9 +300,14 @@ EmbeddingInputT = TypeVar("EmbeddingInputT", default="str")
 ChatResponseT = TypeVar("ChatResponseT", bound="ChatResponse")
 ToolModeT = TypeVar("ToolModeT", bound="ToolMode")
 AgentResponseT = TypeVar("AgentResponseT", bound="AgentResponse")
-ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None, covariant=True)
-ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
-StructuredResponseFormat = type[BaseModel] | Mapping[str, Any] | None
+if TYPE_CHECKING:
+    ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None, covariant=True)
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+    StructuredResponseFormat = type[BaseModel] | Mapping[str, Any] | None
+else:
+    ResponseModelT = TypeVar("ResponseModelT", bound=Any, default=None, covariant=True)
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=Any)
+    StructuredResponseFormat = type[Any] | Mapping[str, Any] | None
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
 
@@ -2110,8 +2117,11 @@ def _parse_structured_response_value(text: str, response_format: Any | None) -> 
         return None
     if not text:
         return None
-    if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-        return response_format.model_validate_json(text)
+    if isinstance(response_format, type):
+        from pydantic import BaseModel
+
+        if issubclass(response_format, BaseModel):
+            return response_format.model_validate_json(text)
     if isinstance(response_format, Mapping):
         try:
             return json.loads(text)
@@ -2780,6 +2790,30 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
     def __str__(self) -> str:
         return self.text
+
+
+def _build_agent_response_from_chat_response(  # pyright: ignore[reportUnusedFunction]
+    response: ChatResponse[Any],
+    *,
+    response_format: StructuredResponseFormat = None,
+    suppress_response_id: bool = False,
+) -> AgentResponse[Any]:
+    """Build the AgentResponse wrapper for a completed ChatResponse."""
+    agent_response = AgentResponse(
+        messages=response.messages,
+        response_id=None if suppress_response_id else response.response_id,
+        created_at=response.created_at,
+        finish_reason=cast(FinishReasonLiteral | FinishReason | None, response.finish_reason),
+        usage_details=response.usage_details,
+        response_format=response_format,
+        continuation_token=response.continuation_token,
+        raw_representation=response,
+        additional_properties=response.additional_properties,
+    )
+    if response._value_parsed:  # pyright: ignore[reportPrivateUsage]
+        agent_response._value = response._value  # pyright: ignore[reportPrivateUsage]
+        agent_response._value_parsed = True  # pyright: ignore[reportPrivateUsage]
+    return agent_response
 
 
 # region AgentResponseUpdate
@@ -3544,6 +3578,8 @@ def normalize_tools(
             # List of tools
             tools = normalize_tools([my_tool, another_tool])
     """
+    from ._tools import normalize_tools as _normalize_tools
+
     return _normalize_tools(tools)
 
 
