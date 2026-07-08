@@ -144,7 +144,8 @@ The application builder owns the trust boundary. Protocol helper packages can pa
 ids or operations, but they do not authenticate callers, authorize access to state, or decide which side effects are
 allowed.
 
-Application code that uses these helpers are responsible for:
+Application code that uses these helpers are responsible for (this means that we advice you to think through these topics,
+but ultimately, the choice of which controls are needed for the intended use case is up to the application builder):
 
 - authenticate the caller through the app's normal mechanism before using protocol-provided ids;
 - authorize any caller-supplied session, checkpoint, task, context, conversation, thread, or response id before loading
