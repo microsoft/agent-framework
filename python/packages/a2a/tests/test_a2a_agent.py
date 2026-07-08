@@ -29,9 +29,9 @@ from agent_framework import (
     SessionContext,
 )
 from agent_framework.a2a import A2AAgent
-from pytest import fixture, mark, raises
+from pytest import fixture, mark, raises, warns
 
-from agent_framework_a2a import A2AAgentSession, A2AContinuationToken
+from agent_framework_a2a import A2AAgentSession, A2AContinuationToken, A2AServiceSessionId
 from agent_framework_a2a._utils import get_uri_data
 
 
@@ -144,6 +144,12 @@ def test_a2a_agent_initialization_with_client(mock_a2a_client: MockA2AClient) ->
     assert agent.id == "test-agent-123"
     assert agent.description == "A test agent"
     assert agent.client == mock_a2a_client
+
+
+def test_a2a_agent_session_emits_deprecation_warning() -> None:
+    """A2AAgentSession emits a deprecation warning on construction."""
+    with warns(DeprecationWarning, match="A2AAgentSession is deprecated"):
+        A2AAgentSession()
 
 
 def test_a2a_agent_defaults_name_description_from_agent_card(mock_a2a_client: MockA2AClient) -> None:
@@ -2034,7 +2040,11 @@ async def test_context_id_assigned_from_response(mock_a2a_client: MockA2AClient)
 
     # context_id from the task response should be assigned
     assert session.context_id == "test-context"
-    assert session.service_session_id == "test-context"
+    assert session.service_session_id == A2AServiceSessionId(
+        context_id="test-context",
+        task_id="task-ctx",
+        task_state=TaskState.TASK_STATE_COMPLETED,
+    )
 
 
 @mark.asyncio
@@ -2056,7 +2066,11 @@ async def test_context_id_tracked_from_message_payload(mock_a2a_client: MockA2AC
 
     # context_id should be captured even without a task_id
     assert session.context_id == "server-ctx-123"
-    assert session.service_session_id == "server-ctx-123"
+    assert session.service_session_id == A2AServiceSessionId(
+        context_id="server-ctx-123",
+        task_id=None,
+        task_state=None,
+    )
     assert session.task_id is None
 
 
@@ -2096,21 +2110,24 @@ async def test_task_state_tracked_on_session(mock_a2a_client: MockA2AClient) -> 
 
 
 @mark.asyncio
-async def test_plain_agent_session_no_reference_tracking(mock_a2a_client: MockA2AClient) -> None:
-    """Test that a plain AgentSession works but does not get reference_task_ids tracking."""
+async def test_plain_agent_session_tracks_structured_service_session_id(mock_a2a_client: MockA2AClient) -> None:
+    """Plain AgentSession should persist A2A continuation state in structured service_session_id."""
     agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
     mock_a2a_client.add_task_response("task-plain", [{"content": "Reply"}])
 
     session = AgentSession()
     await agent.run("Hello", session=session)
 
-    # Plain session does not get task_id tracking
-    assert "a2a_task_id" not in session.state
+    assert session.service_session_id == A2AServiceSessionId(
+        context_id="test-context",
+        task_id="task-plain",
+        task_state=TaskState.TASK_STATE_COMPLETED,
+    )
 
-    # Follow-up has no reference_task_ids (no tracking on plain session)
+    # Follow-up should use the tracked task_id in reference_task_ids
     mock_a2a_client.add_task_response("task-plain-2", [{"content": "Reply 2"}])
     await agent.run("Follow up", session=session)
-    assert list(mock_a2a_client.last_message.reference_task_ids) == []
+    assert list(mock_a2a_client.last_message.reference_task_ids) == ["task-plain"]
 
 
 @mark.asyncio
@@ -2129,6 +2146,52 @@ async def test_a2a_agent_session_serialization() -> None:
     assert restored.context_id == "ctx-456"
     assert restored.task_id == "task-789"
     assert restored.task_state == TaskState.TASK_STATE_COMPLETED
+    assert restored.service_session_id == A2AServiceSessionId(
+        context_id="ctx-456",
+        task_id="task-789",
+        task_state=TaskState.TASK_STATE_COMPLETED,
+    )
+
+
+@mark.asyncio
+async def test_plain_agent_session_structured_service_session_id_for_input_required(
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """Structured service_session_id should drive INPUT_REQUIRED follow-up task_id behavior."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
+    session = AgentSession(
+        service_session_id=A2AServiceSessionId(
+            context_id="ctx-ir",
+            task_id="task-ir-123",
+            task_state=TaskState.TASK_STATE_INPUT_REQUIRED,
+        )
+    )
+
+    mock_a2a_client.add_in_progress_task_response(
+        "task-ir-456",
+        context_id="ctx-ir",
+        state=TaskState.TASK_STATE_COMPLETED,
+        text="Thanks!",
+    )
+    await agent.run("My name is Alice", session=session)
+
+    last_msg = mock_a2a_client.last_message
+    assert last_msg.task_id == "task-ir-123"
+    assert list(last_msg.reference_task_ids) == []
+
+
+def test_a2a_agent_otel_conversation_id_uses_context_id() -> None:
+    """Telemetry conversation id should map to context_id for structured A2A sessions."""
+    agent = A2AAgent(client=MagicMock(), http_client=None)
+    session = AgentSession(
+        service_session_id=A2AServiceSessionId(
+            context_id="ctx-otel",
+            task_id="task-otel",
+            task_state=TaskState.TASK_STATE_WORKING,
+        )
+    )
+
+    assert agent._get_otel_conversation_id(session) == "ctx-otel"
 
 
 @mark.asyncio

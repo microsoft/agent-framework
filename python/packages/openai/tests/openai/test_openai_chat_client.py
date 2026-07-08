@@ -227,6 +227,16 @@ def test_raw_openai_chat_client_accepts_preconfigured_client_with_timeout() -> N
     assert client is not None
 
 
+def test_agent_accepts_openai_chat_clients() -> None:
+    raw_client = RawOpenAIChatClient(api_key="test-api-key", model="test-model")
+    raw_agent = Agent(client=raw_client, instructions="test agent")
+    assert raw_agent.client is raw_client
+
+    client = OpenAIChatClient(api_key="test-api-key", model="test-model")
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
+
+
 def test_openai_chat_client_supports_all_tool_protocols() -> None:
     assert isinstance(OpenAIChatClient, SupportsCodeInterpreterTool)  # pyrefly: ignore[unsafe-overlap]
     assert isinstance(OpenAIChatClient, SupportsWebSearchTool)  # pyrefly: ignore[unsafe-overlap]

@@ -61,7 +61,7 @@ def run_workflow_orchestrator(
     workflow: Workflow,
     initial_message: Any,
     shared_state: dict[str, Any] | None = None,
-) -> Generator[Any, Any, list[Any]]:
+) -> Generator[Any, Any, list[Any] | dict[str, Any]]:
     """Azure Functions wrapper around the shared workflow orchestrator.
 
     Creates an :class:`AzureFunctionsWorkflowContext` and delegates to the
@@ -74,7 +74,10 @@ def run_workflow_orchestrator(
         shared_state: Optional dict for cross-executor state sharing.
 
     Returns:
-        List of workflow outputs collected from executor activities.
+        For a top-level run, the list of workflow outputs collected from executor
+        activities. For a sub-workflow run, a result envelope ``{"outputs": [...],
+        "events": [...]}`` so the parent can bubble nested progress (see the shared
+        ``run_workflow_orchestrator`` in the durabletask package).
     """
     af_ctx = AzureFunctionsWorkflowContext(context)
     return _run_workflow_orchestrator_shared(af_ctx, workflow, initial_message, shared_state)

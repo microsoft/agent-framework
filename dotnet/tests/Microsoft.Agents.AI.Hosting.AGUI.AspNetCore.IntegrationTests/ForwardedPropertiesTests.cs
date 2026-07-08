@@ -12,6 +12,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using AGUI.Abstractions;
+using AGUI.Server;
 using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -268,12 +270,12 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
     private async Task SetupTestServerAsync(FakeForwardedPropsAgent fakeAgent)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        builder.Services.AddAGUI();
+        builder.Services.AddAGUIServer();
         builder.WebHost.UseTestServer();
 
         this._app = builder.Build();
 
-        this._app.MapAGUI("/agent", fakeAgent);
+        this._app.MapAGUIServer("/agent", fakeAgent);
 
         await this._app.StartAsync();
 
@@ -315,10 +317,10 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Extract forwarded properties from ChatOptions.AdditionalProperties (set by AG-UI hosting layer)
-        if (options is ChatClientAgentRunOptions { ChatOptions.AdditionalProperties: { } properties } &&
-            properties.TryGetValue("ag_ui_forwarded_properties", out object? propsObj) &&
-            propsObj is JsonElement forwardedProps)
+        // Recover the originating AG-UI input from the request options (set by the hosting layer).
+        if (options is ChatClientAgentRunOptions { ChatOptions: { } chatOptions } &&
+            chatOptions.TryGetRunAgentInput(out RunAgentInput? agentInput) &&
+            agentInput.ForwardedProperties is { ValueKind: not JsonValueKind.Undefined } forwardedProps)
         {
             this.ReceivedForwardedProperties = forwardedProps;
         }

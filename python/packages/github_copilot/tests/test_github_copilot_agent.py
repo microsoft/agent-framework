@@ -248,6 +248,26 @@ class TestGitHubCopilotAgentInit:
         agent = GitHubCopilotAgent()
         assert agent._instruction_directories is None  # type: ignore
 
+    def test_init_stores_skill_directories(self) -> None:
+        """Test that skill_directories are stored on the agent instance."""
+        agent = GitHubCopilotAgent(default_options=copilot_options({"skill_directories": ["/my/skills"]}))
+        assert agent._skill_directories == ["/my/skills"]  # type: ignore
+
+    def test_init_without_skill_directories(self) -> None:
+        """Test that skill_directories default to None when not provided."""
+        agent = GitHubCopilotAgent()
+        assert agent._skill_directories is None  # type: ignore
+
+    def test_init_stores_disabled_skills(self) -> None:
+        """Test that disabled_skills are stored on the agent instance."""
+        agent = GitHubCopilotAgent(default_options=copilot_options({"disabled_skills": ["skill-a"]}))
+        assert agent._disabled_skills == ["skill-a"]  # type: ignore
+
+    def test_init_without_disabled_skills(self) -> None:
+        """Test that disabled_skills default to None when not provided."""
+        agent = GitHubCopilotAgent()
+        assert agent._disabled_skills is None  # type: ignore
+
 
 class TestGitHubCopilotAgentLifecycle:
     """Test cases for agent lifecycle management."""
@@ -966,6 +986,8 @@ class TestGitHubCopilotAgentSessionManagement:
             mcp_servers=unittest.mock.ANY,
             provider=unittest.mock.ANY,
             instruction_directories=unittest.mock.ANY,
+            skill_directories=unittest.mock.ANY,
+            disabled_skills=unittest.mock.ANY,
             hooks=unittest.mock.ANY,
         )
 
@@ -1187,6 +1209,194 @@ class TestGitHubCopilotAgentSessionManagement:
         call_args = mock_client.resume_session.call_args
         config = call_args.kwargs
         assert config["instruction_directories"] == ["/override/path"]
+
+    async def test_skill_directories_passed_to_create_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that skill_directories are passed through to create_session."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=copilot_options({"skill_directories": ["/path/to/skills", "/other/skills"]}),
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["skill_directories"] == ["/path/to/skills", "/other/skills"]
+
+    async def test_skill_directories_runtime_override(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that runtime skill_directories take precedence over defaults."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=copilot_options({"skill_directories": ["/default/skills"]}),
+        )
+        await agent.start()
+
+        runtime_options: GitHubCopilotOptions = {"skill_directories": ["/runtime/skills"]}
+        await agent._get_or_create_session(AgentSession(), runtime_options=runtime_options)  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["skill_directories"] == ["/runtime/skills"]
+
+    async def test_skill_directories_none_when_not_specified(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that skill_directories is None when not specified."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["skill_directories"] is None
+
+    async def test_skill_directories_empty_list_clears_defaults(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that an explicit empty list at runtime clears the agent-level defaults."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=copilot_options({"skill_directories": ["/default/skills"]}),
+        )
+        await agent.start()
+
+        runtime_options: GitHubCopilotOptions = {"skill_directories": []}
+        await agent._get_or_create_session(AgentSession(), runtime_options=runtime_options)  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["skill_directories"] == []
+
+    async def test_skill_directories_override_on_resumed_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that skill_directories override works on resumed sessions."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=copilot_options({"skill_directories": ["/default/skills"]}),
+        )
+        await agent.start()
+
+        # Simulate a session that already has a service_session_id (resume path)
+        session = AgentSession()
+        session.service_session_id = "existing-session-id"
+
+        runtime_options: GitHubCopilotOptions = {"skill_directories": ["/override/skills"]}
+        await agent._get_or_create_session(session, runtime_options=runtime_options)  # type: ignore
+
+        call_args = mock_client.resume_session.call_args
+        config = call_args.kwargs
+        assert config["skill_directories"] == ["/override/skills"]
+
+    async def test_disabled_skills_passed_to_create_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that disabled_skills are passed through to create_session."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=copilot_options({"disabled_skills": ["skill-a", "skill-b"]}),
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["disabled_skills"] == ["skill-a", "skill-b"]
+
+    async def test_disabled_skills_runtime_override(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that runtime disabled_skills take precedence over defaults."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=copilot_options({"disabled_skills": ["default-skill"]}),
+        )
+        await agent.start()
+
+        runtime_options: GitHubCopilotOptions = {"disabled_skills": ["runtime-skill"]}
+        await agent._get_or_create_session(AgentSession(), runtime_options=runtime_options)  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["disabled_skills"] == ["runtime-skill"]
+
+    async def test_disabled_skills_none_when_not_specified(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that disabled_skills is None when not specified."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["disabled_skills"] is None
+
+    async def test_disabled_skills_empty_list_clears_defaults(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that an explicit empty list at runtime clears the agent-level defaults."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=copilot_options({"disabled_skills": ["default-skill"]}),
+        )
+        await agent.start()
+
+        runtime_options: GitHubCopilotOptions = {"disabled_skills": []}
+        await agent._get_or_create_session(AgentSession(), runtime_options=runtime_options)  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["disabled_skills"] == []
+
+    async def test_disabled_skills_override_on_resumed_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that disabled_skills override works on resumed sessions."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=copilot_options({"disabled_skills": ["default-skill"]}),
+        )
+        await agent.start()
+
+        # Simulate a session that already has a service_session_id (resume path)
+        session = AgentSession()
+        session.service_session_id = "existing-session-id"
+
+        runtime_options: GitHubCopilotOptions = {"disabled_skills": ["override-skill"]}
+        await agent._get_or_create_session(session, runtime_options=runtime_options)  # type: ignore
+
+        call_args = mock_client.resume_session.call_args
+        config = call_args.kwargs
+        assert config["disabled_skills"] == ["override-skill"]
 
 
 class TestGitHubCopilotAgentMCPServers:
@@ -2956,7 +3166,7 @@ async def test_integration_run_with_simple_prompt_returns_response() -> None:
         assert len(response.messages) > 0
         assert "4" in response.text
 
-        if session.service_session_id and agent._client:
+        if isinstance(session.service_session_id, str) and agent._client:
             await agent._client.delete_session(session.service_session_id)
 
 
@@ -2980,7 +3190,7 @@ async def test_integration_run_streaming_returns_updates() -> None:
         full_text = "".join(u.text for u in updates if u.text)
         assert len(full_text) > 0
 
-        if session.service_session_id and agent._client:
+        if isinstance(session.service_session_id, str) and agent._client:
             await agent._client.delete_session(session.service_session_id)
 
 
@@ -3003,7 +3213,7 @@ async def test_integration_run_with_function_tool_invokes_tool() -> None:
         assert len(response.messages) > 0
         assert any(word in response.text.lower() for word in ["sunny", "25", "weather", "seattle"])
 
-        if session.service_session_id and agent._client:
+        if isinstance(session.service_session_id, str) and agent._client:
             await agent._client.delete_session(session.service_session_id)
 
 
@@ -3028,7 +3238,7 @@ async def test_integration_run_with_session_maintains_context() -> None:
         assert response2 is not None
         assert "alice" in response2.text.lower()
 
-        if session.service_session_id and agent._client:
+        if isinstance(session.service_session_id, str) and agent._client:
             await agent._client.delete_session(session.service_session_id)
 
 
@@ -3047,7 +3257,7 @@ async def test_integration_run_with_session_resume_continues_conversation() -> N
         await agent.run("Remember this number: 42.", session=session1)
 
         session_id = session1.service_session_id
-        assert session_id is not None
+        assert isinstance(session_id, str)
 
         session2 = AgentSession()
         session2.service_session_id = session_id
@@ -3078,5 +3288,5 @@ async def test_integration_run_with_shell_permissions_executes_command() -> None
         assert response is not None
         assert "hello" in response.text.lower()
 
-        if session.service_session_id and agent._client:
+        if isinstance(session.service_session_id, str) and agent._client:
             await agent._client.delete_session(session.service_session_id)

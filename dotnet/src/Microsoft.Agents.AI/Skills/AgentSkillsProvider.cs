@@ -37,6 +37,17 @@ namespace Microsoft.Agents.AI;
 /// <see cref="AgentSkillsSource"/>, ownership is controlled by the <c>ownsSource</c> constructor
 /// parameter and defaults to the caller retaining ownership.
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong> Which skills are available, and how much trust to place
+/// in them, is entirely determined by the <see cref="AgentSkillsSource"/> instances this provider is
+/// configured with — see <see cref="AgentSkillsSource"/> for source-level trust boundary guidance
+/// (this includes external sources such as skills discovered over MCP via the
+/// <c>UseMcpSkills</c> extension). Skill content (names, descriptions,
+/// and full bodies loaded via <c>load_skill</c>) is injected into the agent's context as-is, without
+/// validation or sanitization, so a compromised or adversarial source can attempt indirect prompt
+/// injection. The <c>run_skill_script</c> tool executes scripts supplied by the source, so only enable
+/// script-capable sources you trust.
+/// </para>
 /// </remarks>
 public sealed partial class AgentSkillsProvider : AIContextProvider, IDisposable
 {
