@@ -2255,7 +2255,7 @@ class SkillsProvider(ContextProvider):
             if disable_caching
             else CachingSkillsSource(file_source, refresh_interval=cache_refresh_interval)
         )
-        # Only forward newer kwargs when they diverge from their defaults, so a
+        # Only forward the approval-disable kwargs when explicitly enabled, so a
         # subclass with the previous __init__ signature keeps working.
         forwarded_kwargs: dict[str, Any] = {}
         if disable_load_skill_approval:
@@ -2264,8 +2264,6 @@ class SkillsProvider(ContextProvider):
             forwarded_kwargs["disable_read_skill_resource_approval"] = True
         if disable_run_skill_script_approval:
             forwarded_kwargs["disable_run_skill_script_approval"] = True
-        if cache_refresh_interval is not None and not disable_caching:
-            forwarded_kwargs["cache_refresh_interval"] = cache_refresh_interval
         return cls(
             source,
             instruction_template=instruction_template,

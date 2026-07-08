@@ -6193,12 +6193,16 @@ class TestDisableCaching:
         assert not isinstance(source.inner_source, CachingSkillsSource)
         assert provider._cache_refresh_interval is None  # pyright: ignore[reportPrivateUsage]
 
-    async def test_from_paths_legacy_subclass_with_disable_caching_and_interval(self, tmp_path: Path) -> None:
-        """A legacy subclass __init__ still works when both disable_caching and an interval are passed.
+    async def test_from_paths_legacy_subclass_with_interval_does_not_break(self, tmp_path: Path) -> None:
+        """A legacy subclass __init__ still works when cache_refresh_interval is passed.
 
-        Because from_paths does not forward cache_refresh_interval when caching is disabled, a
-        subclass whose __init__ predates the kwarg does not receive an unexpected keyword argument.
+        from_paths bakes the interval into the composed CachingSkillsSource and does NOT forward
+        cache_refresh_interval into cls(...), so a subclass whose __init__ predates the kwarg never
+        receives an unexpected keyword argument — with caching either enabled or disabled — while
+        the cache still refreshes correctly.
         """
+        from agent_framework import CachingSkillsSource, DeduplicatingSkillsSource
+
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
@@ -6221,11 +6225,24 @@ class TestDisableCaching:
                     source_id=source_id,
                 )
 
-        # Must not raise TypeError even though the subclass __init__ lacks cache_refresh_interval.
-        provider = LegacySkillsProvider.from_paths(
+        # Caching enabled (the real break): must not raise, and the composed source must still
+        # carry the interval so refresh works without touching __init__.
+        provider = LegacySkillsProvider.from_paths(str(tmp_path), cache_refresh_interval=timedelta(minutes=10))
+        assert isinstance(provider, LegacySkillsProvider)
+        source = provider._source  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(source, DeduplicatingSkillsSource)
+        caching = source.inner_source
+        assert isinstance(caching, CachingSkillsSource)
+        assert caching._refresh_interval == timedelta(minutes=10)  # pyright: ignore[reportPrivateUsage]
+
+        # Caching disabled: must also not raise (no CachingSkillsSource is built).
+        disabled = LegacySkillsProvider.from_paths(
             str(tmp_path), disable_caching=True, cache_refresh_interval=timedelta(minutes=10)
         )
-        assert isinstance(provider, LegacySkillsProvider)
+        assert isinstance(disabled, LegacySkillsProvider)
+        disabled_source = disabled._source  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(disabled_source, DeduplicatingSkillsSource)
+        assert not isinstance(disabled_source.inner_source, CachingSkillsSource)
 
 
 # ---------------------------------------------------------------------------
