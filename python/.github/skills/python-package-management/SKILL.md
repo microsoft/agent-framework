@@ -70,6 +70,8 @@ uv run poe add-dependency-and-validate-bounds --package core --dependency "<depe
 - Prefer targeted lock updates with `uv lock --upgrade-package <dependency-name>` to reduce `uv.lock` merge conflicts.
 - Use `add-dependency-and-validate-bounds` for package-scoped dependency additions plus bound validation in one command.
 - Use `upgrade-dev-dependencies` for repo-wide dev tooling refreshes; it repins dev dependencies, refreshes `uv.lock`, and reruns `check`, `typing`, and `test`.
+- Preserve package-specific upper-bound formatting when changing only a floor. In particular, `gemini` uses
+  `agent-framework-core>=<floor>,<2.0`; do not rewrite the `<2.0` cap to `<2` when raising its floor.
 
 ## Lazy Loading Pattern
 
@@ -189,10 +191,13 @@ Move a package to `released` when it no longer carries a prerelease qualifier.
 - If promoting a package changes a dependent package's published dependency metadata, bump the
   dependent package's own version in the correct lifecycle pattern for its current stage
 - Lifecycle version patterns:
-  - `alpha`: `1.0.0a<date>`
-  - `beta`: `1.0.0b<date>`
-  - `rc`: `1.0.0rc<number>`
-  - `released`: `1.0.0`
+  - `alpha`: `1.0.0a<date>` where `<date>` is the current Pacific (US west coast) `YYMMDD`
+  - `beta`: `1.0.0b<date>` where `<date>` is the current Pacific (US west coast) `YYMMDD`
+  - `rc`: `1.0.0rc<number>` where `<number>` increments only when the package has changes
+  - `released`: `X.Y.Z` using semver per package
+- For alpha/beta date stamps, use the current Pacific date as the cutoff, not UTC and not the user's local
+  timezone. Same-Pacific-day re-cuts use a `.postN` suffix. Honor an explicit user-provided date over this
+  default.
 - Keep the `Development Status` classifier in `pyproject.toml` aligned with the lifecycle stage:
   - `alpha` -> `Development Status :: 3 - Alpha`
   - `beta` -> `Development Status :: 4 - Beta`

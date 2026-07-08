@@ -20,23 +20,20 @@ If the user explicitly states which packages to bump (or hands over a PR list pe
 
 ## Lifecycle tiers and version rules
 
-Derive the live tier map at release time from `python/PACKAGE_STATUS.md` and the actual `version =` lines in each `pyproject.toml`. Do not hardcode counts — packages move between tiers. The current shape (as of 2026-05):
+Use `python/.github/skills/python-package-management/SKILL.md` as the source of truth for lifecycle
+version patterns, date-stamp cutoffs, classifier alignment, internal dependency updates, and package-specific
+dependency bound notes.
 
-| Tier | Pattern | Bump rule |
-| --- | --- | --- |
-| `alpha` | `1.0.0aYYMMDD` | New Pacific date stamp on each bump. `.postN` suffix for same-day re-cuts. |
-| `beta` | `1.0.0bYYMMDD` | Same as alpha. |
-| `rc` | `1.0.0rcN` | Increment `N` only when the package has changes this cycle. Do NOT increment on date alone. |
-| `released` | `X.Y.Z` | Apply semver **per package**: PATCH for bugfix only, MINOR for any new public API, MAJOR for breaking. |
-
-Date stamp default: **current Pacific (US west coast) date**, not user's local Asia clock, not UTC. Same Pacific day re-cuts use `.postN`. Honor explicit user instruction over this default.
+For release work, derive the live tier map at release time from `python/PACKAGE_STATUS.md` and the actual
+`version =` lines in each `pyproject.toml`. Do not hardcode counts — packages move between tiers.
 
 ## Inputs to confirm before bumping
 
 1. **The changeset**: explicit commits/PRs the release covers, OR derive from `git log ${LAST_RELEASED_TAG}..origin/main -- python/`.
 2. **Per-package CHANGELOG entries**: which packages will get a line in the new release section. This list IS the bump list.
 3. **Per-released-package semver bump**: for each released-tier package that has a CHANGELOG entry, decide PATCH / MINOR / MAJOR.
-4. **Date stamp** (only if any alpha/beta is being bumped): default to Pacific YYMMDD.
+4. **Date stamp** (only if any alpha/beta is being bumped): default from the `python-package-management`
+   date-stamp rule.
 5. **Optional cohort bump?**: ask if betas should all get a new date stamp regardless of per-package changes. Default: no.
 
 If the user states target versions or a date explicitly, use exactly what they said — do not "correct" based on historical timezones.
@@ -44,7 +41,8 @@ If the user states target versions or a date explicitly, use exactly what they s
 ## Non-negotiable rules
 
 - **CHANGELOG-driven bumps**: only packages mentioned in the new CHANGELOG section get version bumps. Exceptions: root follows core (==pin); user-opted cohort bump on betas.
-- **Preserve `gemini`'s `<2.0` cosmetic upper bound** — don't rewrite it to `<2` when touching its floor.
+- **Follow `python-package-management` for package versioning and dependency-bound rules** — do not introduce
+  release-skill-local exceptions.
 - **No `Co-Authored-By` trailer** on any commit.
 - **Use `uv run`** for all Python/poe commands (`uv run poe ...`, `uv run pytest ...`).
 - **Never rename an existing CHANGELOG section header** during a new release cut. Only INSERT a new section above existing ones.
@@ -284,7 +282,8 @@ Only relevant when `core` itself bumped this cycle. Two policies, pick one expli
 - **Conservative (default)**: raise `agent-framework-core>=X.Y.Z` to the new core version on every non-core package that is ALSO bumping this cycle. Leaves packages-not-bumped at their existing floor.
 - **Strict per-upstream-doc**: only raise the floor on packages that actually consume a new core API introduced in the bump. This requires per-package code inspection. Use only when the user is comfortable letting `validate-dependency-bounds-test` (lower-resolution pass) catch any mistakes.
 
-Preserve `gemini`'s `<2.0` cosmetic upper bound — replace ONLY the `>=OLD` half:
+Follow the dependency-bound notes in `python-package-management` when touching floors, including any
+package-specific upper-bound formatting. Replace ONLY the `>=OLD` half:
 
 ```bash
 file="python/packages/<pkg>/pyproject.toml"
@@ -348,17 +347,19 @@ The push output includes a `Create a pull request for '<branch>' on GitHub by vi
 - **Renaming an existing section header.** When drafting a new release, do NOT rewrite an existing `## [X.Y.Z]` header to a new label — that wipes the historical section. Always INSERT a new section above.
 - **Forgetting footer reference links.** When a released-tier bump is in play, the `[Unreleased]` line and the new `[X.Y.Z]` link at the bottom MUST be updated. Heading links don't resolve without them.
 - **Wrong footer compare base.** The new `[X.Y.Z]` line compares from the PREVIOUS released tag, not from two releases ago.
-- **Timezone drift.** Prerelease date stamp follows the current Pacific date — NOT user's local Asia clock, NOT UTC. Same-Pacific-day re-cuts use a `.postN` suffix.
+- **Timezone drift.** For alpha/beta date stamps, follow the `python-package-management` date-stamp rule;
+  do not infer a local timezone from the user's current shell.
 - **`Co-Authored-By` trailer.** Never add it. Rewrite/amend if it slipped in.
 - **Stale inventory in this skill.** Always read `python/PACKAGE_STATUS.md` for the live tier map. Do not trust a hardcoded list.
-- **`gemini`'s `<2.0` upper bound.** When touching its floor, do not rewrite `<2.0` to `<2`.
+- **Package-specific dependency bound formatting.** Follow the dependency-bound notes in
+  `python-package-management` when touching package floors or caps.
 - **Divergent origin vs upstream.** If the release tags from `upstream/main` but `origin/main` is behind, check both — warn if they differ and offer to sync.
 - **`--pre` README cleanup on promotion.** When a package is promoted to `released` in this cycle, grep for `pip install agent-framework-<pkg> --pre` in READMEs and drop the `--pre` flag.
 - **RC counter inflation.** Do not increment `1.0.0rcN` without a CHANGELOG entry for that package. The counter tracks iterations, not calendar.
 
 ## References
 
-- Upstream canonical skill (in-repo): `python/.github/skills/python-package-management/SKILL.md`
+- Package lifecycle and dependency source of truth: `python/.github/skills/python-package-management/SKILL.md`
 - Lifecycle source of truth: `python/PACKAGE_STATUS.md`
 - Validator: `python/scripts/dependencies/validate_dependency_bounds.py` (runs `lowest-direct` and `highest` resolution smoke tests; catches floors/caps that don't match the code)
 - Poe task definitions: `python/pyproject.toml` `[tool.poe.tasks]`
