@@ -698,7 +698,14 @@ class RawGeminiChatClient(
                 case "function_result":
                     raw_part = content.raw_representation
                     if isinstance(raw_part, types.Part) and raw_part.tool_response is not None:
-                        parts.append(raw_part)
+                        tool_response = raw_part.tool_response.model_copy(
+                            update={
+                                "id": content.call_id or self._generate_tool_call_id(),
+                                "response": content.result,
+                            },
+                            deep=True,
+                        )
+                        parts.append(raw_part.model_copy(update={"tool_response": tool_response}, deep=True))
                     else:
                         logger.debug("Skipping unsupported content type for Gemini: %s", content.type)
                 case "data" | "uri":
@@ -771,7 +778,14 @@ class RawGeminiChatClient(
 
         raw_part = content.raw_representation
         if isinstance(raw_part, types.Part) and raw_part.tool_response is not None:
-            return raw_part
+            tool_response = raw_part.tool_response.model_copy(
+                update={
+                    "id": content.call_id or self._generate_tool_call_id(),
+                    "response": content.result,
+                },
+                deep=True,
+            )
+            return raw_part.model_copy(update={"tool_response": tool_response}, deep=True)
 
         name = call_id_to_name.get(content.call_id or "")
         if not name:

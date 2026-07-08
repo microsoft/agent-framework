@@ -805,7 +805,36 @@ def test_server_side_tool_response_part_preserves_raw_part_on_replay() -> None:
     assert parts[0].function_response is None
     assert parts[0].tool_response.id == "search-1"
     assert parts[0].tool_response.tool_type == types.ToolType.FILE_SEARCH
-    assert parts[0].tool_response.response == {"results": ["doc"]}
+    assert parts[0].tool_response.response == '{"results": ["doc"]}'
+
+
+def test_server_side_tool_response_part_uses_content_values_on_replay() -> None:
+    """Server-side Gemini tool responses replay the framework call ID and result."""
+    client, _ = _make_gemini_client()
+    raw_part = types.Part(
+        tool_response=types.ToolResponse(
+            id=None,
+            tool_type=types.ToolType.FILE_SEARCH,
+            response={"results": ["raw"]},
+        )
+    )
+    content = Content.from_function_result(
+        call_id="generated-search-id",
+        result={"results": ["content"]},
+        raw_representation=raw_part,
+    )
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].tool_response is not None
+    assert parts[0].function_response is None
+    assert parts[0].tool_response.id == "generated-search-id"
+    assert parts[0].tool_response.tool_type == types.ToolType.FILE_SEARCH
+    assert parts[0].tool_response.response == '{"results": ["content"]}'
+    assert raw_part.tool_response is not None
+    assert raw_part.tool_response.id is None
+    assert raw_part.tool_response.response == {"results": ["raw"]}
 
 
 # multimodal (data/uri) parts
