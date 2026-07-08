@@ -92,6 +92,10 @@ async def main() -> None:
 
     result = await workflow.run(
         "Write a tagline for a budget-friendly eBike.",
+        # client_kwargs are forwarded to each underlying chat client call.
+        # store=False tells the model API not to persist messages server-side
+        # for this example.
+        client_kwargs={"store": False},
     )
 
     # The final state should be IDLE since the workflow no longer has messages to

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
+    Agent,
     BaseChatClient,
     ChatResponseUpdate,
     Content,
@@ -72,6 +73,12 @@ def ollama_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  #
 @fixture
 def chat_history() -> list[Message]:
     return []
+
+
+def test_agent_accepts_ollama_chat_client(ollama_unit_test_env: dict[str, str]) -> None:
+    client = OllamaChatClient()
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
 
 
 @fixture

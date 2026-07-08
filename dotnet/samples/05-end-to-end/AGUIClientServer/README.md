@@ -114,7 +114,7 @@ User (:q or quit to exit): :q
 
 ### Server Side
 
-The `AGUIServer` uses the `MapAGUI` extension method to expose an agent through the AG-UI protocol:
+The `AGUIServer` uses the `MapAGUIServer` extension method to expose an agent through the AG-UI protocol:
 
 ```csharp
 AIAgent agent = new OpenAIClient(apiKey)
@@ -123,7 +123,7 @@ AIAgent agent = new OpenAIClient(apiKey)
         instructions: "You are a helpful assistant.",
         name: "AGUIAssistant");
 
-app.MapAGUI("/", agent);
+app.MapAGUIServer("/", agent);
 ```
 
 This automatically handles:
@@ -138,11 +138,7 @@ The `AGUIClient` uses the `AGUIChatClient` to connect to the remote server:
 
 ```csharp
 using HttpClient httpClient = new();
-var chatClient = new AGUIChatClient(
-    httpClient,
-    endpoint: serverUrl,
-    modelId: "agui-client",
-    jsonSerializerOptions: null);
+var chatClient = new AGUIChatClient(new(httpClient, serverUrl));
 
 AIAgent agent = chatClient.AsAIAgent(
     instructions: null,
@@ -152,13 +148,21 @@ AIAgent agent = chatClient.AsAIAgent(
 
 bool isFirstUpdate = true;
 AgentResponseUpdate? currentUpdate = null;
+string? threadId = null;
 
 await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread))
 {
+    // AGUIChatClient is stateless and never surfaces a ConversationId; the thread id is
+    // carried on the AG-UI RUN_STARTED event's raw representation.
+    if (update.AsChatResponseUpdate().RawRepresentation is RunStartedEvent runStarted)
+    {
+        threadId = runStarted.ThreadId;
+    }
+
     // First update indicates run started
     if (isFirstUpdate)
     {
-        Console.WriteLine($"[Run Started - Thread: {update.ConversationId}, Run: {update.ResponseId}]");
+        Console.WriteLine($"[Run Started - Thread: {threadId}, Run: {update.ResponseId}]");
         isFirstUpdate = false;
     }
     
@@ -183,7 +187,7 @@ await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, t
 // Last update indicates run finished
 if (currentUpdate != null)
 {
-    Console.WriteLine($"\n[Run Finished - Thread: {currentUpdate.ConversationId}, Run: {currentUpdate.ResponseId}]");
+    Console.WriteLine($"\n[Run Finished - Thread: {threadId}, Run: {currentUpdate.ResponseId}]");
 }
 ```
 
@@ -195,11 +199,11 @@ The `RunStreamingAsync` method:
 
 ## Key Concepts
 
-- **Thread**: Represents a conversation context that persists across multiple runs (accessed via `ConversationId` property)
+- **Thread**: Represents a conversation context that persists across multiple runs. `AGUIChatClient` is stateless and does not surface a `ConversationId`; the thread id is read from the `RUN_STARTED`/`RUN_FINISHED` event's raw representation (`RunStartedEvent.ThreadId`). Continuation is driven by resending the full message history (and, to branch from a prior run, setting `RunAgentInput.ThreadId`/`ParentRunId` via `ChatOptions.RawRepresentationFactory`).
 - **Run**: A single execution of the agent for a given set of messages (identified by `ResponseId` property)
 - **AgentResponseUpdate**: Contains the response data with:
   - `ResponseId`: The unique run identifier
-  - `ConversationId`: The thread/conversation identifier
+  - `RawRepresentation`: The underlying AG-UI event (e.g. `RunStartedEvent`), which carries wire-level fields such as the thread id
   - `Contents`: Collection of content items (TextContent, ErrorContent, etc.)
 - **Run Lifecycle**: 
   - The **first** `AgentResponseUpdate` in a run indicates the run has started

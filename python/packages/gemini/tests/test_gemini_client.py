@@ -13,7 +13,7 @@ from agent_framework import Agent, Content, FunctionTool, Message
 from google.genai import types
 from pydantic import BaseModel
 
-from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, ThinkingConfig
+from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, RawGeminiChatClient, ThinkingConfig
 
 
 def _has_gemini_integration_credentials() -> bool:
@@ -140,6 +140,20 @@ def _make_gemini_client(
     mock._api_client._http_options.base_url = "https://generativelanguage.googleapis.com/"
     client = GeminiChatClient(client=mock, model=model)
     return client, mock
+
+
+def test_agent_accepts_gemini_chat_clients() -> None:
+    mock = MagicMock()
+    mock._api_client.vertexai = False
+    mock._api_client._http_options.base_url = "https://generativelanguage.googleapis.com/"
+
+    raw_client = RawGeminiChatClient(client=mock, model="gemini-2.5-flash")
+    raw_agent = Agent(client=raw_client, instructions="test agent")
+    assert raw_agent.client is raw_client
+
+    client, _ = _make_gemini_client(model="gemini-2.5-flash")
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
 
 
 def _parts(content: types.Content) -> list[types.Part]:
