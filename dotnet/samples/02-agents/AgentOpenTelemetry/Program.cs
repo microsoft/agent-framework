@@ -189,8 +189,8 @@ else
 
         Option A — Microsoft Foundry (recommended):
           FOUNDRY_PROJECT_ENDPOINT=https://<project>.services.ai.azure.com/api/projects/<project>
-          FOUNDRY_MODEL=<model-deployment-name>
-          Then run: az login
+          FOUNDRY_MODEL=<model-deployment-name>   # optional; defaults to gpt-5-mini
+          Then authenticate (e.g., az login)
 
         Option B — Azure OpenAI API key (local/dev fallback):
           AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com/
