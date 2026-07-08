@@ -57,7 +57,7 @@ internal static class JsonDocumentExtensions
             JsonValueKind.Array when jsonDocument.RootElement.GetArrayLength() == 0 => new List<object?>(),
             JsonValueKind.Array => jsonDocument.ParseList(jsonDocument.RootElement.GetListTypeFromJson()),
             JsonValueKind.String => jsonDocument.RootElement.GetString(),
-            JsonValueKind.Number => jsonDocument.RootElement.TryGetInt64(out long longValue) ? longValue : jsonDocument.RootElement.GetDouble(),
+            JsonValueKind.Number => jsonDocument.RootElement.GetDouble(),
             JsonValueKind.True => true,
             JsonValueKind.False => false,
             JsonValueKind.Null => null,
