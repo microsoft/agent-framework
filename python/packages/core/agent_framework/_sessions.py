@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import logging
 import threading
 import uuid
 import weakref
@@ -28,7 +29,13 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypeGuard, cast
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import ChatContext, ChatMiddleware
-from ._types import AgentResponse, ChatResponse, Message, ResponseStream
+from ._types import (
+    AgentResponse,
+    ChatResponse,
+    Message,
+    ResponseStream,
+    _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
+)
 from .exceptions import ChatClientInvalidResponseException
 
 if TYPE_CHECKING:
@@ -36,11 +43,14 @@ if TYPE_CHECKING:
     from ._middleware import MiddlewareTypes
 
 
+logger = logging.getLogger("agent_framework")
+
 # Registry of known types for state deserialization
 _STATE_TYPE_REGISTRY: dict[str, type] = {}
 
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
+ServiceSessionId: TypeAlias = Mapping[str, Any]
 
 
 def _default_json_dumps(value: Any) -> str:
@@ -93,7 +103,7 @@ _register_state_type = register_state_type
 def _serialize_value(value: Any) -> Any:
     """Serialize a single value, handling objects with to_dict() and Pydantic models."""
     if hasattr(value, "to_dict") and callable(value.to_dict):
-        return value.to_dict()  # pyright: ignore[reportUnknownMemberType]
+        return value.to_dict()
     # Pydantic BaseModel support — import lazily to avoid hard dep at module level
     with suppress(ImportError):
         from pydantic import BaseModel
@@ -156,7 +166,8 @@ class SessionContext:
 
     Attributes:
         session_id: The ID of the current session.
-        service_session_id: Service-managed session ID (if present, service handles storage).
+        service_session_id: Service-managed session identifier
+            (if present, the service stores history).
         input_messages: The new messages being sent to the agent (set by caller).
         context_messages: Dict mapping source_id -> messages added by that provider.
             Maintains insertion order (provider execution order).
@@ -173,7 +184,7 @@ class SessionContext:
         self,
         *,
         session_id: str | None = None,
-        service_session_id: str | None = None,
+        service_session_id: str | ServiceSessionId | None = None,
         input_messages: list[Message],
         context_messages: dict[str, list[Message]] | None = None,
         instructions: list[str] | None = None,
@@ -186,7 +197,7 @@ class SessionContext:
 
         Args:
             session_id: The ID of the current session.
-            service_session_id: Service-managed session ID.
+            service_session_id: Service-managed session identifier.
             input_messages: The new messages being sent to the agent.
             context_messages: Pre-populated context messages by source.
             instructions: Pre-populated instructions.
@@ -580,6 +591,7 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         agent: SupportsAgentRun,
         session: AgentSession,
         providers: Sequence[HistoryProvider],
+        service_stores_history: bool = False,
     ) -> None:
         """Initialize the middleware.
 
@@ -587,10 +599,16 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
             agent: The agent that owns the history providers.
             session: The active session for the current run.
             providers: The history providers participating in per-service-call persistence.
+            service_stores_history: When True, the chat client stores history server-side. The
+                middleware then skips loading providers and leaves the real conversation id
+                untouched, persisting each service call without driving the function loop with a
+                local sentinel. When False, the middleware loads providers and uses a local
+                sentinel conversation id so the function loop runs without service-side storage.
         """
         self._agent = agent
         self._session = session
         self._providers = list(providers)
+        self._service_stores_history = service_stores_history
 
     async def _prepare_service_call_context(self, messages: Sequence[Message]) -> SessionContext:
         """Create a per-call SessionContext and load history providers into it."""
@@ -602,6 +620,9 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         )
         for source_id, source_messages in context_messages.items():
             service_call_context.extend_messages(source_id, source_messages)
+        # When the service stores history, it owns loading; the providers are write-only sinks.
+        if self._service_stores_history:
+            return service_call_context
         for provider in self._providers:
             if not provider.load_messages:
                 continue
@@ -620,9 +641,9 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         response: ChatResponse,
     ) -> None:
         """Persist a single model-call response through the configured history providers."""
-        service_call_context._response = AgentResponse(  # type: ignore[assignment]
-            messages=response.messages,
-            response_id=None,
+        service_call_context._response = _build_agent_response_from_chat_response(  # type: ignore[assignment]
+            response,
+            suppress_response_id=True,
         )
         for provider in reversed(self._providers):
             await provider.after_run(
@@ -652,17 +673,35 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         response: ChatResponse,
     ) -> ChatResponse:
         """Persist a model response and apply the local follow-up sentinel when needed."""
-        if response.conversation_id is not None and not is_local_history_conversation_id(response.conversation_id):
+        if (
+            not self._service_stores_history
+            and response.conversation_id is not None
+            and not is_local_history_conversation_id(response.conversation_id)
+        ):
             raise ChatClientInvalidResponseException(
                 "require_per_service_call_history_persistence cannot be used "
                 "when the chat client returns a real conversation_id."
+            )
+
+        # In storing mode the service is expected to echo a conversation id that the next run
+        # resumes from. If it comes back empty, the provider still captures this turn but there is
+        # no service id to load from next time, so cross-turn history can be lost silently. Warn
+        # every time so this uncommon, easy-to-miss failure mode cannot fail quietly.
+        if self._service_stores_history and response.conversation_id is None:
+            logger.warning(
+                "require_per_service_call_history_persistence is enabled with a chat client that "
+                "stores history server-side, but the client returned no conversation_id; cross-turn "
+                "history may not resume. Set store=False to load and resume from the HistoryProvider "
+                "instead."
             )
 
         await self._persist_service_call_response(
             service_call_context=service_call_context,
             response=response,
         )
-        if _response_contains_follow_up_request(response):
+        # The local sentinel only applies when the service does not store history; when it does,
+        # the real conversation id already drives function-loop continuation.
+        if not self._service_stores_history and _response_contains_follow_up_request(response):
             response.mark_internal_conversation_id()
             response.conversation_id = LOCAL_HISTORY_CONVERSATION_ID
         return response
@@ -681,8 +720,12 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
                 result type for streaming or non-streaming execution.
         """
         service_call_context = await self._prepare_service_call_context(context.messages)
-        context.messages = service_call_context.get_messages(include_input=True)
-        self._strip_local_conversation_id(context)
+        # When the service stores history, leave the outgoing messages and the real conversation
+        # id untouched (pass-through); the middleware only persists. Otherwise reconstruct the
+        # outgoing messages from the loaded local history and strip the local sentinel.
+        if not self._service_stores_history:
+            context.messages = service_call_context.get_messages(include_input=True)
+            self._strip_local_conversation_id(context)
 
         await call_next()
 
@@ -714,9 +757,16 @@ class AgentSession:
     Lightweight state container. Provider instances are owned by the agent,
     not the session. The session only holds session IDs and a mutable state dict.
 
+    ``service_session_id`` can contain a provider-issued service session
+    identifier, such as a service conversation ID or response ID. Treat this
+    value as trusted application state: it is scoped by the backing API key,
+    service account, or project, but it is not an end-user authorization
+    boundary by itself.
+
     Attributes:
         session_id: Unique identifier for this session.
-        service_session_id: Service-managed session ID (if using service-side storage).
+        service_session_id: Service-managed session identifier
+            (if using service-side storage).
         state: Mutable state dict shared with all providers.
     """
 
@@ -724,13 +774,13 @@ class AgentSession:
         self,
         *,
         session_id: str | None = None,
-        service_session_id: str | None = None,
+        service_session_id: str | ServiceSessionId | None = None,
     ):
         """Initialize the session.
 
         Args:
             session_id: Optional session ID (generated if not provided).
-            service_session_id: Optional service-managed session ID.
+            service_session_id: Optional service-managed session identifier.
         """
         self._session_id = session_id or str(uuid.uuid4())
         self.service_session_id = service_session_id

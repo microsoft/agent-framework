@@ -25,12 +25,9 @@ from datetime import datetime
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
-from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from ._serialization import SerializationMixin
-from ._tools import ToolTypes
-from ._tools import normalize_tools as _normalize_tools
 from .exceptions import AdditionItemMismatch, ContentError
 
 if sys.version_info >= (3, 13):
@@ -39,6 +36,11 @@ else:
     from typing_extensions import TypeVar  # pragma: no cover
 
 logger = logging.getLogger("agent_framework")
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from ._tools import ToolTypes
 
 
 # region Content Parsing Utilities
@@ -191,7 +193,7 @@ def _get_data_bytes_as_str(content: Content) -> str | None:
         raise ContentError("Data URI must use base64 encoding")
 
     _, data = uri.split(";base64,", 1)
-    return data  # type: ignore[return-value, no-any-return]
+    return data
 
 
 def _get_data_bytes(content: Content) -> bytes | None:  # pyright: ignore[reportUnusedFunction]
@@ -298,9 +300,14 @@ EmbeddingInputT = TypeVar("EmbeddingInputT", default="str")
 ChatResponseT = TypeVar("ChatResponseT", bound="ChatResponse")
 ToolModeT = TypeVar("ToolModeT", bound="ToolMode")
 AgentResponseT = TypeVar("AgentResponseT", bound="AgentResponse")
-ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None, covariant=True)
-ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
-StructuredResponseFormat = type[BaseModel] | Mapping[str, Any] | None
+if TYPE_CHECKING:
+    ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None, covariant=True)
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+    StructuredResponseFormat = type[BaseModel] | Mapping[str, Any] | None
+else:
+    ResponseModelT = TypeVar("ResponseModelT", bound=Any, default=None, covariant=True)
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=Any)
+    StructuredResponseFormat = type[Any] | Mapping[str, Any] | None
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
 
@@ -390,7 +397,7 @@ ContentT = TypeVar("ContentT", bound="Content")
 # endregion
 
 
-class UsageDetails(TypedDict, total=False, extra_items=int):  # type: ignore[call-arg]
+class UsageDetails(TypedDict, total=False, extra_items=int):
     """A dictionary representing usage details.
 
     This is a non-closed dictionary, so any specific provider fields can be added as needed.
@@ -400,12 +407,18 @@ class UsageDetails(TypedDict, total=False, extra_items=int):  # type: ignore[cal
         input_token_count: The number of input tokens used.
         output_token_count: The number of output tokens generated.
         total_token_count: The total number of tokens (input + output).
+        cache_creation_input_token_count: The number of input tokens written to a provider-managed cache.
+        cache_read_input_token_count: The number of input tokens served from a provider-managed cache.
+        reasoning_output_token_count: The number of output tokens used for reasoning.
 
     """
 
     input_token_count: int | None
     output_token_count: int | None
     total_token_count: int | None
+    cache_creation_input_token_count: int | None
+    cache_read_input_token_count: int | None
+    reasoning_output_token_count: int | None
 
 
 def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) -> UsageDetails:
@@ -445,7 +458,7 @@ def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) 
         ):
             logger.warning("Non `int` value found in usage details, skipping.")
             continue
-        result[key] = (val1 or 0) + (val2 or 0)  # type: ignore[literal-required]
+        result[key] = (val1 or 0) + (val2 or 0)
     return result
 
 
@@ -1442,12 +1455,12 @@ class Content:
         combined_id = self.id or other.id
 
         # Concatenate text, handling None values
-        self_text = self.text or ""  # type: ignore[attr-defined]
-        other_text = other.text or ""  # type: ignore[attr-defined]
+        self_text = self.text or ""
+        other_text = other.text or ""
         combined_text = self_text + other_text if (self_text or other_text) else None
 
         # Handle protected_data replacement
-        protected_data = other.protected_data if other.protected_data is not None else self.protected_data  # type: ignore[attr-defined]
+        protected_data = other.protected_data if other.protected_data is not None else self.protected_data
 
         return Content(
             "text_reasoning",
@@ -1901,14 +1914,14 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             # mypy doesn't narrow type based on match/case, but we know these are FunctionCallContents
             case "function_call" if message.contents and message.contents[-1].type == "function_call":
                 try:
-                    message.contents[-1] += content  # type: ignore[operator]
+                    message.contents[-1] += content
                 except (AdditionItemMismatch, ContentError):
                     message.contents.append(content)
             case "usage":
                 if response.usage_details is None:
                     response.usage_details = UsageDetails()
                 # mypy doesn't narrow type based on match/case, but we know this is UsageContent
-                response.usage_details = add_usage_details(response.usage_details, content.usage_details)  # type: ignore[arg-type]
+                response.usage_details = add_usage_details(response.usage_details, content.usage_details)
             case _:
                 message.contents.append(content)
     # Incorporate the update's properties into the response.
@@ -2104,8 +2117,11 @@ def _parse_structured_response_value(text: str, response_format: Any | None) -> 
         return None
     if not text:
         return None
-    if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-        return response_format.model_validate_json(text)
+    if isinstance(response_format, type):
+        from pydantic import BaseModel
+
+        if issubclass(response_format, BaseModel):
+            return response_format.model_validate_json(text)
     if isinstance(response_format, Mapping):
         try:
             return json.loads(text)
@@ -2776,6 +2792,30 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         return self.text
 
 
+def _build_agent_response_from_chat_response(  # pyright: ignore[reportUnusedFunction]
+    response: ChatResponse[Any],
+    *,
+    response_format: StructuredResponseFormat = None,
+    suppress_response_id: bool = False,
+) -> AgentResponse[Any]:
+    """Build the AgentResponse wrapper for a completed ChatResponse."""
+    agent_response = AgentResponse(
+        messages=response.messages,
+        response_id=None if suppress_response_id else response.response_id,
+        created_at=response.created_at,
+        finish_reason=cast(FinishReasonLiteral | FinishReason | None, response.finish_reason),
+        usage_details=response.usage_details,
+        response_format=response_format,
+        continuation_token=response.continuation_token,
+        raw_representation=response,
+        additional_properties=response.additional_properties,
+    )
+    if response._value_parsed:  # pyright: ignore[reportPrivateUsage]
+        agent_response._value = response._value  # pyright: ignore[reportPrivateUsage]
+        agent_response._value_parsed = True  # pyright: ignore[reportPrivateUsage]
+    return agent_response
+
+
 # region AgentResponseUpdate
 
 
@@ -2977,6 +3017,8 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._inner_stream_source: ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]] | None = None
         self._wrap_inner: bool = False
         self._map_update: Callable[[Any], UpdateT | Awaitable[UpdateT]] | None = None
+        self._flat_map_update: Callable[[Any], Iterable[UpdateT] | Awaitable[Iterable[UpdateT]]] | None = None
+        self._pending_mapped_updates: list[UpdateT] = []
         self._pull_context_manager_factories: list[Callable[[], contextlib.AbstractContextManager[Any]]] = []
 
     def map(
@@ -3021,6 +3063,23 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         stream._inner_stream_source = self
         stream._wrap_inner = True
         stream._map_update = transform
+        return stream
+
+    def flat_map(
+        self,
+        transform: Callable[[UpdateT], Iterable[OuterUpdateT] | Awaitable[Iterable[OuterUpdateT]]],
+        finalizer: Callable[[Sequence[OuterUpdateT]], OuterFinalT | Awaitable[OuterFinalT]],
+    ) -> ResponseStream[OuterUpdateT, OuterFinalT]:
+        """Create a new stream that transforms each update into zero or more updates.
+
+        Like :meth:`map`, the returned stream delegates iteration to this stream,
+        preserving single consumption and inner finalization/result hooks. Use this
+        when one upstream update naturally expands into multiple wire-protocol events.
+        """
+        stream: ResponseStream[OuterUpdateT, OuterFinalT] = ResponseStream(self, finalizer=finalizer)
+        stream._inner_stream_source = self
+        stream._wrap_inner = True
+        stream._flat_map_update = transform
         return stream
 
     def with_finalizer(
@@ -3095,43 +3154,56 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
     def __aiter__(self) -> ResponseStream[UpdateT, FinalT]:
         return self
 
-    async def __anext__(self) -> UpdateT:
-        try:
-            with contextlib.ExitStack() as stack:
-                for factory in self._pull_context_manager_factories:
-                    stack.enter_context(factory())
-                # Resolve the underlying stream inside the pull contexts so that any
-                # spans/contexts created during stream resolution (e.g. inner chat
-                # completion spans created on the first pull of a wrapped agent stream)
-                # inherit the active context (e.g. an outer agent invoke span).
-                if self._iterator is None:
-                    stream = await self._get_stream()
-                    self._iterator = stream.__aiter__()
-                update: UpdateT = await self._iterator.__anext__()
-        except StopAsyncIteration:
-            self._consumed = True
-            await self._run_cleanup_hooks()
-            await self.get_final_response()
-            raise
-        except Exception as exc:
-            self._stream_error = exc
-            try:
-                await self._run_cleanup_hooks()
-            finally:
-                self._stream_error = None
-            raise
-        if self._map_update is not None:
-            update = self._map_update(update)  # type: ignore[assignment]
-            if isawaitable(update):
-                update = await update
+    async def _record_update(self, update: UpdateT) -> UpdateT:
         self._updates.append(update)
         for hook in self._transform_hooks:
             hooked = hook(update)
             if isawaitable(hooked):
                 hooked = await hooked
             if hooked is not None:
-                update = hooked
+                update = cast(UpdateT, hooked)
         return update
+
+    async def __anext__(self) -> UpdateT:
+        while True:
+            if self._pending_mapped_updates:
+                return await self._record_update(self._pending_mapped_updates.pop(0))
+
+            try:
+                with contextlib.ExitStack() as stack:
+                    for factory in self._pull_context_manager_factories:
+                        stack.enter_context(factory())
+                    # Resolve the underlying stream inside the pull contexts so that any
+                    # spans/contexts created during stream resolution (e.g. inner chat
+                    # completion spans created on the first pull of a wrapped agent stream)
+                    # inherit the active context (e.g. an outer agent invoke span).
+                    if self._iterator is None:
+                        stream = await self._get_stream()
+                        self._iterator = stream.__aiter__()
+                    update: UpdateT = await self._iterator.__anext__()
+            except StopAsyncIteration:
+                self._consumed = True
+                await self._run_cleanup_hooks()
+                await self.get_final_response()
+                raise
+            except Exception as exc:
+                self._stream_error = exc
+                try:
+                    await self._run_cleanup_hooks()
+                finally:
+                    self._stream_error = None
+                raise
+            if self._flat_map_update is not None:
+                mapped_updates = self._flat_map_update(update)
+                if isawaitable(mapped_updates):
+                    mapped_updates = await mapped_updates
+                self._pending_mapped_updates.extend(mapped_updates)
+                continue
+            if self._map_update is not None:
+                update = self._map_update(update)  # type: ignore[assignment]
+                if isawaitable(update):
+                    update = await update
+            return await self._record_update(update)
 
     async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:
         """Resolve the underlying stream while activating any registered pull context managers.
@@ -3506,6 +3578,8 @@ def normalize_tools(
             # List of tools
             tools = normalize_tools([my_tool, another_tool])
     """
+    from ._tools import normalize_tools as _normalize_tools
+
     return _normalize_tools(tools)
 
 
@@ -3553,7 +3627,7 @@ async def validate_tools(
             # Expand MCP tools to their constituent functions
             if not tool_.is_connected:
                 await tool_.connect()
-            final_tools.extend(tool_.functions)  # type: ignore
+            final_tools.extend(tool_.functions)
         else:
             final_tools.append(tool_)
 

@@ -73,6 +73,21 @@ uv run poe add-dependency-and-validate-bounds --package core --dependency "<depe
 
 ## Lazy Loading Pattern
 
+### Root core API
+
+The root `agent_framework` package is a lazy public API surface:
+
+- Runtime exports live in `packages/core/agent_framework/__init__.py`.
+- Typing/editor exports live in `packages/core/agent_framework/__init__.pyi`.
+- Add or move root exports in `_LAZY_MODULE_EXPORTS`, keep the explicit runtime `__all__` in sync, and add the same
+  symbol to the `.pyi` file.
+- Keep deprecation behavior in the owning module (for example, a module-level `__getattr__` that warns and returns
+  the deprecated alias). Do not add one-off deprecated-symbol branches to root `__getattr__`.
+- Validate root API changes with `uv run poe syntax -P core`, `uv run poe pyright -P core`, and import smoke tests
+  for both `from agent_framework import <symbol>` and `from agent_framework import *`.
+
+### Provider namespaces
+
 Provider folders in core use `__getattr__` to lazy load from connector packages:
 
 ```python

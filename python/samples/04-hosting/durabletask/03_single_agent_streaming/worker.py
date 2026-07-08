@@ -29,8 +29,8 @@ from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
-from redis_stream_response_handler import RedisStreamResponseHandler
-from tools import get_local_events, get_weather_forecast
+from redis_stream_response_handler import RedisStreamResponseHandler  # pyrefly: ignore[missing-import]
+from tools import get_local_events, get_weather_forecast  # pyrefly: ignore[missing-import]
 
 # Load environment variables from .env file
 load_dotenv()

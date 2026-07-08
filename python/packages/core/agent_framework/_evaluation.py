@@ -969,7 +969,7 @@ def _extract_agent_eval_data(
             agent_exec_response: AgentExecutorResponse | None = None
 
             if isinstance(completion_data, list):
-                for cdata_item in cast(list[Any], completion_data):  # type: ignore[redundant-cast]
+                for cdata_item in cast(list[Any], completion_data):
                     if isinstance(cdata_item, AgentExecutorResponse):
                         agent_exec_response = cdata_item
                         break
@@ -982,7 +982,7 @@ def _extract_agent_eval_data(
             query: str | list[Message]
             if agent_exec_response.full_conversation:
                 user_msgs = [m for m in agent_exec_response.full_conversation if m.role == "user"]
-                query = user_msgs or agent_exec_response.full_conversation  # type: ignore[assignment]
+                query = user_msgs or agent_exec_response.full_conversation
             elif executor_id in invoked_data:
                 input_data: Any = invoked_data[executor_id]
                 query = (  # type: ignore[assignment]
@@ -1017,7 +1017,7 @@ def _extract_overall_query(workflow_result: WorkflowRunResult) -> str | None:
             if isinstance(data, str):
                 return data
             if isinstance(data, list) and data:
-                items_list = cast(list[Any], data)  # type: ignore[redundant-cast]
+                items_list = cast(list[Any], data)
                 first = items_list[0]
                 if isinstance(first, Message):
                     msgs: list[Message] = [m for m in items_list if isinstance(m, Message)]
@@ -1492,7 +1492,7 @@ def evaluator(
                 result = await result
             return _coerce_result(value=result, check_name=check_name)
 
-        _check.__name__ = check_name  # type: ignore[attr-defined,assignment]
+        _check.__name__ = check_name
         _check.__doc__ = func.__doc__
         return _check
 
@@ -2040,7 +2040,7 @@ def _build_overall_item(
     final_output: Any = outputs[-1]
     overall_response: AgentResponse[None]
     if isinstance(final_output, list) and final_output and isinstance(final_output[0], Message):
-        msgs: list[Message] = [m for m in cast(list[Any], final_output) if isinstance(m, Message)]  # type: ignore[redundant-cast]
+        msgs: list[Message] = [m for m in cast(list[Any], final_output) if isinstance(m, Message)]
         response_text = " ".join(str(m.text) for m in msgs if m.role == "assistant")
         overall_response = AgentResponse(messages=[Message("assistant", [response_text])])
     elif isinstance(final_output, AgentResponse):

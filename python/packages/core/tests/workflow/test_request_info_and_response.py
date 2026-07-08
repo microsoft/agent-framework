@@ -70,10 +70,10 @@ class ApprovalRequiredExecutor(Executor, RequestInfoMixin):
         self.approval_received = True
 
         if approved:
-            self.final_result = f"Operation approved: {original_request.prompt}"
+            self.final_result = f"Operation approved: {original_request.prompt}"  # type: ignore[assignment]
             await ctx.send_message(f"APPROVED: {original_request.context}")
         else:
-            self.final_result = "Operation denied by user"
+            self.final_result = "Operation denied by user"  # type: ignore[assignment]
             await ctx.send_message("DENIED: Operation was not approved")
 
 

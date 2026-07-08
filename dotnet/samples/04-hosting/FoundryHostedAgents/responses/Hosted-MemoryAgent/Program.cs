@@ -7,8 +7,8 @@
 // isolation key headers.
 //
 // Memory scope flows from request -> hosting layer -> session -> provider:
-//   1. Foundry sets x-agent-user-isolation-key on every inbound request.
-//   2. AgentFrameworkResponseHandler reads context.Isolation.UserIsolationKey via the registered
+//   1. Foundry sets x-agent-user-id on every inbound request.
+//   2. AgentFrameworkResponseHandler reads context.PlatformContext.UserIdKey via the registered
 //      HostedSessionIsolationKeyProvider and stores it on the session as a HostedSessionContext.
 //   3. FoundryMemoryProvider's stateInitializer reads HostedSessionContext.UserId and uses it as
 //      the FoundryMemoryProviderScope, partitioning memories per user.
@@ -26,14 +26,16 @@ using Microsoft.Extensions.AI;
 // Load .env file if present (for local development).
 Env.TraversePath().Load();
 
-var projectEndpoint = new Uri(Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set."));
-var agentName = Environment.GetEnvironmentVariable("AGENT_NAME")
-    ?? throw new InvalidOperationException("AGENT_NAME is not set.");
-var deployment = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
+var projectEndpoint = new Uri(Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set."));
+var agentName = Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-memory-agent";
+var deployment = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-4o";
 var embeddingDeployment = Environment.GetEnvironmentVariable("AZURE_AI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-ada-002";
 var memoryStoreName = Environment.GetEnvironmentVariable("AZURE_AI_MEMORY_STORE_ID") ?? "hosted-memory-sample";
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Use a chained credential: try a temporary dev token first (for local Docker debugging),
 // then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in foundry).
 TokenCredential credential = new ChainedTokenCredential(
@@ -72,9 +74,15 @@ ChatClientAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions()
 });
 
 // Host the agent as a Foundry Hosted Agent using the Responses API.
+//
+// Per-user memory isolation comes from the platform-injected x-agent-user-id header, resolved by the
+// default HostedSessionIsolationKeyProvider into the session's HostedSessionContext. This sample scopes
+// memory per user via HostedFoundryMemoryProviderScopes.PerUser(), which REQUIRES that context: a
+// request with no resolved user identity throws. So locally you must send an x-agent-user-id request
+// header (see scripts/smoke.ps1); vary it to simulate distinct users. On the Foundry platform the
+// header is always present, so no local provider registration is needed.
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
-builder.Services.AddDevTemporaryLocalContributorSetup(); // Local Docker debugging only - must not be used in production.
 
 var app = builder.Build();
 app.MapFoundryResponses();

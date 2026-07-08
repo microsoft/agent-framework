@@ -1,4 +1,4 @@
-# Hosted-FoundryAgent
+﻿# Hosted-FoundryAgent
 
 A hosted agent that delegates to a **Foundry-managed agent definition**. Instead of defining the model, instructions, and tools inline in code, this sample retrieves an existing agent registered in the Foundry platform via `AIProjectClient.AsAIAgent(agentRecord)` and hosts it using the Responses protocol.
 
@@ -7,7 +7,7 @@ This is the **Foundry hosting** pattern — the agent's behavior is configured i
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- An Azure AI Foundry project with a **registered agent** (created via Foundry UI, CLI, or API)
+- A Foundry project with a **registered agent** (created via Foundry UI, CLI, or API)
 - Azure CLI logged in (`az login`)
 
 ## Configuration
@@ -18,10 +18,10 @@ Copy the template and fill in your project endpoint:
 cp .env.example .env
 ```
 
-Edit `.env` and set your Azure AI Foundry project endpoint:
+Edit `.env` and set your Foundry project endpoint:
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 ASPNETCORE_URLS=http://+:8088
 ASPNETCORE_ENVIRONMENT=Development
 ```
@@ -106,6 +106,32 @@ curl -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
   -d '{"input": "Hello!", "model": "<your-agent-name>"}'
 ```
+
+## Deploying to Foundry (azd spec)
+
+This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent spec (`agent.yaml`) for deployment to Foundry.
+
+Initialize an `azd` project from this sample's manifest:
+
+```bash
+mkdir hosted-foundry-agent && cd hosted-foundry-agent
+azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-FoundryAgent/agent.manifest.yaml
+```
+
+Then deploy:
+
+```bash
+azd deploy
+```
+
+If you need to override defaults, set deployment-time environment variables in the `azd` environment before deploying:
+
+```bash
+azd env set AGENT_NAME hosted-foundry-agent
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-4o
+```
+
+For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
 
 ## NuGet package users
 

@@ -160,12 +160,12 @@ class _CallbackAggregator(Executor):
         # Call according to provided signature, always non-blocking for sync callbacks
         if self._param_count >= 2:
             if inspect.iscoroutinefunction(self._callback):
-                ret = await self._callback(results, ctx)  # type: ignore[misc]
+                ret = await self._callback(results, ctx)
             else:
                 ret = await asyncio.to_thread(self._callback, results, ctx)
         else:
             if inspect.iscoroutinefunction(self._callback):
-                ret = await self._callback(results)  # type: ignore[misc]
+                ret = await self._callback(results)
             else:
                 ret = await asyncio.to_thread(self._callback, results)
 
