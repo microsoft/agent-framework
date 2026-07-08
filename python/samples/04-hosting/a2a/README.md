@@ -88,7 +88,7 @@ The default `a2a-sdk` task/push-config stores scope ownership by `user_name` onl
 from a2a.server.tasks import InMemoryTaskStore
 
 def resolve_tenant_user_scope(context):
-    return f"{context.tenant}\x00{context.user.user_name}"
-
+    # Derive tenant + user identity from your host's auth/session context.
+    return f"{context.tenant}:{context.user.user_name}"
 task_store = InMemoryTaskStore(owner_resolver=resolve_tenant_user_scope)
 ```
