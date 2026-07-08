@@ -25,6 +25,7 @@ from agent_framework import (
     ResponseStream,
     SessionContext,
     UsageDetails,
+    add_usage_details,
     normalize_messages,
 )
 from agent_framework._settings import load_settings
@@ -615,9 +616,13 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             if event.type != SessionEventType.ASSISTANT_USAGE:
                 return
             if isinstance(event.data, AssistantUsageData):
-                usage_details = self._parse_usage_details_from_copilot(event.data)
-                finish_reason = event.data.finish_reason or None
-                model = event.data.model or None
+                parsed_usage_details = self._parse_usage_details_from_copilot(event.data)
+                if parsed_usage_details:
+                    usage_details = add_usage_details(usage_details, parsed_usage_details)
+                if event.data.finish_reason:
+                    finish_reason = event.data.finish_reason
+                if event.data.model:
+                    model = event.data.model
             else:
                 logger.warning(
                     "Ignoring GitHub Copilot assistant usage event with unexpected payload type: %s",

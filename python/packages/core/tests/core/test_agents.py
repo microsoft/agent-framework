@@ -1307,6 +1307,39 @@ async def test_context_provider_receives_full_agent_response_non_streaming(
     assert response.raw_representation is raw_response
 
 
+async def test_context_provider_after_run_preserves_lazy_structured_value_parsing(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Context providers should see the response before malformed structured output raises for callers."""
+    captured_response: AgentResponse | None = None
+
+    class CapturingContextProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="capture_lazy_value_response")
+
+        async def after_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            nonlocal captured_response
+            captured_response = context.response
+
+    raw_response = ChatResponse(messages=[Message(role="assistant", contents=[Content.from_text("not-json")])])
+    chat_client_base.run_responses = [raw_response]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    agent = Agent(client=chat_client_base, context_providers=[CapturingContextProvider()])
+
+    response = await agent.run("Hello", options={"response_format": {"type": "object"}})
+
+    assert captured_response is response
+    assert response.text == "not-json"
+    with pytest.raises(ValueError, match="not valid JSON"):
+        _ = response.value
+
+
 async def test_context_provider_receives_full_agent_response_streaming(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:

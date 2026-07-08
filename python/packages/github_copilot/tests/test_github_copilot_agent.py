@@ -462,6 +462,17 @@ class TestGitHubCopilotAgentRun:
             timestamp=datetime.now(timezone.utc),
             type=SessionEventType.ASSISTANT_USAGE,
         )
+        second_usage_event = SessionEvent(
+            data=AssistantUsageData(
+                model="gpt-5.1-mini",
+                input_tokens=5,
+                output_tokens=2,
+                finish_reason="length",
+            ),
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.ASSISTANT_USAGE,
+        )
         usage_handler: Any = None
 
         def mock_on(handler: Any) -> Any:
@@ -471,6 +482,7 @@ class TestGitHubCopilotAgentRun:
 
         async def mock_send_and_wait(*args: Any, **kwargs: Any) -> SessionEvent:
             usage_handler(usage_event)
+            usage_handler(second_usage_event)
             return assistant_message_event
 
         mock_session.on = mock_on
@@ -479,16 +491,16 @@ class TestGitHubCopilotAgentRun:
         agent = GitHubCopilotAgent(client=mock_client)
         response = await agent.run("Hello")
 
-        assert response.finish_reason == "stop"
+        assert response.finish_reason == "length"
         assert response.usage_details == {
-            "input_token_count": 120,
-            "output_token_count": 40,
-            "total_token_count": 160,
+            "input_token_count": 125,
+            "output_token_count": 42,
+            "total_token_count": 167,
             "cache_read_input_token_count": 7,
             "cache_creation_input_token_count": 3,
             "reasoning_output_token_count": 11,
         }
-        assert response.additional_properties["model"] == "claude-sonnet-4-5"
+        assert response.additional_properties["model"] == "gpt-5.1-mini"
 
     async def test_run_empty_response(
         self,
