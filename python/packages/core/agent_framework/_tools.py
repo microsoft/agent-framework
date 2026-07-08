@@ -1659,7 +1659,11 @@ async def _try_execute_function_calls(
     """
     from ._types import Content
 
-    function_calls = [function_call for function_call in function_calls if _is_actionable_function_call(function_call)]
+    function_calls = [
+        function_call
+        for function_call in function_calls
+        if function_call.type == "function_approval_response" or _is_actionable_function_call(function_call)
+    ]
     if not function_calls:
         return ([], False)
 
