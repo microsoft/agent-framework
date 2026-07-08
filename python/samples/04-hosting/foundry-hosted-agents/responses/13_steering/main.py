@@ -5,6 +5,7 @@ import os
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
+from azure.ai.agentserver.responses import ResponsesServerOptions
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
@@ -30,7 +31,10 @@ def main():
     # running handler is cooperatively cancelled (via cancellation_signal)
     # rather than the client receiving HTTP 409 conversation_locked.
     # Once the current turn reaches a terminal event the queued turn runs.
-    server = ResponsesHostServer(agent, steerable_conversations=True)
+    server = ResponsesHostServer(
+        agent,
+        options=ResponsesServerOptions(steerable_conversations=True),
+    )
     server.run()
 
 

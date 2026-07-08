@@ -54,10 +54,13 @@ async def _wait_for_server(timeout: float = 30) -> bool:
     return False
 
 
+_MAIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
+
+
 def _start_server() -> subprocess.Popen[bytes]:
     """Start main.py as a subprocess, suppressing its output."""
     return subprocess.Popen(
-        [sys.executable, "main.py"],
+        [sys.executable, _MAIN],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -139,8 +142,12 @@ async def demo() -> None:
                             for item in poll.get("output", [])
                             for part in item.get("content", [])
                         )
-                        preview = output_text[:400] + ("..." if len(output_text) > 400 else "")
-                        print(f"\nRecovered response ({len(output_text)} chars):\n{preview}")
+                        preview = output_text[:400] + (
+                            "..." if len(output_text) > 400 else ""
+                        )
+                        print(
+                            f"\nRecovered response ({len(output_text)} chars):\n{preview}"
+                        )
                     else:
                         print(f"\nResponse ended with status={status!r}")
                     break
