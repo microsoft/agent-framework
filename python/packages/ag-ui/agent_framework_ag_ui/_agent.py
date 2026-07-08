@@ -9,7 +9,7 @@ from typing import Any, cast
 from ag_ui.core import BaseEvent
 from agent_framework import SupportsAgentRun
 
-from ._agent_run import PendingApprovalEntry, run_agent_stream
+from ._agent_run import PendingApprovalEntry, PendingApprovalKey, run_agent_stream
 from ._snapshots import AGUIThreadSnapshotStore
 
 
@@ -58,7 +58,7 @@ class AgentConfig:
             base_model_type = None
 
         if base_model_type is not None and isinstance(state_schema, base_model_type):
-            schema_dict = state_schema.__class__.model_json_schema()  # type: ignore[union-attr]
+            schema_dict = state_schema.__class__.model_json_schema()
             return schema_dict.get("properties", {}) or {}
 
         if base_model_type is not None and isinstance(state_schema, type) and issubclass(state_schema, base_model_type):
@@ -112,11 +112,11 @@ class AgentFrameworkAgent:
         )
 
         # Server-side registry of pending approval requests.
-        # Keys are "{thread_id}:{request_id}", values are the function name.
+        # Keys are (thread_id, request_id), values are the function name.
         # Populated when approval requests are emitted; consumed when responses arrive.
         # Prevents bypass, function name spoofing, and replay attacks.
         # Bounded to prevent unbounded growth from abandoned approval requests.
-        self._pending_approvals: OrderedDict[str, PendingApprovalEntry] = OrderedDict()
+        self._pending_approvals: OrderedDict[PendingApprovalKey, PendingApprovalEntry] = OrderedDict()
         self._pending_approvals_max_size: int = 10_000
 
     @property

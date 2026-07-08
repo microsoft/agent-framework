@@ -41,17 +41,17 @@ from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
 from ._tools import _sanitize_foundry_response_tool  # pyright: ignore[reportPrivateUsage]
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework import (
@@ -145,7 +145,7 @@ def _build_agent_reference(agent_name: str, agent_version: str | None) -> dict[s
     return ref
 
 
-class RawFoundryAgentChatClient(  # type: ignore[misc]
+class RawFoundryAgentChatClient(
     RawOpenAIChatClient[FoundryAgentOptionsT],
     Generic[FoundryAgentOptionsT],
 ):
@@ -481,9 +481,7 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
             return self.agent_version
         if not self.allow_preview:
             return None
-        agent_details = await cast(Any, self.project_client.beta.agents).get(  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-            agent_name=self.agent_name
-        )
+        agent_details = await cast(Any, self.project_client.beta.agents).get(agent_name=self.agent_name)
         versions_object = getattr(agent_details, "versions", None)
         if not isinstance(versions_object, Mapping):
             raise TypeError("Foundry agent details did not include a versions mapping.")
@@ -501,7 +499,7 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
             await self.project_client.close()
 
 
-class _FoundryAgentChatClient(  # type: ignore[misc]
+class _FoundryAgentChatClient(
     FunctionInvocationLayer[FoundryAgentOptionsT],
     ChatMiddlewareLayer[FoundryAgentOptionsT],
     ChatTelemetryLayer[FoundryAgentOptionsT],
@@ -591,7 +589,7 @@ class _FoundryAgentChatClient(  # type: ignore[misc]
         )
 
 
-class RawFoundryAgent(  # type: ignore[misc]
+class RawFoundryAgent(
     RawAgent[FoundryAgentOptionsT],
 ):
     """Raw Microsoft Foundry Agent without agent-level middleware or telemetry.
@@ -710,7 +708,7 @@ class RawFoundryAgent(  # type: ignore[misc]
             id=id,
             name=name or agent_name,
             description=description,
-            tools=tools,  # type: ignore[arg-type]
+            tools=tools,
             default_options=cast(FoundryAgentOptionsT | None, default_options),
             context_providers=context_providers,
             middleware=middleware,
@@ -747,7 +745,7 @@ class RawFoundryAgent(  # type: ignore[misc]
         if version := await self.client.get_agent_version():
             from azure.ai.projects.models import VersionRefIndicator
 
-            create_session_kwargs["version_indicator"] = VersionRefIndicator(agent_version=version)  # type: ignore
+            create_session_kwargs["version_indicator"] = VersionRefIndicator(agent_version=version)
 
         service_session = await self.client.project_client.beta.agents.create_session(**create_session_kwargs)
         agent_session_id = getattr(service_session, "agent_session_id", None)
@@ -755,6 +753,24 @@ class RawFoundryAgent(  # type: ignore[misc]
             raise ValueError("Hosted Foundry session creation did not return a non-empty agent_session_id.")
 
         return agent_session_id
+
+    async def create_conversation(self, *, session_id: str | None = None) -> AgentSession:
+        """Create a project-level Foundry conversation session.
+
+        This creates a server-side conversation through the Foundry project's OpenAI
+        client and returns an ``AgentSession`` configured to continue that
+        conversation.
+
+        Keyword Args:
+            session_id: Optional local session ID (generated if not provided).
+
+        Returns:
+            A new ``AgentSession`` whose ``service_session_id`` is the created
+            Foundry conversation ID.
+        """
+        client = cast(RawFoundryAgentChatClient, self.client)
+        conversation = await client.project_client.get_openai_client().conversations.create()
+        return self.get_session(service_session_id=conversation.id, session_id=session_id)
 
     @override
     async def _prepare_run_context(

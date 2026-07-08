@@ -654,7 +654,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
             try:
                 poller = await self._client.begin_analyze(  # type: ignore[call-overload, reportUnknownVariableType]
                     token_info["analyzer_id"],
-                    continuation_token=token_info["continuation_token"],  # pyright: ignore[reportCallIssue]
+                    continuation_token=token_info["continuation_token"],
                 )
                 # Use wait_for to avoid blocking before_run indefinitely.
                 # poller.done() always returns False for resumed pollers (stale
@@ -671,7 +671,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     result: AnalysisResult = await asyncio.wait_for(
                         poller.result(),  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
                         timeout=resolution_timeout,
-                    )  # pyright: ignore[reportUnknownVariableType]
+                    )
                 except asyncio.TimeoutError:
                     # Still running — update token and keep for next turn
                     new_token: str = poller.continuation_token()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
@@ -680,7 +680,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     continue
 
                 completed_keys.append(doc_key)
-                rendered = self._render_for_llm(result, entry["filename"])  # pyright: ignore[reportUnknownArgumentType]
+                rendered = self._render_for_llm(result, entry["filename"])
                 entry["status"] = DocumentStatus.READY
                 entry["analyzed_at"] = datetime.now(tz=timezone.utc).isoformat()
                 entry["result"] = rendered

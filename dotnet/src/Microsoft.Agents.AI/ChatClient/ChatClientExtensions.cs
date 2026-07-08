@@ -94,6 +94,12 @@ public static class ChatClientExtensions
             chatBuilder.Use(innerClient => new PerServiceCallChatHistoryPersistingChatClient(innerClient));
         }
 
+        // DeferredOpenTelemetryChatClient is registered last so it sits as the innermost decorator, directly
+        // above the leaf client and below FunctionInvokingChatClient. It is inert until an OpenTelemetryAgent
+        // activates it. Placing OpenTelemetry below FICC ensures the chat span closes before tools are invoked,
+        // so FICC emits execute_tool spans on the agent source.
+        chatBuilder.Use(innerClient => new DeferredOpenTelemetryChatClient(innerClient));
+
         var agentChatClient = chatBuilder.Build(services);
 
         if (options?.ChatOptions?.Tools is { Count: > 0 })

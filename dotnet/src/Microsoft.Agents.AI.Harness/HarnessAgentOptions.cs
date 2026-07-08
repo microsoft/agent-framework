@@ -183,20 +183,22 @@ public sealed class HarnessAgentOptions
     public int? MaximumIterationsPerRequest { get; set; }
 
     /// <summary>
-    /// Gets or sets a value indicating whether the <see cref="ToolApprovalAgent"/> wrapper is disabled.
+    /// Gets or sets a value indicating whether the <see cref="ToolApprovalAgent"/> auto-approval middleware is disabled.
     /// </summary>
     /// <remarks>
-    /// When <see langword="false"/> (the default), the agent is wrapped with tool approval middleware
-    /// that supports "don't ask again" auto-approval rules.
+    /// This disables the tool auto-approval functionality only, keeping the tool approval flow requiring approval (for example,
+    /// <see cref="ApprovalRequiredAIFunction"/> tools). This setting controls whether the agent is wrapped with the
+    /// <see cref="ToolApprovalAgent"/> middleware that supports "don't ask again" and auto-approval rules.
+    /// When <see langword="false"/> (the default), the middleware is added.
     /// </remarks>
-    public bool DisableToolApproval { get; set; }
+    public bool DisableToolAutoApproval { get; set; }
 
     /// <summary>
     /// Gets or sets the options for the <see cref="ToolApprovalAgent"/> middleware.
     /// </summary>
     /// <remarks>
     /// When <see langword="null"/>, the <see cref="ToolApprovalAgent"/> uses default settings.
-    /// This property has no effect when <see cref="DisableToolApproval"/> is <see langword="true"/>.
+    /// This property has no effect when <see cref="DisableToolAutoApproval"/> is <see langword="true"/>.
     /// </remarks>
     public ToolApprovalAgentOptions? ToolApprovalAgentOptions { get; set; }
 
@@ -368,6 +370,45 @@ public sealed class HarnessAgentOptions
     /// When <see langword="null"/> (the default), no shell features are enabled.
     /// </remarks>
     public ShellExecutor? ShellExecutor { get; set; }
+
+    /// <summary>
+    /// Gets or sets the name of the shell execution tool exposed to the model.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="null"/> (the default), the shell executor's default tool name (<c>run_shell</c>) is used.
+    /// This property is ignored when <see cref="ShellExecutor"/> is <see langword="null"/>.
+    /// </remarks>
+    public string? ShellToolName { get; set; }
+
+    /// <summary>
+    /// Gets or sets the description of the shell execution tool shown to the model.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="null"/> (the default), the shell executor's built-in description is used.
+    /// This property is ignored when <see cref="ShellExecutor"/> is <see langword="null"/>.
+    /// </remarks>
+    public string? ShellToolDescription { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether approval is disabled for the shell execution tool.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When <see langword="false"/> (the default), the shell tool is wrapped in an <see cref="ApprovalRequiredAIFunction"/>
+    /// so every command requires explicit approval before executing. When <see langword="true"/>, the tool can be invoked
+    /// without approval. This property is ignored when <see cref="ShellExecutor"/> is <see langword="null"/>.
+    /// </para>
+    /// <para>
+    /// Setting this to <see langword="true"/> also requires the underlying <see cref="ShellExecutor"/> to permit
+    /// unapproved use. The inverse of this value is forwarded as the <c>requireApproval</c> argument to
+    /// <see cref="ShellExecutor.AsAIFunction"/>, and some executors enforce their own security boundary:
+    /// <see cref="LocalShellExecutor"/> throws an <see cref="System.InvalidOperationException"/> unless it was
+    /// constructed with <see cref="LocalShellExecutorOptions.AcknowledgeUnsafe"/> set to <see langword="true"/>,
+    /// because running unapproved commands directly on the host is inherently unsafe. Sandboxed executors such as
+    /// <see cref="DockerShellExecutor"/> impose no such requirement.
+    /// </para>
+    /// </remarks>
+    public bool DisableShellToolApproval { get; set; }
 
     /// <summary>
     /// Gets or sets optional configuration for the <see cref="ShellEnvironmentProvider"/>.

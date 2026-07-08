@@ -156,18 +156,20 @@ async def main() -> None:
 
     # Use the provider's before_run/after_run API to store and retrieve messages.
     # In practice, the agent handles this automatically; this shows the low-level API.
-    from agent_framework import AgentSession, SessionContext
+    from typing import cast
+
+    from agent_framework import AgentSession, SessionContext, SupportsAgentRun
 
     session = AgentSession(session_id="runA")
     context = SessionContext(input_messages=messages)
     state = session.state
 
     # Store messages via after_run
-    await provider.after_run(agent=None, session=session, context=context, state=state)
+    await provider.after_run(agent=cast(SupportsAgentRun, None), session=session, context=context, state=state)
 
     # Retrieve relevant memories via before_run
     query_context = SessionContext(input_messages=[Message("system", ["B: Assistant Message"])])
-    await provider.before_run(agent=None, session=session, context=query_context, state=state)
+    await provider.before_run(agent=cast(SupportsAgentRun, None), session=session, context=query_context, state=state)
 
     # Inspect retrieved memories that would be injected into instructions
     # (Debug-only output so you can verify retrieval works as expected.)

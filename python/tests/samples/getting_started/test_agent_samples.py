@@ -7,142 +7,142 @@ from typing import Any
 
 import pytest
 from pytest import MonkeyPatch, mark, param
-from samples.getting_started.agents.azure_ai.azure_ai_basic import (
+from samples.getting_started.agents.azure_ai.azure_ai_basic import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_ai_basic,
 )
-from samples.getting_started.agents.azure_ai.azure_ai_with_code_interpreter import (
+from samples.getting_started.agents.azure_ai.azure_ai_with_code_interpreter import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_ai_with_code_interpreter,
 )
-from samples.getting_started.agents.azure_ai.azure_ai_with_existing_agent import (
+from samples.getting_started.agents.azure_ai.azure_ai_with_existing_agent import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_ai_with_existing_agent,
 )
-from samples.getting_started.agents.azure_ai.azure_ai_with_explicit_settings import (
+from samples.getting_started.agents.azure_ai.azure_ai_with_explicit_settings import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_ai_with_explicit_settings,
 )
-from samples.getting_started.agents.azure_ai.azure_ai_with_function_tools import (
+from samples.getting_started.agents.azure_ai.azure_ai_with_function_tools import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     mixed_tools_example as azure_ai_with_function_tools_mixed,
 )
-from samples.getting_started.agents.azure_ai.azure_ai_with_function_tools import (
+from samples.getting_started.agents.azure_ai.azure_ai_with_function_tools import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     tools_on_agent_level as azure_ai_with_function_tools_agent,
 )
-from samples.getting_started.agents.azure_ai.azure_ai_with_function_tools import (
+from samples.getting_started.agents.azure_ai.azure_ai_with_function_tools import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     tools_on_run_level as azure_ai_with_function_tools_run,
 )
-from samples.getting_started.agents.azure_ai.azure_ai_with_local_mcp import (
+from samples.getting_started.agents.azure_ai.azure_ai_with_local_mcp import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_ai_with_local_mcp,
 )
-from samples.getting_started.agents.azure_ai.azure_ai_with_thread import (
+from samples.getting_started.agents.azure_ai.azure_ai_with_thread import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_ai_with_thread,
 )
-from samples.getting_started.agents.azure_openai.azure_assistants_basic import (
+from samples.getting_started.agents.azure_openai.azure_assistants_basic import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_assistants_basic,
 )
-from samples.getting_started.agents.azure_openai.azure_assistants_with_code_interpreter import (
+from samples.getting_started.agents.azure_openai.azure_assistants_with_code_interpreter import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_assistants_with_code_interpreter,
 )
-from samples.getting_started.agents.azure_openai.azure_assistants_with_existing_assistant import (
+from samples.getting_started.agents.azure_openai.azure_assistants_with_existing_assistant import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_assistants_with_existing_assistant,
 )
-from samples.getting_started.agents.azure_openai.azure_assistants_with_explicit_settings import (
+from samples.getting_started.agents.azure_openai.azure_assistants_with_explicit_settings import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_assistants_with_explicit_settings,
 )
-from samples.getting_started.agents.azure_openai.azure_assistants_with_function_tools import (
+from samples.getting_started.agents.azure_openai.azure_assistants_with_function_tools import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_assistants_with_function_tools,
 )
-from samples.getting_started.agents.azure_openai.azure_assistants_with_thread import (
+from samples.getting_started.agents.azure_openai.azure_assistants_with_thread import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_assistants_with_thread,
 )
-from samples.getting_started.agents.azure_openai.azure_chat_client_basic import (
+from samples.getting_started.agents.azure_openai.azure_chat_client_basic import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_chat_client_basic,
 )
-from samples.getting_started.agents.azure_openai.azure_chat_client_with_explicit_settings import (
+from samples.getting_started.agents.azure_openai.azure_chat_client_with_explicit_settings import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_chat_client_with_explicit_settings,
 )
-from samples.getting_started.agents.azure_openai.azure_chat_client_with_function_tools import (
+from samples.getting_started.agents.azure_openai.azure_chat_client_with_function_tools import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_chat_client_with_function_tools,
 )
-from samples.getting_started.agents.azure_openai.azure_chat_client_with_thread import (
+from samples.getting_started.agents.azure_openai.azure_chat_client_with_thread import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_chat_client_with_thread,
 )
-from samples.getting_started.agents.azure_openai.azure_responses_client_basic import (
+from samples.getting_started.agents.azure_openai.azure_responses_client_basic import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_responses_client_basic,
 )
-from samples.getting_started.agents.azure_openai.azure_responses_client_with_code_interpreter import (
+from samples.getting_started.agents.azure_openai.azure_responses_client_with_code_interpreter import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_responses_client_with_code_interpreter,
 )
-from samples.getting_started.agents.azure_openai.azure_responses_client_with_explicit_settings import (
+from samples.getting_started.agents.azure_openai.azure_responses_client_with_explicit_settings import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_responses_client_with_explicit_settings,
 )
-from samples.getting_started.agents.azure_openai.azure_responses_client_with_function_tools import (
+from samples.getting_started.agents.azure_openai.azure_responses_client_with_function_tools import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_responses_client_with_function_tools,
 )
-from samples.getting_started.agents.azure_openai.azure_responses_client_with_thread import (
+from samples.getting_started.agents.azure_openai.azure_responses_client_with_thread import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_responses_client_with_thread,
 )
-from samples.getting_started.agents.openai.openai_assistants_basic import (
+from samples.getting_started.agents.openai.openai_assistants_basic import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_assistants_basic,
 )
-from samples.getting_started.agents.openai.openai_assistants_with_code_interpreter import (
+from samples.getting_started.agents.openai.openai_assistants_with_code_interpreter import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_assistants_with_code_interpreter,
 )
-from samples.getting_started.agents.openai.openai_assistants_with_existing_assistant import (
+from samples.getting_started.agents.openai.openai_assistants_with_existing_assistant import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_assistants_with_existing_assistant,
 )
-from samples.getting_started.agents.openai.openai_assistants_with_explicit_settings import (
+from samples.getting_started.agents.openai.openai_assistants_with_explicit_settings import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_assistants_with_explicit_settings,
 )
-from samples.getting_started.agents.openai.openai_assistants_with_file_search import (
+from samples.getting_started.agents.openai.openai_assistants_with_file_search import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_assistants_with_file_search,
 )
-from samples.getting_started.agents.openai.openai_assistants_with_function_tools import (
+from samples.getting_started.agents.openai.openai_assistants_with_function_tools import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_assistants_with_function_tools,
 )
-from samples.getting_started.agents.openai.openai_assistants_with_thread import (
+from samples.getting_started.agents.openai.openai_assistants_with_thread import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_assistants_with_thread,
 )
-from samples.getting_started.agents.openai.openai_chat_client_basic import (
+from samples.getting_started.agents.openai.openai_chat_client_basic import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_chat_client_basic,
 )
-from samples.getting_started.agents.openai.openai_chat_client_with_explicit_settings import (
+from samples.getting_started.agents.openai.openai_chat_client_with_explicit_settings import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_chat_client_with_explicit_settings,
 )
-from samples.getting_started.agents.openai.openai_chat_client_with_function_tools import (
+from samples.getting_started.agents.openai.openai_chat_client_with_function_tools import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_chat_client_with_function_tools,
 )
-from samples.getting_started.agents.openai.openai_chat_client_with_local_mcp import (
+from samples.getting_started.agents.openai.openai_chat_client_with_local_mcp import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_chat_client_with_local_mcp,
 )
-from samples.getting_started.agents.openai.openai_chat_client_with_thread import (
+from samples.getting_started.agents.openai.openai_chat_client_with_thread import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_chat_client_with_thread,
 )
-from samples.getting_started.agents.openai.openai_chat_client_with_web_search import (
+from samples.getting_started.agents.openai.openai_chat_client_with_web_search import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_chat_client_with_web_search,
 )
-from samples.getting_started.agents.openai.openai_responses_client_basic import (
+from samples.getting_started.agents.openai.openai_responses_client_basic import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_responses_client_basic,
 )
-from samples.getting_started.agents.openai.openai_responses_client_reasoning import (
+from samples.getting_started.agents.openai.openai_responses_client_reasoning import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_responses_client_reasoning,
 )
-from samples.getting_started.agents.openai.openai_responses_client_with_code_interpreter import (
+from samples.getting_started.agents.openai.openai_responses_client_with_code_interpreter import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_responses_client_with_code_interpreter,
 )
-from samples.getting_started.agents.openai.openai_responses_client_with_explicit_settings import (
+from samples.getting_started.agents.openai.openai_responses_client_with_explicit_settings import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_responses_client_with_explicit_settings,
 )
-from samples.getting_started.agents.openai.openai_responses_client_with_file_search import (
+from samples.getting_started.agents.openai.openai_responses_client_with_file_search import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_responses_client_with_file_search,
 )
-from samples.getting_started.agents.openai.openai_responses_client_with_function_tools import (
+from samples.getting_started.agents.openai.openai_responses_client_with_function_tools import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_responses_client_with_function_tools,
 )
-from samples.getting_started.agents.openai.openai_responses_client_with_local_mcp import (
+from samples.getting_started.agents.openai.openai_responses_client_with_local_mcp import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_responses_client_with_local_mcp,
 )
-from samples.getting_started.agents.openai.openai_responses_client_with_thread import (
+from samples.getting_started.agents.openai.openai_responses_client_with_thread import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_responses_client_with_thread,
 )
-from samples.getting_started.agents.openai.openai_responses_client_with_web_search import (
+from samples.getting_started.agents.openai.openai_responses_client_with_web_search import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_responses_client_with_web_search,
 )
 
@@ -591,4 +591,4 @@ async def test_agent_samples(sample: Callable[..., Awaitable[Any]], responses: l
         return responses.pop(0) if responses else "exit"
 
     monkeypatch.setattr("builtins.input", mock_input)
-    await sample
+    await sample()

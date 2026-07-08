@@ -38,15 +38,21 @@ internal sealed class ResponsesHttpHandler
         ResponseError? validationError = await this._responsesService.ValidateRequestAsync(request, cancellationToken).ConfigureAwait(false);
         if (validationError is not null)
         {
-            return Results.BadRequest(new ErrorResponse
+            var (statusCode, wireCode) = ResponseErrorCodes.MapValidationError(validationError.Code);
+            var errorResponse = new ErrorResponse
             {
                 Error = new ErrorDetails
                 {
                     Message = validationError.Message,
                     Type = "invalid_request_error",
-                    Code = validationError.Code
+                    Code = wireCode
                 }
-            });
+            };
+
+            // Not-found codes become a 404; other validation failures are 400 bad requests.
+            return statusCode == StatusCodes.Status404NotFound
+                ? Results.NotFound(errorResponse)
+                : Results.BadRequest(errorResponse);
         }
 
         try

@@ -92,9 +92,6 @@ jobs:
       - name: Run lab type checking
         run: cd packages/lab && uv run poe pyright
 
-      - name: Run lab mypy
-        run: cd packages/lab && uv run poe mypy
-
       # Surface failing tests
       - name: Surface failing tests
         if: always()

@@ -30,6 +30,7 @@ from agent_framework import (
     Message,
     RawAgent,
     ResponseStream,
+    ServiceSessionId,
     SupportsAgentRun,
     WorkflowAgent,
     WorkflowBuilder,
@@ -187,7 +188,24 @@ class TestResponsesHostServerInit:
         assert server is not None
 
     def test_init_rejects_history_provider_with_load_messages(self) -> None:
-        hp = HistoryProvider(source_id="test", load_messages=True)
+
+        class _LoadMessagesHistoryProvider(HistoryProvider):
+            async def get_messages(
+                self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
+            ) -> list[Message]:
+                return []
+
+            async def save_messages(
+                self,
+                session_id: str | None,
+                messages: Sequence[Message],
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> None:
+                pass
+
+        hp = _LoadMessagesHistoryProvider(source_id="test", load_messages=True)
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
@@ -477,7 +495,7 @@ class TestStreaming:
         agent = _make_agent(
             stream_updates=[
                 AgentResponseUpdate(
-                    contents=[Content.from_function_call("call_1", "handoff_to_refund", arguments=request)],
+                    contents=[Content.from_function_call("call_1", "handoff_to_refund", arguments=request.__dict__)],
                     role="assistant",
                 ),
             ]
@@ -778,7 +796,7 @@ class TestOutputItemToMessage:
         from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
 
         item = FunctionCallOutputItemParam({"type": "function_call_output", "call_id": "call_1", "output": "sunny"})
-        msg = await _output_item_to_message(item)  # type: ignore[arg-type]
+        msg = await _output_item_to_message(item)  # type: ignore[arg-type] # ty: ignore[invalid-argument-type]
         assert msg.role == "tool"
         assert msg.contents[0].type == "function_result"
         assert msg.contents[0].call_id == "call_1"
@@ -2592,7 +2610,9 @@ class TestFunctionApprovalStorage:
         assert loaded.type == "function_approval_request"
         assert loaded.id == "apr_1"  # type: ignore[attr-defined]
         # The embedded function_call survives the round trip.
-        assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined]
+        function_call = loaded.function_call
+        assert function_call is not None
+        assert function_call.name == "delete_file"
 
     async def test_file_based_duplicate_save_raises(self, tmp_path: Any) -> None:
         path = tmp_path / "approvals.json"
@@ -2632,7 +2652,9 @@ class TestFunctionApprovalConversion:
         assert c.type == "function_approval_request"
         assert c.id == "apr-1"  # type: ignore[attr-defined]
         # The full saved Content (incl. function_call) is restored.
-        assert c.function_call.name == "delete_file"  # type: ignore[attr-defined]
+        function_call = c.function_call
+        assert function_call is not None
+        assert function_call.name == "delete_file"
 
     async def test_output_item_mcp_approval_request_without_storage_raises(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalRequest
@@ -2666,7 +2688,9 @@ class TestFunctionApprovalConversion:
         assert c.type == "function_approval_response"
         assert c.approved is True  # type: ignore[attr-defined]
         assert c.id == "apr-1"  # type: ignore[attr-defined]
-        assert c.function_call.name == "delete_file"  # type: ignore[attr-defined]
+        function_call = c.function_call
+        assert function_call is not None
+        assert function_call.name == "delete_file"
 
     async def test_output_item_mcp_approval_response_without_storage_raises(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalResponseResource
@@ -2750,7 +2774,7 @@ class TestFunctionApprovalRoundTrip:
             approval_request_id
         )
         assert loaded.type == "function_approval_request"
-        assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined]
+        assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
 
     async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
         request_content = _make_function_approval_request_content(request_id="apr_streaming")
@@ -2769,7 +2793,7 @@ class TestFunctionApprovalRoundTrip:
         for e in events:
             if e["event"] != "response.output_item.added":
                 continue
-            item = e["data"].get("item") or {}
+            item: dict[str, Any] = e["data"].get("item") or {}
             if item.get("type") == "mcp_approval_request":
                 approval_request_id = item.get("id")
                 break
@@ -2897,7 +2921,7 @@ class TestFunctionApprovalRoundTrip:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "failed"
-        error = body.get("error") or {}
+        error: dict[str, Any] = body.get("error") or {}
         assert "apr_unknown" in (error.get("message") or "")
 
 
@@ -2919,7 +2943,7 @@ class TestCheckpointContextPathValidation:
     """
 
     @staticmethod
-    def _helper() -> Callable[[str, str], FileCheckpointStorage]:
+    def _helper() -> Callable[..., FileCheckpointStorage]:
         from agent_framework_foundry_hosting._responses import (  # pyright: ignore[reportPrivateUsage]
             _checkpoint_storage_for_context,
         )
@@ -3111,7 +3135,7 @@ class TestCheckpointContextPathValidation:
     def test_non_string_context_id_is_rejected(self, tmp_path: Any) -> None:
         helper = self._helper()
         with pytest.raises(RuntimeError):
-            helper(str(tmp_path), None)  # type: ignore[arg-type]
+            helper(str(tmp_path), None)
 
     def test_url_encoded_traversal_is_treated_as_literal_segment(self, tmp_path: Any) -> None:
         """URL-encoded traversal should not decode to traversal at the filesystem layer.
@@ -3125,6 +3149,59 @@ class TestCheckpointContextPathValidation:
         storage = helper(str(root), "%2e%2e")
         assert storage.storage_path.parent == root.resolve()
         assert storage.storage_path.name == "%2e%2e"
+
+    def test_user_id_scopes_storage_under_user_partition(self, tmp_path: Any) -> None:
+        """A per-user partition key nests the context dir under ``<root>/<user_id>``."""
+        helper = self._helper()
+        root = tmp_path / "root"
+        root.mkdir()
+        storage = helper(str(root), "resp_abc123", user_id="user-A")
+        assert storage.storage_path.is_dir()
+        assert storage.storage_path == (root / "user-A" / "resp_abc123").resolve()
+
+    @pytest.mark.parametrize("absent_user_id", [None, ""])
+    def test_absent_user_id_uses_unscoped_layout(self, tmp_path: Any, absent_user_id: str | None) -> None:
+        """``None``/empty user id (local dev or protocol v1) falls back to the unscoped layout."""
+        helper = self._helper()
+        root = tmp_path / "root"
+        root.mkdir()
+        storage = helper(str(root), "resp_abc123", user_id=absent_user_id)
+        assert storage.storage_path == (root / "resp_abc123").resolve()
+
+    def test_distinct_users_get_isolated_storage(self, tmp_path: Any) -> None:
+        """Two users sharing a context id must not resolve to the same directory."""
+        helper = self._helper()
+        root = tmp_path / "root"
+        root.mkdir()
+        a = helper(str(root), "shared_context", user_id="user-A")
+        b = helper(str(root), "shared_context", user_id="user-B")
+        assert a.storage_path != b.storage_path
+        assert a.storage_path.is_relative_to((root / "user-A").resolve())
+        assert b.storage_path.is_relative_to((root / "user-B").resolve())
+
+    @pytest.mark.parametrize(
+        "bad_user_id",
+        [
+            "../../escape",
+            "..",
+            ".",
+            "/tmp/escape",
+            "C:\\temp\\escape",
+            "user/../../escape",
+            "with\x00null",
+            "a/b",
+        ],
+    )
+    def test_malicious_user_id_is_rejected(self, tmp_path: Any, bad_user_id: str) -> None:
+        helper = self._helper()
+        root = tmp_path / "root"
+        root.mkdir()
+        before = sorted(p.name for p in tmp_path.iterdir())
+        with pytest.raises(RuntimeError):
+            helper(str(root), "resp_abc123", user_id=bad_user_id)
+        after = sorted(p.name for p in tmp_path.iterdir())
+        assert before == after, f"Unexpected filesystem artifacts created for user id {bad_user_id!r}"
+        assert list(root.iterdir()) == []
 
     @pytest.mark.parametrize(
         "context_field,bad_id",
@@ -3206,7 +3283,7 @@ class TestCheckpointContextPathValidation:
         response_obj = getattr(failed[0], "response", None)
         error = getattr(response_obj, "error", None) if response_obj is not None else None
         assert error is not None
-        assert "Invalid checkpoint context id" in (error.message or "")
+        assert "Invalid context id" in (error.message or "")
         assert before == after, f"Unexpected filesystem artifacts created for {context_field}={bad_id!r}"
         assert list(root.iterdir()) == [], f"Checkpoint dir created inside root for {context_field}={bad_id!r}"
 
@@ -3291,6 +3368,59 @@ class TestCheckpointContextPathValidation:
             f"before={before} after={after}"
         )
         assert list(root.iterdir()) == [], f"Checkpoint directory created inside root for {context_field}={bad_id!r}"
+
+
+class TestApprovalStoragePathValidation:
+    """Path-traversal and per-user scoping tests for function approval storage.
+
+    Mirrors the checkpoint validation: the per-user approval directory is
+    derived by joining the platform-injected ``x-agent-user-id`` partition key
+    under the base approval directory, and the user id must be a single safe
+    path segment (CWE-22).
+    """
+
+    @staticmethod
+    def _helper() -> Callable[..., str]:
+        from agent_framework_foundry_hosting._responses import (  # pyright: ignore[reportPrivateUsage]
+            _approval_storage_path_for_user,
+        )
+
+        return _approval_storage_path_for_user
+
+    def test_user_id_scopes_path_under_base_directory(self, tmp_path: Any) -> None:
+        from pathlib import Path
+
+        helper = self._helper()
+        base = tmp_path / "approvals" / "requests.json"
+        scoped = Path(helper(str(base), "user-A"))
+        assert scoped.name == "requests.json"
+        assert scoped.parent.name == "user-A"
+        assert scoped.parent.parent == (tmp_path / "approvals").resolve()
+
+    def test_distinct_users_get_isolated_paths(self, tmp_path: Any) -> None:
+        helper = self._helper()
+        base = tmp_path / "approvals" / "requests.json"
+        assert helper(str(base), "user-A") != helper(str(base), "user-B")
+
+    @pytest.mark.parametrize(
+        "bad_user_id",
+        [
+            "../../escape",
+            "..",
+            ".",
+            "/tmp/escape",
+            "C:\\temp\\escape",
+            "user/../../escape",
+            "with\x00null",
+            "a/b",
+            "",
+        ],
+    )
+    def test_malicious_user_id_is_rejected(self, tmp_path: Any, bad_user_id: str) -> None:
+        helper = self._helper()
+        base = tmp_path / "approvals" / "requests.json"
+        with pytest.raises(RuntimeError):
+            helper(str(base), bad_user_id)
 
 
 # region Agent lifecycle (lazy entry & OAuth consent surfacing)
@@ -3477,7 +3607,7 @@ class TestOAuthConsentSurfacing:
         body = resp.json()
         assert body["status"] == "failed"
         assert not any(it["type"] == "oauth_consent_request" for it in body.get("output", []))
-        error = body.get("error") or {}
+        error: dict[str, Any] = body.get("error") or {}
         assert error.get("message") == "boom"
         agent.run.assert_not_called()
 
@@ -3535,7 +3665,7 @@ class TestResponseFailedSurfacing:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "failed"
-        error = body.get("error") or {}
+        error: dict[str, Any] = body.get("error") or {}
         assert error.get("message") == "non-stream kaboom"
 
     async def test_streaming_run_failure_emits_response_failed(self) -> None:
@@ -3570,8 +3700,8 @@ class TestResponseFailedSurfacing:
 
         failed = [e for e in events if e["event"] == "response.failed"]
         assert len(failed) == 1
-        response_payload = failed[0]["data"].get("response") or {}
-        error = response_payload.get("error") or {}
+        response_payload: dict[str, Any] = failed[0]["data"].get("response") or {}
+        error: dict[str, Any] = response_payload.get("error") or {}
         assert error.get("message") == "stream kaboom"
 
     async def test_streaming_run_failure_drains_pending_output_item(self) -> None:
@@ -3626,7 +3756,7 @@ class TestResponseFailedSurfacing:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "failed"
-        error = body.get("error") or {}
+        error: dict[str, Any] = body.get("error") or {}
         assert error.get("message") == "workflow kaboom"
 
 
@@ -3669,7 +3799,7 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
     def create_session(self, **kwargs: Any) -> AgentSession:
         return AgentSession()
 
-    def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+    def get_session(self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
         return AgentSession()
 
     def _next_request_id(self) -> str:
@@ -3803,7 +3933,9 @@ def _build_text_workflow_agent(text: str) -> WorkflowAgent:
         def create_session(self, **kwargs: Any) -> AgentSession:
             return AgentSession()
 
-        def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+        def get_session(
+            self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None
+        ) -> AgentSession:
             return AgentSession()
 
         @overload
@@ -3949,7 +4081,7 @@ class TestWorkflowAgentHosting:
             approval_request_id
         )
         assert loaded.type == "function_approval_request"
-        assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined]
+        assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
         assert mock_agent.run_count == 1
 
     async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
@@ -3968,7 +4100,7 @@ class TestWorkflowAgentHosting:
         for e in events:
             if e["event"] != "response.output_item.added":
                 continue
-            item = e["data"].get("item") or {}
+            item: dict[str, Any] = e["data"].get("item") or {}
             if item.get("type") == "mcp_approval_request":
                 approval_request_id = item.get("id")
                 break

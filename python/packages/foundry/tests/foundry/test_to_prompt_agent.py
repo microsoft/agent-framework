@@ -192,7 +192,7 @@ def test_to_prompt_agent_does_not_mutate_default_options() -> None:
 def test_to_prompt_agent_passes_through_sdk_tool_instances() -> None:
     """Foundry SDK tool instances (e.g. WebSearchTool) are passed through unchanged."""
     ws = WebSearchTool()
-    ci = CodeInterpreterTool(container={"type": "auto"})
+    ci = CodeInterpreterTool({"container": {"type": "auto"}})
     agent = _make_agent(_make_foundry_chat_client(), instructions="x", tools=[ws, ci])
 
     definition = to_prompt_agent(agent)
@@ -616,7 +616,7 @@ def test_to_prompt_agent_forwards_structured_inputs_kwarg() -> None:
 
 def test_to_prompt_agent_forwards_rai_config_kwarg() -> None:
     """A ``RaiConfig`` kwarg is forwarded to the definition."""
-    rai_config = RaiConfig()
+    rai_config = RaiConfig(rai_policy_name="test-policy")
     agent = _make_agent(_make_foundry_chat_client(), instructions="x")
 
     definition = to_prompt_agent(agent, rai_config=rai_config)
@@ -631,7 +631,7 @@ def test_to_prompt_agent_forwards_rai_config_kwarg() -> None:
 
 def test_to_prompt_agent_combines_all_sources() -> None:
     """Generation params from default_options + Foundry-only kwargs combine cleanly."""
-    rai_config = RaiConfig()
+    rai_config = RaiConfig(rai_policy_name="test-policy")
     structured = {"q": StructuredInputDefinition(description="query")}
     agent = _make_agent(
         _make_foundry_chat_client(),

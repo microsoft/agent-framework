@@ -26,4 +26,5 @@ dotnet run --project .\Evaluation_Multimodal
 
 - [Evaluation_SimpleEval](../Evaluation_SimpleEval/) — Simplest evaluation with built-in checks and `agent.EvaluateAsync()`
 - [Evaluation_FoundryQuality](../../../05-end-to-end/Evaluation/Evaluation_FoundryQuality/) — Cloud-based quality evaluation with Foundry evaluators
+- [Evaluation_FoundryRubric](../../../05-end-to-end/Evaluation/Evaluation_FoundryRubric/) — Rubric (adaptive) evaluators with per-dimension scores
 - [Evaluation_ConversationSplits](../../../05-end-to-end/Evaluation/Evaluation_ConversationSplits/) — Multi-turn conversation split strategies

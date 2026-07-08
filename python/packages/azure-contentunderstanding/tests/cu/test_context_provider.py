@@ -6,7 +6,7 @@ import asyncio
 import base64
 import json
 import re
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 from agent_framework import Content, Message, SessionContext
@@ -1411,7 +1411,7 @@ class TestCloseCancel:
         await provider.close()
 
         # Client should be closed (no tasks to cancel — tokens are just strings)
-        provider._client.close.assert_called_once()
+        cast(Any, provider._client.close).assert_called_once()
 
 
 class TestSessionIsolation:

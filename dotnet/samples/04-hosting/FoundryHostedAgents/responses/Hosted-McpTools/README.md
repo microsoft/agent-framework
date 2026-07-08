@@ -19,7 +19,7 @@ A hosted agent demonstrating **two layers of MCP (Model Context Protocol) tool i
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- An Azure AI Foundry project with a deployed model (e.g., `gpt-4o`)
+- A Foundry project with a deployed model (e.g., `gpt-4o`)
 - Azure CLI logged in (`az login`)
 
 ## Configuration

@@ -15,7 +15,7 @@ from agent_framework import (
 from agent_framework import (
     FunctionTool as AFFunctionTool,
 )
-from agent_framework._feature_stage import (  # type: ignore[reportPrivateUsage]
+from agent_framework._feature_stage import (
     ExperimentalFeature,
     experimental,
 )
@@ -42,9 +42,9 @@ from ._models import (
 )
 
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 
 @experimental(feature_id=ExperimentalFeature.DECLARATIVE_AGENTS)
@@ -708,7 +708,7 @@ class AgentFactory:
         module = __import__(module_name, fromlist=[class_name])
         agent_class = getattr(module, class_name)
         setup_dict[mapping["model_field"]] = prompt_agent.model.id
-        return agent_class(**setup_dict)  # type: ignore[no-any-return]
+        return agent_class(**setup_dict)
 
     def _parse_chat_options(self, model: Model | None) -> dict[str, Any]:
         """Parse ModelOptions into chat options dictionary."""
@@ -753,7 +753,7 @@ class AgentFactory:
                     for binding in tool_resource.bindings:
                         if binding.name and (func := self.bindings.get(binding.name)):
                             break
-                return AFFunctionTool(  # type: ignore
+                return AFFunctionTool(
                     name=tool_resource.name,  # type: ignore
                     description=tool_resource.description,  # type: ignore
                     input_model=tool_resource.parameters.to_json_schema() if tool_resource.parameters else None,

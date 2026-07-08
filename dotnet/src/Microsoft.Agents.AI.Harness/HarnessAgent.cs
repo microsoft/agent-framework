@@ -57,7 +57,7 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// <strong>Agent decorators (each enabled by default, individually disableable):</strong>
 /// <list type="bullet">
-/// <item><description><see cref="ToolApprovalAgent"/> — "don't ask again" tool approval rules enabling safe unattended execution. Disable with <see cref="HarnessAgentOptions.DisableToolApproval"/>.</description></item>
+/// <item><description><see cref="ToolApprovalAgent"/> — "don't ask again" tool approval rules enabling safe unattended execution. Disable with <see cref="HarnessAgentOptions.DisableToolAutoApproval"/>.</description></item>
 /// <item><description><see cref="OpenTelemetryAgent"/> — OpenTelemetry instrumentation following semantic conventions for generative AI. Disable with <see cref="HarnessAgentOptions.DisableOpenTelemetry"/>.</description></item>
 /// <item><description><see cref="LoopAgent"/> — re-invokes the agent until the configured evaluators are satisfied. Applied as the outermost decorator (so each iteration is a complete agent run) and only when <see cref="HarnessAgentOptions.LoopEvaluators"/> supplies at least one evaluator; otherwise omitted.</description></item>
 /// </list>
@@ -155,7 +155,7 @@ public sealed class HarnessAgent : DelegatingAIAgent
             }
         }
 
-        if (options?.DisableToolApproval is not true)
+        if (options?.DisableToolAutoApproval is not true)
         {
             builder.UseToolApproval(options?.ToolApprovalAgentOptions);
         }
@@ -190,6 +190,11 @@ public sealed class HarnessAgent : DelegatingAIAgent
             }
         }
 
+        CompactionProvider? compactionProvider = compactionStrategy is not null
+            ? new CompactionProvider(compactionStrategy, loggerFactory: loggerFactory)
+            : null;
+
+        // Build ChatHistoryProvider
         ChatHistoryProvider chatHistoryProvider = options?.ChatHistoryProvider
             ?? (compactionStrategy is not null
                 ? new InMemoryChatHistoryProvider(new InMemoryChatHistoryProviderOptions
@@ -198,6 +203,7 @@ public sealed class HarnessAgent : DelegatingAIAgent
                 })
                 : new InMemoryChatHistoryProvider());
 
+        // Build instructions
         string harnessInstructions = options?.HarnessInstructions ?? DefaultInstructions;
         string? agentInstructions = options?.ChatOptions?.Instructions;
 
@@ -209,14 +215,11 @@ public sealed class HarnessAgent : DelegatingAIAgent
             (false, false) => $"{harnessInstructions}\n\n{agentInstructions}",
         };
 
+        // Build Chat Options & context providers
         ChatOptions chatOptions = BuildChatOptions(options, instructions, options?.MaxOutputTokens);
-
-        CompactionProvider? compactionProvider = compactionStrategy is not null
-            ? new CompactionProvider(compactionStrategy, loggerFactory: loggerFactory)
-            : null;
-
         IEnumerable<AIContextProvider> contextProviders = BuildContextProviders(options, loggerFactory);
 
+        // Build ChatClient stack
         ChatClientBuilder chatClientBuilder = chatClient.AsBuilder();
 
         if (options?.DisableNonApprovalRequiredFunctionBypassing is not true)
@@ -224,7 +227,7 @@ public sealed class HarnessAgent : DelegatingAIAgent
             chatClientBuilder.UseNonApprovalRequiredFunctionBypassing();
         }
 
-        ChatClientBuilder pipeline = chatClientBuilder
+        chatClientBuilder = chatClientBuilder
             .UseFunctionInvocation(loggerFactory, configure: options?.MaximumIterationsPerRequest is int maxIterations
                 ? ficc => ficc.MaximumIterationsPerRequest = maxIterations
                 : null)
@@ -233,10 +236,16 @@ public sealed class HarnessAgent : DelegatingAIAgent
 
         if (compactionProvider is not null)
         {
-            pipeline = pipeline.UseAIContextProviders(compactionProvider);
+            chatClientBuilder = chatClientBuilder.UseAIContextProviders(compactionProvider);
         }
 
-        return pipeline
+        if (options?.DisableOpenTelemetry is not true)
+        {
+            chatClientBuilder = chatClientBuilder.UseOpenTelemetry(sourceName: options?.OpenTelemetrySourceName);
+        }
+
+        // Build Chat Client Agent
+        return chatClientBuilder
             .BuildAIAgent(new ChatClientAgentOptions
             {
                 Id = options?.Id,
@@ -274,7 +283,9 @@ public sealed class HarnessAgent : DelegatingAIAgent
         if (options?.ShellExecutor is ShellExecutor shellExecutor)
         {
             result.Tools ??= [];
-            result.Tools.Add(shellExecutor.AsAIFunction());
+            result.Tools.Add(options.ShellToolName is { } shellToolName
+                ? shellExecutor.AsAIFunction(shellToolName, options.ShellToolDescription, !options.DisableShellToolApproval)
+                : shellExecutor.AsAIFunction(description: options.ShellToolDescription, requireApproval: !options.DisableShellToolApproval));
         }
 #endif
 
