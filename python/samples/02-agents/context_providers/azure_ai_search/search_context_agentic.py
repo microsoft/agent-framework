@@ -82,9 +82,11 @@ async def main() -> None:
             credential=AzureCliCredential() if not search_key else None,
             mode="agentic",
             knowledge_base_name=knowledge_base_name,
-            # Optional: Configure retrieval behavior
-            knowledge_base_output_mode="extractive_data",  # or "answer_synthesis"
-            retrieval_reasoning_effort="minimal",  # or "medium", "low"
+            # Optional: Configure retrieval behavior. "answer_synthesis" output mode and
+            # "medium"/"low" reasoning effort require the preview build of azure-search-documents
+            # (`pip install --pre azure-search-documents`); the provider auto-detects the build.
+            knowledge_base_output_mode="extractive_data",  # or "answer_synthesis" (preview build only)
+            retrieval_reasoning_effort="minimal",  # or "medium", "low" (preview build only)
         )
     else:
         # Auto-create Knowledge Base from index
@@ -101,9 +103,11 @@ async def main() -> None:
             mode="agentic",
             azure_openai_resource_url=azure_openai_resource_url,
             model=model_deployment,
-            # Optional: Configure retrieval behavior
-            knowledge_base_output_mode="extractive_data",  # or "answer_synthesis"
-            retrieval_reasoning_effort="minimal",  # or "medium", "low"
+            # Optional: Configure retrieval behavior. "answer_synthesis" output mode and
+            # "medium"/"low" reasoning effort require the preview build of azure-search-documents
+            # (`pip install --pre azure-search-documents`); the provider auto-detects the build.
+            knowledge_base_output_mode="extractive_data",  # or "answer_synthesis" (preview build only)
+            retrieval_reasoning_effort="minimal",  # or "medium", "low" (preview build only)
             top_k=3,
         )
 

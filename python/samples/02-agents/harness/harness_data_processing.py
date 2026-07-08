@@ -13,25 +13,40 @@
 
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Harness Data Processing Assistant with Console UI.
+"""Harness Data Processing Assistant with Console UI and tool approvals.
 
-Demonstrates ``create_harness_agent`` configured with the default
-``FileAccessProvider`` to give an agent access to a folder of CSV data files.
-The agent can read, analyze, and extract information from the data, then write
-results back as new files via the ``file_access_*`` tools.
+Demonstrates ``create_harness_agent`` configured with a ``FileAccessProvider``
+to give an agent access to a folder of CSV data files. The agent can read,
+analyze, and extract information from the data, then write results back as new
+files via the ``file_access_*`` tools.
+
+This sample also demonstrates **tool approval**. The ``FileAccessProvider``
+registers all of its tools with ``approval_mode="always_require"``, so every
+file operation would normally prompt the host for approval. To keep read-only
+exploration frictionless while still guarding mutations, the agent is given the
+:meth:`FileAccessProvider.read_only_tools_auto_approval_rule` auto-approval
+rule. With this rule:
+
+- Read-only tools (read, list files, list subdirectories, search) are
+  auto-approved and run without prompting.
+- Write tools (save and delete) still require explicit approval, so you are
+  asked before the agent modifies the file store.
 
 The sample includes a pre-populated ``working/`` folder with sales transaction
-data. The ``file_access_store`` is set explicitly to that folder (resolved
-relative to this script) so it works regardless of the current working
-directory. Ask the agent to analyze the data, produce summaries, or create new
-output files. For example::
+data. The ``FileAccessProvider`` is pointed at that folder (resolved relative to
+this script) so it works regardless of the current working directory. Ask the
+agent to analyze the data, produce summaries, or create new output files. For
+example::
 
     Please process the sales.csv file by first filtering it to only North region
     sales, and then calculating the sum of sales by person. I'd like to write the
     results of the processing to north_region_totals.csv
 
-Unused harness features (file memory, todos, plan/execute mode, web search) are
-disabled to keep this a simple, conversational data-interaction sample.
+When the agent reads ``sales.csv`` it proceeds automatically, but when it tries
+to save ``north_region_totals.csv`` you are prompted to approve the write.
+
+Unused harness features (todos, plan/execute mode, web search) are disabled to
+keep this a simple, conversational data-interaction sample.
 
 Environment variables:
     FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint URL
@@ -44,7 +59,7 @@ Authentication:
 import asyncio
 from pathlib import Path
 
-from agent_framework import FileSystemAgentFileStore, create_harness_agent
+from agent_framework import FileAccessProvider, FileSystemAgentFileStore, create_harness_agent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from console import build_default_observers, run_agent_async
@@ -54,7 +69,7 @@ DATA_ANALYST_INSTRUCTIONS = """\
 You are a data analyst assistant. You have access to a folder of data files via the file_access_* tools.
 
 ## Getting started
-- Start by listing available files with file_access_list_files to see what data is available.
+- Start by listing available files with file_access_ls to see what data is available.
 - Read the files to understand their structure and contents.
 
 ## Working with data
@@ -63,7 +78,7 @@ You are a data analyst assistant. You have access to a folder of data files via 
 - When calculations are needed, work through them step by step and show your reasoning.
 
 ## Writing output
-- When asked to produce output files (e.g., reports, summaries, filtered data), use file_access_save_file to write them.
+- When asked to produce output files (e.g., reports, summaries, filtered data), use file_access_write to write them.
 - Use appropriate file formats: CSV for tabular data, Markdown for reports.
 - Confirm what you wrote and where.
 
@@ -91,9 +106,9 @@ async def main() -> None:
     # with your preferred authentication option.
     client = FoundryChatClient(credential=AzureCliCredential())
 
-    # Create a harness agent with data-analyst instructions. The FileAccessProvider
-    # is explicitly pointed at the sample's working/ folder so it works regardless
-    # of the current working directory. Unused features are disabled.
+    # Create a harness agent with data-analyst instructions. Unused features are
+    # disabled. The read_only_tools_auto_approval_rule auto-approves the
+    # FileAccessProvider's read-only tools, so only write operations prompt.
     agent = create_harness_agent(
         client=client,
         max_context_window_tokens=MAX_CONTEXT_WINDOW_TOKENS,
@@ -102,7 +117,7 @@ async def main() -> None:
         description="A data analyst assistant that reads, analyzes, and processes data files.",
         agent_instructions=DATA_ANALYST_INSTRUCTIONS,
         file_access_store=FileSystemAgentFileStore(working_dir),
-        disable_file_memory=True,
+        auto_approval_rules=[FileAccessProvider.read_only_tools_auto_approval_rule],
         disable_todo=True,
         disable_mode=True,
         disable_web_search=True,

@@ -7,20 +7,19 @@
 //
 // Required environment variables:
 //   FOUNDRY_PROJECT_ENDPOINT (hosted runtime) OR AZURE_AI_PROJECT_ENDPOINT (local-dev)
-//                                     - Azure AI Foundry project endpoint. The Foundry hosted
+//                                     - Foundry project endpoint. The Foundry hosted
 //                                       runtime auto-injects FOUNDRY_PROJECT_ENDPOINT; locally
 //                                       set AZURE_AI_PROJECT_ENDPOINT.
-//   FOUNDRY_MODEL                     - Model deployment name (default: gpt-4o)
 //
 // Optional:
-//   FOUNDRY_TOOLBOX_NAME              - Name of the toolbox to load (default: my-toolset)
-//   FOUNDRY_AGENT_TOOLSET_ENDPOINT    - Foundry Toolsets proxy base URL
-//                                       (injected automatically by Foundry platform at runtime)
-//   FOUNDRY_AGENT_NAME                - Client name reported to MCP server (auto-injected in hosted runtime)
-//   FOUNDRY_AGENT_VERSION             - Client version reported to MCP server (auto-injected in hosted runtime)
-//   FOUNDRY_AGENT_TOOLSET_FEATURES    - Additional Foundry-Features header flags (the mandatory
-//                                       Toolboxes=V1Preview flag is always sent; this env var
-//                                       appends additional flags if present).
+//   FOUNDRY_MODEL (or AZURE_AI_MODEL_DEPLOYMENT_NAME)
+//                                     - Model deployment name (default: gpt-4o)
+//   TOOLBOX_NAME                      - Name of the toolbox to load (default: my-toolset).
+//                                       NOTE: All FOUNDRY_* and AGENT_* env-var prefixes (other
+//                                       than the platform-injected ones above) are reserved by the
+//                                       Foundry container platform and rejected at agent-create.
+//                                       Use TOOLBOX_NAME, not FOUNDRY_TOOLBOX_NAME, for the
+//                                       sample-owned toolbox name so it survives deployment.
 //
 // The Foundry.Hosting package builds the toolbox proxy URL from FOUNDRY_PROJECT_ENDPOINT
 // per tools-integration-spec.md §2–§3.
@@ -43,8 +42,7 @@ string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
         "nor AZURE_AI_PROJECT_ENDPOINT (local-dev convention) is set.");
 string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL")
     ?? Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
-string toolboxName = Environment.GetEnvironmentVariable("FOUNDRY_TOOLBOX_NAME")
-    ?? Environment.GetEnvironmentVariable("TOOLBOX_NAME") ?? "my-toolset";
+string toolboxName = Environment.GetEnvironmentVariable("TOOLBOX_NAME") ?? "my-toolset";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
@@ -74,13 +72,12 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Register the agent and response handler
 builder.Services.AddFoundryResponses(agent);
-builder.Services.AddDevTemporaryLocalContributorSetup(); // Local Docker debugging only - must not be used in production.
 
 // Register Foundry Toolbox: connects to the MCP proxy at startup and makes tools available.
 // The toolbox name must match a toolbox registered in your Foundry project.
 // When FOUNDRY_PROJECT_ENDPOINT is absent (e.g., in local development without Foundry
 // infrastructure), startup succeeds without error and no toolbox tools are loaded.
-builder.Services.AddFoundryToolboxes(toolboxName);
+builder.Services.AddFoundryToolboxes(credential, toolboxName);
 
 var app = builder.Build();
 app.MapFoundryResponses();

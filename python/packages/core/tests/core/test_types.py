@@ -572,35 +572,38 @@ def test_usage_details_addition():
         input_token_count=5,
         output_token_count=10,
         total_token_count=15,
-        test1=10,  # ty: ignore[invalid-key]
-        test2=20,  # ty: ignore[invalid-key]
+        test1=10,
+        test2=20,
     )
     usage2 = UsageDetails(  # type: ignore[typeddict-unknown-key]
         input_token_count=3,
         output_token_count=6,
         total_token_count=9,
-        test1=10,  # ty: ignore[invalid-key]
-        test3=30,  # ty: ignore[invalid-key]
+        test1=10,
+        test3=30,
     )
 
     combined_usage = add_usage_details(usage1, usage2)
     assert combined_usage["input_token_count"] == 8
     assert combined_usage["output_token_count"] == 16
     assert combined_usage["total_token_count"] == 24
-    assert combined_usage["test1"] == 20  # type: ignore[typeddict-item]  # ty: ignore[invalid-key]
-    assert combined_usage["test2"] == 20  # type: ignore[typeddict-item]  # ty: ignore[invalid-key]
-    assert combined_usage["test3"] == 30  # type: ignore[typeddict-item]  # ty: ignore[invalid-key]
+    assert combined_usage["test1"] == 20  # type: ignore[typeddict-item]
+    assert combined_usage["test2"] == 20  # type: ignore[typeddict-item]
+    assert combined_usage["test3"] == 30  # type: ignore[typeddict-item]
 
 
 def test_usage_details_fail():
     # TypedDict doesn't validate types at runtime, so this test no longer applies
     # Creating UsageDetails with wrong types won't raise ValueError
-    usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, wrong_type="42.923")  # type: ignore[typeddict-item, typeddict-unknown-key]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-key]
-    assert usage["wrong_type"] == "42.923"  # type: ignore[typeddict-item]  # ty: ignore[invalid-key]
+    usage = cast(
+        UsageDetails,
+        {"input_token_count": 5, "output_token_count": 10, "total_token_count": 15, "wrong_type": "42.923"},
+    )
+    assert usage["wrong_type"] == "42.923"  # type: ignore[typeddict-item]
 
 
 def test_usage_details_additional_counts():
-    usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, **{"test": 1})  # type: ignore[call-arg, typeddict-unknown-key]  # ty: ignore[invalid-key]
+    usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, **{"test": 1})  # type: ignore[call-arg, typeddict-unknown-key]
     assert usage.get("test") == 1
 
 
@@ -616,8 +619,8 @@ def test_usage_details_add_with_none_and_type_errors():
 
 
 def test_usage_details_add_skips_non_int():
-    u1 = UsageDetails(input_token_count=10, other="test")  # type: ignore[typeddict-item, typeddict-unknown-key]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-key]
-    u2 = UsageDetails(input_token_count=10, another="test")  # type: ignore[typeddict-item, typeddict-unknown-key]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-key]
+    u1 = cast(UsageDetails, {"input_token_count": 10, "other": "test"})
+    u2 = cast(UsageDetails, {"input_token_count": 10, "another": "test"})
     u3 = add_usage_details(u1, u2)
     assert len(u3.keys()) == 1
     assert "input_token_count" in u3
@@ -1758,9 +1761,9 @@ def test_comprehensive_to_dict_exclude_options():
     assert "text" in text_dict_exclude
 
     # Test UsageDetails - it's a TypedDict now, not a class with to_dict
-    usage = UsageDetails(input_token_count=5, custom_count=10)  # type: ignore[typeddict-unknown-key]  # ty: ignore[invalid-key]
+    usage = UsageDetails(input_token_count=5, custom_count=10)  # type: ignore[typeddict-unknown-key]
     assert usage["input_token_count"] == 5
-    assert usage["custom_count"] == 10  # type: ignore[typeddict-item]  # ty: ignore[invalid-key]
+    assert usage["custom_count"] == 10  # type: ignore[typeddict-item]
 
     # Test UsageDetails exclude_none behavior isn't applicable to TypedDict
     # TypedDict doesn't have a to_dict method
@@ -1769,8 +1772,8 @@ def test_comprehensive_to_dict_exclude_options():
 def test_usage_details_iadd_edge_cases():
     """Test UsageDetails addition with edge cases for better coverage."""
     # Test with None values
-    u1 = UsageDetails(input_token_count=None, output_token_count=5, custom1=10)  # type: ignore[typeddict-unknown-key]  # ty: ignore[invalid-key]
-    u2 = UsageDetails(input_token_count=3, output_token_count=None, custom2=20)  # type: ignore[typeddict-unknown-key]  # ty: ignore[invalid-key]
+    u1 = UsageDetails(input_token_count=None, output_token_count=5, custom1=10)  # type: ignore[typeddict-unknown-key]
+    u2 = UsageDetails(input_token_count=3, output_token_count=None, custom2=20)  # type: ignore[typeddict-unknown-key]
 
     result = add_usage_details(u1, u2)
     assert result["input_token_count"] == 3
@@ -1779,8 +1782,8 @@ def test_usage_details_iadd_edge_cases():
     assert result.get("custom2") == 20
 
     # Test merging additional counts
-    u3 = UsageDetails(input_token_count=1, shared_count=5)  # type: ignore[typeddict-unknown-key]  # ty: ignore[invalid-key]
-    u4 = UsageDetails(input_token_count=2, shared_count=15)  # type: ignore[typeddict-unknown-key]  # ty: ignore[invalid-key]
+    u3 = UsageDetails(input_token_count=1, shared_count=5)  # type: ignore[typeddict-unknown-key]
+    u4 = UsageDetails(input_token_count=2, shared_count=15)  # type: ignore[typeddict-unknown-key]
 
     result2 = add_usage_details(u3, u4)
     assert result2["input_token_count"] == 3
@@ -2013,7 +2016,7 @@ def test_usage_content_serialization_with_details():
     usage_content = Content(**usage_data)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     assert isinstance(usage_content.usage_details, dict)
     assert usage_content.usage_details["input_token_count"] == 10
-    assert usage_content.usage_details["custom_count"] == 5  # type: ignore[typeddict-item]  # ty: ignore[invalid-argument-type, invalid-key]  # Custom fields go directly in UsageDetails
+    assert usage_content.usage_details["custom_count"] == 5  # type: ignore[typeddict-item]  # Custom fields go directly in UsageDetails
 
     # Test to_dict with UsageDetails object
     usage_dict = usage_content.to_dict()
@@ -2692,6 +2695,7 @@ def test_text_content_with_annotations_serialization():
 
     # Verify reconstruction
     assert len(reconstructed.annotations) == 2  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert reconstructed.annotations is not None
     # Annotation are TypedDicts (dicts at runtime)
     assert all(isinstance(ann, dict) for ann in reconstructed.annotations)  # type: ignore[union-attr]  # pyrefly: ignore[not-iterable]
     assert reconstructed.annotations[0]["title"] == "Citation 1"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]
@@ -3039,19 +3043,20 @@ def test_content_add_usage_content_non_integer_values():
     """Test adding usage content with non-integer values."""
     usage1 = Content(
         type="usage",
-        usage_details={"model": "gpt-4", "count": 10},  # type: ignore[arg-type, typeddict-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type, invalid-key]
+        usage_details=cast(UsageDetails, {"model": "gpt-4", "count": 10}),
     )
     usage2 = Content(
         type="usage",
-        usage_details={"model": "gpt-3.5", "count": 20},  # type: ignore[arg-type, typeddict-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type, invalid-key]
+        usage_details=cast(UsageDetails, {"model": "gpt-3.5", "count": 20}),
     )
 
     result = usage1 + usage2
 
     # Non-integer "model" should take first non-None value
-    assert "model" not in result.usage_details  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert result.usage_details is not None
+    assert "model" not in result.usage_details  # type: ignore[operator]  # pyrefly: ignore[not-iterable]
     # Integer "count" should be summed
-    assert result.usage_details["count"] == 30  # type: ignore[index, typeddict-item]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[invalid-key, not-subscriptable]
+    assert result.usage_details["count"] == 30  # type: ignore[index, typeddict-item]  # pyrefly: ignore[unsupported-operation]
 
 
 # endregion
@@ -3859,6 +3864,61 @@ class TestResponseStreamMapAndWithFinalizer:
 
         final = await outer.get_final_response()
         assert final.text == "mapped_update_0mapped_update_1"
+
+    async def test_flat_map_expands_updates(self) -> None:
+        """flat_map() can transform one update into many updates."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        def expand(update: ChatResponseUpdate) -> list[ChatResponseUpdate]:
+            return [
+                ChatResponseUpdate(contents=[Content.from_text(update.text)], role=cast(Any, update.role)),
+                ChatResponseUpdate(contents=[Content.from_text(f"{update.text}_extra")], role=cast(Any, update.role)),
+            ]
+
+        outer = inner.flat_map(expand, _combine_updates)
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_0_extra", "update_1", "update_1_extra"]
+
+        final = await outer.get_final_response()
+        assert final.text == "update_0update_0_extraupdate_1update_1_extra"
+
+    async def test_flat_map_skips_empty_mappings(self) -> None:
+        """flat_map() supports zero-output transforms."""
+        inner = ResponseStream(_generate_updates(3), finalizer=_combine_updates)
+
+        def keep_odd(update: ChatResponseUpdate) -> list[ChatResponseUpdate]:
+            return [update] if update.text == "update_1" else []
+
+        outer = inner.flat_map(keep_odd, _combine_updates)
+
+        collected = [update.text async for update in outer]
+        assert collected == ["update_1"]
+
+        final = await outer.get_final_response()
+        assert final.text == "update_1"
+
+    async def test_flat_map_calls_inner_result_hooks(self) -> None:
+        """flat_map() preserves inner result hooks."""
+        inner_result_hook_called = {"value": False}
+
+        def inner_result_hook(response: ChatResponse) -> ChatResponse:
+            inner_result_hook_called["value"] = True
+            return response
+
+        inner = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[inner_result_hook],  # ty: ignore[invalid-argument-type]
+        )
+        outer = inner.flat_map(lambda u: [u], _combine_updates)
+
+        await outer.get_final_response()
+
+        assert inner_result_hook_called["value"] is True
 
     async def test_outer_transform_hooks_independent(self) -> None:
         """Outer stream has its own independent transform hooks."""

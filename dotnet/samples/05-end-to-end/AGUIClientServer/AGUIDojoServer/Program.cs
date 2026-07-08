@@ -17,7 +17,7 @@ builder.Services.AddHttpLogging(logging =>
 
 builder.Services.AddHttpClient().AddLogging();
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolverChain.Add(AGUIDojoServerSerializerContext.Default));
-builder.Services.AddAGUI();
+builder.Services.AddAGUIServer();
 
 // WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,
 // make sure to also register a SessionIsolationKeyProvider to scope sessions by principal in multi-user
@@ -32,20 +32,20 @@ app.UseHttpLogging();
 ChatClientAgentFactory.Initialize(app.Configuration);
 
 // Map the AG-UI agent endpoints for different scenarios
-app.MapAGUI("/agentic_chat", ChatClientAgentFactory.CreateAgenticChat());
+app.MapAGUIServer("/agentic_chat", ChatClientAgentFactory.CreateAgenticChat());
 
-app.MapAGUI("/backend_tool_rendering", ChatClientAgentFactory.CreateBackendToolRendering());
+app.MapAGUIServer("/backend_tool_rendering", ChatClientAgentFactory.CreateBackendToolRendering());
 
-app.MapAGUI("/human_in_the_loop", ChatClientAgentFactory.CreateHumanInTheLoop());
+app.MapAGUIServer("/human_in_the_loop", ChatClientAgentFactory.CreateHumanInTheLoop());
 
-app.MapAGUI("/tool_based_generative_ui", ChatClientAgentFactory.CreateToolBasedGenerativeUI());
+app.MapAGUIServer("/tool_based_generative_ui", ChatClientAgentFactory.CreateToolBasedGenerativeUI());
 
 var jsonOptions = app.Services.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
-app.MapAGUI("/agentic_generative_ui", ChatClientAgentFactory.CreateAgenticUI(jsonOptions.Value.SerializerOptions));
+app.MapAGUIServer("/agentic_generative_ui", ChatClientAgentFactory.CreateAgenticUI(jsonOptions.Value.SerializerOptions));
 
-app.MapAGUI("/shared_state", ChatClientAgentFactory.CreateSharedState(jsonOptions.Value.SerializerOptions));
+app.MapAGUIServer("/shared_state", ChatClientAgentFactory.CreateSharedState(jsonOptions.Value.SerializerOptions));
 
-app.MapAGUI("/predictive_state_updates", ChatClientAgentFactory.CreatePredictiveStateUpdates(jsonOptions.Value.SerializerOptions));
+app.MapAGUIServer("/predictive_state_updates", ChatClientAgentFactory.CreatePredictiveStateUpdates(jsonOptions.Value.SerializerOptions));
 
 await app.RunAsync();
 

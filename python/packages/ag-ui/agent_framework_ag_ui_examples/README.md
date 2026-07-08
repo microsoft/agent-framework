@@ -133,6 +133,30 @@ The server exposes endpoints at:
 - `/predictive_state_updates` - Document writing with `document_writer_agent`
 - `/subgraphs` - Travel planner with interrupt-driven flight/hotel choices via `subgraphs_agent`
 
+### Interrupt and Resume Shape
+
+Human-in-the-loop and workflow examples use the canonical AG-UI protocol shape. A paused run finishes with
+`RUN_FINISHED.outcome.type == "interrupt"` and renders prompts from `RUN_FINISHED.outcome.interrupts`; it does not
+depend on a stable top-level `RUN_FINISHED.interrupt` field.
+
+Resume interrupted example threads with a canonical `resume` array:
+
+```json
+{
+  "threadId": "thread-1",
+  "messages": [],
+  "resume": [
+    {
+      "interruptId": "interrupt_1",
+      "status": "resolved",
+      "payload": {
+        "approved": true
+      }
+    }
+  ]
+}
+```
+
 ### Complete FastAPI Example
 
 ```python

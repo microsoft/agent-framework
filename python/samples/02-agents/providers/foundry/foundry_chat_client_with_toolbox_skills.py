@@ -5,7 +5,7 @@ import os
 from collections.abc import Generator
 
 import httpx
-from agent_framework import Agent, MCPSkillsSource, SkillsProvider
+from agent_framework import Agent, MCPSkillsSource, SkillsProvider, ToolApprovalMiddleware
 from agent_framework.foundry import FoundryChatClient
 from azure.core.credentials import TokenCredential
 from azure.identity import AzureCliCredential, get_bearer_token_provider
@@ -55,7 +55,6 @@ async def main() -> None:
     async with (
         httpx.AsyncClient(
             auth=_BearerAuth(credential),
-            headers={"Foundry-Features": "Toolboxes=V1Preview"},
             timeout=httpx.Timeout(30.0, read=300.0),
             follow_redirects=True,
         ) as http_client,
@@ -75,11 +74,13 @@ async def main() -> None:
             name="ToolboxMCPSkillsAgent",
             instructions="You are a helpful assistant. Use available skills to answer the user.",
             context_providers=[skills_provider],
+            middleware=[ToolApprovalMiddleware(auto_approval_rules=[SkillsProvider.all_tools_auto_approval_rule])],
         ) as agent:
             query = input("User: ").strip()  # noqa: ASYNC250
             if not query:
                 return
-            response = await agent.run(query)
+            session = agent.create_session()
+            response = await agent.run(query, session=session)
             print(f"Assistant: {response.text}")
 
 

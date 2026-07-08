@@ -87,7 +87,8 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
         presence_penalty: Presence penalty, translates to ``options.presence_penalty``.
         tools: List of function tools.
         response_format: Output format, translates to ``format``.
-            Use 'json' for JSON mode or a JSON schema dict for structured output.
+            Use 'json' for JSON mode, a JSON schema dict, or a Pydantic model class
+            (converted to its JSON schema) for structured output.
 
         # Options not supported in Ollama:
         tool_choice: Ollama only supports auto tool choice.
@@ -415,6 +416,13 @@ class OllamaChatClient(
             else:
                 # Apply top-level translations (e.g., response_format -> format)
                 translated_key = OLLAMA_OPTION_TRANSLATIONS.get(key, key)
+                if translated_key == "format" and isinstance(value, type) and issubclass(value, BaseModel):
+                    # Ollama's `format` accepts '', 'json', or a JSON-schema dict, not a
+                    # Pydantic model class. Convert the class to its JSON schema, matching
+                    # OpenAIChatClient/FoundryChatClient and Ollama's documented usage
+                    # (https://ollama.com/blog/structured-outputs). The original class is
+                    # kept in `options` for typed parsing of the response.
+                    value = value.model_json_schema()
                 run_options[translated_key] = value
 
         # Add model options to run_options if any
@@ -532,11 +540,30 @@ class OllamaChatClient(
 
     def _parse_streaming_response_from_ollama(self, response: OllamaChatResponse) -> ChatResponseUpdate:
         contents = self._parse_contents_from_ollama(response)
+        finish_reason = None
+        if response.done:
+            usage_details = UsageDetails(
+                **{
+                    key: value
+                    for key, value in {
+                        "input_token_count": response.prompt_eval_count,
+                        "output_token_count": response.eval_count,
+                        "total_token_count": response.prompt_eval_count + response.eval_count
+                        if isinstance(response.prompt_eval_count, int) and isinstance(response.eval_count, int)
+                        else None,
+                    }.items()
+                    if isinstance(value, int)
+                }
+            )
+            if usage_details:
+                contents.append(Content.from_usage(usage_details, raw_representation=response))
+            finish_reason = response.done_reason if response.done_reason in ("stop", "length") else None
         return ChatResponseUpdate(
             contents=contents,
             role="assistant",
             model=response.model,
             created_at=response.created_at,
+            finish_reason=finish_reason,
         )
 
     def _parse_response_from_ollama(
@@ -546,15 +573,27 @@ class OllamaChatClient(
         response_format: Any | None = None,
     ) -> ChatResponse:
         contents = self._parse_contents_from_ollama(response)
+        usage_details = UsageDetails(
+            **{
+                key: value
+                for key, value in {
+                    "input_token_count": response.prompt_eval_count,
+                    "output_token_count": response.eval_count,
+                    "total_token_count": response.prompt_eval_count + response.eval_count
+                    if isinstance(response.prompt_eval_count, int) and isinstance(response.eval_count, int)
+                    else None,
+                }.items()
+                if isinstance(value, int)
+            }
+        )
+        finish_reason = response.done_reason if response.done_reason in ("stop", "length") else None
 
         return ChatResponse(
             messages=[Message(role="assistant", contents=contents)],
             model=response.model,
             created_at=response.created_at,
-            usage_details=UsageDetails(
-                input_token_count=response.prompt_eval_count,
-                output_token_count=response.eval_count,
-            ),
+            finish_reason=finish_reason,
+            usage_details=usage_details or None,
             response_format=response_format,
         )
 

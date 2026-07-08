@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
@@ -109,7 +110,6 @@ public static class ChatClientBuilderExtensions
     /// </remarks>
     /// <param name="builder">The <see cref="ChatClientBuilder"/> to add the decorator to.</param>
     /// <returns>The <paramref name="builder"/> for chaining.</returns>
-    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public static ChatClientBuilder UsePerServiceCallChatHistoryPersistence(this ChatClientBuilder builder)
     {
         return builder.Use(innerClient => new PerServiceCallChatHistoryPersistingChatClient(innerClient));
@@ -150,33 +150,39 @@ public static class ChatClientBuilderExtensions
     }
 
     /// <summary>
-    /// Adds an <see cref="NonApprovalRequiredFunctionBypassingChatClient"/> to the chat client pipeline.
+    /// Adds an <see cref="ApprovalNotRequiredFunctionBypassingChatClient"/> to the chat client pipeline.
     /// </summary>
     /// <remarks>
     /// <para>
     /// This decorator should be positioned above the <see cref="FunctionInvokingChatClient"/> in the pipeline
     /// so that it can intercept approval requests for tools that do not require approval. When
     /// <see cref="FunctionInvokingChatClient"/> converts all function calls to approval requests (because at
-    /// least one tool requires approval), this decorator removes the requests for non-approval-required tools,
-    /// stores them in the session, and automatically re-injects them as approved on the next request.
+    /// least one tool requires approval), this decorator removes the requests for tools that do not require
+    /// approval, stores them in the session, and automatically re-injects them as approved on the next request.
     /// </para>
     /// <para>
     /// This extension method is intended for use with custom chat client stacks when
     /// <see cref="ChatClientAgentOptions.UseProvidedChatClientAsIs"/> is <see langword="true"/>.
     /// When <see cref="ChatClientAgentOptions.UseProvidedChatClientAsIs"/> is <see langword="false"/> (the default),
-    /// the <see cref="ChatClientAgent"/> automatically injects this decorator when
-    /// <see cref="ChatClientAgentOptions.EnableNonApprovalRequiredFunctionBypassing"/> is <see langword="true"/>.
+    /// the <see cref="ChatClientAgent"/> automatically injects this decorator unless
+    /// <see cref="ChatClientAgentOptions.DisableApprovalNotRequiredFunctionBypassing"/> is <see langword="true"/>.
     /// </para>
     /// <para>
-    /// This decorator only works within the context of a running <see cref="ChatClientAgent"/> with
-    /// an active session, and will throw an exception if used in any other stack.
+    /// This decorator is intended for use within the context of a running <see cref="ChatClientAgent"/> with
+    /// an active session. When invoked outside of an agent run (for example when the built chat client is used
+    /// directly), the decorator becomes a no-op, passing the request through unchanged and logging a warning.
     /// </para>
     /// </remarks>
     /// <param name="builder">The <see cref="ChatClientBuilder"/> to add the decorator to.</param>
+    /// <param name="loggerFactory">
+    /// An optional <see cref="ILoggerFactory"/> used to create a logger for the decorator. When not provided,
+    /// the factory is resolved from the pipeline's <see cref="IServiceProvider"/>; if none is available,
+    /// logging is a no-op.
+    /// </param>
     /// <returns>The <paramref name="builder"/> for chaining.</returns>
-    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-    public static ChatClientBuilder UseNonApprovalRequiredFunctionBypassing(this ChatClientBuilder builder)
+    public static ChatClientBuilder UseApprovalNotRequiredFunctionBypassing(this ChatClientBuilder builder, ILoggerFactory? loggerFactory = null)
     {
-        return builder.Use(innerClient => new NonApprovalRequiredFunctionBypassingChatClient(innerClient));
+        return builder.Use((innerClient, services) =>
+            new ApprovalNotRequiredFunctionBypassingChatClient(innerClient, loggerFactory ?? services.GetService<ILoggerFactory>()));
     }
 }

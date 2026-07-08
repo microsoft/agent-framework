@@ -34,6 +34,15 @@ namespace Microsoft.Agents.AI;
 /// <item><description><c>background_agents_clear_completed_task</c> — Remove a completed background task and release its session to free memory.</description></item>
 /// </list>
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong> The agents passed to the constructor are delegated
+/// arbitrary work by the parent agent — the parent sends them text input (which may include content
+/// derived from the parent's own untrusted context) and receives back whatever text they produce. A
+/// compromised or malicious supplied agent (for example, one with a compromised system prompt, tools,
+/// or upstream model) could exfiltrate that input to an external system, or return adversarial output
+/// designed to influence the parent agent via indirect prompt injection once its result is retrieved.
+/// Only supply agents you have vetted and trust with the data the parent may pass to them.
+/// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class BackgroundAgentsProvider : AIContextProvider
@@ -60,7 +69,12 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
     /// <summary>
     /// Initializes a new instance of the <see cref="BackgroundAgentsProvider"/> class.
     /// </summary>
-    /// <param name="agents">The collection of background agents available for delegation.</param>
+    /// <param name="agents">
+    /// The collection of background agents available for delegation. <strong>Security:</strong> Each
+    /// supplied agent should be vetted and trusted, since it will receive text input from the parent
+    /// agent and its output is fed back into the parent's context — see the type-level security
+    /// considerations for details on the exfiltration and prompt-injection risks of untrusted agents.
+    /// </param>
     /// <param name="options">Optional settings controlling the provider behavior.</param>
     /// <exception cref="ArgumentNullException"><paramref name="agents"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">An agent has a null or empty name, or agent names are not unique.</exception>
@@ -101,6 +115,37 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
             Instructions = this._instructions,
             Tools = this.CreateTools(state, runtimeState, context.Session),
         });
+    }
+
+    /// <summary>
+    /// Gets the background tasks for the specified session that have not yet completed (i.e., are still running).
+    /// </summary>
+    /// <remarks>
+    /// The status of in-flight tasks is refreshed before the result is computed, so tasks that have finished since the
+    /// last interaction are finalized and excluded. Only tasks whose <see cref="BackgroundTaskInfo.Status"/> is
+    /// <see cref="BackgroundTaskStatus.Running"/> are returned; <see cref="BackgroundTaskStatus.Completed"/>,
+    /// <see cref="BackgroundTaskStatus.Failed"/>, and <see cref="BackgroundTaskStatus.Lost"/> are all terminal and are
+    /// not included. The returned <see cref="BackgroundTaskInfo"/> instances are live references to internal state.
+    /// </remarks>
+    /// <param name="session">The agent session whose background tasks should be inspected.</param>
+    /// <returns>A read-only list of the background tasks that are still running.</returns>
+    public IReadOnlyList<BackgroundTaskInfo> GetIncompleteTasks(AgentSession? session)
+    {
+        BackgroundAgentState state = this._sessionState.GetOrInitializeState(session);
+        BackgroundAgentRuntimeState runtimeState = this._runtimeSessionState.GetOrInitializeState(session);
+
+        this.TryRefreshTaskState(state, runtimeState, session);
+
+        var incomplete = new List<BackgroundTaskInfo>();
+        foreach (BackgroundTaskInfo task in state.Tasks)
+        {
+            if (task.Status == BackgroundTaskStatus.Running)
+            {
+                incomplete.Add(task);
+            }
+        }
+
+        return incomplete;
     }
 
     /// <summary>

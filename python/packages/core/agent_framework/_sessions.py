@@ -29,7 +29,13 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypeGuard, cast
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import ChatContext, ChatMiddleware
-from ._types import AgentResponse, ChatResponse, Message, ResponseStream
+from ._types import (
+    AgentResponse,
+    ChatResponse,
+    Message,
+    ResponseStream,
+    _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
+)
 from .exceptions import ChatClientInvalidResponseException
 
 if TYPE_CHECKING:
@@ -44,6 +50,7 @@ _STATE_TYPE_REGISTRY: dict[str, type] = {}
 
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
+ServiceSessionId: TypeAlias = Mapping[str, Any]
 
 
 def _default_json_dumps(value: Any) -> str:
@@ -176,7 +183,7 @@ class SessionContext:
         self,
         *,
         session_id: str | None = None,
-        service_session_id: str | None = None,
+        service_session_id: str | ServiceSessionId | None = None,
         input_messages: list[Message],
         context_messages: dict[str, list[Message]] | None = None,
         instructions: list[str] | None = None,
@@ -633,9 +640,9 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         response: ChatResponse,
     ) -> None:
         """Persist a single model-call response through the configured history providers."""
-        service_call_context._response = AgentResponse(  # type: ignore[assignment]
-            messages=response.messages,
-            response_id=None,
+        service_call_context._response = _build_agent_response_from_chat_response(  # type: ignore[assignment]
+            response,
+            suppress_response_id=True,
         )
         for provider in reversed(self._providers):
             await provider.after_run(
@@ -759,7 +766,7 @@ class AgentSession:
         self,
         *,
         session_id: str | None = None,
-        service_session_id: str | None = None,
+        service_session_id: str | ServiceSessionId | None = None,
     ):
         """Initialize the session.
 
