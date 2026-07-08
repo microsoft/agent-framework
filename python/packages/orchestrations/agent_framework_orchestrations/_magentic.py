@@ -28,7 +28,7 @@ from agent_framework._workflows._request_info_mixin import response_handler
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
-from typing_extensions import Never
+from typing_extensions import Never, Sentinel
 
 from ._base_group_chat_orchestrator import (
     BaseGroupChatOrchestrator,
@@ -39,7 +39,7 @@ from ._base_group_chat_orchestrator import (
     ParticipantRegistry,
 )
 from ._participant_output_config import (
-    _MISSING,  # pyright: ignore[reportPrivateUsage]
+    UNSET,
     _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
     _coerce_intermediate_output_from,  # pyright: ignore[reportPrivateUsage]
     _ParticipantIntermediateOutputSelection,  # pyright: ignore[reportPrivateUsage]
@@ -48,9 +48,9 @@ from ._participant_output_config import (
 )
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
@@ -69,10 +69,10 @@ ORCH_MSG_KIND_NOTICE = "notice"
 def _message_to_payload(message: Message) -> Any:
     if hasattr(message, "to_dict") and callable(getattr(message, "to_dict", None)):
         with contextlib.suppress(Exception):
-            return message.to_dict()  # type: ignore[attr-defined]
+            return message.to_dict()
     if hasattr(message, "to_json") and callable(getattr(message, "to_json", None)):
         with contextlib.suppress(Exception):
-            json_payload = message.to_json()  # type: ignore[attr-defined]
+            json_payload = message.to_json()
             if isinstance(json_payload, str):
                 with contextlib.suppress(Exception):
                     return json.loads(json_payload)
@@ -90,7 +90,7 @@ def _message_from_payload(payload: Any) -> Message:
             return Message.from_dict(payload)  # type: ignore[attr-defined,no-any-return]
     if hasattr(Message, "from_json") and isinstance(payload, str):
         with contextlib.suppress(Exception):
-            return Message.from_json(payload)  # type: ignore[attr-defined,no-any-return]
+            return Message.from_json(payload)
     if isinstance(payload, dict):
         with contextlib.suppress(Exception):
             return Message(**payload)  # type: ignore[arg-type]
@@ -457,7 +457,7 @@ def _coerce_model(model_cls: type[T], data: dict[str, Any]) -> T:
     # We check with hasattr() first, so this is safe
     if hasattr(model_cls, "from_dict") and callable(model_cls.from_dict):  # type: ignore[attr-defined]
         return model_cls.from_dict(data)  # type: ignore[attr-defined,return-value,no-any-return]
-    return model_cls(**data)  # type: ignore[arg-type,call-arg]
+    return model_cls(**data)
 
 
 # endregion Utilities
@@ -1411,13 +1411,13 @@ class MagenticBuilder:
         task_ledger_plan_update_prompt: str | None = None,
         progress_ledger_prompt: str | None = None,
         final_answer_prompt: str | None = None,
-        max_stall_count: int = 3,
+        max_stall_count: int | Sentinel = UNSET,  # type: ignore[reportArgumentType]
         max_reset_count: int | None = None,
         max_round_count: int | None = None,
         # Existing params
         enable_plan_review: bool = False,
         checkpoint_storage: CheckpointStorage | None = None,
-        output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, _MISSING),
+        output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, UNSET),
         intermediate_output_from: _ParticipantIntermediateOutputSelection = None,
     ) -> None:
         """Initialize the Magentic workflow builder.
@@ -1621,7 +1621,7 @@ class MagenticBuilder:
         progress_ledger_prompt: str | None = None,
         final_answer_prompt: str | None = None,
         # Limits
-        max_stall_count: int = 3,
+        max_stall_count: int | Sentinel = UNSET,  # type: ignore[reportArgumentType]
         max_reset_count: int | None = None,
         max_round_count: int | None = None,
     ) -> None:
@@ -1656,8 +1656,10 @@ class MagenticBuilder:
                 "Exactly one of manager, manager_agent, manager_factory, or manager_agent_factory must be provided."
             )
 
+        resolved_max_stall_count: int = 3 if max_stall_count is UNSET else cast(int, max_stall_count)
+
         def _log_warning_if_constructor_args_provided() -> None:
-            if any(
+            if max_stall_count is not UNSET or any(
                 arg is not None
                 for arg in [
                     task_ledger,
@@ -1668,7 +1670,6 @@ class MagenticBuilder:
                     task_ledger_plan_update_prompt,
                     progress_ledger_prompt,
                     final_answer_prompt,
-                    max_stall_count,
                     max_reset_count,
                     max_round_count,
                 ]
@@ -1689,7 +1690,7 @@ class MagenticBuilder:
                 task_ledger_plan_update_prompt=task_ledger_plan_update_prompt,
                 progress_ledger_prompt=progress_ledger_prompt,
                 final_answer_prompt=final_answer_prompt,
-                max_stall_count=max_stall_count,
+                max_stall_count=resolved_max_stall_count,
                 max_reset_count=max_reset_count,
                 max_round_count=max_round_count,
             )
@@ -1707,7 +1708,7 @@ class MagenticBuilder:
                 "task_ledger_plan_update_prompt": task_ledger_plan_update_prompt,
                 "progress_ledger_prompt": progress_ledger_prompt,
                 "final_answer_prompt": final_answer_prompt,
-                "max_stall_count": max_stall_count,
+                "max_stall_count": resolved_max_stall_count,
                 "max_reset_count": max_reset_count,
                 "max_round_count": max_round_count,
             }

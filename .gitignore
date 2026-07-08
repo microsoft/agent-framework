@@ -206,6 +206,7 @@ temp*/
 .temp/
 
 # AI
+**/.checkpoints/
 .claude/
 .omc/
 .omx/
@@ -213,6 +214,7 @@ WARP.md
 **/memory-bank/
 **/projectBrief.md
 **/tmpclaude*
+.kiro/
 # Dependency-bound validation reports
 python/scripts/dependency-*-results.json
 python/scripts/dependencies/dependency-*-results.json
@@ -248,3 +250,4 @@ dotnet/filtered-*.slnx
 .omx/
 
 **/issues/
+.test_*

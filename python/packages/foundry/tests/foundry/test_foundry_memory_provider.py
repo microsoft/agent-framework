@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -160,7 +161,7 @@ async def test_retrieves_static_memories_on_first_run(mock_project_client: Async
     ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
 
     await provider.before_run(  # type: ignore[arg-type]
-        agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        agent=cast(Any, None), session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
     )
 
     # Should call search_memories twice: once for static, once for contextual
@@ -195,7 +196,7 @@ async def test_contextual_memories_added_to_context(mock_project_client: AsyncMo
     ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
 
     await provider.before_run(  # type: ignore[arg-type]
-        agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        agent=cast(Any, None), session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
     )
 
     # Check that memories were added to context
@@ -222,7 +223,7 @@ async def test_empty_input_skips_contextual_search(mock_project_client: AsyncMoc
     ctx = SessionContext(input_messages=[Message(role="user", contents=[""])], session_id="s1")
 
     await provider.before_run(  # type: ignore[arg-type]
-        agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        agent=cast(Any, None), session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
     )
 
     # Should only call search_memories once for static memories
@@ -244,7 +245,7 @@ async def test_empty_search_results_no_messages(mock_project_client: AsyncMock) 
     ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
     await provider.before_run(  # type: ignore[arg-type]
-        agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        agent=cast(Any, None), session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
     )
 
     assert provider.source_id not in ctx.context_messages
@@ -270,7 +271,7 @@ async def test_static_memories_only_retrieved_once(mock_project_client: AsyncMoc
 
     # First call
     await provider.before_run(  # type: ignore[arg-type]
-        agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        agent=cast(Any, None), session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
     )
     assert mock_project_client.beta.memory_stores.search_memories.call_count == 2
 
@@ -283,7 +284,7 @@ async def test_static_memories_only_retrieved_once(mock_project_client: AsyncMoc
     # Second call - should only search contextual, not static
     ctx2 = SessionContext(input_messages=[Message(role="user", contents=["World"])], session_id="s1")
     await provider.before_run(  # type: ignore[arg-type]
-        agent=None, session=session, context=ctx2, state=session.state.setdefault(provider.source_id, {})
+        agent=cast(Any, None), session=session, context=ctx2, state=session.state.setdefault(provider.source_id, {})
     )
     assert mock_project_client.beta.memory_stores.search_memories.call_count == 1
 
@@ -301,7 +302,7 @@ async def test_handles_search_exception_gracefully(mock_project_client: AsyncMoc
 
     # Should not raise exception
     await provider.before_run(  # type: ignore[arg-type]
-        agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        agent=cast(Any, None), session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
     )
 
     # No memories added
@@ -326,7 +327,7 @@ async def test_stores_input_and_response(mock_project_client: AsyncMock) -> None
     ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["answer"])])
 
     await provider.after_run(  # type: ignore[arg-type]
-        agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        agent=cast(Any, None), session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
     )
 
     mock_project_client.beta.memory_stores.begin_update_memories.assert_awaited_once()
@@ -359,7 +360,7 @@ async def test_only_stores_user_assistant_system(mock_project_client: AsyncMock)
     ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["reply"])])
 
     await provider.after_run(  # type: ignore[arg-type]
-        agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        agent=cast(Any, None), session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
     )
 
     call_kwargs = mock_project_client.beta.memory_stores.begin_update_memories.call_args.kwargs
@@ -386,7 +387,7 @@ async def test_skips_empty_messages(mock_project_client: AsyncMock) -> None:
     ctx._response = AgentResponse(messages=[])
 
     await provider.after_run(  # type: ignore[arg-type]
-        agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        agent=cast(Any, None), session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
     )
 
     mock_project_client.beta.memory_stores.begin_update_memories.assert_not_awaited()
@@ -407,7 +408,7 @@ async def test_uses_configured_update_delay(mock_project_client: AsyncMock) -> N
     ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hey"])])
 
     await provider.after_run(  # type: ignore[arg-type]
-        agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        agent=cast(Any, None), session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
     )
 
     call_kwargs = mock_project_client.beta.memory_stores.begin_update_memories.call_args.kwargs
@@ -433,7 +434,7 @@ async def test_uses_previous_update_id_for_incremental_updates(mock_project_clie
 
     # First update
     await provider.after_run(  # type: ignore[arg-type]
-        agent=None, session=session, context=ctx1, state=session.state.setdefault(provider.source_id, {})
+        agent=cast(Any, None), session=session, context=ctx1, state=session.state.setdefault(provider.source_id, {})
     )
     assert session.state[provider.source_id]["previous_update_id"] == "update-1"
 
@@ -442,7 +443,7 @@ async def test_uses_previous_update_id_for_incremental_updates(mock_project_clie
     ctx2._response = AgentResponse(messages=[Message(role="assistant", contents=["response2"])])
 
     await provider.after_run(  # type: ignore[arg-type]
-        agent=None, session=session, context=ctx2, state=session.state.setdefault(provider.source_id, {})
+        agent=cast(Any, None), session=session, context=ctx2, state=session.state.setdefault(provider.source_id, {})
     )
 
     call_kwargs = mock_project_client.beta.memory_stores.begin_update_memories.call_args.kwargs
@@ -464,7 +465,7 @@ async def test_handles_update_exception_gracefully(mock_project_client: AsyncMoc
 
     # Should not raise exception
     await provider.after_run(  # type: ignore[arg-type]
-        agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        agent=cast(Any, None), session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
     )
 
 

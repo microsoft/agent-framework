@@ -22,9 +22,9 @@ from ._typing_utils import is_chat_agent
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
@@ -429,15 +429,30 @@ class AgentExecutor(Executor):
             function_invocation_kwargs=function_invocation_kwargs,
             client_kwargs=client_kwargs,
         )
-        await ctx.yield_output(response)
 
         # Handle any user input requests
         if response.user_input_requests:
+            user_input_request_count = len(response.user_input_requests)
+            total_message_content_count = sum(len(msg.contents) for msg in response.messages)
+            if user_input_request_count != total_message_content_count:
+                logger.warning(
+                    "Response %s contains %d user input requests but total message contents are %d. "
+                    "This indicates the response contains both user input requests and message contents. "
+                    "Double check if this is the intended behavior, as non user input request contents in "
+                    "this response will not be emitted.",
+                    response.response_id,
+                    user_input_request_count,
+                    total_message_content_count,
+                )
             for user_input_request in response.user_input_requests:
                 self._pending_agent_requests[user_input_request.id] = user_input_request  # type: ignore[index]
-                await ctx.request_info(user_input_request, Content)
+                await ctx.request_info(user_input_request, Content, request_id=user_input_request.id)
             return None
 
+        # Only yield output if the response is complete and not waiting for user input.
+        # This is to avoid emitting two events of different types ('output' and 'request_info')
+        # that carry the same payload.
+        await ctx.yield_output(response)
         return response
 
     async def _run_agent_streaming(self, ctx: WorkflowContext[Never, AgentResponseUpdate]) -> AgentResponse | None:
@@ -472,9 +487,25 @@ class AgentExecutor(Executor):
         )
         async for update in stream:
             updates.append(update)
-            await ctx.yield_output(update)
             if update.user_input_requests:
+                user_input_request_count = len(update.user_input_requests)
+                total_message_content_count = len(update.contents)
+                if user_input_request_count != total_message_content_count:
+                    logger.warning(
+                        "Response update %s contains %d user input requests but total message contents are %d. "
+                        "This indicates the response update contains both user input requests and message contents. "
+                        "Double check if this is the intended behavior, as non user input request contents will "
+                        "not be emitted.",
+                        update.response_id,
+                        user_input_request_count,
+                        total_message_content_count,
+                    )
                 streamed_user_input_requests.extend(update.user_input_requests)
+            else:
+                # Only yield output events for updates that do not contain user input requests.
+                # This is to avoid emitting two events of different types ('output' and 'request_info')
+                # that carry the same payload.
+                await ctx.yield_output(update)
 
         # Prefer stream finalization when available so result hooks run
         # (e.g., thread conversation updates). Fall back to reconstructing from updates
@@ -509,7 +540,7 @@ class AgentExecutor(Executor):
         if user_input_requests:
             for user_input_request in user_input_requests:
                 self._pending_agent_requests[user_input_request.id] = user_input_request  # type: ignore[index]
-                await ctx.request_info(user_input_request, Content)
+                await ctx.request_info(user_input_request, Content, request_id=user_input_request.id)
             return None
 
         return response

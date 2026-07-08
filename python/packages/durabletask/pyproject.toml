@@ -4,7 +4,7 @@ description = "Durable Task integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260521"
+version = "1.0.0b260630"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -22,7 +22,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.6.0,<2",
+    "agent-framework-core>=1.10.0,<2",
     "durabletask>=1.4.0,!=1.4.1,!=1.4.2,!=1.4.3,<2",
     "durabletask-azuremanaged>=1.4.0,<2",
     "python-dateutil>=2.8.0,<3",
@@ -30,7 +30,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "types-python-dateutil==2.9.0.20260402",
+    "types-python-dateutil==2.9.0.20260518",
 ]
 
 [tool.uv]

@@ -21,7 +21,7 @@ from agent_framework import (
 )
 from typing_extensions import override
 
-from agent_framework_a2a._utils import get_uri_data
+from ._utils import get_uri_data
 
 logger = logging.getLogger("agent_framework.a2a")
 
@@ -287,9 +287,7 @@ class A2AExecutor(AgentExecutor):
                     artifact_id=artifact_id,
                     metadata=metadata,
                     append=(
-                        True
-                        if streamed_artifact_ids is not None and artifact_id in streamed_artifact_ids
-                        else None
+                        True if streamed_artifact_ids is not None and artifact_id in streamed_artifact_ids else None
                     ),
                 )
                 if artifact_id and streamed_artifact_ids is not None:

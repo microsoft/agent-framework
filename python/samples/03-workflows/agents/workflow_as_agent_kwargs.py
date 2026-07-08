@@ -140,7 +140,7 @@ async def main() -> None:
     print("\n===== Streaming Response =====")
     async for update in workflow_agent.run(
         "Please get my user data and then call the users API endpoint.",
-        additional_function_arguments={"custom_data": custom_data, "user_token": user_token},
+        function_invocation_kwargs={"custom_data": custom_data, "user_token": user_token},
         stream=True,
     ):
         if update.text:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import sys
 import uuid
@@ -29,19 +28,20 @@ from .._types import (
     UsageDetails,
     add_usage_details,
 )
-from ..exceptions import AgentInvalidRequestException, AgentInvalidResponseException
+from ..exceptions import AgentException, AgentInvalidRequestException, AgentInvalidResponseException
 from ._checkpoint import CheckpointStorage
 from ._events import (
     AGENT_FORWARDED_EVENT_TYPES,
     WorkflowEvent,
+    WorkflowRunState,
 )
 from ._message_utils import normalize_messages_input
 from ._typing_utils import is_instance_of, is_type_compatible
 
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -58,27 +58,24 @@ class WorkflowAgent(BaseAgent):
     @dataclass
     class RequestInfoFunctionArgs:
         request_id: str
-        data: Any
+        request_event: WorkflowEvent
 
         def to_dict(self) -> dict[str, Any]:
-            return {"request_id": self.request_id, "data": self.data}
-
-        def to_json(self) -> str:
-            return json.dumps(self.to_dict())
+            return {"request_id": self.request_id, "request_event": self.request_event.to_dict()}
 
         @classmethod
         def from_dict(cls, payload: dict[str, Any]) -> WorkflowAgent.RequestInfoFunctionArgs:
-            return cls(request_id=payload.get("request_id", ""), data=payload.get("data"))
+            if "request_id" not in payload or "request_event" not in payload:
+                raise ValueError(
+                    "Invalid payload for RequestInfoFunctionArgs. 'request_id' and 'request_event' are required."
+                )
+            if not payload["request_id"]:
+                raise ValueError("request_id cannot be empty.")
 
-        @classmethod
-        def from_json(cls, raw: str) -> WorkflowAgent.RequestInfoFunctionArgs:
-            try:
-                parsed: Any = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"RequestInfoFunctionArgs JSON payload is malformed: {exc}") from exc
-            if not isinstance(parsed, dict):
-                raise ValueError("RequestInfoFunctionArgs JSON payload must decode to a mapping")
-            return cls.from_dict(cast(dict[str, Any], parsed))
+            return cls(
+                request_id=payload.get("request_id", ""),
+                request_event=WorkflowEvent.from_dict(payload.get("request_event", {})),
+            )
 
     def __init__(
         self,
@@ -128,15 +125,10 @@ class WorkflowAgent(BaseAgent):
             **kwargs,
         )
         self._workflow: Workflow = workflow
-        self._pending_requests: dict[str, WorkflowEvent[Any]] = {}
 
     @property
     def workflow(self) -> Workflow:
         return self._workflow
-
-    @property
-    def pending_requests(self) -> dict[str, WorkflowEvent[Any]]:
-        return self._pending_requests
 
     # region Run Methods
 
@@ -181,7 +173,7 @@ class WorkflowAgent(BaseAgent):
 
         Args:
             messages: The message(s) to send to the workflow. Required for new runs,
-                should be None when resuming from checkpoint.
+                could be None if only restoring the underlying workflow from a checkpoint.
 
         Keyword Args:
             stream: If True, returns an async iterable of updates. If False (default),
@@ -284,7 +276,7 @@ class WorkflowAgent(BaseAgent):
             if provider_session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.before_run(
-                agent=self,  # type: ignore[arg-type]
+                agent=self,
                 session=provider_session,
                 context=session_context,
                 state=provider_session.state.setdefault(provider.source_id, {}),
@@ -364,7 +356,7 @@ class WorkflowAgent(BaseAgent):
             if provider_session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.before_run(
-                agent=self,  # type: ignore[arg-type]
+                agent=self,
                 session=provider_session,
                 context=session_context,
                 state=provider_session.state.setdefault(provider.source_id, {}),
@@ -415,40 +407,43 @@ class WorkflowAgent(BaseAgent):
         Yields:
             WorkflowEvent objects from the workflow execution.
         """
-        # Determine the execution mode based on state.
-        # The streaming flag controls the workflow's internal streaming mode,
-        # which affects executor behavior (e.g. AgentExecutor emits different event
-        # types in streaming vs non-streaming mode).
-        if bool(self.pending_requests):
-            function_responses = self._process_pending_requests(input_messages)
+        # Restore the workflow state if a checkpoint is provided
+        if checkpoint_id is not None:
+            if checkpoint_storage is None:
+                raise AgentInvalidRequestException("checkpoint_storage must be provided when checkpoint_id is provided")
+            logger.debug(f"Restoring workflow from checkpoint {checkpoint_id}")
+            # Restore the workflow from checkpoint
             if streaming:
-                async for event in self.workflow.run(
-                    responses=function_responses,
-                    stream=True,
-                    function_invocation_kwargs=function_invocation_kwargs,
-                    client_kwargs=client_kwargs,
-                ):
-                    yield event
-            else:
-                for event in await self.workflow.run(
-                    responses=function_responses,
-                    function_invocation_kwargs=function_invocation_kwargs,
-                    client_kwargs=client_kwargs,
-                ):
-                    yield event
-
-        elif checkpoint_id is not None:
-            # Restore the prior workflow state from the checkpoint. Shared
-            # state (e.g. accumulated conversation history maintained by the
-            # workflow's executors) survives across turns because Workflow.run
-            # no longer wipes state per call. Callers who want to deliver a
-            # new user message after restore should make a second
-            # `workflow.run(message=...)` call - they are NOT mutually
-            # exclusive on the same instance, but each must be its own call.
-            if streaming:
-                async for event in self.workflow.run(
+                async for _ in self.workflow.run(
                     stream=True,
                     checkpoint_id=checkpoint_id,
+                    checkpoint_storage=checkpoint_storage,
+                ):
+                    pass
+            else:
+                _ = await self.workflow.run(
+                    checkpoint_id=checkpoint_id,
+                    checkpoint_storage=checkpoint_storage,
+                )
+            if not input_messages:
+                logger.info("No input messages provided; the workflow has been restored to the checkpoint state.")
+                return
+
+        final_state = self._workflow.status
+        logger.debug(f"Workflow state: {final_state}")
+
+        if final_state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
+            # Extract function responses from input messages, and ensure that
+            # only function responses are present in messages if there is any
+            # pending request.
+            # NOTE: It is possible that some pending requests are not fulfilled,
+            # and we will let the workflow to handle this -- the agent does not
+            # have an opinion on this.
+            function_responses = self._extract_function_responses(input_messages)
+            if streaming:
+                async for event in self.workflow.run(
+                    responses=function_responses,
+                    stream=True,
                     checkpoint_storage=checkpoint_storage,
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
@@ -456,59 +451,34 @@ class WorkflowAgent(BaseAgent):
                     yield event
             else:
                 for event in await self.workflow.run(
-                    checkpoint_id=checkpoint_id,
+                    responses=function_responses,
                     checkpoint_storage=checkpoint_storage,
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
                 ):
                     yield event
-
+        elif final_state == WorkflowRunState.IDLE:
+            if streaming:
+                async for event in self.workflow.run(
+                    message=input_messages,
+                    stream=True,
+                    checkpoint_storage=checkpoint_storage,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    client_kwargs=client_kwargs,
+                ):
+                    yield event
+            else:
+                for event in await self.workflow.run(
+                    message=input_messages,
+                    checkpoint_storage=checkpoint_storage,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    client_kwargs=client_kwargs,
+                ):
+                    yield event
         else:
-            if streaming:
-                async for event in self.workflow.run(
-                    message=input_messages,
-                    stream=True,
-                    checkpoint_storage=checkpoint_storage,
-                    function_invocation_kwargs=function_invocation_kwargs,
-                    client_kwargs=client_kwargs,
-                ):
-                    yield event
-            else:
-                for event in await self.workflow.run(
-                    message=input_messages,
-                    checkpoint_storage=checkpoint_storage,
-                    function_invocation_kwargs=function_invocation_kwargs,
-                    client_kwargs=client_kwargs,
-                ):
-                    yield event
+            raise AgentException(f"The underlying workflow is in an invalid state to restart: {final_state}.")
 
     # endregion Run Methods
-
-    def _process_pending_requests(self, input_messages: Sequence[Message]) -> dict[str, Any]:
-        """Process pending requests by extracting function responses and updating state.
-
-        Args:
-            input_messages: Input messages that may contain function responses.
-
-        Returns:
-            A dictionary mapping request IDs to their response data.
-        """
-        logger.info(f"Continuing workflow to address {len(self.pending_requests)} requests")
-
-        # Extract function responses from input messages, and ensure that
-        # only function responses are present in messages if there is any
-        # pending request.
-        function_responses = self._extract_function_responses(input_messages)
-
-        # Pop pending requests if fulfilled.
-        for request_id in list(self.pending_requests.keys()):
-            if request_id in function_responses:
-                self.pending_requests.pop(request_id)
-
-        # NOTE: It is possible that some pending requests are not fulfilled,
-        # and we will let the workflow to handle this -- the agent does not
-        # have an opinion on this.
-        return function_responses
 
     def _convert_workflow_events_to_agent_response(
         self,
@@ -527,10 +497,10 @@ class WorkflowAgent(BaseAgent):
 
         for output_event in output_events:
             if output_event.type == "request_info":
-                function_call, approval_request = self._process_request_info_event(output_event)
+                request_content = self._process_request_info_event(output_event)
                 messages.append(
                     Message(
-                        contents=[function_call, approval_request],
+                        contents=[request_content],
                         role="assistant",
                         author_name=output_event.source_executor_id,
                         message_id=str(uuid.uuid4()),
@@ -596,38 +566,6 @@ class WorkflowAgent(BaseAgent):
             usage_details=merged_usage,
             raw_representation=raw_representations,
         )
-
-    def _process_request_info_event(
-        self,
-        event: WorkflowEvent[Any],
-    ) -> tuple[Content, Content]:
-        """Convert a request_info event to FunctionCallContent and FunctionApprovalRequestContent.
-
-        Args:
-            event: A WorkflowEvent with type='request_info'.
-
-        Returns:
-            A tuple of (FunctionCallContent, FunctionApprovalRequestContent).
-        """
-        request_id = event.request_id
-        if not request_id:
-            raise ValueError("request_info event must have a request_id")
-
-        self.pending_requests[request_id] = event
-
-        args = self.RequestInfoFunctionArgs(request_id=request_id, data=event.data).to_dict()
-
-        function_call = Content.from_function_call(
-            call_id=request_id,
-            name=self.REQUEST_INFO_FUNCTION_NAME,
-            arguments=args,
-        )
-        approval_request = Content.from_function_approval_request(
-            id=request_id,
-            function_call=function_call,
-            additional_properties={"request_id": request_id},
-        )
-        return function_call, approval_request
 
     def _convert_workflow_event_to_agent_response_updates(
         self,
@@ -730,85 +668,72 @@ class WorkflowAgent(BaseAgent):
             ]
 
         if event.type == "request_info":
-            # Store the pending request for later correlation
-            request_id = event.request_id
-            if not request_id:
-                raise ValueError("request_info event must have a request_id")
-
-            self.pending_requests[request_id] = event
-
-            args = self.RequestInfoFunctionArgs(request_id=request_id, data=event.data).to_dict()
-
-            function_call = Content.from_function_call(
-                call_id=request_id,
-                name=self.REQUEST_INFO_FUNCTION_NAME,
-                arguments=args,
-            )
-            approval_request = Content.from_function_approval_request(
-                id=request_id,
-                function_call=function_call,
-                additional_properties={"request_id": request_id},
-            )
+            request_content = self._process_request_info_event(event)
             return [
                 AgentResponseUpdate(
-                    contents=[function_call, approval_request],
+                    contents=[request_content],
                     role="assistant",
                     author_name=self.name,
                     response_id=response_id,
                     message_id=str(uuid.uuid4()),
                     created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                    raw_representation=event,
                 )
             ]
 
         # Ignore workflow-internal events
         return []
 
+    def _process_request_info_event(
+        self,
+        event: WorkflowEvent[Any],
+    ) -> Content:
+        """Convert a request_info event to FunctionApprovalRequestContent.
+
+        Args:
+            event: A WorkflowEvent with type='request_info'.
+
+        Returns:
+            A content object representing the request info. The content can be a `function_approval_request`
+            or a `function_call` depending on the structure of the event data.
+
+        Note:
+            If the event data is already a FunctionApprovalRequestContent, it will be returned as-is.
+        """
+        if isinstance(event.data, Content) and event.data.user_input_request:
+            # Return the event data as-is if it's already a properly formed FunctionApprovalRequestContent
+            return event.data
+
+        request_id = event.request_id
+        args = self.RequestInfoFunctionArgs(request_id=request_id, request_event=event).to_dict()
+
+        return Content.from_function_call(
+            call_id=request_id,
+            name=self.REQUEST_INFO_FUNCTION_NAME,
+            arguments=args,
+        )
+
     def _extract_function_responses(self, input_messages: Sequence[Message]) -> dict[str, Any]:
-        """Extract function responses from input messages."""
+        """Extract function responses from input messages.
+
+        The responses are for pending requests that the workflow is waiting on, and
+        will be passed to the workflow. The pending requests are processed to either
+        `function_approval_request` or `function_call` content by `_process_request_info_event`.
+        """
         function_responses: dict[str, Any] = {}
         for message in input_messages:
             for content in message.contents:
                 if content.type == "function_approval_response":
-                    # Parse the function arguments to recover request payload
-                    arguments_payload = content.function_call.arguments  # type: ignore[attr-defined, union-attr]
-                    if isinstance(arguments_payload, str):
-                        try:
-                            parsed_args = self.RequestInfoFunctionArgs.from_json(arguments_payload)
-                        except ValueError as exc:
-                            raise AgentInvalidResponseException(
-                                "FunctionApprovalResponseContent arguments must decode to a mapping."
-                            ) from exc
-                    elif isinstance(arguments_payload, dict):
-                        parsed_args = self.RequestInfoFunctionArgs.from_dict(arguments_payload)
-                    else:
-                        raise AgentInvalidResponseException(
-                            "FunctionApprovalResponseContent arguments must be a mapping or JSON string."
-                        )
-
-                    request_id = parsed_args.request_id or content.id  # type: ignore[attr-defined]
-                    if not content.approved:  # type: ignore[attr-defined]
-                        raise AgentInvalidResponseException(f"Request '{request_id}' was not approved by the caller.")
-
-                    if request_id in self.pending_requests:
-                        function_responses[request_id] = parsed_args.data
-                    elif bool(self.pending_requests):
-                        raise AgentInvalidRequestException(
-                            "Only responses for pending requests are allowed when there are outstanding approvals."
-                        )
+                    request_id: str = content.id  # type: ignore[assignment]
+                    function_responses[request_id] = content
                 elif content.type == "function_result":
-                    request_id = content.call_id  # type: ignore[attr-defined]
-                    if request_id in self.pending_requests:
-                        response_data = content.result if hasattr(content, "result") else str(content)  # type: ignore[attr-defined]
-                        function_responses[request_id] = response_data
-                    elif bool(self.pending_requests):
-                        raise AgentInvalidRequestException(
-                            "Only function responses for pending requests are allowed while requests are outstanding."
-                        )
+                    response_data = content.result if hasattr(content, "result") else str(content)
+                    function_responses[content.call_id] = response_data  # type: ignore
                 else:
-                    if bool(self.pending_requests):
-                        raise AgentInvalidResponseException(
-                            "Unexpected content type while awaiting request info responses."
-                        )
+                    raise AgentInvalidResponseException(
+                        "Unexpected content type while awaiting request info responses."
+                    )
+
         return function_responses
 
     def _extract_contents(self, data: Any) -> list[Content]:
@@ -816,7 +741,7 @@ class WorkflowAgent(BaseAgent):
         if isinstance(data, list):
             return [c for item in data for c in self._extract_contents(item)]  # type: ignore
         if isinstance(data, Content):
-            return [data]  # type: ignore[redundant-cast]
+            return [data]
         if isinstance(data, str):
             return [Content.from_text(text=data)]
         return [Content.from_text(text=str(data))]
@@ -910,7 +835,7 @@ class WorkflowAgent(BaseAgent):
                 messages=(current.messages or []) + (incoming.messages or []),
                 response_id=current.response_id or incoming.response_id,
                 created_at=incoming.created_at or current.created_at,
-                usage_details=add_usage_details(current.usage_details, incoming.usage_details),  # type: ignore[arg-type]
+                usage_details=add_usage_details(current.usage_details, incoming.usage_details),
                 raw_representation=raw_list if raw_list else None,
                 additional_properties=incoming.additional_properties or current.additional_properties,
             )
@@ -945,7 +870,7 @@ class WorkflowAgent(BaseAgent):
             if aggregated:
                 final_messages.extend(aggregated.messages)
                 if aggregated.usage_details:
-                    merged_usage = add_usage_details(merged_usage, aggregated.usage_details)  # type: ignore[arg-type]
+                    merged_usage = add_usage_details(merged_usage, aggregated.usage_details)
                 if aggregated.created_at and (
                     not latest_created_at or _parse_dt(aggregated.created_at) > _parse_dt(latest_created_at)
                 ):
@@ -969,7 +894,7 @@ class WorkflowAgent(BaseAgent):
             flattened = AgentResponse.from_updates(global_dangling)
             final_messages.extend(flattened.messages)
             if flattened.usage_details:
-                merged_usage = add_usage_details(merged_usage, flattened.usage_details)  # type: ignore[arg-type]
+                merged_usage = add_usage_details(merged_usage, flattened.usage_details)
             if flattened.created_at and (
                 not latest_created_at or _parse_dt(flattened.created_at) > _parse_dt(latest_created_at)
             ):
