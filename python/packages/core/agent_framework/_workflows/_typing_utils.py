@@ -1,9 +1,44 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import typing
 from types import UnionType
 from typing import Any, TypeGuard, Union, cast, get_args, get_origin
 
+import typing_extensions
+
 from .._agents import Agent
+
+# Pre-compute the TypeVar types for runtime-safe detection.
+# isinstance(x, TypeVar) can fail if TypeVar is a factory/callable
+# on some Python versions, so we compare against the actual runtime type.
+_TYPEVAR_TYPES: tuple[type, ...] = (type(typing.TypeVar("_T")), type(typing_extensions.TypeVar("_T")))  # pyright: ignore[reportUnknownVariableType]
+
+
+def is_typevar(x: Any) -> bool:
+    """Check if x is an unresolved TypeVar instance (from typing or typing_extensions).
+
+    Args:
+        x: The value to check.
+
+    Returns:
+        True if x is a TypeVar instance, False otherwise.
+    """
+    return isinstance(x, _TYPEVAR_TYPES)
+
+
+def contains_typevar(annotation: Any) -> bool:
+    """Check if an annotation contains an unresolved TypeVar at any nesting level.
+
+    Args:
+        annotation: The annotation to inspect.
+
+    Returns:
+        True if the annotation or any nested type argument is a TypeVar, False otherwise.
+    """
+    if is_typevar(annotation):
+        return True
+
+    return any(contains_typevar(arg) for arg in get_args(annotation))
 
 
 def is_chat_agent(agent: Any) -> TypeGuard[Agent]:
@@ -140,7 +175,7 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
     if origin in [list, set]:
         return isinstance(data, origin) and (
             not args or all(any(is_instance_of(item, arg) for arg in args) for item in data)  # type: ignore[misc]
-        )  # type: ignore
+        )
 
     # Case 4: target_type is a tuple
     if origin is tuple:

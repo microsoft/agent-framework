@@ -1,4 +1,4 @@
-# Harness Step 02 — BackgroundAgents (Stock Price Research)
+﻿# Harness Step 02 — BackgroundAgents (Stock Price Research)
 
 This sample demonstrates how to use the **BackgroundAgentsProvider** to delegate work from a parent agent to background agents. Both agents use `HarnessAgent` for pre-configured function invocation, per-service-call persistence, and context-window compaction.
 
@@ -9,16 +9,16 @@ A parent agent receives a list of stock tickers and uses a web-search background
 ### Architecture
 
 ```
-┌────────────────────────────────────────┐
-│     StockPriceResearcher               │
-│         (Parent Agent)                 │
-│                                        │
-│  BackgroundAgentsProvider              │
-│    ├─ BackgroundAgents_StartTask       │
-│    ├─ BackgroundAgents_WaitFor...      │
-│    ├─ BackgroundAgents_GetTaskResults  │
-│    └─ ...                              │
-└────────────┬───────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│     StockPriceResearcher                         │
+│         (Parent Agent)                           │
+│                                                  │
+│  BackgroundAgentsProvider                        │
+│    ├─ background_agents_start_task               │
+│    ├─ background_agents_wait_for_first_completion│
+│    ├─ background_agents_get_task_results         │
+│    └─ ...                                        │
+└─────────────┬────────────────────────────────────┘
              │  delegates to
              ▼
 ┌─────────────────────────────────┐
@@ -35,7 +35,7 @@ A parent agent receives a list of stock tickers and uses a web-search background
 - An Azure AI Foundry endpoint with an OpenAI model deployment
 - Set the following environment variables:
   - `AZURE_FOUNDRY_OPENAI_ENDPOINT` — Your Foundry OpenAI endpoint URL
-  - `AZURE_AI_MODEL_DEPLOYMENT_NAME` — Model deployment name (defaults to `gpt-5.4`)
+  - `FOUNDRY_MODEL` — Model deployment name (defaults to `gpt-5.4`)
 
 ## Running the Sample
 
@@ -51,3 +51,11 @@ BAC, MSFT, BA
 ```
 
 The parent agent will delegate each ticker lookup to the web search background agent concurrently and present the results in a table.
+
+## Security Considerations
+
+`BackgroundAgentsProvider` delegates work to the agents you supply — the parent sends them text input
+and receives back whatever they produce. A compromised or malicious background agent could exfiltrate
+data it receives, or return adversarial output designed to influence the parent agent via indirect
+prompt injection once its result is retrieved. Only supply background agents you have vetted and trust
+with the data the parent may pass to them.

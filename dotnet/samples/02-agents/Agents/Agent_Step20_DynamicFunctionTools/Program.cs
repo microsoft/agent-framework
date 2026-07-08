@@ -7,13 +7,13 @@
 // can then use the newly added tools in subsequent iterations of the same function-calling loop.
 
 using System.ComponentModel;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // Pre-defined tool implementations that can be loaded on demand.
 [Description("Get the current weather for a city.")]
@@ -97,20 +97,21 @@ AIFunction requestToolsFunction = AIFunctionFactory.Create(
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(
+AIAgent agent = new AIProjectClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
-    .AsIChatClient()
-    .AsBuilder()
-    .Use(getResponseFunc: ToolLoggingMiddleware, getStreamingResponseFunc: ToolLoggingStreamingMiddleware)
-    .BuildAIAgent(
+    .AsAIAgent(
+        model: deploymentName,
         instructions: """
             You are a helpful assistant. You start with limited tools.
             When you need functionality that you don't currently have, call RequestTools with a description
             of what you need. After new tools are loaded, use them to answer the user's question.
             """,
-        tools: [requestToolsFunction]);
+        tools: [requestToolsFunction],
+        clientFactory: (chatClient) => chatClient
+            .AsBuilder()
+            .Use(getResponseFunc: ToolLoggingMiddleware, getStreamingResponseFunc: ToolLoggingStreamingMiddleware)
+            .Build());
 
 // Run a conversation that triggers dynamic tool expansion.
 Console.WriteLine("=== Dynamic Function Tools Sample ===\n");

@@ -189,7 +189,7 @@ public static class A2AServerServiceCollectionExtensions
             var isolationKeyProvider = serviceProvider.GetService<SessionIsolationKeyProvider>();
             if (agentSessionStore?.GetService<IsolationKeyScopedAgentSessionStore>() is null)
             {
-                agentSessionStore ??= new InMemoryAgentSessionStore();
+                agentSessionStore ??= new NoopAgentSessionStore();
                 agentSessionStore = new IsolationKeyScopedAgentSessionStore(agentSessionStore, isolationKeyProvider, new() { Strict = isolationKeyProvider != null });
             }
 

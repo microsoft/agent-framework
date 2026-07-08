@@ -6,6 +6,10 @@ on:
     branches: ["main"]
     paths:
       - "python/**"
+      - "!python/AGENTS.md"
+      - "!python/**/AGENTS.md"
+      - "!python/.github/skills/*"
+      - "!python/.github/skills/**"
 
 env:
   # Configure a constant location for the uv cache
@@ -109,8 +113,8 @@ jobs:
       - name: Run markdown code lint
         run: uv run poe markdown-code-lint
 
-  mypy:
-    name: Mypy Checks
+  test-typing:
+    name: Test Typing Checks
     if: "!cancelled()"
     strategy:
       fail-fast: false
@@ -135,7 +139,5 @@ jobs:
           os: ${{ runner.os }}
         env:
           UV_CACHE_DIR: /tmp/.uv-cache
-      - name: Run Mypy
-        env:
-          GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref || github.base_ref || 'main' }}
-        run: uv run python scripts/workspace_poe_tasks.py ci-mypy
+      - name: Run tests/samples type checkers (mypy, pyrefly, ty)
+        run: uv run python scripts/workspace_poe_tasks.py ci-test-typing

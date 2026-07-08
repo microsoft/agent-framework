@@ -9,7 +9,7 @@ integrations, many of which are lazy-loaded from optional packages.
 """
 
 import importlib.metadata
-from typing import Final
+from typing import TYPE_CHECKING, Any, Final
 
 try:
     _version = importlib.metadata.version(__name__)
@@ -27,6 +27,7 @@ from ._clients import (
     SupportsGetEmbeddings,
     SupportsImageGenerationTool,
     SupportsMCPTool,
+    SupportsShellTool,
     SupportsWebSearchTool,
 )
 from ._compaction import (
@@ -98,8 +99,22 @@ from ._harness._file_access import (
     FileAccessProvider,
     FileSearchMatch,
     FileSearchResult,
+    FileStoreEntry,
     FileSystemAgentFileStore,
     InMemoryAgentFileStore,
+)
+from ._harness._file_memory import (
+    DEFAULT_FILE_MEMORY_INSTRUCTIONS,
+    DEFAULT_FILE_MEMORY_SOURCE_ID,
+    FileMemoryProvider,
+)
+from ._harness._loop import (
+    AgentLoopMiddleware,
+    JudgeVerdict,
+    background_tasks_running,
+    background_tasks_running_message,
+    todos_remaining,
+    todos_remaining_message,
 )
 from ._harness._memory import (
     DEFAULT_MEMORY_SOURCE_ID,
@@ -124,7 +139,16 @@ from ._harness._todo import (
     TodoSessionStore,
     TodoStore,
 )
-from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPWebsocketTool
+from ._harness._tool_approval import (
+    DEFAULT_TOOL_APPROVAL_SOURCE_ID,
+    ToolApprovalMiddleware,
+    ToolApprovalRule,
+    ToolApprovalRuleCallback,
+    ToolApprovalState,
+    create_always_approve_tool_response,
+    create_always_approve_tool_with_arguments_response,
+)
+from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPTaskOptions, MCPWebsocketTool, SamplingApprovalCallback
 from ._middleware import (
     AgentContext,
     AgentMiddleware,
@@ -151,12 +175,14 @@ from ._sessions import (
     FileHistoryProvider,
     HistoryProvider,
     InMemoryHistoryProvider,
+    ServiceSessionId,
     SessionContext,
     register_state_type,
 )
 from ._settings import SecretString, load_settings
 from ._skills import (
     AggregatingSkillsSource,
+    CachingSkillsSource,
     ClassSkill,
     DeduplicatingSkillsSource,
     DelegatingSkillsSource,
@@ -168,13 +194,18 @@ from ._skills import (
     InlineSkillResource,
     InlineSkillScript,
     InMemorySkillsSource,
+    MCPSkill,
+    MCPSkillResource,
+    MCPSkillsSource,
     Skill,
     SkillFrontmatter,
     SkillResource,
     SkillScript,
+    SkillScriptArgumentParser,
     SkillScriptRunner,
     SkillsProvider,
     SkillsSource,
+    SkillsSourceContext,
 )
 from ._telemetry import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -239,6 +270,7 @@ from ._workflows._agent_executor import (
 )
 from ._workflows._agent_utils import resolve_agent_id
 from ._workflows._checkpoint import (
+    CheckpointID,
     CheckpointStorage,
     FileCheckpointStorage,
     InMemoryCheckpointStorage,
@@ -282,7 +314,6 @@ from ._workflows._functional import (
     workflow,
 )
 from ._workflows._request_info_mixin import response_handler
-from ._workflows._runner import Runner
 from ._workflows._runner_context import (
     InProcRunnerContext,
     RunnerContext,
@@ -322,11 +353,14 @@ __all__ = [
     "DEFAULT_BACKGROUND_AGENTS_SOURCE_ID",
     "DEFAULT_FILE_ACCESS_INSTRUCTIONS",
     "DEFAULT_FILE_ACCESS_SOURCE_ID",
+    "DEFAULT_FILE_MEMORY_INSTRUCTIONS",
+    "DEFAULT_FILE_MEMORY_SOURCE_ID",
     "DEFAULT_HARNESS_INSTRUCTIONS",
     "DEFAULT_MAX_ITERATIONS",
     "DEFAULT_MEMORY_SOURCE_ID",
     "DEFAULT_MODE_SOURCE_ID",
     "DEFAULT_TODO_SOURCE_ID",
+    "DEFAULT_TOOL_APPROVAL_SOURCE_ID",
     "EXCLUDED_KEY",
     "EXCLUDE_REASON_KEY",
     "GROUP_ANNOTATION_KEY",
@@ -349,6 +383,7 @@ __all__ = [
     "AgentExecutorResponse",
     "AgentFileStore",
     "AgentFrameworkException",
+    "AgentLoopMiddleware",
     "AgentMiddleware",
     "AgentMiddlewareLayer",
     "AgentMiddlewareTypes",
@@ -365,6 +400,7 @@ __all__ = [
     "BaseAgent",
     "BaseChatClient",
     "BaseEmbeddingClient",
+    "CachingSkillsSource",
     "Case",
     "CharacterEstimatorTokenizer",
     "ChatAndFunctionMiddlewareTypes",
@@ -376,6 +412,7 @@ __all__ = [
     "ChatResponse",
     "ChatResponseUpdate",
     "CheckResult",
+    "CheckpointID",
     "CheckpointStorage",
     "ClassSkill",
     "CompactionProvider",
@@ -410,11 +447,13 @@ __all__ = [
     "FileAccessProvider",
     "FileCheckpointStorage",
     "FileHistoryProvider",
+    "FileMemoryProvider",
     "FileSearchMatch",
     "FileSearchResult",
     "FileSkill",
     "FileSkillScript",
     "FileSkillsSource",
+    "FileStoreEntry",
     "FileSystemAgentFileStore",
     "FilteringSkillsSource",
     "FinalT",
@@ -440,9 +479,14 @@ __all__ = [
     "InlineSkill",
     "InlineSkillResource",
     "InlineSkillScript",
+    "JudgeVerdict",
     "LocalEvaluator",
+    "MCPSkill",
+    "MCPSkillResource",
+    "MCPSkillsSource",
     "MCPStdioTool",
     "MCPStreamableHTTPTool",
+    "MCPTaskOptions",
     "MCPWebsocketTool",
     "MemoryContextProvider",
     "MemoryFileStore",
@@ -465,17 +509,21 @@ __all__ = [
     "RunContext",
     "Runner",
     "RunnerContext",
+    "SamplingApprovalCallback",
     "SecretString",
     "SelectiveToolCallCompactionStrategy",
+    "ServiceSessionId",
     "SessionContext",
     "SingleEdgeGroup",
     "Skill",
     "SkillFrontmatter",
     "SkillResource",
     "SkillScript",
+    "SkillScriptArgumentParser",
     "SkillScriptRunner",
     "SkillsProvider",
     "SkillsSource",
+    "SkillsSourceContext",
     "SlidingWindowStrategy",
     "StepWrapper",
     "SubWorkflowRequestMessage",
@@ -488,6 +536,7 @@ __all__ = [
     "SupportsGetEmbeddings",
     "SupportsImageGenerationTool",
     "SupportsMCPTool",
+    "SupportsShellTool",
     "SupportsWebSearchTool",
     "SwitchCaseEdgeGroup",
     "SwitchCaseEdgeGroupCase",
@@ -501,6 +550,10 @@ __all__ = [
     "TodoStore",
     "TokenBudgetComposedStrategy",
     "TokenizerProtocol",
+    "ToolApprovalMiddleware",
+    "ToolApprovalRule",
+    "ToolApprovalRuleCallback",
+    "ToolApprovalState",
     "ToolMode",
     "ToolResultCompactionStrategy",
     "ToolTypes",
@@ -534,7 +587,11 @@ __all__ = [
     "agent_middleware",
     "annotate_message_groups",
     "apply_compaction",
+    "background_tasks_running",
+    "background_tasks_running_message",
     "chat_middleware",
+    "create_always_approve_tool_response",
+    "create_always_approve_tool_with_arguments_response",
     "create_edge_runner",
     "create_harness_agent",
     "detect_media_type_from_base64",
@@ -562,6 +619,8 @@ __all__ = [
     "response_handler",
     "set_agent_mode",
     "step",
+    "todos_remaining",
+    "todos_remaining_message",
     "tool",
     "tool_call_args_match",
     "tool_called_check",
@@ -572,3 +631,20 @@ __all__ = [
     "validate_workflow_graph",
     "workflow",
 ]
+
+if TYPE_CHECKING:
+    from ._workflows._runner import Runner
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily resolve deprecated public names, emitting a ``DeprecationWarning``.
+
+    ``Runner`` remains importable from ``agent_framework`` for backward
+    compatibility but is deprecated and slated for removal from the public API.
+    """
+    if name == "Runner":
+        from ._workflows._runner import Runner, warn_runner_deprecated
+
+        warn_runner_deprecated()
+        return Runner
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -10,7 +10,12 @@ using OpenAI.Chat;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHttpClient().AddLogging();
-builder.Services.AddAGUI();
+builder.Services.AddAGUIServer();
+
+// WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,
+// make sure to also register a SessionIsolationKeyProvider to scope sessions by principal in multi-user
+// deployments, e.g.:
+// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 
 WebApplication app = builder.Build();
 
@@ -32,6 +37,6 @@ ChatClientAgent agent = chatClient.AsAIAgent(
     instructions: "You are a helpful assistant.");
 
 // Map the AG-UI agent endpoint
-app.MapAGUI("/ag-ui", agent);
+app.MapAGUIServer("/ag-ui", agent);
 
 await app.RunAsync();

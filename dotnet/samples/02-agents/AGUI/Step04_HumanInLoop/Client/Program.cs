@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
+using AGUI.Client;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AGUI;
 using Microsoft.Extensions.AI;
 
 string serverUrl = Environment.GetEnvironmentVariable("AGUI_SERVER_URL") ?? "http://localhost:5100";
@@ -13,7 +13,7 @@ using HttpClient httpClient = new()
     Timeout = TimeSpan.FromSeconds(60)
 };
 
-AGUIChatClient chatClient = new(httpClient, serverUrl);
+AGUIChatClient chatClient = new(new(httpClient, serverUrl));
 
 // Create agent
 ChatClientAgent baseAgent = chatClient.AsAIAgent(

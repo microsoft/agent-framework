@@ -51,9 +51,8 @@ public sealed class AgentClassSkillTests
         // Act & Assert — Content is cached
         Assert.Same(await skill.GetContentAsync(), await skill.GetContentAsync());
 
-        // Act & Assert — Content includes parameter schema from typed script
-        Assert.Contains("parameters_schema", await skill.GetContentAsync());
-        Assert.Contains("value", await skill.GetContentAsync());
+        // Act & Assert — Content includes parameter schema from typed script (with preserved quotes)
+        Assert.Contains("\"value\"", await skill.GetContentAsync());
     }
 
     [Fact]
@@ -87,7 +86,7 @@ public sealed class AgentClassSkillTests
         var source = new AgentInMemorySkillsSource(skills);
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Equal(2, result.Count);
@@ -383,10 +382,10 @@ public sealed class AgentClassSkillTests
         // Arrange
         var skill = new AttributedFullSkill();
 
-        // Act & Assert — Content includes reflected resources and scripts
-        Assert.Contains("<resources>", await skill.GetContentAsync());
+        // Act & Assert — Content includes resources in body; scripts are in available_scripts
+        Assert.Contains("<available_resources>", await skill.GetContentAsync());
         Assert.Contains("conversion-table", await skill.GetContentAsync());
-        Assert.Contains("<scripts>", await skill.GetContentAsync());
+        Assert.Contains("<available_scripts>", await skill.GetContentAsync());
         Assert.Contains("convert", await skill.GetContentAsync());
 
         // Act & Assert — discovered members are cached
@@ -504,7 +503,7 @@ public sealed class AgentClassSkillTests
     }
 
     [Fact]
-    public async Task Content_IncludesDescription_ForReflectedResourcesAsync()
+    public async Task Content_RendersResources_InBodyAsync()
     {
         // Arrange
         var skill = new AttributedResourcePropertiesSkill();
@@ -512,8 +511,10 @@ public sealed class AgentClassSkillTests
         // Act
         var content = await skill.GetContentAsync();
 
-        // Assert — descriptions from [Description] attribute appear in synthesized content
-        Assert.Contains("Some important data.", content);
+        // Assert — resources are rendered in body content; described resources include description attribute
+        Assert.Contains("<available_resources>", content);
+        Assert.Contains("ref-data", content);
+        Assert.Contains("description=\"Some important data.\"", content);
     }
 
     [Fact]

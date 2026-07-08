@@ -20,7 +20,10 @@ ignorePatterns:
   - pattern: "https://your-resource.openai.azure.com/"
   - pattern: "http://host.docker.internal"
   - pattern: "https://openai.github.io/openai-agents-js/openai/agents/classes/"
-  - pattern: "https:\/\/dotnet.microsoft.com\/download"
+  # dotnet.microsoft.com bot-blocks CI link checkers with intermittent 403s on any
+  # path (including localized variants like /en-us/download/...), so ignore the
+  # whole domain rather than just /download.
+  - pattern: "https:\/\/dotnet.microsoft.com"
   - pattern: "https://github.com/Rel1cx/eslint-react"
 # excludedDirs:
   # Folders which include links to localhost, since it's not ignored with regular expressions

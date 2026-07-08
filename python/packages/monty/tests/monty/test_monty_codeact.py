@@ -143,11 +143,11 @@ class _FakeMonty:
 def fake_monty_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Install a fake ``pydantic_monty`` module for the duration of each test."""
     fake = types.ModuleType("pydantic_monty")
-    fake.Monty = _FakeMonty  # type: ignore[attr-defined]
-    fake.MontyComplete = _FakeMontyComplete  # type: ignore[attr-defined]
-    fake.FunctionSnapshot = _FakeFunctionSnapshot  # type: ignore[attr-defined]
-    fake.FutureSnapshot = _FakeFutureSnapshot  # type: ignore[attr-defined]
-    fake.NameLookupSnapshot = _FakeNameLookupSnapshot  # type: ignore[attr-defined]
+    fake.Monty = _FakeMonty  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
+    fake.MontyComplete = _FakeMontyComplete  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
+    fake.FunctionSnapshot = _FakeFunctionSnapshot  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
+    fake.FutureSnapshot = _FakeFutureSnapshot  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
+    fake.NameLookupSnapshot = _FakeNameLookupSnapshot  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
 
     monkeypatch.setitem(sys.modules, "pydantic_monty", fake)
     _current_script[0] = None

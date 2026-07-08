@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows multiple middleware layers working together with Azure OpenAI:
+// Middleware — Chain multiple middleware layers on an agent
+//
+// This sample shows multiple middleware layers working together with Azure AI Foundry:
 // chat client (global/per-request), agent run (PII filtering and guardrails),
 // function invocation (logging and result overrides), human-in-the-loop
 // approval workflows for sensitive function calls, and MessageAIContextProvider
@@ -8,21 +10,20 @@
 
 using System.ComponentModel;
 using System.Text.RegularExpressions;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-// Get Microsoft Foundry configuration from environment variables
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+// Get Azure AI Foundry configuration from environment variables
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // Get a client to create/retrieve server side agents with
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-var azureOpenAIClient = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetChatClient(deploymentName);
+var aiProjectClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential());
 
 [Description("Get the weather for a given location.")]
 static string GetWeather([Description("The location to get the weather for.")] string location)
@@ -33,12 +34,14 @@ static string GetDateTime()
     => DateTimeOffset.Now.ToString();
 
 // Adding middleware to the chat client level and building an agent on top of it
-var originalAgent = azureOpenAIClient.AsIChatClient()
-    .AsBuilder()
-    .Use(getResponseFunc: ChatClientMiddleware, getStreamingResponseFunc: null)
-    .BuildAIAgent(
-        instructions: "You are an AI assistant that helps people find information.",
-        tools: [AIFunctionFactory.Create(GetDateTime, name: nameof(GetDateTime))]);
+var originalAgent = aiProjectClient.AsAIAgent(
+    model: deploymentName,
+    instructions: "You are an AI assistant that helps people find information.",
+    tools: [AIFunctionFactory.Create(GetDateTime, name: nameof(GetDateTime))],
+    clientFactory: (chatClient) => chatClient
+        .AsBuilder()
+        .Use(getResponseFunc: ChatClientMiddleware, getStreamingResponseFunc: null)
+        .Build());
 
 // Adding middleware to the agent level
 var middlewareEnabledAgent = originalAgent
@@ -117,11 +120,13 @@ Console.WriteLine($"Context-enriched response: {contextResponse}");
 // In this case we are attaching an AIContextProvider that only adds messages.
 Console.WriteLine("\n\n=== Example 6: AIContextProvider on chat client pipeline ===");
 
-var chatClientProviderAgent = azureOpenAIClient.AsIChatClient()
-    .AsBuilder()
-    .UseAIContextProviders(new DateTimeContextProvider())
-    .BuildAIAgent(
-        instructions: "You are an AI assistant that helps people find information.");
+var chatClientProviderAgent = aiProjectClient.AsAIAgent(
+    model: deploymentName,
+    instructions: "You are an AI assistant that helps people find information.",
+    clientFactory: (chatClient) => chatClient
+        .AsBuilder()
+        .UseAIContextProviders(new DateTimeContextProvider())
+        .Build());
 
 var chatClientContextResponse = await chatClientProviderAgent.RunAsync("Is it almost time for lunch?");
 Console.WriteLine($"Chat client context-enriched response: {chatClientContextResponse}");

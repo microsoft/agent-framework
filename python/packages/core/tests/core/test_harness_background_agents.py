@@ -14,6 +14,7 @@ from agent_framework import (
     BackgroundTaskInfo,
     BackgroundTaskStatus,
     Message,
+    ServiceSessionId,
 )
 from agent_framework._sessions import SessionContext
 
@@ -46,7 +47,12 @@ class _FakeAgent:
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+    def get_session(
+        self,
+        service_session_id: str | ServiceSessionId,
+        *,
+        session_id: str | None = None,
+    ) -> AgentSession:
         return AgentSession(service_session_id=service_session_id, session_id=session_id)
 
     async def run(
@@ -61,7 +67,7 @@ class _FakeAgent:
 
 def _make_provider(*agents: _FakeAgent) -> BackgroundAgentsProvider:
     """Create a provider with given agents."""
-    return BackgroundAgentsProvider(agents)
+    return BackgroundAgentsProvider(agents)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
 
 def _make_session() -> AgentSession:
@@ -97,7 +103,7 @@ def test_constructor_requires_agent_names() -> None:
     """Should reject agents with no name."""
     agent = _FakeAgent("")
     with pytest.raises(ValueError, match="non-empty name"):
-        BackgroundAgentsProvider([agent])
+        BackgroundAgentsProvider([agent])  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
 
 def test_constructor_rejects_duplicate_names() -> None:
@@ -105,18 +111,18 @@ def test_constructor_rejects_duplicate_names() -> None:
     agent1 = _FakeAgent("Research")
     agent2 = _FakeAgent("research")
     with pytest.raises(ValueError, match="Duplicate background agent name"):
-        BackgroundAgentsProvider([agent1, agent2])
+        BackgroundAgentsProvider([agent1, agent2])  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
 
 def test_constructor_valid_agents() -> None:
     """Should succeed with valid unique agents."""
-    provider = BackgroundAgentsProvider([_FakeAgent("Alpha"), _FakeAgent("Beta")])
+    provider = BackgroundAgentsProvider([_FakeAgent("Alpha"), _FakeAgent("Beta")])  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     assert provider.source_id == "background_agents"
 
 
 def test_constructor_custom_source_id() -> None:
     """Should accept custom source_id."""
-    provider = BackgroundAgentsProvider([_FakeAgent("Agent1")], source_id="custom_bg")
+    provider = BackgroundAgentsProvider([_FakeAgent("Agent1")], source_id="custom_bg")  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     assert provider.source_id == "custom_bg"
 
 

@@ -4,36 +4,32 @@
 //
 // Prerequisites:
 //   - Azure Functions Core Tools
-//   - Azure OpenAI resource
+//   - Foundry project endpoint and credentials
 //
 // Environment variables:
-//   AZURE_OPENAI_ENDPOINT
-//   AZURE_OPENAI_DEPLOYMENT_NAME (defaults to "gpt-5.4-mini")
+//   FOUNDRY_PROJECT_ENDPOINT
+//   FOUNDRY_MODEL (defaults to "gpt-5.4-mini")
 //
 // Run with: func start
 // Then call: POST http://localhost:7071/api/agents/HostedAgent/run
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting.AzureFunctions;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.Hosting;
-using OpenAI.Chat;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // Set up an AI agent following the standard Microsoft Agent Framework pattern.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
-    .AsAIAgent(
-        instructions: "You are a helpful assistant hosted in Azure Functions.",
-        name: "HostedAgent");
+AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+    .AsAIAgent(model: model, instructions: "You are a helpful assistant hosted in Azure Functions.", name: "HostedAgent");
 
 // Configure the function app to host the AI agent.
 // This will automatically generate HTTP API endpoints for the agent.
