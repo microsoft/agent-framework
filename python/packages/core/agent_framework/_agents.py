@@ -50,6 +50,7 @@ from ._types import (
     ChatResponseUpdate,
     Message,
     ResponseStream,
+    _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
     map_chat_to_agent_update,
     normalize_messages,
 )
@@ -1082,24 +1083,28 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         if not response:
             raise AgentInvalidResponseException("Chat client did not return a response.")
 
-        await self._finalize_response(
-            response=response,
-            agent_name=context["agent_name"],
-            session=context["session"],
-            session_context=context["session_context"],
+        for message in response.messages:
+            if message.author_name is None:
+                message.author_name = context["agent_name"]
+
+        session = context["session"]
+        if (
+            session
+            and response.conversation_id
+            and not is_local_history_conversation_id(response.conversation_id)
+            and session.service_session_id != response.conversation_id
+        ):
+            session.service_session_id = response.conversation_id
+
+        agent_response = _build_agent_response_from_chat_response(
+            response,
+            response_format=context["chat_options"].get("response_format"),
             suppress_response_id=context["suppress_response_id"],
         )
-        return AgentResponse(
-            messages=response.messages,
-            response_id=None if context["suppress_response_id"] else response.response_id,
-            created_at=response.created_at,
-            usage_details=response.usage_details,
-            value=response.value,
-            response_format=context["chat_options"].get("response_format"),
-            continuation_token=response.continuation_token,
-            raw_representation=response,
-            additional_properties=response.additional_properties,
-        )
+        session_context = context["session_context"]
+        session_context._response = agent_response  # type: ignore[assignment]
+        await self._run_after_providers(session=session, context=session_context)
+        return agent_response
 
     def _parse_streaming_response(
         self,
@@ -1127,12 +1132,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             ):
                 session.service_session_id = conversation_id
 
-            suppress_response_id = context["suppress_response_id"]
             session_context = context["session_context"]
-            session_context._response = AgentResponse(  # type: ignore[assignment]
-                messages=response.messages,
-                response_id=None if suppress_response_id else response.response_id,
-            )
+            if context["suppress_response_id"]:
+                response.response_id = None
+            session_context._response = response  # type: ignore[assignment]
             await self._run_after_providers(session=session, context=session_context)
 
         def _propagate_conversation_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
@@ -1429,48 +1432,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             "client_kwargs": effective_client_kwargs,
             "function_invocation_kwargs": additional_function_arguments,
         }
-
-    async def _finalize_response(
-        self,
-        response: ChatResponse,
-        agent_name: str,
-        session: AgentSession | None,
-        session_context: SessionContext,
-        suppress_response_id: bool = False,
-    ) -> None:
-        """Finalize response by setting author names and running after_run providers.
-
-        Args:
-            response: The chat response to finalize.
-            agent_name: The name of the agent to set as author.
-            session: The conversation session.
-            session_context: The invocation context.
-            suppress_response_id: When True, omit the raw service response ID from the public response.
-        """
-        # Ensure that the author name is set for each message in the response.
-        for message in response.messages:
-            if message.author_name is None:
-                message.author_name = agent_name
-
-        # Propagate conversation_id back to session (e.g. thread ID from Assistants API).
-        # For Responses-style APIs this can rotate every turn (response_id-based continuation),
-        # so refresh when a newer value is returned.
-        if (
-            session
-            and response.conversation_id
-            and not is_local_history_conversation_id(response.conversation_id)
-            and session.service_session_id != response.conversation_id
-        ):
-            session.service_session_id = response.conversation_id
-
-        # Set the response on the context for after_run providers
-        session_context._response = AgentResponse(  # type: ignore[assignment]
-            messages=response.messages,
-            response_id=None if suppress_response_id else response.response_id,
-        )
-
-        # Run after_run providers (reverse order)
-        await self._run_after_providers(session=session, context=session_context)
 
     async def _prepare_session_and_messages(
         self,

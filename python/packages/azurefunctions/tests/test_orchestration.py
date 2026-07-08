@@ -90,7 +90,7 @@ def executor_with_uuid() -> tuple[Any, Mock, str]:
 
     executor = AzureFunctionsAgentExecutor(context)
     test_uuid_hex = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    executor.generate_unique_id = Mock(return_value=test_uuid_hex)  # type: ignore[method-assign] # ty: ignore[invalid-assignment]
+    executor.generate_unique_id = Mock(return_value=test_uuid_hex)  # type: ignore[method-assign]
 
     return executor, context, test_uuid_hex
 
@@ -112,7 +112,7 @@ def executor_with_multiple_uuids() -> tuple[Any, Mock, list[str]]:
         "dddddddd-dddd-dddd-dddd-dddddddddddd",
         "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
     ]
-    executor.generate_unique_id = Mock(side_effect=uuid_hexes)  # type: ignore[method-assign] # ty: ignore[invalid-assignment]
+    executor.generate_unique_id = Mock(side_effect=uuid_hexes)  # type: ignore[method-assign]
 
     return executor, context, uuid_hexes
 
