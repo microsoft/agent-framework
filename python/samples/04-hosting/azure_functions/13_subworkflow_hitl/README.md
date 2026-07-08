@@ -57,7 +57,8 @@ request_id = await WorkflowHitlContext.pending_request_id(ctx)
 
 # NotifyExecutor (also inside the inner workflow)
 hitl = WorkflowHitlContext.from_context(ctx)
-respond_url = hitl.build_respond_url(request_id)  # already qualified back to the root
+if hitl and request_id:
+    respond_url = hitl.build_respond_url(request_id)  # already qualified back to the root
 ```
 
 The notify executor runs inside the child orchestration, yet `build_respond_url` returns a URL that targets the **top-level** instance with the qualified `review_sub~0~{requestId}` id. You pass only the **bare** inner id. The host propagates the address context (the root instance, the workflow name, and the `review_sub~0~` path prefix) down into the child, so the executor qualifies the id for you and never needs to know how it is embedded.

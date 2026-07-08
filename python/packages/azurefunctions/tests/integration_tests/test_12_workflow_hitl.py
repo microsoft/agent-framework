@@ -248,9 +248,9 @@ class TestWorkflowHITL:
         pending = pending_requests[0]
         request_id = pending["requestId"]
 
-        # The review executor now generates an explicit uuid4 and passes it to
-        # request_info, so the pending id round-trips as a valid UUID (not an opaque
-        # framework default).
+        # request_info generates the request id internally as a uuid4 when the caller
+        # does not pass one, so the pending id round-trips as a valid UUID (not an
+        # opaque framework default).
         uuid.UUID(request_id)  # raises ValueError if not a valid UUID
 
         # The request originates in the executor that called request_info.

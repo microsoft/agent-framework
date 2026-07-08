@@ -51,7 +51,8 @@ await ctx.request_info(
 # Read that id back, then build the respond URL with WorkflowHitlContext.
 request_id = await WorkflowHitlContext.pending_request_id(ctx)
 hitl = WorkflowHitlContext.from_context(ctx)
-respond_url = hitl.build_respond_url(request_id)  # email this to the reviewer
+if hitl and request_id:
+    respond_url = hitl.build_respond_url(request_id)  # email this to the reviewer
 ```
 
 Two things make this safe and worth understanding.

@@ -13,7 +13,7 @@ orchestration. These tests cover the host-side glue:
   the original typed object on the child side.
 """
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock
 
 from agent_framework import WorkflowExecutor
@@ -326,7 +326,7 @@ class TestSubworkflowAddressPropagation:
         captured: list[dict[str, str]] = []
 
         def _call_sub(name: str, input_: dict[str, object], *, instance_id: str) -> str:  # noqa: ARG001
-            captured.append(input_[SUBWORKFLOW_ADDRESS_KEY])  # type: ignore[arg-type]
+            captured.append(cast("dict[str, str]", input_[SUBWORKFLOW_ADDRESS_KEY]))
             return f"task::{instance_id}"
 
         ctx = Mock()

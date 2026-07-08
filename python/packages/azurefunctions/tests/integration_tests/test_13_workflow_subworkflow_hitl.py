@@ -169,8 +169,8 @@ class TestSubworkflowHITL:
         assert len(pending) == 1
         qualified_id = pending[0]["requestId"]
 
-        # The qualified id is ``review_sub~0~{bare}``; the inner review gate now
-        # generates an explicit uuid4 as the bare id.
+        # The qualified id is ``review_sub~0~{bare}``; request_info generates the bare
+        # inner id internally as a uuid4 when the review gate does not pass one.
         prefix = f"{SUBWORKFLOW_NODE_ID}~0~"
         assert qualified_id.startswith(prefix), qualified_id
         bare_id = qualified_id[len(prefix) :]
