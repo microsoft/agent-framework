@@ -518,7 +518,7 @@ async def test_cmc_with_invalid_data_content_media_type(
         )
 
         ollama_client = OllamaChatClient()
-        ollama_client.client.chat = AsyncMock(return_value=mock_streaming_chat_completion_response)  # type: ignore[method-assign] # ty: ignore[invalid-assignment]
+        ollama_client.client.chat = AsyncMock(return_value=mock_streaming_chat_completion_response)  # type: ignore[method-assign]
 
         await ollama_client.get_response(messages=chat_history)
 

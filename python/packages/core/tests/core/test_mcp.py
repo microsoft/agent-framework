@@ -1833,8 +1833,8 @@ async def test_mcp_tool_message_handler_notification():
     tool = MCPStdioTool(name="test_tool", command="python")
 
     # Mock the load_tools and load_prompts methods
-    tool.load_tools = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
-    tool.load_prompts = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.load_tools = AsyncMock()  # type: ignore[method-assign]
+    tool.load_prompts = AsyncMock()  # type: ignore[method-assign]
 
     # Test tools list changed notification
     tools_notification = Mock(spec=types.ServerNotification)
@@ -1845,10 +1845,10 @@ async def test_mcp_tool_message_handler_notification():
     assert result is None
     # The reload is scheduled as a background task; let it run.
     await asyncio.sleep(0)
-    tool.load_tools.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool.load_tools.assert_called_once()
 
     # Reset mock
-    tool.load_tools.reset_mock()  # ty: ignore[unresolved-attribute]
+    tool.load_tools.reset_mock()
 
     # Test prompts list changed notification
     prompts_notification = Mock(spec=types.ServerNotification)
@@ -1858,7 +1858,7 @@ async def test_mcp_tool_message_handler_notification():
     result = await tool.message_handler(prompts_notification)  # type: ignore[func-returns-value]
     assert result is None
     await asyncio.sleep(0)
-    tool.load_prompts.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool.load_prompts.assert_called_once()
 
     # Test unhandled notification
     unknown_notification = Mock(spec=types.ServerNotification)
@@ -1924,7 +1924,7 @@ async def test_mcp_tool_message_handler_does_not_block_receive_loop():
 async def test_mcp_tool_message_handler_reload_failure_is_logged(caplog: pytest.LogCaptureFixture):
     """Background reload errors are logged, not raised into the receive loop."""
     tool = MCPStdioTool(name="test_tool", command="python")
-    tool.load_tools = AsyncMock(side_effect=RuntimeError("connection lost"))  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.load_tools = AsyncMock(side_effect=RuntimeError("connection lost"))  # type: ignore[method-assign]
 
     tools_notification = Mock(spec=types.ServerNotification)
     tools_notification.root = Mock()
@@ -1936,7 +1936,7 @@ async def test_mcp_tool_message_handler_reload_failure_is_logged(caplog: pytest.
     pending = list(tool._pending_reload_tasks)
     if pending:
         await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), timeout=1)
-    tool.load_tools.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool.load_tools.assert_called_once()
     assert len(tool._pending_reload_tasks) == 0
 
     # Verify the warning was actually logged with exception info.
@@ -2627,7 +2627,7 @@ async def test_connect_sampling_capabilities_with_client():
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     with patch("mcp.client.session.ClientSession") as mock_session_class:
         mock_session = AsyncMock()
@@ -2657,7 +2657,7 @@ async def test_connect_no_sampling_capabilities_without_client():
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     with patch("mcp.client.session.ClientSession") as mock_session_class:
         mock_session = AsyncMock()
@@ -2686,7 +2686,7 @@ async def test_connect_session_creation_failure():
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     # Mock ClientSession to raise an exception
     with patch("mcp.client.session.ClientSession") as mock_session_class:
@@ -2709,7 +2709,7 @@ async def test_connect_initialization_failure_http_no_command():
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     # Mock successful session creation but failed initialization
     mock_session = Mock()
@@ -2732,28 +2732,28 @@ async def test_connect_cleanup_on_transport_failure():
     tool = MCPStdioTool(name="test", command="test-command")
 
     # Mock _exit_stack.aclose to verify it's called
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
     # Mock get_mcp_client to raise an exception
-    tool.get_mcp_client = Mock(side_effect=RuntimeError("Transport failed"))  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(side_effect=RuntimeError("Transport failed"))  # type: ignore[method-assign]
 
     with pytest.raises(ToolException):
         await tool.connect()
 
     # Verify cleanup was called
-    tool._exit_stack.aclose.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool._exit_stack.aclose.assert_called_once()
 
 
 async def test_connect_cleanup_on_transport_failure_http_uses_generic_message():
     """Test HTTP transport failures use the generic connection message when no command exists."""
     tool = MCPStreamableHTTPTool(name="test", url="https://example.com/mcp")
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
-    tool.get_mcp_client = Mock(side_effect=RuntimeError("Transport failed"))  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
+    tool.get_mcp_client = Mock(side_effect=RuntimeError("Transport failed"))  # type: ignore[method-assign]
 
     with pytest.raises(ToolException, match="Failed to connect to MCP server: Transport failed"):
         await tool.connect()
 
-    tool._exit_stack.aclose.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool._exit_stack.aclose.assert_called_once()
 
 
 async def test_connect_cleanup_on_initialization_failure():
@@ -2761,14 +2761,14 @@ async def test_connect_cleanup_on_initialization_failure():
     tool = MCPStdioTool(name="test", command="test-command")
 
     # Mock _exit_stack.aclose to verify it's called
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
     # Mock successful transport creation
     mock_transport = (Mock(), Mock())
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     # Mock successful session creation but failed initialization
     mock_session = Mock()
@@ -2782,31 +2782,31 @@ async def test_connect_cleanup_on_initialization_failure():
             await tool.connect()
 
         # Verify cleanup was called
-        tool._exit_stack.aclose.assert_called_once()  # ty: ignore[unresolved-attribute]
+        tool._exit_stack.aclose.assert_called_once()
 
 
 async def test_connect_cancelled_error_during_transport_creation_raises_tool_exception():
     """Test that CancelledError from transport creation is wrapped in ToolException."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
-    tool.get_mcp_client = Mock(side_effect=asyncio.CancelledError("cancel scope"))  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
+    tool.get_mcp_client = Mock(side_effect=asyncio.CancelledError("cancel scope"))  # type: ignore[method-assign]
 
     with pytest.raises(ToolException, match="Failed to connect to MCP server"):
         await tool.connect()
 
-    tool._exit_stack.aclose.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool._exit_stack.aclose.assert_called_once()
 
 
 async def test_connect_cancelled_error_during_transport_creation_stdio_raises_tool_exception():
     """Test that CancelledError from transport creation uses the command-specific message for MCPStdioTool."""
     tool = MCPStdioTool(name="test", command="my-server")
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
-    tool.get_mcp_client = Mock(side_effect=asyncio.CancelledError("cancel scope"))  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
+    tool.get_mcp_client = Mock(side_effect=asyncio.CancelledError("cancel scope"))  # type: ignore[method-assign]
 
     with pytest.raises(ToolException, match="Failed to start MCP server 'my-server'"):
         await tool.connect()
 
-    tool._exit_stack.aclose.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool._exit_stack.aclose.assert_called_once()
 
 
 async def test_connect_cancelled_error_during_session_creation_raises_tool_exception():
@@ -2817,7 +2817,7 @@ async def test_connect_cancelled_error_during_session_creation_raises_tool_excep
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     with patch("mcp.client.session.ClientSession") as mock_session_class:
         mock_session_class.return_value.__aenter__ = AsyncMock(side_effect=asyncio.CancelledError("cancel scope"))
@@ -2840,7 +2840,7 @@ async def test_connect_cancelled_error_during_initialize_raises_tool_exception()
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     mock_session = Mock()
     mock_session.initialize = AsyncMock(side_effect=asyncio.CancelledError("Cancelled via cancel scope"))
@@ -2861,7 +2861,7 @@ async def test_connect_cancelled_error_during_initialize_stdio_raises_tool_excep
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     mock_session = Mock()
     mock_session.initialize = AsyncMock(side_effect=asyncio.CancelledError("Cancelled via cancel scope"))
@@ -2878,30 +2878,30 @@ async def test_connect_cancelled_error_during_initialize_stdio_raises_tool_excep
 async def test_connect_genuine_cancellation_during_transport_creation_propagates():
     """Test that genuine task cancellation (task.cancelling() > 0) propagates as CancelledError."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
     mock_cancelled_task = Mock()
     mock_cancelled_task.cancelling.return_value = 1
 
     with patch("asyncio.current_task", return_value=mock_cancelled_task):
-        tool.get_mcp_client = Mock(side_effect=asyncio.CancelledError("task cancelled"))  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+        tool.get_mcp_client = Mock(side_effect=asyncio.CancelledError("task cancelled"))  # type: ignore[method-assign]
         with pytest.raises(asyncio.CancelledError):
             await tool.connect()
 
-    tool._exit_stack.aclose.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool._exit_stack.aclose.assert_called_once()
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 async def test_connect_genuine_cancellation_during_initialize_propagates():
     """Test that genuine task cancellation during initialize() propagates as CancelledError."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
     mock_transport = (Mock(), Mock())
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     mock_session = Mock()
     mock_session.initialize = AsyncMock(side_effect=asyncio.CancelledError("task cancelled"))
@@ -2919,20 +2919,20 @@ async def test_connect_genuine_cancellation_during_initialize_propagates():
         with pytest.raises(asyncio.CancelledError):
             await tool.connect()
 
-    tool._exit_stack.aclose.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool._exit_stack.aclose.assert_called_once()
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 async def test_connect_genuine_cancellation_during_session_creation_propagates():
     """Test that genuine task cancellation during session creation propagates as CancelledError."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
     mock_transport = (Mock(), Mock())
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     mock_cancelled_task = Mock()
     mock_cancelled_task.cancelling.return_value = 1
@@ -2947,7 +2947,7 @@ async def test_connect_genuine_cancellation_during_session_creation_propagates()
         with pytest.raises(asyncio.CancelledError):
             await tool.connect()
 
-    tool._exit_stack.aclose.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool._exit_stack.aclose.assert_called_once()
 
 
 async def test_aenter_cancelled_error_during_connect_is_catchable_as_exception():
@@ -2965,7 +2965,7 @@ async def test_aenter_cancelled_error_during_connect_is_catchable_as_exception()
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     with patch("mcp.client.session.ClientSession") as mock_session_class:
         mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -3018,7 +3018,7 @@ async def test_connect_cancelled_error_during_session_creation_includes_exceptio
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     with patch("mcp.client.session.ClientSession") as mock_session_class:
         mock_session_class.return_value.__aenter__ = AsyncMock(
@@ -3041,7 +3041,7 @@ async def test_connect_cancelled_error_during_session_creation_logs_with_exc_inf
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     with patch("mcp.client.session.ClientSession") as mock_session_class:
         mock_session_class.return_value.__aenter__ = AsyncMock(side_effect=asyncio.CancelledError("cancel scope"))
@@ -3864,7 +3864,7 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
 
     # Mock _exit_stack.aclose to track cleanup calls
     original_exit_stack = tool._exit_stack
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
     # Mock connect() to avoid trying to start actual process
     with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
@@ -3963,7 +3963,7 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
 
     # Mock _exit_stack.aclose to track cleanup calls
     original_exit_stack = tool._exit_stack
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
     # Mock connect() to avoid trying to start actual process
     with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
@@ -5566,7 +5566,7 @@ def _send_request_dispatcher(*responses_by_method: tuple[str, Any]) -> Any:
 
     async def _dispatch(request: Any, _result_type: Any, *_args: Any, **_kw: Any) -> Any:
         method = getattr(request.root, "method", None) or getattr(request, "method", None)
-        queue = queues.get(method)  # type: ignore[arg-type, call-overload]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        queue = queues.get(method)  # type: ignore[arg-type, call-overload]  # pyrefly: ignore[bad-argument-type]
         if not queue:
             raise AssertionError(f"No mocked send_request response for method '{method}'.")
         item = queue.pop(0)

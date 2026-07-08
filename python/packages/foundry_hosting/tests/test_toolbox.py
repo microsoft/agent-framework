@@ -145,14 +145,14 @@ async def test_close_closes_owned_http_client() -> None:
     )
     client = toolbox._httpx_client  # pyright: ignore[reportPrivateUsage]
     assert client is not None
-    client.aclose = AsyncMock()  # ty: ignore # zuban: ignore
+    client.aclose = AsyncMock()  # zuban: ignore
 
     await toolbox.close()
 
-    client.aclose.assert_awaited_once()  # ty: ignore
+    client.aclose.assert_awaited_once()
     # Idempotent: a second close does not re-close the client.
     await toolbox.close()
-    client.aclose.assert_awaited_once()  # ty: ignore
+    client.aclose.assert_awaited_once()
 
 
 def test_as_skills_provider_returns_provider() -> None:

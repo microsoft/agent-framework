@@ -30,7 +30,7 @@ dependencies = [
 dev = [
     "uv==0.11.17",
     "flit==3.12.0",
-    "ruff==0.15.15",
+    "ruff==0.15.20",
     "pytest==9.1.0",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
@@ -39,10 +39,10 @@ dev = [
     "pytest-retry==1.7.0",
     "mypy==1.20.0",
     "pyright==1.1.410",
-    "pyrefly==1.0.0",
-    "ty==0.0.46",
+    "pyrefly==1.1.1",
+    "ty==0.0.55",
     "zuban==0.8.2",
-    "mcp[ws]==1.27.2",
+    "mcp[ws]==1.28.1",
     "opentelemetry-sdk==1.40.0",
     "azure-monitor-opentelemetry==1.8.8",
     #tasks
@@ -147,9 +147,11 @@ select = [
 ignore = [
     "D100", # allow missing docstring in public module
     "D104", # allow missing docstring in public package
+    "D421", # allow property docstrings that start with a verb
     "D418", # allow overload to have a docstring
     "TD003", # allow missing link to todo issue
     "FIX002", # allow todo
+    "ASYNC119", # allow yielding inside async-generator context managers
     "B027", # allow empty non-abstract method in ABC
     "B905", # `zip()` without an explicit `strict=` parameter
     "RUF067", # allow version detection in __init__.py
