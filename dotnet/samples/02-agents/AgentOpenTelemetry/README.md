@@ -47,11 +47,11 @@ $env:FOUNDRY_MODEL             = "gpt-5-mini"   # if not set, defaults to gpt-5-
 az login
 ```
 
-**Note**: Option A uses Azure CLI credentials (`DefaultAzureCredential`). Make sure you are logged in with `az login` and have access to the Foundry project before running the demo.
+ **Note**: Option A uses `DefaultAzureCredential`. For local runs, `az login` is usually the easiest way to authenticate; you can also use managed identity or other supported credential sources.
 
 ### Option B — Azure OpenAI API Key (Local/Dev Fallback)
 
-Useful when `az login` is not available. All three variables must be set.
+ Useful when `az login` is not available. `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY` must be set (deployment name is optional).
 
 | Variable | Required | Description |
 |---|---|---|

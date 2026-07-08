@@ -203,9 +203,10 @@ var session = await agent.CreateSessionAsync();
 
 appLogger.LogInformation("Agent created successfully with ID: {AgentId}", agent.Id);
 
-// When OTEL_DEMO_NEW_TRACE_PER_TURN=true, each interaction starts as a new root trace
-// (useful for demo readability in Aspire Dashboard or App Insights — each turn appears as a separate top-level trace while maintaining the overall session correlation).
-// Default (false): interactions are child spans of the session span, preserving correlation.
+// When OTEL_DEMO_NEW_TRACE_PER_TURN=true, each interaction starts a new root trace (new TraceId)
+// to make turns show up as standalone entries in dashboards. Session-level correlation is retained
+// via the shared session.id tag (not via parent/child trace relationships).
+// Default (false): interactions are child spans of the session span, preserving full trace correlation.
 var newTracePerTurn = string.Equals(
     SystemEnvironment.GetEnvironmentVariable("OTEL_DEMO_NEW_TRACE_PER_TURN"),
     "true",
@@ -240,15 +241,15 @@ using (appLogger.BeginScope(new Dictionary<string, object> { ["SessionId"] = ses
         interactionCount++;
         appLogger.LogInformation("Processing user interaction #{InteractionNumber}: {UserInput}", interactionCount, userInput);
 
-        // If OTEL_DEMO_NEW_TRACE_PER_TURN is enabled, break the parent-child link so each
-        // interaction appears as its own root trace in the dashboard. Otherwise, preserve
-        // the ambient context so all interaction spans correlate under the session trace.
-        if (newTracePerTurn)
-        {
-            Activity.Current = null;
-        }
-
-        using var activity = activitySource.StartActivity("Agent Interaction");
+        // If OTEL_DEMO_NEW_TRACE_PER_TURN is enabled, create a fresh ActivityContext with a new random
+        // TraceId so each interaction appears as an independent root trace in the dashboard.
+        // Passing `default` does NOT work — an empty ActivityContext causes the runtime to fall back
+        // to Activity.Current (the session span), so all turns would still share the same TraceId.
+        // Using a real random context guarantees a new TraceId without mutating Activity.Current.
+        using var activity = newTracePerTurn
+            ? activitySource.StartActivity("Agent Interaction", ActivityKind.Internal,
+                new ActivityContext(ActivityTraceId.CreateRandom(), ActivitySpanId.CreateRandom(), ActivityTraceFlags.Recorded))
+            : activitySource.StartActivity("Agent Interaction");
         activity?
             .SetTag("user.input", userInput)
             .SetTag("agent.name", "OpenTelemetryDemoAgent")

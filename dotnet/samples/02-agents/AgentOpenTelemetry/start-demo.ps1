@@ -35,7 +35,7 @@ if ($foundryEndpoint) {
     Write-Host "Configuration: Microsoft Foundry (recommended)" -ForegroundColor Green
     Write-Host "Endpoint   : $foundryEndpoint" -ForegroundColor Green
     Write-Host "Model      : $foundryModel$(if (!$env:FOUNDRY_MODEL) { ' (default)' })" -ForegroundColor Green
-    Write-Host "Note: Foundry uses DefaultAzureCredential. Ensure you have run 'az login'." -ForegroundColor Cyan
+    Write-Host "Note: Foundry uses DefaultAzureCredential. Authenticate (e.g., run 'az login')." -ForegroundColor Cyan
 } elseif ($azureOpenAIEndpoint -and $azureOpenAIApiKey) {
     # Option B: Azure OpenAI API key fallback — API key is intentionally not printed
     $deploymentName = if ($azureOpenAIDeployment) { $azureOpenAIDeployment } else { $defaultModel }
