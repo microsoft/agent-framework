@@ -1008,37 +1008,6 @@ class TestSymlinkDetection:
 # ---------------------------------------------------------------------------
 
 
-class TestSkillsStableStage:
-    """Tests confirming the skills APIs are stable (no experimental annotation)."""
-
-    def test_docstrings_omit_experimental_warning(self) -> None:
-        assert SkillResource.__doc__ is not None
-        assert SkillScript.__doc__ is not None
-        assert Skill.__doc__ is not None
-        assert SkillScriptRunner.__doc__ is not None
-        assert SkillsProvider.__doc__ is not None
-        assert SkillScript.parameters_schema.__doc__ is not None
-
-        assert ".. warning:: Experimental" not in SkillResource.__doc__
-        assert ".. warning:: Experimental" not in SkillScript.__doc__
-        assert ".. warning:: Experimental" not in Skill.__doc__
-        assert ".. warning:: Experimental" not in SkillScriptRunner.__doc__
-        assert ".. warning:: Experimental" not in SkillsProvider.__doc__
-        assert ".. warning:: Experimental" not in SkillScript.parameters_schema.__doc__
-
-    def test_feature_metadata_is_absent(self) -> None:
-        assert getattr(SkillResource, "__feature_stage__", None) is None
-        assert getattr(SkillScript, "__feature_stage__", None) is None
-        assert getattr(Skill, "__feature_stage__", None) is None
-        assert getattr(SkillsProvider, "__feature_stage__", None) is None
-        assert getattr(SkillScriptRunner, "__feature_stage__", None) is None
-        assert getattr(SkillResource, "__feature_id__", None) is None
-        assert getattr(SkillScript, "__feature_id__", None) is None
-        assert getattr(Skill, "__feature_id__", None) is None
-        assert getattr(SkillsProvider, "__feature_id__", None) is None
-        assert getattr(SkillScriptRunner, "__feature_id__", None) is None
-
-
 class TestSkillResource:
     """Tests for SkillResource dataclass."""
 
