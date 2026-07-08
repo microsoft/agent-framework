@@ -28,6 +28,9 @@ What the route demonstrates:
   caller continue from any earlier response, not just the latest one — so
   every response id needs to stay independently resolvable, not just the
   most recent.
+- Treats an unknown `conversation_id` as a request to create a new local
+  session. Your app can choose a stricter policy, such as requiring a separate
+  API to create new conversations before callers can continue them.
 
 `app:app` is a module-level FastAPI ASGI app; recommended local launch is
 Hypercorn.

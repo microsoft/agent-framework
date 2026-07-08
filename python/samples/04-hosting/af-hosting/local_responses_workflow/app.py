@@ -16,9 +16,10 @@ This sample is not a full-fledged production deployment. Before exposing this
 route to callers, add authentication and authorization at the infrastructure
 layer, the FastAPI app layer, or inside the route body.
 
-Session continuation deserves particular care: treat ``previous_response_id``
-and ``conversation_id`` as untrusted request values, authorize the caller
-before restoring or storing a checkpoint cursor for those ids, and partition
+This sample demonstrates continuation with ``previous_response_id`` only. It
+rejects ``conversation_id`` continuity with HTTP 400. Treat every
+``previous_response_id`` as an untrusted request value, authorize the caller
+before restoring or storing a checkpoint cursor for that id, and partition
 durable checkpoint/cursor storage by tenant/user as appropriate for your
 application. See ``README.md#production-readiness``.
 
@@ -53,6 +54,7 @@ from pathlib import Path
 from typing import Any, TypedDict, cast
 
 from agent_framework import (
+    Agent,
     AgentExecutor,
     AgentExecutorResponse,
     AgentResponse,
@@ -60,7 +62,6 @@ from agent_framework import (
     Executor,
     FileCheckpointStorage,
     Message,
-    Workflow,
     WorkflowBuilder,
     WorkflowContext,
     handler,
@@ -104,7 +105,7 @@ class CheckpointCursorStore:
         self._path = path
 
     def get(self, key: str) -> CheckpointCursor | None:
-        """Return the checkpoint cursor for a response or conversation id."""
+        """Return the checkpoint cursor for a previous response id."""
         return self._load().get(key)
 
     def set_many(self, cursors: Mapping[str, CheckpointCursor]) -> None:
@@ -137,13 +138,13 @@ class CheckpointCursorStore:
 checkpoint_cursor_store = CheckpointCursorStore(CHECKPOINT_CURSOR_PATH)
 
 
-def _checkpoint_storage_for(storage_id: str) -> FileCheckpointStorage:
+def checkpoint_storage_for(storage_id: str) -> FileCheckpointStorage:
     """Return file checkpoint storage scoped to a single continuation bucket."""
     storage_key = hashlib.sha256(storage_id.encode("utf-8")).hexdigest()
     return FileCheckpointStorage(str(CHECKPOINTS_ROOT / storage_key))
 
 
-def _workflow_prompt_from_messages(messages: Any) -> str:
+def workflow_prompt_from_messages(messages: Any) -> str:
     """Prepare the workflow's initial writer prompt from Responses input."""
 
     def extract_text(value: object) -> str:
@@ -177,7 +178,7 @@ def _workflow_prompt_from_messages(messages: Any) -> str:
     )
 
 
-def _response_from_workflow_result(result: Any) -> AgentResponse[Any]:
+def response_from_workflow_result(result: Any) -> AgentResponse[Any]:
     """Collapse workflow outputs to one assistant response for Responses rendering."""
     outputs = result.get_outputs() if hasattr(result, "get_outputs") else []
     output = outputs[-1] if outputs else "(no workflow output)"
@@ -200,31 +201,24 @@ class TerminalFormatter(Executor):
         await ctx.yield_output(f'Slogan: "{slogan}"')
 
 
-def create_workflow() -> Workflow:
-    """Create the sample slogan workflow."""
-    client = FoundryChatClient(credential=DefaultAzureCredential())
+client = FoundryChatClient(credential=DefaultAzureCredential())
+writer = Agent(
+    client=client,
+    name="writer",
+    instructions="You are an excellent slogan writer. Create one short slogan from the given brief.",
+)
+writer_ex = AgentExecutor(writer, context_mode="last_agent")
+formatter_ex = TerminalFormatter(id="terminal_formatter")
 
-    writer = client.as_agent(
-        name="writer",
-        instructions="You are an excellent slogan writer. Create one short slogan from the given brief.",
-    )
-
-    writer_ex = AgentExecutor(writer, context_mode="last_agent")
-    formatter_ex = TerminalFormatter(id="terminal_formatter")
-
-    return (
-        WorkflowBuilder(
-            name="local_responses_slogan_workflow",
-            start_executor=writer_ex,
-            output_from=[formatter_ex],
-        )
-        .add_edge(writer_ex, formatter_ex)
-        .build()
-    )
+workflow_builder = WorkflowBuilder(
+    name="local_responses_slogan_workflow",
+    start_executor=writer_ex,
+    output_from=[formatter_ex],
+).add_edge(writer_ex, formatter_ex)
 
 
 app = FastAPI()
-state = WorkflowState(create_workflow, cache_target=False)
+state = WorkflowState(workflow_builder, cache_target=False)
 
 
 @app.post("/responses", response_model=None)
@@ -235,22 +229,30 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse:  # noqa: 
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    session_id = responses_session_id(body)
+    # This sample demonstrates only Responses `previous_response_id`
+    # continuation. `responses_session_id` also returns `conversation_id`, so
+    # reject that shape here instead of treating it as a checkpoint cursor.
+    previous_response_id = responses_session_id(body)
+    if previous_response_id and not previous_response_id.startswith("resp_"):
+        raise HTTPException(
+            status_code=400,
+            detail="This server supports previous_response_id continuation only; conversation_id is not implemented.",
+        )
     response_id = create_response_id()
 
     target = await state.get_target()
-    if session_id is not None and (checkpoint_cursor := checkpoint_cursor_store.get(session_id)) is not None:
+    if previous_response_id and (checkpoint_cursor := checkpoint_cursor_store.get(previous_response_id)) is not None:
         # Restore first. Workflow.run does not allow `message` and
         # `checkpoint_id` in the same call.
         await target.run(
             checkpoint_id=checkpoint_cursor["checkpoint_id"],
-            checkpoint_storage=_checkpoint_storage_for(checkpoint_cursor["storage_id"]),
+            checkpoint_storage=checkpoint_storage_for(checkpoint_cursor["storage_id"]),
         )
 
-    storage_id = session_id if session_id is not None and session_id.startswith("conv_") else response_id
-    checkpoint_storage = _checkpoint_storage_for(storage_id)
+    storage_id = response_id
+    checkpoint_storage = checkpoint_storage_for(storage_id)
     result = await target.run(
-        message=_workflow_prompt_from_messages(run["messages"]),
+        message=workflow_prompt_from_messages(run["messages"]),
         checkpoint_storage=checkpoint_storage,
     )
 
@@ -259,16 +261,13 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse:  # noqa: 
         # Responses `previous_response_id` can point to any response id. Store
         # the current response id as the cursor for this workflow continuation.
         cursor = CheckpointCursor(checkpoint_id=latest.checkpoint_id, storage_id=storage_id)
-        cursors = {response_id: cursor}
-        if session_id is not None and session_id.startswith("conv_"):
-            cursors[session_id] = cursor
-        checkpoint_cursor_store.set_many(cursors)
+        checkpoint_cursor_store.set_many({response_id: cursor})
 
     return JSONResponse(
         responses_from_run(
-            _response_from_workflow_result(result),
+            response_from_workflow_result(result),
             response_id=response_id,
-            session_id=session_id,
+            session_id=previous_response_id,
         )
     )
 

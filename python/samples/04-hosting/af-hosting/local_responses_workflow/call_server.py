@@ -2,7 +2,10 @@
 
 """Local client for the local_responses_workflow sample.
 
-Posts to ``/responses`` using the standard ``openai`` SDK.
+Posts to ``/responses`` using the standard ``openai`` SDK. This client
+demonstrates the sample's only supported continuation mode:
+``previous_response_id``. It deliberately does not send ``conversation_id``,
+which the sample server rejects.
 
 Start the server first (in another shell)::
 
@@ -25,7 +28,7 @@ FOLLOW_UP = "Make it a little more premium, but still family friendly."
 
 
 def main() -> None:
-    """Send a two-turn workflow conversation to the local server."""
+    """Send a two-turn workflow conversation using ``previous_response_id``."""
     client = OpenAI(base_url=BASE_URL, api_key="not-needed")
     brief = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_BRIEF
 
@@ -34,6 +37,8 @@ def main() -> None:
     print(f"Workflow: {response.output_text}")
     print(f"Response ID: {response.id}")
 
+    # Continue with the returned response id. The server sample rejects
+    # `conversation_id` continuity.
     follow_up = client.responses.create(
         input=FOLLOW_UP,
         previous_response_id=response.id,

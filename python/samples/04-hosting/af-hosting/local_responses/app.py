@@ -23,6 +23,10 @@ before loading or storing a session for those ids, and partition durable session
 storage by tenant/user as appropriate for your application. See
 ``README.md#production-readiness``.
 
+Unknown ``conversation_id`` values create a new local session in this sample.
+Your app can choose a different policy, such as requiring a separate API to
+create new conversations before callers can continue them.
+
 Run
 ---
 ``app`` is a module-level FastAPI ASGI app. Recommended local launch::
@@ -125,6 +129,8 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
 
     target = await state.get_target()
     lookup_id = session_id or response_id
+    # An unknown `conversation_id` becomes a new session here. Production apps
+    # can choose to require a separate "create conversation" API instead.
     session = await state.get_or_create_session(lookup_id)
     if run["stream"]:
         stream = target.run(
