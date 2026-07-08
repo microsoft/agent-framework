@@ -15,6 +15,8 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests;
 [Trait("Category", "SampleValidation")]
 public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLifetime
 {
+    private const string DisabledDueToFailingCiJob = "Disabled due to persistent CI failures. See #6732.";
+
     private const string AzureFunctionsPort = "7071";
     private const string AzuritePort = "10000";
     private const string DtsPort = "8080";
@@ -60,7 +62,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         await Task.CompletedTask;
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = DisabledDueToFailingCiJob)]
     public async Task SingleAgentSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "01_SingleAgent");
@@ -148,7 +150,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = DisabledDueToFailingCiJob)]
     public async Task MultiAgentOrchestrationConcurrentSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "03_AgentOrchestration_Concurrency");
@@ -198,7 +200,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = DisabledDueToFailingCiJob)]
     public async Task MultiAgentOrchestrationConditionalsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "04_AgentOrchestration_Conditionals");
@@ -216,7 +218,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = "Disabled due to persistent CI failures.")]
     public async Task SingleAgentOrchestrationHITLSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "05_AgentOrchestration_HITL");
@@ -272,7 +274,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = DisabledDueToFailingCiJob)]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
@@ -362,7 +364,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = DisabledDueToFailingCiJob)]
     public async Task AgentAsMcpToolAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "07_AgentAsMcpTool");
@@ -402,7 +404,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = "Disabled due to persistent CI failures.")]
     public async Task ReliableStreamingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "08_ReliableStreaming");

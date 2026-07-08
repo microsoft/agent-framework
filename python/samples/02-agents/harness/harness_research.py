@@ -33,6 +33,15 @@ it inside the Textual-based harness console. The agent will plan research tasks
 using todos, switch between plan and execute modes, search the web for current
 information, and track its progress.
 
+It also demonstrates harness **looping**: a ``loop_should_continue`` predicate
+keeps re-invoking the agent automatically while it is in ``"execute"`` mode and
+the ``TodoProvider`` still has open items, so the agent works through the whole
+plan autonomously once execution begins. A ``loop_next_message`` callable injects
+a reminder between iterations listing the todos that are still open, and the loop
+is scoped to ``"execute"`` mode so ``"plan"`` mode stays interactive.
+``loop_max_iterations`` caps the number of autonomous passes per turn as a safety
+net.
+
 Environment variables:
     FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint URL
     FOUNDRY_MODEL            — Model deployment name
@@ -43,7 +52,11 @@ Authentication:
 
 import asyncio
 
-from agent_framework import create_harness_agent
+from agent_framework import (
+    create_harness_agent,
+    todos_remaining,
+    todos_remaining_message,
+)
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from console import build_observers_with_planning, run_agent_async
@@ -96,6 +109,13 @@ async def main() -> None:
         name="ResearchAgent",
         description="A research assistant that plans and executes research tasks.",
         agent_instructions=RESEARCH_INSTRUCTIONS,
+        # Enable harness looping: while the agent is in "execute" mode and still has open todos,
+        # keep re-invoking it automatically so it works through the whole plan without manual
+        # prompting. loop_next_message reminds the agent which todos are still open each pass, and
+        # loop_max_iterations caps the autonomous passes per turn as a safety net.
+        loop_should_continue=todos_remaining(looping_modes=["execute"]),
+        loop_next_message=todos_remaining_message,
+        loop_max_iterations=10,
     )
 
     # Run the harness console with the research agent.

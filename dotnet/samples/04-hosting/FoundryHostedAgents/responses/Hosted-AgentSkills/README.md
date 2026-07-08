@@ -42,7 +42,7 @@ The agent is hosted using the [Agent Framework](https://github.com/microsoft/age
 
 ## Prerequisites
 
-- An Azure AI Foundry project with a deployed model (e.g., `gpt-4o`)
+- A Foundry project with a deployed model (e.g., `gpt-4o`)
 - Azure CLI logged in (`az login`)
 
 ### Required RBAC

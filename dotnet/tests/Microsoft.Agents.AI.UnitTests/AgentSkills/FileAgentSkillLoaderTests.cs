@@ -41,7 +41,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -61,7 +61,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -81,7 +81,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -100,7 +100,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -125,7 +125,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -142,7 +142,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -160,7 +160,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -178,7 +178,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -206,7 +206,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -234,7 +234,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new DeduplicatingAgentSkillsSource(fileSource);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert – filesystem enumeration order is not guaranteed, so we only
         // verify that exactly one of the two duplicates was kept.
@@ -253,7 +253,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -276,7 +276,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -301,7 +301,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -324,7 +324,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -350,7 +350,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — only the file directly in references/ is discovered; the nested file is not
         Assert.Single(skills);
@@ -375,7 +375,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor, new AgentFileSkillsSourceOptions { AllowedResourceExtensions = s_customExtensions });
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — only .custom files should be discovered, not .json
         Assert.Single(skills);
@@ -405,7 +405,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Assert — default extensions include .md
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
         Assert.Single(skills[0].GetTestResources()!);
     }
 
@@ -438,7 +438,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — root-level files are discovered by default (depth=2 includes root)
         Assert.Single(skills);
@@ -475,7 +475,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — subdirectory files are discovered by default
         Assert.Single(skills);
@@ -501,7 +501,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
             new AgentFileSkillsSourceOptions { ResourceFilter = ctx => !ctx.RelativeFilePath.StartsWith("docs/", StringComparison.OrdinalIgnoreCase) });
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — only references/ resource is included; docs/ is excluded by filter
         Assert.Single(skills);
@@ -518,7 +518,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -532,7 +532,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(Enumerable.Empty<string>(), s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -545,7 +545,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(Path.Combine(this._testRoot, "does-not-exist"), s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -563,7 +563,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -579,7 +579,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Directory.CreateDirectory(refsDir);
         File.WriteAllText(Path.Combine(refsDir, "doc.md"), "Document content here.");
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
         var resource = skills[0].GetTestResources()!.First(r => r.Name == "references/doc.md");
 
         // Act
@@ -602,7 +602,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -621,7 +621,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Empty(skills);
@@ -659,7 +659,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — skill should still load, the symlinked references/ is skipped, assets/legit.md is found
         var skill = skills.FirstOrDefault(s => s.Frontmatter.Name == "symlink-escape-skill");
@@ -701,7 +701,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — only assets/legit.md is found; the symlinked references/ directory is skipped entirely
         var skill = skills.FirstOrDefault(s => s.Frontmatter.Name == "symlink-directory-skip");
@@ -738,7 +738,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — skill loads but scripts from the symlinked directory are not discovered
         var skill = skills.FirstOrDefault(s => s.Frontmatter.Name == "symlink-script-skip");
@@ -778,7 +778,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
             new AgentFileSkillsSourceOptions { SearchDepth = 4 });
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — the symlinked intermediate segment causes the directory to be skipped
         var skill = skills.FirstOrDefault(s => s.Frontmatter.Name == "symlink-intermediate");
@@ -797,7 +797,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -815,7 +815,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -832,7 +832,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -849,7 +849,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -866,7 +866,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -885,7 +885,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -915,7 +915,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -938,7 +938,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
         Assert.Single(skills);
@@ -964,7 +964,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
             new AgentFileSkillsSourceOptions { SearchDepth = 1 });
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — scripts in subdirectories are NOT discovered at depth 1
         Assert.Single(skills);
@@ -985,7 +985,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — resource is discovered once
         Assert.Single(skills);
@@ -1007,7 +1007,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — script is discovered
         Assert.Single(skills);
@@ -1034,7 +1034,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
             new AgentFileSkillsSourceOptions { ResourceFilter = ctx => ctx.RelativeFilePath.StartsWith("references/", StringComparison.OrdinalIgnoreCase) });
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — only the references/ resource is included
         Assert.Single(skills);
@@ -1056,7 +1056,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — resource at depth 4 is NOT discovered with default depth=2
         Assert.Single(skills);
@@ -1078,7 +1078,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
             new AgentFileSkillsSourceOptions { SearchDepth = 5 });
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — resource file inside the deeply nested directory is discovered
         Assert.Single(skills);
@@ -1129,7 +1129,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — skill at depth 3 should not be discovered
         Assert.DoesNotContain(skills, s => s.Frontmatter.Name == "deep-skill");
@@ -1148,7 +1148,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — script at the skill root is discovered by default
         var skill = skills.FirstOrDefault(s => s.Frontmatter.Name == "root-script-skill");
@@ -1190,7 +1190,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
-        var skills = await source.GetSkillsAsync();
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert — only legit.md should be discovered; the symlinked leak.md is skipped
         var skill = skills.FirstOrDefault(s => s.Frontmatter.Name == "symlink-file-skill");
@@ -1199,4 +1199,27 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Equal("references/legit.md", skill.GetTestResources()![0].Name);
     }
 #endif
+
+    [Fact]
+    public async Task GetSkillsAsync_NestedSkillMd_DoesNotTreatSubdirectoryAsIndependentSkillAsync()
+    {
+        // Arrange — parent has SKILL.md; subdirectory also has SKILL.md with a name
+        // matching its directory so it would pass validation if discovered.
+        // Only the parent should be discovered as a skill root.
+        string parentSkillDir = this.CreateSkillDirectory("parent-skill", "Parent skill", "Parent body.");
+        string childDir = Path.Combine(parentSkillDir, "child");
+        Directory.CreateDirectory(childDir);
+        File.WriteAllText(
+            Path.Combine(childDir, "SKILL.md"),
+            "---\nname: child\ndescription: Child skill\n---\nChild body.");
+
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert — only the parent skill is discovered; the nested child is not an independent skill
+        Assert.Single(skills);
+        Assert.Equal("parent-skill", skills[0].Frontmatter.Name);
+    }
 }

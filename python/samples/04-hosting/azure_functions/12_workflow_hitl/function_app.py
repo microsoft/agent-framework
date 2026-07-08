@@ -23,7 +23,6 @@ Prerequisites:
 - Authentication via Azure CLI (az login)
 """
 
-import json
 import logging
 import os
 from dataclasses import dataclass
@@ -333,19 +332,14 @@ class InputRouterExecutor(Executor):
     @handler
     async def route_input(
         self,
-        input_json: str,
+        submission: ContentSubmission,
         ctx: WorkflowContext[AgentExecutorRequest],
     ) -> None:
-        """Parse input and create agent request."""
-        data = json.loads(input_json) if isinstance(input_json, str) else input_json
+        """Create the agent request from the submitted content.
 
-        submission = ContentSubmission(
-            content_id=data.get("content_id", "unknown"),
-            title=data.get("title", "Untitled"),
-            body=data.get("body", ""),
-            author=data.get("author", "Anonymous"),
-        )
-
+        The durable engine reconstructs this ``ContentSubmission`` from the
+        client's JSON payload before delivery, mirroring in-process execution.
+        """
         # Store submission in shared state for later retrieval
         ctx.set_state("current_submission", submission)
 
@@ -394,7 +388,7 @@ def _create_workflow() -> Workflow:
     #   input_router -> content_analyzer_agent -> content_analyzer_executor
     #   -> human_review_executor (HITL pause here) -> publish_executor
     return (
-        WorkflowBuilder(start_executor=input_router)
+        WorkflowBuilder(name="content_moderation", start_executor=input_router)
         .add_edge(input_router, content_analyzer_agent)
         .add_edge(content_analyzer_agent, content_analyzer_executor)
         .add_edge(content_analyzer_executor, human_review_executor)
@@ -417,11 +411,12 @@ def launch(durable: bool = True) -> AgentFunctionApp | None:
     """
     if durable:
         # Azure Functions mode with Durable Functions
-        # The app automatically provides HITL endpoints:
-        # - POST /api/workflow/run - Start the workflow
-        # - GET /api/workflow/status/{instanceId} - Check status and pending HITL requests
-        # - POST /api/workflow/respond/{instanceId}/{requestId} - Send HITL response
-        # - GET /api/health - Health check
+        # The app automatically provides per-workflow HITL endpoints (workflow name
+        # "content_moderation"):
+        # - POST /api/workflow/content_moderation/run - Start the workflow
+        # - GET  /api/workflow/content_moderation/status/{instanceId} - Status + pending HITL requests
+        # - POST /api/workflow/content_moderation/respond/{instanceId}/{requestId} - Send HITL response
+        # - GET  /api/health - Health check
         workflow = _create_workflow()
         return AgentFunctionApp(workflow=workflow, enable_health_check=True)
     # Pure MAF mode with DevUI for local development

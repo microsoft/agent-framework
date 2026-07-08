@@ -220,7 +220,7 @@ def _create_workflow() -> Workflow:
     #     False -> submit_to_email_assistant -> email_assistant_agent -> finalize_and_send
     #     True  -> handle_spam
     return (
-        WorkflowBuilder(start_executor=store_email)
+        WorkflowBuilder(name="email_triage_shared_state", start_executor=store_email)
         .add_edge(store_email, spam_detection_agent)
         .add_edge(spam_detection_agent, to_detection_result)
         .add_edge(to_detection_result, submit_to_email_assistant, condition=get_condition(False))

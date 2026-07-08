@@ -19,6 +19,7 @@ from agent_framework import (
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
+    ServiceSessionId,
     SupportsAgentRun,
     UsageDetails,
     WorkflowAgent,
@@ -1234,7 +1235,7 @@ class TestWorkflowAgent:
             def create_session(self, **kwargs: Any) -> AgentSession:
                 return AgentSession()
 
-            def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+            def get_session(self, *, service_session_id: str | ServiceSessionId, **kwargs: Any) -> AgentSession:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
                 return AgentSession()
 
             @overload
@@ -1344,7 +1345,7 @@ class TestWorkflowAgent:
             def create_session(self, **kwargs: Any) -> AgentSession:
                 return AgentSession()
 
-            def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+            def get_session(self, *, service_session_id: str | ServiceSessionId, **kwargs: Any) -> AgentSession:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
                 return AgentSession()
 
             @overload
@@ -1980,7 +1981,7 @@ class _ToolApprovalMockAgent(SupportsAgentRun):
     def create_session(self, **kwargs: Any) -> AgentSession:
         return AgentSession()
 
-    def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+    def get_session(self, *, service_session_id: str | ServiceSessionId, **kwargs: Any) -> AgentSession:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
         return AgentSession()
 
     def _next_request_id(self) -> str:

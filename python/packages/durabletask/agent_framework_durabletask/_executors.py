@@ -59,7 +59,7 @@ class DurableAgentTask(CompositeTask[AgentResponse], CompletableTask[AgentRespon
         """
         self._response_format = response_format
         self._correlation_id = correlation_id
-        super().__init__([entity_task])  # type: ignore
+        super().__init__([entity_task])
 
     def on_child_completed(self, task: Task[Any]) -> None:
         """Handle completion of the underlying entity task.
