@@ -96,7 +96,6 @@ tool-call arguments as a JSON string instead of a JSON object.
 """
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillResource(ABC):
     """Abstract base class for supplementary content attached to a skill.
 
@@ -140,7 +139,6 @@ class SkillResource(ABC):
         """
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class InlineSkillResource(SkillResource):
     """A code-defined skill resource backed by static content or a callable.
 
@@ -280,7 +278,6 @@ class _FileSkillResource(SkillResource):
         return await asyncio.to_thread(Path(self.full_path).read_text, encoding="utf-8")
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillScript(ABC):
     """Abstract base class for executable scripts attached to a skill.
 
@@ -334,7 +331,6 @@ class SkillScript(ABC):
         """
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class InlineSkillScript(SkillScript):
     """A code-defined skill script backed by a callable.
 
@@ -451,7 +447,6 @@ class InlineSkillScript(SkillScript):
         return result
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class FileSkillScript(SkillScript):
     """A file-path-backed skill script requiring an external runner.
 
@@ -537,7 +532,6 @@ class FileSkillScript(SkillScript):
         return result
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class Skill(ABC):
     """Abstract base class for all agent skills.
 
@@ -602,7 +596,6 @@ class Skill(ABC):
         return None
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillFrontmatter:
     """L1 discovery metadata for a :class:`Skill`.
 
@@ -817,7 +810,6 @@ def _build_available_scripts_block(scripts: Sequence[SkillScript] | None) -> str
     return f"<available_scripts>\n{script_lines}\n</available_scripts>"
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class InlineSkill(Skill):
     """A skill defined entirely in code with resources and scripts.
 
@@ -1131,7 +1123,6 @@ def _discover_marked_members(cls: type, marker_attr: str) -> list[tuple[str, dic
     return results
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class ClassSkill(Skill, ABC):
     """Abstract base class for defining skills as reusable Python classes.
 
@@ -1509,7 +1500,6 @@ class ClassSkill(Skill, ABC):
         return next((s for s in self.scripts if s.name.lower() == name_lower), None)
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class FileSkill(Skill):
     """A :class:`Skill` discovered from a filesystem directory backed by a SKILL.md file.
 
@@ -1607,7 +1597,6 @@ class FileSkill(Skill):
 
 
 @runtime_checkable
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillScriptRunner(Protocol):
     """Protocol for skill script runners.
 
@@ -1830,7 +1819,6 @@ SCRIPT_RUNNER_INSTRUCTIONS: Final[str] = (
 _TSkillsProvider = TypeVar("_TSkillsProvider", bound="SkillsProvider")
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillsProvider(ContextProvider):
     """Context provider that advertises skills and exposes skill tools.
 
@@ -2707,7 +2695,6 @@ def _create_script_element(script: SkillScript) -> str:
 # region Skill Sources
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 @dataclass(frozen=True)
 class SkillsSourceContext:
     """Contextual information passed to a :class:`SkillsSource` when retrieving skills.
@@ -2729,7 +2716,6 @@ class SkillsSourceContext:
     session: AgentSession | None = None
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillsSource(ABC):
     """Abstract base class for skill sources.
 
@@ -3736,7 +3722,6 @@ class FilteringSkillsSource(DelegatingSkillsSource):
         return [s for s in skills if self._predicate(s, context)]
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class CachingSkillsSource(DelegatingSkillsSource):
     """Decorator that caches the skills list returned by an inner source.
 

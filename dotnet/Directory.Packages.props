@@ -11,7 +11,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
-    <PackageVersion Include="Anthropic" Version="12.20.0" />
+    <PackageVersion Include="Anthropic" Version="12.31.0" />
     <PackageVersion Include="Anthropic.Foundry" Version="0.6.0" />
     <PackageVersion Include="Aspire.Hosting" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.0.0-preview.1.25560.3" />
@@ -52,7 +52,13 @@
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.9" />
     <PackageVersion Include="System.Linq.AsyncEnumerable" Version="10.0.5" />
     <PackageVersion Include="System.Net.Http.Json" Version="10.0.0" />
-    <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.5" />
+    <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.8" />
+    <!-- AG-UI .NET SDK packages (published by the AG-UI team). -->
+    <PackageVersion Include="AGUI.Abstractions" Version="0.0.1" />
+    <PackageVersion Include="AGUI.Formatting" Version="0.0.1" />
+    <PackageVersion Include="AGUI.Protobuf" Version="0.0.1" />
+    <PackageVersion Include="AGUI.Client" Version="0.0.1" />
+    <PackageVersion Include="AGUI.Server" Version="0.0.1" />
     <PackageVersion Include="System.Text.Json" Version="10.0.9" />
     <PackageVersion Include="System.Threading.Channels" Version="10.0.8" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />

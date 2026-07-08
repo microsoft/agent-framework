@@ -222,9 +222,9 @@ public sealed class HarnessAgent : DelegatingAIAgent
         // Build ChatClient stack
         ChatClientBuilder chatClientBuilder = chatClient.AsBuilder();
 
-        if (options?.DisableNonApprovalRequiredFunctionBypassing is not true)
+        if (options?.DisableApprovalNotRequiredFunctionBypassing is not true)
         {
-            chatClientBuilder.UseNonApprovalRequiredFunctionBypassing();
+            chatClientBuilder.UseApprovalNotRequiredFunctionBypassing();
         }
 
         chatClientBuilder = chatClientBuilder

@@ -30,7 +30,7 @@ public class HarnessAgentOptionsTests
         Assert.Null(options.LoopEvaluators);
         Assert.Null(options.LoopAgentOptions);
         Assert.False(options.DisableToolAutoApproval);
-        Assert.False(options.DisableNonApprovalRequiredFunctionBypassing);
+        Assert.False(options.DisableApprovalNotRequiredFunctionBypassing);
         Assert.False(options.DisableFileMemory);
         Assert.False(options.DisableFileAccess);
         Assert.False(options.DisableWebSearch);
@@ -86,7 +86,7 @@ public class HarnessAgentOptionsTests
             AIContextProviders = contextProviders,
             MaximumIterationsPerRequest = 42,
             DisableToolAutoApproval = true,
-            DisableNonApprovalRequiredFunctionBypassing = true,
+            DisableApprovalNotRequiredFunctionBypassing = true,
             DisableFileMemory = true,
             FileMemoryStore = fileMemoryStore,
             DisableFileAccess = true,
@@ -121,7 +121,7 @@ public class HarnessAgentOptionsTests
         Assert.Same(contextProviders, options.AIContextProviders);
         Assert.Equal(42, options.MaximumIterationsPerRequest);
         Assert.True(options.DisableToolAutoApproval);
-        Assert.True(options.DisableNonApprovalRequiredFunctionBypassing);
+        Assert.True(options.DisableApprovalNotRequiredFunctionBypassing);
         Assert.True(options.DisableFileMemory);
         Assert.Same(fileMemoryStore, options.FileMemoryStore);
         Assert.True(options.DisableFileAccess);

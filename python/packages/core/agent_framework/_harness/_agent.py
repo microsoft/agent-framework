@@ -11,9 +11,10 @@ context providers (todo, mode, memory, skills).
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from .._agents import Agent, SupportsAgentRun
 from .._clients import SupportsShellTool, SupportsWebSearchTool
@@ -21,6 +22,7 @@ from .._compaction import CompactionProvider, ContextWindowCompactionStrategy, T
 from .._feature_stage import ExperimentalFeature, experimental
 from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider
 from .._skills import SkillsProvider
+from .._types import ChatOptions
 from ._background_agents import BackgroundAgentsProvider
 from ._file_access import AgentFileStore, FileAccessProvider, FileSystemAgentFileStore
 from ._file_memory import FileMemoryProvider
@@ -28,6 +30,11 @@ from ._loop import DEFAULT_MAX_ITERATIONS, AgentLoopMiddleware
 from ._mode import AgentModeProvider
 from ._todo import TodoProvider
 from ._tool_approval import ToolApprovalMiddleware
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # pragma: no cover
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -246,10 +253,16 @@ def _assemble_shell(
 
 HARNESS_AGENT_PROVIDER_NAME = "microsoft.agent_framework.harness"
 
+OptionsCoT = TypeVar(
+    "OptionsCoT",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="ChatOptions[None]",
+)
+
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 def create_harness_agent(
-    client: SupportsChatGetResponse[Any],
+    client: SupportsChatGetResponse[OptionsCoT],
     *,
     id: str | None = None,
     name: str | None = None,
@@ -291,7 +304,7 @@ def create_harness_agent(
     context_providers: Sequence[ContextProvider] | None = None,
     middleware: Sequence[MiddlewareTypes] | None = None,
     default_options: Mapping[str, Any] | None = None,
-) -> Agent[Any]:
+) -> Agent[OptionsCoT]:
     """Create a pre-configured agent with batteries included.
 
     Assembles an :class:`~agent_framework.Agent` from a chat client, automatically wiring:
