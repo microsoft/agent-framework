@@ -3,6 +3,7 @@
 import inspect
 import json
 import os
+import re
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -1269,7 +1270,7 @@ def test_prepare_tools_with_web_search_on_azure_raises(
 
     with pytest.raises(
         ValueError,
-        match=_AZURE_WEB_SEARCH_UNSUPPORTED_MSG,
+        match=re.escape(_AZURE_WEB_SEARCH_UNSUPPORTED_MSG),
     ):
         client._prepare_tools_for_openai([web_search_tool])
 

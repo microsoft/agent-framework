@@ -620,9 +620,8 @@ class RawOpenAIChatCompletionClient(
                 if typed_tool.get("type") == "web_search":
                     if self._use_azure_client:
                         raise ValueError(_AZURE_WEB_SEARCH_UNSUPPORTED_MSG)
-                    else:
-                        # Web search is handled via web_search_options, not tools array
-                        web_search_options = {k: v for k, v in typed_tool.items() if k != "type"}
+                    # Web search is handled via web_search_options, not tools array
+                    web_search_options = {k: v for k, v in typed_tool.items() if k != "type"}
                 else:
                     # Pass through all other dict-based tools unchanged
                     chat_tools.append(typed_tool)
