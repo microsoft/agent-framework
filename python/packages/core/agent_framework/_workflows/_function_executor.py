@@ -24,7 +24,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ._executor import Executor
-from ._typing_utils import is_typevar, normalize_type_to_list, resolve_type_annotation
+from ._typing_utils import contains_typevar, normalize_type_to_list, resolve_type_annotation
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
 
 if sys.version_info >= (3, 11):
@@ -100,7 +100,7 @@ class FunctionExecutor(Executor):
             ("output", resolved_output_type),
             ("workflow_output", resolved_workflow_output_type),
         ]:
-            if param_type is not None and is_typevar(param_type):
+            if param_type is not None and contains_typevar(param_type):
                 raise ValueError(
                     f"Executor '{func.__name__}' has an unresolved TypeVar '{param_type}' "
                     f"as its {param_name} type. "
@@ -128,7 +128,7 @@ class FunctionExecutor(Executor):
             )
 
         # Check for unresolved TypeVar in introspected message type
-        if is_typevar(message_type):
+        if contains_typevar(message_type):
             raise ValueError(
                 f"Executor '{func.__name__}' has an unresolved TypeVar '{message_type}' "
                 f"as its message type. "
@@ -372,7 +372,7 @@ def _validate_function_signature(
 
     # Reject unresolved TypeVar in message annotation -- these are not supported
     # for workflow type validation and must be replaced with concrete types.
-    if not skip_message_annotation and isinstance(message_type, typing.TypeVar):
+    if not skip_message_annotation and contains_typevar(message_type):
         raise ValueError(
             f"Function instance {func.__name__} has an unresolved TypeVar '{message_type}' as its message type "
             "annotation. Generic TypeVar annotations are not supported for workflow type validation. "

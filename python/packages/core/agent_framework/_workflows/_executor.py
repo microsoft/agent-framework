@@ -21,7 +21,7 @@ from ._model_utils import DictConvertible
 from ._request_info_mixin import RequestInfoMixin
 from ._runner_context import MessageType, RunnerContext, WorkflowMessage
 from ._state import State
-from ._typing_utils import is_instance_of, is_typevar, normalize_type_to_list, resolve_type_annotation
+from ._typing_utils import contains_typevar, is_instance_of, normalize_type_to_list, resolve_type_annotation
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
 
 logger = logging.getLogger(__name__)
@@ -656,7 +656,7 @@ def handler(
                 ("output", resolved_output_type),
                 ("workflow_output", resolved_workflow_output_type),
             ]:
-                if param_type is not None and is_typevar(param_type):
+                if param_type is not None and contains_typevar(param_type):
                     raise ValueError(
                         f"Handler '{func.__name__}' has an unresolved TypeVar '{param_type}' "
                         f"as its {param_name} type. "
@@ -695,7 +695,7 @@ def handler(
                 )
 
             # Check for unresolved TypeVar in introspected message type
-            if is_typevar(message_type):
+            if contains_typevar(message_type):
                 raise ValueError(
                     f"Handler '{func.__name__}' has an unresolved TypeVar '{message_type}' "
                     f"as its message type. "
@@ -788,7 +788,7 @@ def _validate_handler_signature(
 
     # Reject unresolved TypeVar in message annotation -- these are not supported
     # for workflow type validation and must be replaced with concrete types.
-    if not skip_message_annotation and isinstance(message_type, TypeVar):
+    if not skip_message_annotation and contains_typevar(message_type):
         raise ValueError(
             f"Handler {func.__name__} has an unresolved TypeVar '{message_type}' as its message type annotation. "
             "Generic TypeVar annotations are not supported for workflow type validation. "

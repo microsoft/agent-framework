@@ -14,7 +14,7 @@ from agent_framework import (
     executor,
     handler,
 )
-from agent_framework._workflows._typing_utils import is_typevar
+from agent_framework._workflows._typing_utils import contains_typevar, is_typevar
 
 T = TypeVar("T")
 U = TypeVar("U")
@@ -50,6 +50,18 @@ class TestIsTypevarHelper:
         assert not is_typevar(42)
         assert not is_typevar([])
 
+    def test_contains_typevar_detects_nested_typevars(self):
+        """contains_typevar should detect TypeVar nested in typing constructs."""
+        assert contains_typevar(list[T])  # type: ignore[misc, valid-type]
+        assert contains_typevar(dict[str, T])  # type: ignore[misc, valid-type]
+        assert contains_typevar(str | list[T])  # type: ignore[misc, valid-type]
+
+    def test_contains_typevar_rejects_concrete_nested_types(self):
+        """contains_typevar should return False for concrete nested types."""
+        assert not contains_typevar(list[str])
+        assert not contains_typevar(dict[str, int])
+        assert not contains_typevar(str | None)
+
 
 class TestHandlerTypeVarValidation:
     """Tests for @handler decorator rejecting unresolved TypeVars."""
@@ -59,7 +71,7 @@ class TestHandlerTypeVarValidation:
         with pytest.raises(ValueError, match="unresolved TypeVar"):
 
             class _Bad(Executor):  # pyright: ignore[reportUnusedClass]
-                @handler(input=T)  # type: ignore[arg-type]
+                @handler(input=T)  # type: ignore[arg-type, call-overload]  # ty: ignore[invalid-argument-type]
                 async def handle(self, message, ctx: WorkflowContext[str]) -> None:  # type: ignore[no-untyped-def]
                     pass
 
@@ -68,7 +80,7 @@ class TestHandlerTypeVarValidation:
         with pytest.raises(ValueError, match="unresolved TypeVar"):
 
             class _Bad(Executor):  # pyright: ignore[reportUnusedClass]
-                @handler(input=str, output=T)  # type: ignore[arg-type]
+                @handler(input=str, output=T)  # type: ignore[arg-type, call-overload]  # ty: ignore[invalid-argument-type]
                 async def handle(self, message: str, ctx: WorkflowContext[str]) -> None:
                     pass
 
@@ -77,8 +89,17 @@ class TestHandlerTypeVarValidation:
         with pytest.raises(ValueError, match="unresolved TypeVar"):
 
             class _Bad(Executor):  # pyright: ignore[reportUnusedClass]
-                @handler(input=str, workflow_output=T)  # type: ignore[arg-type]
+                @handler(input=str, workflow_output=T)  # type: ignore[arg-type, call-overload]  # ty: ignore[invalid-argument-type]
                 async def handle(self, message: str, ctx: WorkflowContext[str]) -> None:
+                    pass
+
+    def test_handler_explicit_nested_input_typevar_raises(self):
+        """@handler(input=list[T]) should raise ValueError."""
+        with pytest.raises(ValueError, match="unresolved TypeVar"):
+
+            class _Bad(Executor):  # pyright: ignore[reportUnusedClass]
+                @handler(input=list[T])  # type: ignore[arg-type, call-overload, misc, valid-type]
+                async def handle(self, message, ctx: WorkflowContext[str]) -> None:  # type: ignore[no-untyped-def]
                     pass
 
     def test_handler_introspected_typevar_raises(self):
@@ -88,6 +109,15 @@ class TestHandlerTypeVarValidation:
             class _Bad(Executor):  # pyright: ignore[reportUnusedClass]
                 @handler  # type: ignore[arg-type]
                 async def handle(self, message: T, ctx: WorkflowContext[str]) -> None:  # type: ignore[valid-type]
+                    pass
+
+    def test_handler_introspected_nested_typevar_raises(self):
+        """@handler with TypeVar nested in message annotation should raise ValueError."""
+        with pytest.raises(ValueError, match="unresolved TypeVar"):
+
+            class _Bad(Executor):  # pyright: ignore[reportUnusedClass]
+                @handler  # type: ignore[arg-type]
+                async def handle(self, message: list[T], ctx: WorkflowContext[str]) -> None:  # type: ignore[valid-type]
                     pass
 
     def test_handler_concrete_types_work(self):
@@ -108,7 +138,7 @@ class TestExecutorTypeVarValidation:
         """@executor(input=T) with a TypeVar should raise ValueError."""
         with pytest.raises(ValueError, match="unresolved TypeVar"):
 
-            @executor(input=T)  # type: ignore[arg-type]
+            @executor(input=T)  # type: ignore[arg-type, call-overload]  # ty: ignore[invalid-argument-type]
             async def bad_func(message, ctx: WorkflowContext[str]) -> None:  # type: ignore[no-untyped-def]
                 pass
 
@@ -116,14 +146,27 @@ class TestExecutorTypeVarValidation:
         """@executor(input=str, output=T) with a TypeVar should raise ValueError."""
         with pytest.raises(ValueError, match="unresolved TypeVar"):
 
-            @executor(input=str, output=T)  # type: ignore[arg-type]
+            @executor(input=str, output=T)  # type: ignore[arg-type, call-overload]  # ty: ignore[invalid-argument-type]
             async def bad_func(message: str, ctx: WorkflowContext[str]) -> None:
+                pass
+
+    def test_executor_explicit_nested_input_typevar_raises(self):
+        """@executor(input=list[T]) should raise ValueError."""
+        with pytest.raises(ValueError, match="unresolved TypeVar"):
+
+            @executor(input=list[T])  # type: ignore[arg-type, call-overload, misc, valid-type]
+            async def bad_func(message, ctx: WorkflowContext[str]) -> None:  # type: ignore[no-untyped-def]
                 pass
 
     def test_executor_introspected_typevar_raises(self):
         """@executor with TypeVar in message annotation should raise ValueError."""
         with pytest.raises(ValueError, match="unresolved TypeVar"):
             FunctionExecutor(self._make_typevar_func())  # type: ignore[arg-type]
+
+    def test_executor_introspected_nested_typevar_raises(self):
+        """@executor with TypeVar nested in message annotation should raise ValueError."""
+        with pytest.raises(ValueError, match="unresolved TypeVar"):
+            FunctionExecutor(self._make_nested_typevar_func())  # type: ignore[arg-type]
 
     def test_executor_concrete_types_work(self):
         """@executor with concrete types should succeed."""
@@ -139,6 +182,15 @@ class TestExecutorTypeVarValidation:
         """Create a function with TypeVar annotation for testing."""
 
         async def func(message: T, ctx: WorkflowContext[str]) -> None:  # type: ignore[valid-type]
+            pass
+
+        return func
+
+    @staticmethod
+    def _make_nested_typevar_func():
+        """Create a function with nested TypeVar annotation for testing."""
+
+        async def func(message: list[T], ctx: WorkflowContext[str]) -> None:  # type: ignore[valid-type]
             pass
 
         return func
@@ -163,12 +215,28 @@ class TestWorkflowContextTypeVarValidation:
             async def bad_func(message: str, ctx: WorkflowContext[T | str]) -> None:  # type: ignore[valid-type]
                 pass
 
+    def test_context_nested_typevar_raises(self):
+        """WorkflowContext[list[T]] with a nested TypeVar should raise ValueError."""
+        with pytest.raises(ValueError, match="unresolved TypeVar"):
+
+            @executor(id="bad")
+            async def bad_func(message: str, ctx: WorkflowContext[list[T]]) -> None:  # type: ignore[valid-type]
+                pass
+
     def test_context_workflow_output_typevar_raises(self):
         """WorkflowContext[str, T] with a TypeVar should raise ValueError."""
         with pytest.raises(ValueError, match="unresolved TypeVar"):
 
             @executor(id="bad")
             async def bad_func(message: str, ctx: WorkflowContext[str, T]) -> None:  # type: ignore[valid-type]
+                pass
+
+    def test_context_nested_workflow_output_typevar_raises(self):
+        """WorkflowContext[str, dict[str, T]] with a nested TypeVar should raise ValueError."""
+        with pytest.raises(ValueError, match="unresolved TypeVar"):
+
+            @executor(id="bad")
+            async def bad_func(message: str, ctx: WorkflowContext[str, dict[str, T]]) -> None:  # type: ignore[valid-type]
                 pass
 
     def test_context_concrete_types_work(self):

@@ -26,6 +26,21 @@ def is_typevar(x: Any) -> bool:
     return isinstance(x, _TYPEVAR_TYPES)
 
 
+def contains_typevar(annotation: Any) -> bool:
+    """Check if an annotation contains an unresolved TypeVar at any nesting level.
+
+    Args:
+        annotation: The annotation to inspect.
+
+    Returns:
+        True if the annotation or any nested type argument is a TypeVar, False otherwise.
+    """
+    if is_typevar(annotation):
+        return True
+
+    return any(contains_typevar(arg) for arg in get_args(annotation))
+
+
 def is_chat_agent(agent: Any) -> TypeGuard[Agent]:
     """Check if the given agent is a Agent.
 
