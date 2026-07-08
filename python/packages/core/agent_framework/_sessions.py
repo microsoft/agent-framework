@@ -29,7 +29,13 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypeGuard, cast
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import ChatContext, ChatMiddleware
-from ._types import AgentResponse, ChatResponse, Message, ResponseStream
+from ._types import (
+    AgentResponse,
+    ChatResponse,
+    Message,
+    ResponseStream,
+    _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
+)
 from .exceptions import ChatClientInvalidResponseException
 
 if TYPE_CHECKING:
@@ -160,7 +166,8 @@ class SessionContext:
 
     Attributes:
         session_id: The ID of the current session.
-        service_session_id: Service-managed session ID (if present, service handles storage).
+        service_session_id: Service-managed session identifier
+            (if present, the service stores history).
         input_messages: The new messages being sent to the agent (set by caller).
         context_messages: Dict mapping source_id -> messages added by that provider.
             Maintains insertion order (provider execution order).
@@ -190,7 +197,7 @@ class SessionContext:
 
         Args:
             session_id: The ID of the current session.
-            service_session_id: Service-managed session ID.
+            service_session_id: Service-managed session identifier.
             input_messages: The new messages being sent to the agent.
             context_messages: Pre-populated context messages by source.
             instructions: Pre-populated instructions.
@@ -634,9 +641,9 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         response: ChatResponse,
     ) -> None:
         """Persist a single model-call response through the configured history providers."""
-        service_call_context._response = AgentResponse(  # type: ignore[assignment]
-            messages=response.messages,
-            response_id=None,
+        service_call_context._response = _build_agent_response_from_chat_response(  # type: ignore[assignment]
+            response,
+            suppress_response_id=True,
         )
         for provider in reversed(self._providers):
             await provider.after_run(
@@ -750,9 +757,16 @@ class AgentSession:
     Lightweight state container. Provider instances are owned by the agent,
     not the session. The session only holds session IDs and a mutable state dict.
 
+    ``service_session_id`` can contain a provider-issued service session
+    identifier, such as a service conversation ID or response ID. Treat this
+    value as trusted application state: it is scoped by the backing API key,
+    service account, or project, but it is not an end-user authorization
+    boundary by itself.
+
     Attributes:
         session_id: Unique identifier for this session.
-        service_session_id: Service-managed session ID (if using service-side storage).
+        service_session_id: Service-managed session identifier
+            (if using service-side storage).
         state: Mutable state dict shared with all providers.
     """
 
@@ -766,7 +780,7 @@ class AgentSession:
 
         Args:
             session_id: Optional session ID (generated if not provided).
-            service_session_id: Optional service-managed session ID.
+            service_session_id: Optional service-managed session identifier.
         """
         self._session_id = session_id or str(uuid.uuid4())
         self.service_session_id = service_session_id

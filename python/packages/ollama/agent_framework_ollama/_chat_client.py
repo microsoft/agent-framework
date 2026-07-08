@@ -540,11 +540,30 @@ class OllamaChatClient(
 
     def _parse_streaming_response_from_ollama(self, response: OllamaChatResponse) -> ChatResponseUpdate:
         contents = self._parse_contents_from_ollama(response)
+        finish_reason = None
+        if response.done:
+            usage_details = UsageDetails(
+                **{
+                    key: value
+                    for key, value in {
+                        "input_token_count": response.prompt_eval_count,
+                        "output_token_count": response.eval_count,
+                        "total_token_count": response.prompt_eval_count + response.eval_count
+                        if isinstance(response.prompt_eval_count, int) and isinstance(response.eval_count, int)
+                        else None,
+                    }.items()
+                    if isinstance(value, int)
+                }
+            )
+            if usage_details:
+                contents.append(Content.from_usage(usage_details, raw_representation=response))
+            finish_reason = response.done_reason if response.done_reason in ("stop", "length") else None
         return ChatResponseUpdate(
             contents=contents,
             role="assistant",
             model=response.model,
             created_at=response.created_at,
+            finish_reason=finish_reason,
         )
 
     def _parse_response_from_ollama(
@@ -554,15 +573,27 @@ class OllamaChatClient(
         response_format: Any | None = None,
     ) -> ChatResponse:
         contents = self._parse_contents_from_ollama(response)
+        usage_details = UsageDetails(
+            **{
+                key: value
+                for key, value in {
+                    "input_token_count": response.prompt_eval_count,
+                    "output_token_count": response.eval_count,
+                    "total_token_count": response.prompt_eval_count + response.eval_count
+                    if isinstance(response.prompt_eval_count, int) and isinstance(response.eval_count, int)
+                    else None,
+                }.items()
+                if isinstance(value, int)
+            }
+        )
+        finish_reason = response.done_reason if response.done_reason in ("stop", "length") else None
 
         return ChatResponse(
             messages=[Message(role="assistant", contents=contents)],
             model=response.model,
             created_at=response.created_at,
-            usage_details=UsageDetails(
-                input_token_count=response.prompt_eval_count,
-                output_token_count=response.eval_count,
-            ),
+            finish_reason=finish_reason,
+            usage_details=usage_details or None,
             response_format=response_format,
         )
 

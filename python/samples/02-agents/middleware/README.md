@@ -11,6 +11,7 @@ This folder contains focused middleware samples for `Agent`, chat clients, tools
 | [`agent_loop_middleware_todos.py`](./agent_loop_middleware_todos.py) | Demonstrates `AgentLoopMiddleware` with a `should_continue` predicate built from a `TodoProvider` via `todos_remaining`, so the agent keeps working while open todos remain. |
 | [`agent_loop_middleware_judge.py`](./agent_loop_middleware_judge.py) | Demonstrates `AgentLoopMiddleware.with_judge`: a ChatClient judge re-runs the agent until it decides the original request was answered, with `criteria` shared between the agent and the judge. |
 | [`agent_loop_middleware_report.py`](./agent_loop_middleware_report.py) | Demonstrates composing two `AgentLoopMiddleware` on one agent: an inner `todos_remaining` loop that drafts a report todo-by-todo, wrapped by an outer report-style `with_judge` loop that re-runs it until an editor chat client judges the report publication-ready. |
+| [`atr_validation_middleware.py`](./atr_validation_middleware.py) | Demonstrates deterministic validation at the tool-execution boundary: a `FunctionMiddleware` that inspects the validated tool arguments and raises `MiddlewareTermination` before the tool runs when they match an attack rule. Loads the open, MIT-licensed Agent Threat Rules ruleset and runs the real engine locally (`pip install pyatr`), with a built-in deny-list fallback when it is not installed. |
 | [`chat_middleware.py`](./chat_middleware.py) | Shows class-based and function-based chat middleware that can observe, modify, and override model calls. |
 | [`class_based_middleware.py`](./class_based_middleware.py) | Shows class-based agent and function middleware. |
 | [`decorator_middleware.py`](./decorator_middleware.py) | Demonstrates middleware registration with decorators. |
@@ -39,3 +40,12 @@ uv run samples/02-agents/middleware/usage_tracking_middleware.py
 ```
 
 The sample forces a tool call so you can see middleware output for each inner model call in both non-streaming and streaming modes.
+
+## Security Considerations
+
+`AgentLoopMiddleware.with_judge` (used by `agent_loop_middleware_judge.py` and
+`agent_loop_middleware_report.py`) is an explicit opt-in to sending the original request and the
+agent's latest response to a second, external judge chat client on every iteration. A compromised
+or malicious judge endpoint could exfiltrate that data, or return a manipulated verdict/gap
+analysis that gets fed back into the loop as feedback — a form of indirect prompt injection. Only
+configure a judge client that points at a service you trust as much as the primary model.

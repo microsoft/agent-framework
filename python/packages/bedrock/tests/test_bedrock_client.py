@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from agent_framework import Content, Message
+from agent_framework import Agent, Content, Message
 
 from agent_framework_bedrock import BedrockChatClient
 
@@ -38,6 +38,12 @@ def _make_client() -> BedrockChatClient:
         region="us-west-2",
         client=_StubBedrockRuntime(),  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
+
+
+def test_agent_accepts_bedrock_chat_client() -> None:
+    client = _make_client()
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
 
 
 async def test_get_response_invokes_bedrock_runtime() -> None:
