@@ -1,320 +1,351 @@
 ---
 status: proposed
 contact: eavanvalkenburg
-date: 2026-06-11
+date: 2026-07-08
 deciders: eavanvalkenburg
 ---
 
-# Python hosting core and pluggable channels
+# Python protocol helpers and optional execution state
 
 ## Scope
 
-This specification is the Python implementation plan for [ADR-0027](../decisions/0027-hosting-channels.md). It documents the simplified v1 host/channel contract only.
+This specification is the Python implementation plan for
+[ADR-0027](../decisions/0027-hosting-channels.md). It documents the helper-first v1 contract for Python hosting.
 
 The v1 contract is:
 
-- `AgentFrameworkHost` owns one Starlette app, one hostable target, and one or more channels.
-- A hostable target is either a `SupportsAgentRun`-compatible agent or a `Workflow`.
-- Channels contribute routes, middleware, commands, and lifecycle callbacks.
-- Channels parse protocol-native input into `ChannelRequest`.
-- Channels render their own originating response.
-- Session continuity is explicit: a channel supplies `ChannelSession(isolation_key=...)`, and the host resolves/caches an `AgentSession` for that key.
-- The host invokes `ChannelRunHook` and `ChannelResponseHook`; channels provide hook configuration and protocol context.
+- protocol packages expose helper functions that convert protocol-native input to Agent Framework run values;
+- protocol packages expose helper functions that convert Agent Framework run results or streams back to protocol-native
+  payloads or operations;
+- application/framework code owns routes, native SDK clients, authentication, command policy, webhooks, response status
+  codes, and outbound sends;
+- `agent-framework-hosting` provides small optional state holders for Agent Framework targets;
+- state helpers do not own web apps, route contribution, protocol dispatch, command projection, or native SDK calls.
 
-The host does not link identities, route responses to other channels, run background continuations, or multicast in v1. Those enhancements are tracked in [ADR-0028](../decisions/0028-hosting-linking-multicast-enhancements.md).
+The old `AgentFrameworkHost` / `Channel` implementation remains present while the package is unreleased, but it is not
+the intended v1 direction. New work should target protocol helpers plus app-owned routes.
 
 ## Goals
 
-- Let an app expose one agent or workflow on multiple protocols without handwritten Starlette composition.
-- Keep protocol parsing and response formatting inside channel packages.
-- Provide one session-resolution path shared by all channels.
-- Keep the channel authoring surface small enough for new channels to implement.
-- Preserve full-fidelity agent and workflow results until a channel decides how to render them.
+- Let apps expose agents and workflows from FastAPI, Starlette, Django, Azure Functions, native SDK webhooks, CLIs, and
+  tests without adopting a host/channel framework.
+- Keep protocol parsing and response formatting inside protocol packages.
+- Keep session continuity explicit and app-owned at the trust boundary.
+- Reuse Agent Framework primitives: `AgentSession`, `CheckpointStorage`, `Agent.run(...)`, `Workflow.run(...)`, and
+  `ResponseStream`.
+- Preserve full-fidelity Agent Framework results until a protocol helper renders them.
 
 ## Non-goals for v1
 
-The following are removed from the v1 implementation pass:
+### App-owned in v1
 
-- `IdentityLinker`, `IdentityAllowlist`, `AuthPolicy`, and `LinkPolicy`
-- `ResponseTarget`, active-channel routing, `all_linked`, fan-out, and multicast
-- `ChannelPush` and `ChannelPushCodec`
-- `DurableTaskRunner`, `InProcessTaskRunner`, and `RetryPolicy`
-- continuation tokens and background delivery
-- confidentiality tiers
-- `agent-framework-hosting-entra`
-- `local_identity_link`
+The app builder owns these concerns with normal web-framework, SDK, platform, or application code:
 
-These are follow-up design topics, not hidden requirements of the v1 host.
+- authentication, authorization policy, and allowlists;
+- deciding whether identities across protocols map to the same `session_id`;
+- non-originating sends using native SDK clients;
+- background work, durable execution, retry, and replay when app code owns the work;
+- routing between multiple agents.
+
+The helper-first model makes app-owned linking and non-originating delivery easier than the old host/channel model because
+app code already owns the native SDK clients, authenticated caller context, session id selection, and outbound sends.
+
+### Future framework work
+
+The following require a separate reviewed design before becoming reusable framework features:
+
+- reusable cross-channel identity linking;
+- framework-owned proactive or non-originating delivery;
+- fan-out, multicast, selected-channel, active-channel, or all-linked delivery;
+- framework-owned delivery observability, dead-letter handling, and replay semantics;
+- cross-channel confidentiality and link policy.
+
+[ADR-0028](../decisions/0028-hosting-linking-multicast-enhancements.md) tracks possible follow-up work in this area and
+must be aligned with the helper-first model before implementation. Old vocabulary such as `IdentityLinker`,
+`ResponseTarget`, `ChannelPush`, `ChannelPushCodec`, `DurableTaskRunner`, `RetryPolicy`, and `LinkPolicy` is not v1 API.
 
 ## Packages
 
-| Package | Import surface | Contents |
+| Package | Import surface | v1 helper-first contents |
 |---|---|---|
-| `agent-framework-hosting` | `agent_framework_hosting` | `AgentFrameworkHost`, channel protocols, key request/result types, hooks, `reset_session`, state-path helpers. |
-| `agent-framework-hosting-responses` | `agent_framework_hosting_responses` | `ResponsesChannel`. |
-| `agent-framework-hosting-invocations` | `agent_framework_hosting_invocations` | `InvocationsChannel`. |
-| `agent-framework-hosting-telegram` | `agent_framework_hosting_telegram` | `TelegramChannel` and Telegram command helpers. |
-| `agent-framework-hosting-activity-protocol` | `agent_framework_hosting_activity_protocol` | `ActivityProtocolChannel` for Activity Protocol over Azure Bot Service. |
-| `agent-framework-hosting-discord` | `agent_framework_hosting_discord` | `DiscordChannel` and Discord command/interaction helpers. |
-| `agent-framework-foundry-hosting` | `agent_framework.foundry_hosting` | Foundry isolation middleware and Foundry-backed hosting helpers usable with the v1 host. |
+| `agent-framework-hosting` | `agent_framework_hosting` | `AgentState`, `WorkflowState`, `SessionStore`, run-argument `TypedDict`s, and existing unreleased channel/host types. |
+| `agent-framework-hosting-responses` | `agent_framework_hosting_responses` | Responses helpers: request parsing, session id extraction, response id creation, response rendering, streaming rendering. |
+| Future protocol packages | e.g. `agent_framework_hosting_telegram` | Protocol-specific helpers such as `telegram_to_run(...)`, `telegram_from_run(...)`, `telegram_session_id(...)`, and command/media helpers when useful. |
 
-Channel packages may depend on their native SDKs. The core hosting package should not depend on channel SDKs or on top-level legacy protocol hosts.
+The core hosting package must not depend on protocol SDKs. Protocol packages may depend on their native protocol SDKs if
+needed, but helper functions should stay usable from plain app code and tests.
 
-## Key Types
+## Helper naming and families
 
-### `AgentFrameworkHost`
+Helper names are protocol-specific. Avoid a generic `protocol_to_run(...)` public surface.
 
-The host constructor accepts:
+Protocol packages may provide the following helper families when the protocol has the concept:
 
-- `target`: one `SupportsAgentRun`-compatible object or one `Workflow`
-- `channels`: one or more `Channel` instances
-- optional Starlette middleware
-- optional `state_dir`
-- optional workflow `checkpoint_location`
+| Helper family | Shape | Purpose |
+| --- | --- | --- |
+| Run conversion | `<protocol>_to_run(...)` | Convert one protocol-native call/update/request into `Agent.run` or `Workflow.run` values. |
+| Final rendering | `<protocol>_from_run(...)` | Convert a final `AgentResponse` or workflow result into protocol-native response payloads or operations. |
+| Stream rendering | `<protocol>_from_streaming_run(...)` | Convert `ResponseStream` or workflow updates into protocol-native events or operations. |
+| Session id extraction | `<protocol>_session_id(...)` | Extract the protocol's natural continuation/partition key from the call, if present. |
+| Command/action parsing | `<protocol>_command(...)` | Parse a protocol-native command/action/operation name without deciding app policy. |
 
-The host exposes:
+Examples:
 
-- `app`: the canonical Starlette ASGI application
-- `serve(...)`: a convenience wrapper for local serving
-- `reset_session(isolation_key: str)`: rotate the cached `AgentSession` for a host-tracked conversation
+- `responses_to_run(...)`, `responses_from_run(...)`, `responses_from_streaming_run(...)`,
+  `responses_session_id(...)`;
+- `telegram_to_run(...)`, `telegram_from_run(...)`, `telegram_from_streaming_run(...)`,
+  `telegram_session_id(...)`, `telegram_command(...)`;
+- `activity_to_run(...)`, `activity_from_run(...)`, `activity_session_id(...)`, `activity_command(...)`;
+- `discord_to_run(...)`, `discord_from_run(...)`, `discord_session_id(...)`, `discord_command(...)`.
 
-`state_dir` is narrowed to v1 host-owned local files only:
+This table is a naming guide, not a required checklist. A protocol package should add only the helpers that match native
+protocol concepts and current samples.
 
-- session aliases (`isolation_key` to current `AgentSession` id), and
-- workflow checkpoint paths when the app chooses the host-provided file layout.
+Protocol-specific helpers may also exist for native details such as `telegram_chat_id(...)`,
+`telegram_callback_query_id(...)`, `telegram_media_file_id(...)`, `discord_interaction_id(...)`, `a2a_task_id(...)`,
+`a2a_context_id(...)`, or MCP tool/prompt/resource helpers. These helpers should stay side-effect-free. App/native SDK
+code performs acknowledgements, sends/edits messages, resolves protected file URLs, applies rate limits, and registers
+handlers.
 
-It is not a store for identity links, continuations, active-channel state, delivery attempts, or multicast payloads.
+## `agent-framework-hosting` state helpers
 
-Externally supplied isolation keys are trusted only after the channel or host middleware has authenticated and authorized the caller. The host uses `isolation_key` as a partition key; the string itself is not proof of identity or ownership.
+### `SessionStore`
 
-### `Channel`
-
-A channel implements a small protocol:
-
-- declare a stable channel id/name,
-- contribute routes, middleware, commands, and lifecycle callbacks,
-- parse inbound protocol data into `ChannelRequest`,
-- call the host through `ChannelContext.run(...)` or `ChannelContext.run_stream(...)`, and
-- serialize the returned result to the originating protocol response.
-
-Channels own protocol authentication, signature validation, native command registration, and protocol-specific error bodies.
-
-### `ChannelContribution`
-
-`ChannelContribution` is the channel's host-facing contribution:
-
-- Starlette routes and optional middleware,
-- native command descriptors,
-- startup and shutdown callbacks, and
-- any channel-local metadata needed by the package.
-
-The host aggregates contributions but does not interpret protocol payloads.
-
-### `ChannelRequest`
-
-`ChannelRequest` is the host-neutral request envelope produced by a channel. It carries:
-
-- target input,
-- optional `ChannelSession`,
-- optional `ChannelIdentity`,
-- options and attributes produced by the channel, and
-- request metadata useful to hooks and context providers.
-
-The host may pass attributes through to context providers and middleware. Channels should treat attributes as a documented extension bag, not as a cross-channel delivery contract.
-
-### `ChannelSession`
-
-`ChannelSession(isolation_key=...)` is the only v1 session-continuity mechanism.
-
-When a request contains an isolation key:
-
-1. The host looks up or creates the cached `AgentSession` for that key.
-2. The target runs with that `AgentSession` when the target is an agent.
-3. `reset_session(isolation_key)` rotates the alias so the next request starts a new conversation.
-
-If two channels produce the same isolation key on the same host, they share the same cached session. If they produce different keys, they do not share session state.
-
-### `ChannelIdentity`
-
-`ChannelIdentity` is optional request metadata such as channel id, native user id, tenant id, claims, or display attributes.
-
-In v1, `ChannelIdentity` does not link channels, authorize callers, select delivery destinations, or imply that two identities should share an `AgentSession`. A channel that wants shared history must still produce the same `ChannelSession.isolation_key`.
-
-### Hooks
-
-Hooks are optional and channel-owned:
-
-- `ChannelRunHook`: runs after channel parsing and before host invocation; returns the `ChannelRequest` to execute.
-- `ChannelResponseHook`: runs after target completion and before the originating channel renders a one-shot response.
-- `ChannelStreamUpdateHook`: the host applies it to streamed updates before the originating channel serializes the stream.
-
-Common uses include adapting chat text into workflow inputs, enforcing deployment-specific options, flattening rich output for text-only protocols, or filtering streamed updates for a protocol. Stream update hooks are update-only; they do not automatically sanitize `get_final_response()` output. Channels choose their response transport from the parsed protocol request before invoking run hooks.
-
-### `HostedRunResult`
-
-`HostedRunResult[T]` wraps the target's full-fidelity result plus the resolved `AgentSession | None`.
-
-- Agent targets produce `HostedRunResult[AgentResponse]`.
-- Workflow targets produce `HostedRunResult[WorkflowRunResult]`.
-
-The host does not flatten, filter, or translate the result. Each channel decides how much of the result its protocol can carry.
-
-## Host Behavior
-
-1. `AgentFrameworkHost` builds one Starlette app and asks each channel for its contribution.
-2. A channel route receives a protocol-native request.
-3. The channel validates/parses the native payload and creates `ChannelRequest`.
-4. The channel passes the request, optional `ChannelRunHook`, and protocol-native context to the host.
-5. The host invokes `ChannelRunHook`, if configured, and receives the prepared request.
-6. The host resolves an `AgentSession` from `ChannelSession.isolation_key` when present.
-7. The host invokes the agent or workflow target.
-8. The host wraps the result in `HostedRunResult` or the streaming equivalent.
-9. The host invokes `ChannelResponseHook`, if configured, for non-streaming/final response shaping.
-10. The host applies stream update hooks while the channel consumes streams; the channel renders the originating protocol response.
-
-There is no host-level route from one channel's request to another channel's response in v1.
-
-## Workflow Checkpoints
-
-Workflow checkpointing is explicit. Apps either configure checkpoint storage on the workflow itself or pass a `checkpoint_location` to the host so the workflow dispatch path can use the intended file location.
-
-`state_dir` may provide a conventional location for workflow checkpoint files, but checkpointing is still opt-in and separate from agent session history. Checkpoints are workflow-runtime state, not channel state and not identity-link state.
-
-## Foundry Isolation Middleware
-
-V1 keeps Foundry isolation as middleware rather than as a channel-linking feature.
-
-The middleware is installed only when the Foundry hosting environment flag is present. In that environment it reads Foundry-provided isolation values at the trusted hosting boundary, exposes them as read-only request context for Foundry-aware history or memory providers, and rejects unsafe session resumes when the live isolation context does not match persisted session context. Outside Foundry, raw isolation headers are ignored unless an app supplies its own trusted middleware.
-
-This middleware does not create cross-channel identity links and does not authorize non-Foundry channels.
-
-## Current Channels
-
-### Responses
-
-`ResponsesChannel` exposes the OpenAI-compatible Responses API shape. It maps request body fields such as input, options, and conversation identifiers into `ChannelRequest`, and it renders Responses-compatible one-shot or streaming responses.
-
-Responses session continuity uses a channel-selected `isolation_key`, commonly derived from a response/conversation id, caller-provided session id, Foundry isolation context, or deployment-specific request metadata.
-
-### Invocations
-
-`InvocationsChannel` exposes an invocation endpoint for server-side callers and tools. It maps the request body into `ChannelRequest` and renders the invocation result on the same HTTP response.
-
-Invocations is useful for typed workflow inputs because a `ChannelRunHook` can translate the request body into the workflow's expected input type.
-
-### Telegram
-
-`TelegramChannel` supports webhook or polling transport, native command registration, and message rendering back to the originating Telegram chat.
-
-The channel chooses a default `isolation_key` from Telegram-native data such as chat id, user id, or a configured user/chat scope. A `/new` or equivalent command may call `reset_session` for that isolation key.
-
-### Activity Protocol
-
-`ActivityChannel` supports Activity Protocol requests, typically through Azure Bot Service for Teams, Web Chat, and other Bot Framework-fronted surfaces.
-
-The channel maps incoming `Activity` objects to `ChannelRequest` and renders a reply activity to the originating conversation. Proactive Activity delivery, active-channel routing, and all-linked fan-out are not v1 host semantics.
-
-### Discord
-
-`DiscordChannel` supports Discord messages, slash commands, and interactions as channel-native input.
-
-The channel maps Discord-native user, guild, channel, thread, and interaction data into `ChannelRequest` metadata and a configured `ChannelSession.isolation_key`. It renders the result to the originating Discord response path.
-
-## High-level Samples
-
-### One agent on Responses
+`SessionStore` is an in-memory async lookup:
 
 ```python
-host = AgentFrameworkHost(
-    target=agent,
-    channels=[ResponsesChannel()],
+class SessionStore:
+    async def get(self, session_id: str) -> AgentSession | None: ...
+    async def set(self, session_id: str, session: AgentSession) -> None: ...
+    async def delete(self, session_id: str) -> None: ...
+```
+
+The store does not create sessions. It stores `session_id -> AgentSession` values supplied by callers.
+
+The built-in store has no TTL or eviction. This is intentional for local/dev and simple process-local scenarios: protocols
+such as OpenAI Responses can continue from any prior response id. Durable or multi-replica deployments should provide a
+durable store and their own TTL/eviction policy.
+
+### `AgentState`
+
+`AgentState` holds an agent target and an optional `SessionStore`:
+
+```python
+state = AgentState(agent)
+state = AgentState(create_agent)
+state = AgentState(create_agent, cache_target=False)
+```
+
+The target may be:
+
+- a `SupportsAgentRun` instance;
+- a synchronous factory;
+- an asynchronous factory;
+- an awaitable target.
+
+`AgentState` provides:
+
+- `await get_target()`;
+- synchronous `target` only after a target is already available/resolved;
+- `session_store`;
+- `await get_or_create_session(session_id)`;
+- `await set_session(session_id, session)`.
+
+`get_or_create_session(...)` resolves the target and calls `target.create_session(session_id=...)` only when the store has
+no session for that id.
+
+Apps must store the post-run session explicitly after `agent.run(...)` or stream finalization:
+
+```python
+session = await state.get_or_create_session(session_id)
+target = await state.get_target()
+result = await target.run(messages, session=session, options=options)
+await state.set_session(response_id, session)
+```
+
+### `WorkflowState`
+
+`WorkflowState` resolves a workflow target. It does not own checkpoint storage.
+
+The target may be:
+
+- a `Workflow` instance;
+- a `WorkflowBuilder` or other object with `build() -> Workflow`;
+- a synchronous factory;
+- an asynchronous factory;
+- an awaitable target.
+
+`WorkflowState` provides:
+
+- `await get_target()`;
+- synchronous `target` only after a target is already available/resolved.
+
+Workflow checkpointing uses Agent Framework's existing `CheckpointStorage` abstraction directly. Apps that need
+per-session workflow resume should keep an app-owned cursor such as `session_id -> checkpoint_id`:
+
+```python
+# session_id must already be authenticated and authorized for this caller
+target = await workflow_state.get_target()
+checkpoint_id = await checkpoint_cursor_store.get(session_id)
+if checkpoint_id is None:
+    result = await target.run(message=workflow_input, checkpoint_storage=checkpoint_storage)
+else:
+    result = await target.run(checkpoint_id=checkpoint_id, checkpoint_storage=checkpoint_storage)
+latest = await checkpoint_storage.get_latest(workflow_name=target.name)
+if latest is not None:
+    await checkpoint_cursor_store.set(session_id, latest.checkpoint_id)
+```
+
+`Workflow.run(...)` does not currently emit a checkpoint id on `WorkflowRunResult` or normal workflow events by default.
+The runner receives checkpoint ids internally from `CheckpointStorage.save(...)`. Apps that own the storage can query
+`get_latest(workflow_name=...)` after the run if they need to update a cursor.
+
+## `agent-framework-hosting-responses`
+
+The Responses package provides the helper-first surface for OpenAI Responses-shaped requests.
+
+### Request helpers
+
+- `messages_from_responses_input(input) -> list[Message]`
+- `responses_to_run(body) -> AgentRunArgs`
+- `responses_session_id(body) -> str | None`
+- `create_response_id() -> str`
+
+`responses_to_run(...)` returns values corresponding to `Agent.run(...)`:
+
+```python
+run = responses_to_run(body)
+messages = run["messages"]
+options = run["options"]
+stream = run["stream"]
+```
+
+It excludes protocol transport/session fields from `options` and remaps known Responses option names such as
+`max_output_tokens -> max_tokens`.
+
+`responses_session_id(...)` returns:
+
+- `previous_response_id` when present (`resp_*`);
+- otherwise `conversation_id` when present (`conv_*`);
+- otherwise `None`.
+
+The helper only extracts the candidate key. App code decides whether to trust and use that key.
+
+### Response helpers
+
+- `responses_from_run(result, *, response_id, session_id=None) -> dict[str, Any]`
+- `responses_from_streaming_run(stream, *, response_id, session_id=None) -> AsyncIterator[str]`
+
+`responses_from_run(...)` renders a full Responses JSON payload from an `AgentResponse`. It renders the full set of
+OpenAI Responses output item types supported by Agent Framework content.
+
+`responses_from_streaming_run(...)` renders Server-Sent Event strings for a `ResponseStream`. It emits a created event,
+text deltas, and a completed event. The final completed payload is produced through `responses_from_run(...)`; the helper
+also preserves the model id observed on streaming updates when the finalized `AgentResponse` no longer carries raw model
+metadata.
+
+### Compatibility with old channel code
+
+`ResponsesChannel` and the old channel helpers remain present while the package is unreleased. New samples and new code
+should use the helper-first surface.
+
+## Security responsibilities
+
+Protocol helper packages parse and render. They do not authenticate callers, authorize access to state, or decide which
+side effects are allowed.
+
+Application code that uses these helpers is responsible for:
+
+- authenticating the caller through the app's normal mechanism before using protocol-provided ids;
+- authorizing any caller-supplied session, checkpoint, task, context, conversation, thread, or response id before loading
+  state for it;
+- binding externally supplied ids to the authenticated user, tenant, workspace, installation, or chat context before
+  using them as `SessionStore` keys or checkpoint cursor keys;
+- treating `<protocol>_session_id(...)` results as untrusted candidate keys until that ownership check has passed;
+- keeping platform-provided isolation helpers fail-closed outside their trusted hosting environment;
+- authorizing command/action effects such as reset, cancel, approve, submit, or tool invocation after parsing them;
+- opting in explicitly before resolving protected media/resource/file URLs and passing them to a remote model provider;
+- persisting post-run session or checkpoint state only after `agent.run(...)`, `workflow.run(...)`, or stream finalization
+  has updated that state.
+
+## Persistent versus transient hosting
+
+The application builder decides whether the server is persistent or transient.
+
+- Persistent single-process apps, such as a long-running container or web app, may use in-memory state for local
+  development or simple deployments. Multi-replica persistent apps still need durable state for continuity.
+- Transient apps, such as Azure Functions, Foundry Hosted Agents, or any environment where process memory is not a
+  reliable boundary, must not rely on in-memory `SessionStore` state between calls. They need a durable session store or
+  a service-owned continuation id.
+- Workflow hosts must choose an explicit `CheckpointStorage` and, when they need per-session resume, a durable
+  `session_id -> checkpoint_id` cursor. In-process workflow state and in-memory checkpoint cursors do not survive
+  transient execution.
+
+## Minimal FastAPI Responses shape
+
+This is the shape the local Responses sample should demonstrate. It is not an app framework.
+
+```python
+from collections.abc import AsyncIterator
+
+from agent_framework import ResponseStream
+from agent_framework_hosting import AgentState
+from agent_framework_hosting_responses import (
+    create_response_id,
+    responses_from_run,
+    responses_from_streaming_run,
+    responses_session_id,
+    responses_to_run,
 )
+from fastapi import Body, FastAPI, HTTPException
+from fastapi.responses import JSONResponse, StreamingResponse
 
-app = host.app
+app = FastAPI()
+state = AgentState(create_agent)
+
+
+@app.post("/responses", response_model=None)
+async def responses(body: dict = Body(...)) -> JSONResponse | StreamingResponse:
+    run = responses_to_run(body)
+    candidate_session_id = responses_session_id(body)
+    response_id = create_response_id()
+
+    # Verify this caller owns candidate_session_id before loading it.
+    session_id = candidate_session_id or response_id
+    session = await state.get_or_create_session(session_id)
+    target = await state.get_target()
+
+    if run["stream"]:
+        stream = target.run(run["messages"], stream=True, session=session, options=run["options"])
+        if not isinstance(stream, ResponseStream):
+            raise HTTPException(status_code=500, detail="agent did not return a response stream")
+
+        async def events() -> AsyncIterator[str]:
+            async for event in responses_from_streaming_run(
+                stream,
+                response_id=response_id,
+                session_id=candidate_session_id,
+            ):
+                yield event
+            await state.set_session(response_id, session)
+
+        return StreamingResponse(events(), media_type="text/event-stream")
+
+    result = await target.run(run["messages"], session=session, options=run["options"])
+    await state.set_session(response_id, session)
+    return JSONResponse(responses_from_run(result, response_id=response_id, session_id=candidate_session_id))
 ```
 
-### One agent on multiple channels
+## Validation
 
-```python
-host = AgentFrameworkHost(
-    target=agent,
-    channels=[
-        ResponsesChannel(),
-        InvocationsChannel(),
-        TelegramChannel(bot_token=os.environ["TELEGRAM_BOT_TOKEN"]),
-    ],
-)
+Implementation validation must cover:
 
-host.serve(host="localhost", port=8000)
-```
-
-The host owns one Starlette app. Each channel contributes its own routes and renders its own response.
-
-### Adapting a request before execution
-
-```python
-from dataclasses import replace
-
-
-def enforce_options(request: ChannelRequest) -> ChannelRequest:
-    options = dict(request.options or {})
-    options["temperature"] = 0
-    return replace(request, options=options)
-
-
-host = AgentFrameworkHost(
-    target=agent,
-    channels=[ResponsesChannel(run_hook=enforce_options)],
-)
-```
-
-### Workflow with explicit checkpoints
-
-```python
-host = AgentFrameworkHost(
-    target=workflow,
-    channels=[InvocationsChannel(run_hook=adapt_to_workflow_input)],
-    checkpoint_location=Path("./.af-hosting/workflow_checkpoints"),
-)
-```
-
-The hook adapts channel-native input to the workflow's typed input. Checkpoints use the explicit workflow checkpoint location, not identity-link or delivery storage.
-
-### Message channel reset command
-
-```python
-async def new_chat(context):
-    if context.request.session is not None:
-        await context.host.reset_session(context.request.session.isolation_key)
-        await context.reply("Started a new conversation.")
-```
-
-Telegram, Activity Protocol, and Discord can expose equivalent native commands when their protocols support them.
-
-## Follow-up Enhancements
-
-See [ADR-0028](../decisions/0028-hosting-linking-multicast-enhancements.md) for the deferred design covering:
-
-- cross-channel identity linking,
-- authorization and allowlists,
-- non-originating response delivery,
-- active-channel routing,
-- multicast and all-linked delivery,
-- background runs and continuation tokens,
-- durable delivery runners,
-- retry/replay semantics, and
-- payload serialization.
-
-Those enhancements must layer on top of this v1 contract without requiring v1 users to adopt them.
-
-## Validation Gates
-
-The Python implementation should be considered complete when:
-
-- a sample uses one `AgentFrameworkHost` with multiple channels and no manual Starlette route composition,
-- each current channel has contract tests for route contribution, lifecycle, request parsing, hooks, and originating response rendering,
-- session tests prove shared `isolation_key` values share an `AgentSession` and `reset_session` rotates it,
-- workflow tests or samples use explicit `checkpoint_location`,
-- Foundry isolation middleware is covered by integration or contract tests,
-- no v1 package exposes the removed linking, multicast, durable-runner, or continuation APIs, and
-- this spec and ADR-0027 remain aligned.
+- `SessionStore` plain get/set/delete behavior;
+- `AgentState` target resolution, target caching, and get-or-create session behavior;
+- `WorkflowState` target resolution for direct workflows, factories, `WorkflowBuilder`, and orchestration-style builders;
+- Responses request parsing and option remapping;
+- Responses session id extraction;
+- Responses response rendering, including rich output item mapping;
+- Responses streaming SSE rendering;
+- HTTP round-trip tests showing a native FastAPI route using `AgentState` and Responses helpers;
+- sample type checking for the local Responses sample.
