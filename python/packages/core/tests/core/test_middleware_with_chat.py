@@ -1,11 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, cast
 from unittest.mock import patch
 
+import pytest
+
 from agent_framework import (
+    MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
     Agent,
+    AgentSession,
     ChatContext,
     ChatMiddleware,
     ChatMiddlewareTypes,
@@ -15,10 +19,15 @@ from agent_framework import (
     FunctionInvocationContext,
     FunctionTool,
     Message,
+    MessageInjectionMiddleware,
+    ResponseStream,
     SupportsChatGetResponse,
     chat_middleware,
+    enqueue_messages,
     function_middleware,
+    tool,
 )
+from agent_framework.exceptions import ChatClientInvalidRequestException
 
 from .conftest import MockBaseChatClient
 
@@ -372,6 +381,172 @@ class TestChatMiddleware:
         assert modified_options["max_tokens"] == 500
         assert modified_options["new_param"] == "added_by_middleware"
         assert modified_options["custom_param"] == "test_value"
+
+    async def test_message_injection_middleware_appends_prequeued_messages(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Test that queued session messages are appended to the next model call."""
+        session = AgentSession()
+        injection = MessageInjectionMiddleware()
+        enqueue_messages(session, "queued message")
+        captured_messages: list[list[str | None]] = []
+
+        async def fake_get_response(
+            *,
+            messages: Sequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ChatResponse:
+            captured_messages.append([message.text for message in messages])
+            return ChatResponse(messages=Message(role="assistant", contents=["ok"]))
+
+        with patch.object(chat_client_base, "_get_non_streaming_response", side_effect=fake_get_response):
+            agent = Agent(client=chat_client_base, middleware=[injection])
+            response = await agent.run("user message", session=session)
+
+        assert response.messages[0].text == "ok"
+        assert captured_messages == [["user message", "queued message"]]
+        assert injection.get_pending_messages(session) == []
+
+    async def test_message_injection_middleware_loops_when_messages_are_queued_after_call(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Test that queued messages after a non-tool response trigger another model call."""
+        session = AgentSession()
+        injection = MessageInjectionMiddleware()
+        captured_messages: list[list[str | None]] = []
+        captured_conversation_ids: list[str | None] = []
+
+        async def fake_get_response(
+            *,
+            messages: Sequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ChatResponse:
+            captured_messages.append([message.text for message in messages])
+            captured_conversation_ids.append(options.get("conversation_id"))
+            if len(captured_messages) == 1:
+                enqueue_messages(session, "queued during call")
+                return ChatResponse(
+                    messages=Message(role="assistant", contents=["first"]),
+                    conversation_id="conversation-1",
+                )
+            return ChatResponse(messages=Message(role="assistant", contents=["second"]))
+
+        with patch.object(chat_client_base, "_get_non_streaming_response", side_effect=fake_get_response):
+            response = await chat_client_base.get_response(
+                [Message(role="user", contents=["user message"])],
+                client_kwargs={"middleware": [injection], "session": session},
+            )
+
+        assert response.messages[0].text == "second"
+        assert captured_messages == [["user message"], ["queued during call"]]
+        assert captured_conversation_ids == [None, "conversation-1"]
+
+    async def test_message_injection_middleware_tool_enqueued_messages_wait_for_function_results(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Test that tool-enqueued messages are injected after function results are available."""
+        session = AgentSession()
+        injection = MessageInjectionMiddleware()
+        captured_messages: list[list[Message]] = []
+        responses = [
+            ChatResponse(
+                messages=Message(
+                    role="assistant",
+                    contents=[Content.from_function_call(call_id="call-1", name="inject_message", arguments={})],
+                )
+            ),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+        @tool(approval_mode="never_require")
+        def inject_message(ctx: FunctionInvocationContext) -> str:
+            """Inject a message into the active session."""
+            active_session = ctx.session
+            if active_session is None:
+                raise AssertionError("Expected an active session.")
+            assert active_session is session
+            enqueue_messages(active_session, "queued from tool")
+            return "tool result"
+
+        async def fake_get_response(
+            *,
+            messages: Sequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ChatResponse:
+            captured_messages.append(list(messages))
+            return responses.pop(0)
+
+        with patch.object(chat_client_base, "_get_non_streaming_response", side_effect=fake_get_response):
+            agent = Agent(client=chat_client_base, middleware=[injection], tools=[inject_message])
+            response = await agent.run("user message", session=session)
+
+        second_call_contents = [content for message in captured_messages[1] for content in message.contents]
+        assert response.messages[-1].text == "done"
+        assert [message.text for message in captured_messages[0]] == ["user message"]
+        assert any(content.type == "function_result" for content in second_call_contents)
+        assert captured_messages[1][-1].text == "queued from tool"
+
+    async def test_message_injection_middleware_loops_for_streaming_pending_messages(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Test that queued messages after a streaming response trigger another streaming model call."""
+        session = AgentSession()
+        injection = MessageInjectionMiddleware()
+        captured_messages: list[list[str | None]] = []
+
+        def fake_streaming_response(
+            *,
+            messages: Sequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            captured_messages.append([message.text for message in messages])
+
+            async def stream() -> AsyncIterable[ChatResponseUpdate]:
+                if len(captured_messages) == 1:
+                    yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                    enqueue_messages(session, "queued while streaming")
+                    return
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+
+            return ResponseStream(
+                stream(),
+                finalizer=lambda updates: ChatResponse.from_updates(
+                    updates,
+                    output_format_type=options.get("response_format"),
+                ),
+            )
+
+        with patch.object(chat_client_base, "_get_streaming_response", side_effect=fake_streaming_response):
+            stream = chat_client_base.get_response(
+                [Message(role="user", contents=["user message"])],
+                stream=True,
+                client_kwargs={"middleware": [injection], "session": session},
+            )
+            updates = [update async for update in stream]
+
+        assert [update.text for update in updates] == ["first", "second"]
+        assert captured_messages == [["user message"], ["queued while streaming"]]
+
+    def test_enqueue_messages_uses_session_state_queue(self) -> None:
+        """Test that standalone message injection enqueueing stores messages in session state."""
+        session = AgentSession()
+
+        enqueue_messages(session, "queued message")
+
+        queued_messages = session.state[MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY]
+        assert [message.text for message in queued_messages] == ["queued message"]
+
+    async def test_message_injection_middleware_requires_session(self, chat_client_base: "MockBaseChatClient") -> None:
+        """Test that message injection middleware fails clearly without an active session."""
+        with pytest.raises(ChatClientInvalidRequestException, match="requires an AgentSession"):
+            await chat_client_base.get_response(
+                [Message(role="user", contents=["user message"])],
+                client_kwargs={"middleware": [MessageInjectionMiddleware()]},
+            )
 
     def test_chat_middleware_pipeline_cache_reuses_matching_middleware(
         self,

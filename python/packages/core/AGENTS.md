@@ -69,6 +69,7 @@ agent_framework/
 - **`ChatMiddleware`** - Intercepts chat client `get_response()` calls
 - **`FunctionMiddleware`** - Intercepts function/tool invocations
 - **`AgentContext`** / **`ChatContext`** / **`FunctionInvocationContext`** - Context objects passed through middleware. A tool can declare a `FunctionInvocationContext` parameter to receive it; `context.tools` is the live, mutable tools list for the run, and `context.add_tools(...)` / `context.remove_tools(...)` enable progressive tool exposure (changes apply on the next function-calling iteration).
+- **`MessageInjectionMiddleware`** - Session-scoped chat middleware that lets tools or other code enqueue messages for the next model call in the current `AgentSession`; it drains queued messages into the next call and loops only when no function calls need to be handled by the function invocation layer.
 
 ### Sessions (`_sessions.py`)
 

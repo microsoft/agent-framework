@@ -13,7 +13,6 @@ Instructions for AI coding agents working in the Python codebase.
 - `python-code-quality` — linting, formatting, type checking, prek hooks, CI workflow
 - `python-feature-lifecycle` — package vs feature lifecycle stages, decorators, enums, and promotion guidance
 - `python-package-management` — monorepo structure, lazy loading, versioning, new packages
-- `python-samples` — sample file structure, PEP 723, documentation guidelines
 - `pull-requests` — writing PR descriptions (template) and handling/resolving PR review comments
 
 ## Maintaining Documentation

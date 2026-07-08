@@ -22,7 +22,7 @@ import uuid
 import weakref
 from abc import abstractmethod
 from base64 import urlsafe_b64encode
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypeGuard, cast
@@ -31,12 +31,15 @@ from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import ChatContext, ChatMiddleware
 from ._types import (
     AgentResponse,
+    AgentRunInputs,
     ChatResponse,
+    ChatResponseUpdate,
     Message,
     ResponseStream,
     _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
+    normalize_messages,
 )
-from .exceptions import ChatClientInvalidResponseException
+from .exceptions import ChatClientInvalidRequestException, ChatClientInvalidResponseException
 
 if TYPE_CHECKING:
     from ._agents import SupportsAgentRun
@@ -47,6 +50,8 @@ logger = logging.getLogger("agent_framework")
 
 # Registry of known types for state deserialization
 _STATE_TYPE_REGISTRY: dict[str, type] = {}
+MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY: str = "message_injection.pending_messages"
+_MESSAGE_INJECTION_LOCK = threading.Lock()
 
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
@@ -551,6 +556,8 @@ def is_local_history_conversation_id(conversation_id: str | None) -> bool:
 
 def _response_contains_follow_up_request(response: ChatResponse) -> bool:
     """Return whether a response requires another model call in the current run."""
+    # TODO(eavanvalkenburg): When informational-only function call content lands, ignore informational-only calls here
+    # so hosted/provider-executed tool transcript items do not block injected-message processing.
     return any(
         item.type in {"function_call", "function_approval_request"}
         for message in response.messages
@@ -572,6 +579,160 @@ def _split_service_call_messages(messages: Sequence[Message]) -> tuple[list[Mess
                 continue
         input_messages.append(message)
     return input_messages, context_messages
+
+
+def enqueue_messages(session: AgentSession, messages: AgentRunInputs) -> None:
+    """Enqueue messages for the next model call in the given session.
+
+    Args:
+        session: The session whose pending message queue should receive the messages.
+        messages: The messages to enqueue. Accepts the same flexible shapes as ``Agent.run`` input:
+            a string, ``Content``, ``Message``, or a sequence of those.
+    """
+    pending_messages = normalize_messages(messages)
+    if not pending_messages:
+        return
+    with _MESSAGE_INJECTION_LOCK:
+        queue = cast(
+            list[Message],
+            session.state.setdefault(MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY, []),
+        )
+        queue.extend(pending_messages)
+
+
+class MessageInjectionMiddleware(ChatMiddleware):
+    """Chat middleware that injects queued session messages into the model call loop.
+
+    Messages can be enqueued for an :class:`AgentSession` before a run starts or while a run is in progress,
+    including from tool code that receives a :class:`FunctionInvocationContext`. Pending messages are stored in
+    ``session.state`` and drained into the next model call for that session. After a model call completes, the
+    middleware loops internally only when there are newly queued messages and the response does not contain function
+    calls that the function invocation layer must handle.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the middleware."""
+
+    def enqueue_messages(self, session: AgentSession, messages: AgentRunInputs) -> None:
+        """Enqueue messages for the next model call in the given session.
+
+        Args:
+            session: The session whose pending message queue should receive the messages.
+            messages: The messages to enqueue. Accepts the same flexible shapes as ``Agent.run`` input:
+                a string, ``Content``, ``Message``, or a sequence of those.
+        """
+        enqueue_messages(session, messages)
+
+    def get_pending_messages(self, session: AgentSession) -> list[Message]:
+        """Return a snapshot of messages queued for the given session.
+
+        Args:
+            session: The session whose pending messages should be returned.
+
+        Returns:
+            A point-in-time copy of the queued messages. The returned list is not updated if the queue is later
+            drained or extended.
+        """
+        with _MESSAGE_INJECTION_LOCK:
+            return list(cast(list[Message], session.state.get(MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY, [])))
+
+    def _drain_pending_messages(self, session: AgentSession, messages: Sequence[Message]) -> list[Message]:
+        with _MESSAGE_INJECTION_LOCK:
+            queue = cast(
+                list[Message],
+                session.state.setdefault(MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY, []),
+            )
+            if not queue:
+                return list(messages)
+            next_messages = [*messages, *queue]
+            queue.clear()
+            return next_messages
+
+    def _has_pending_messages(self, session: AgentSession) -> bool:
+        with _MESSAGE_INJECTION_LOCK:
+            return bool(session.state.get(MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY, []))
+
+    @staticmethod
+    def _update_context_conversation_id(context: ChatContext, conversation_id: str | None) -> None:
+        if conversation_id is None:
+            return
+        context.kwargs["conversation_id"] = conversation_id
+        if context.options is None:
+            context.options = {"conversation_id": conversation_id}
+            return
+        context.options = {**context.options, "conversation_id": conversation_id}
+
+    async def _process_non_streaming(
+        self,
+        context: ChatContext,
+        call_next: Callable[[], Awaitable[None]],
+        session: AgentSession,
+    ) -> None:
+        while True:
+            context.messages = self._drain_pending_messages(session, context.messages)
+            context.result = None
+            await call_next()
+            if context.result is None:
+                return
+            if isinstance(context.result, ResponseStream):
+                raise ValueError("Non-streaming message injection middleware requires a ChatResponse result.")
+            response = cast(ChatResponse, context.result)
+            if _response_contains_follow_up_request(response) or not self._has_pending_messages(session):
+                return
+            self._update_context_conversation_id(context, response.conversation_id)
+            empty_messages: list[Message] = []
+            context.messages = empty_messages
+
+    async def _stream_injected_messages(
+        self,
+        context: ChatContext,
+        call_next: Callable[[], Awaitable[None]],
+        session: AgentSession,
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        while True:
+            context.messages = self._drain_pending_messages(session, context.messages)
+            context.result = None
+            await call_next()
+            if context.result is None:
+                return
+            if not isinstance(context.result, ResponseStream):
+                raise ValueError("Streaming message injection middleware requires a ResponseStream result.")
+            stream = cast(ResponseStream[ChatResponseUpdate, ChatResponse], context.result)
+            async for update in stream:
+                yield update
+            response = await stream.get_final_response()
+            if _response_contains_follow_up_request(response) or not self._has_pending_messages(session):
+                return
+            self._update_context_conversation_id(context, response.conversation_id)
+            empty_messages: list[Message] = []
+            context.messages = empty_messages
+
+    async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        """Inject pending session messages into chat model calls.
+
+        Args:
+            context: The chat invocation context for the current model call.
+            call_next: The next middleware or leaf chat client.
+
+        Raises:
+            ChatClientInvalidRequestException: If the middleware is used without an active ``AgentSession``.
+            ValueError: If downstream middleware returns a non-streaming result for streaming mode, or vice versa.
+        """
+        session = context.session
+        if session is None:
+            raise ChatClientInvalidRequestException(
+                "MessageInjectionMiddleware requires an AgentSession. Pass session=... when running the agent."
+            )
+
+        if not context.stream:
+            await self._process_non_streaming(context, call_next, session)
+            return
+
+        response_format = context.options.get("response_format") if context.options is not None else None
+        context.result = ResponseStream(
+            self._stream_injected_messages(context, call_next, session),
+            finalizer=lambda updates: ChatResponse.from_updates(updates, output_format_type=response_format),
+        )
 
 
 class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
