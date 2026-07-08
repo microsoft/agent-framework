@@ -381,14 +381,14 @@ response-id minting details; the application owns FastAPI routing, auth, policy 
 
 ```python
 import os
+from collections.abc import AsyncIterator
 
-from agent_framework import Agent
+from agent_framework import Agent, ResponseStream
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_hosting import AgentState
-from agent_framework_hosting_responses import create_response_id, responses_from_run, responses_session_id, responses_to_run
+from agent_framework_hosting import AgentState  # pyright: ignore[reportAttributeAccessIssue]
+from agent_framework_hosting_responses import create_response_id, responses_from_run, responses_from_streaming_run, responses_session_id, responses_to_run  # pyright: ignore[reportAttributeAccessIssue]
 from fastapi import Body, FastAPI, Header, HTTPException
-from fastapi.responses import JSONResponse
-s
+from fastapi.responses import JSONResponse, StreamingResponse
 
 app = FastAPI()
 agent = Agent(
@@ -400,7 +400,7 @@ state = AgentState(agent)
 
 
 @app.post("/responses")
-async def responses(body: dict = Body(...), x_api_key: str | None = Header(default=None)) -> JSONResponse:
+async def responses(body: dict = Body(...), x_api_key: str | None = Header(default=None)) -> JSONResponse | StreamingResponse:
     if x_api_key != os.environ["RESPONSES_API_KEY"]:
         raise HTTPException(status_code=401, detail="bad api key")
 
@@ -422,8 +422,27 @@ async def responses(body: dict = Body(...), x_api_key: str | None = Header(defau
     # alone does not prove ownership of a caller-supplied resp_* or conv_* id
     session_id = candidate_session_id or response_id
     session = await state.get_or_create_session(session_id)
-    # call the agent
     target = await state.get_target()
+
+    if run["stream"]:
+        stream = target.run(
+            run["messages"],
+            stream=True,
+            session=session,
+            options=run["options"],
+        )
+        async def stream_events() -> AsyncIterator[str]:
+            async for event in responses_from_streaming_run(
+                stream,
+                response_id=response_id,
+                session_id=candidate_session_id,
+            ):
+                yield event
+            # agent.run may update the session during stream finalization, so store the post-run session explicitly
+            await state.set_session(response_id, session)
+
+        return StreamingResponse(stream_events(), media_type="text/event-stream")
+
     result = await target.run(
         run["messages"],
         session=session,
@@ -441,7 +460,8 @@ async def responses(body: dict = Body(...), x_api_key: str | None = Header(defau
 The same helper surface can be used without FastAPI. A Django app owns URL routing, CSRF/auth policy, request parsing,
 and `JsonResponse` construction. In a real Django project this would live in the app's normal view module (for example
 `assistant/views.py`) and be routed from that app's `urls.py`; Django discovers it through its standard project/app
-layout, not through Agent Framework.
+layout, not through Agent Framework. This sketch shows the non-streaming path only; the streaming branch is the same
+state/finalization pattern shown in the FastAPI sketch and is omitted here to avoid duplicating it.
 
 ```python
 import json
@@ -449,8 +469,8 @@ import os
 
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_hosting import AgentState
-from agent_framework_hosting_responses import create_response_id, responses_from_run, responses_session_id, responses_to_run
+from agent_framework_hosting import AgentState  # pyright: ignore[reportAttributeAccessIssue]
+from agent_framework_hosting_responses import create_response_id, responses_from_run, responses_session_id, responses_to_run  # pyright: ignore[reportAttributeAccessIssue]
 from django.http import HttpRequest, HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
 from django.views import View
 
