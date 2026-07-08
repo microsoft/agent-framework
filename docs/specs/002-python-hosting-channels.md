@@ -65,7 +65,7 @@ must be aligned with the helper-first model before implementation. Old vocabular
 
 | Package | Import surface | v1 helper-first contents |
 |---|---|---|
-| `agent-framework-hosting` | `agent_framework_hosting` | `AgentState`, `WorkflowState`, `SessionStore`, run-argument `TypedDict`s, and existing unreleased channel/host types. |
+| `agent-framework-hosting` | `agent_framework_hosting` | `AgentState`, `WorkflowState`, `SessionStore`, and run-argument `TypedDict`s. |
 | `agent-framework-hosting-responses` | `agent_framework_hosting_responses` | Responses helpers: request parsing, session id extraction, response id creation, response rendering, streaming rendering. |
 | Future protocol packages | e.g. `agent_framework_hosting_telegram` | Protocol-specific helpers such as `telegram_to_run(...)`, `telegram_from_run(...)`, `telegram_session_id(...)`, and command/media helpers when useful. |
 
@@ -179,8 +179,9 @@ The target may be:
 
 Workflow checkpointing uses Agent Framework's existing `CheckpointStorage` abstraction directly. Apps that need
 per-session workflow resume should keep an app-owned cursor such as `session_id -> checkpoint_id`. When the app uses
-file-backed cursor storage, the file-based checkpoint storage should share the same app storage root, for example
-`storage/checkpoints/` beside `storage/checkpoint_cursors.json`:
+file-backed cursor storage, the file-based checkpoint storage should share the same app storage root and should be
+scoped to the current authenticated user/tenant/session bucket, for example
+`storage/checkpoints/<session-bucket>/` beside `storage/checkpoint_cursors.json`:
 
 ```python
 # session_id must already be authenticated and authorized for this caller
@@ -273,8 +274,9 @@ The application builder decides whether the server is persistent or transient.
   a service-owned continuation id.
 - Workflow hosts must choose an explicit `CheckpointStorage` and, when they need per-session resume, a durable
   `session_id -> checkpoint_id` cursor. File-backed checkpoint storage and file-backed cursor storage should live under
-  the same app storage root. In-process workflow state and in-memory checkpoint cursors do not survive transient
-  execution.
+  the same app storage root, with checkpoints scoped to the current authenticated user/tenant/session bucket so a
+  "latest checkpoint" lookup cannot cross conversations. In-process workflow state and in-memory checkpoint cursors do
+  not survive transient execution.
 
 ## Minimal FastAPI Responses shape
 

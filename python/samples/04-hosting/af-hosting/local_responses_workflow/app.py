@@ -45,11 +45,12 @@ Then call it with a structured brief::
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 from agent_framework import (
     AgentExecutor,
@@ -79,11 +80,16 @@ from hypercorn.asyncio import serve
 from hypercorn.config import Config
 
 STORAGE_ROOT = Path(__file__).resolve().parent / "storage"
-CHECKPOINTS_DIR = STORAGE_ROOT / "checkpoints"
+CHECKPOINTS_ROOT = STORAGE_ROOT / "checkpoints"
 CHECKPOINT_CURSOR_PATH = STORAGE_ROOT / "checkpoint_cursors.json"
-CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
+CHECKPOINTS_ROOT.mkdir(parents=True, exist_ok=True)
 
-checkpoint_storage = FileCheckpointStorage(str(CHECKPOINTS_DIR))
+
+class CheckpointCursor(TypedDict):
+    """Stored pointer to a workflow checkpoint and its storage bucket."""
+
+    checkpoint_id: str
+    storage_id: str
 
 
 class CheckpointCursorStore:
@@ -97,18 +103,18 @@ class CheckpointCursorStore:
         """
         self._path = path
 
-    def get(self, key: str) -> str | None:
-        """Return the checkpoint id for a response or conversation id."""
+    def get(self, key: str) -> CheckpointCursor | None:
+        """Return the checkpoint cursor for a response or conversation id."""
         return self._load().get(key)
 
-    def set_many(self, cursors: Mapping[str, str]) -> None:
+    def set_many(self, cursors: Mapping[str, CheckpointCursor]) -> None:
         """Persist one or more checkpoint cursors."""
         data = self._load()
         data.update(cursors)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    def _load(self) -> dict[str, str]:
+    def _load(self) -> dict[str, CheckpointCursor]:
         if not self._path.exists():
             return {}
 
@@ -116,15 +122,25 @@ class CheckpointCursorStore:
         if not isinstance(raw, dict):
             raise ValueError("Checkpoint cursor file must contain a JSON object.")
 
-        data: dict[str, str] = {}
+        data: dict[str, CheckpointCursor] = {}
         for key, value in raw.items():
-            if not isinstance(key, str) or not isinstance(value, str):
-                raise ValueError("Checkpoint cursor file must map string ids to string checkpoint ids.")
-            data[key] = value
+            if not isinstance(key, str) or not isinstance(value, Mapping):
+                raise ValueError("Checkpoint cursor file must map string ids to checkpoint cursor objects.")
+            checkpoint_id = value.get("checkpoint_id")
+            storage_id = value.get("storage_id")
+            if not isinstance(checkpoint_id, str) or not isinstance(storage_id, str):
+                raise ValueError("Checkpoint cursor objects must contain string checkpoint_id and storage_id fields.")
+            data[key] = CheckpointCursor(checkpoint_id=checkpoint_id, storage_id=storage_id)
         return data
 
 
 checkpoint_cursor_store = CheckpointCursorStore(CHECKPOINT_CURSOR_PATH)
+
+
+def _checkpoint_storage_for(storage_id: str) -> FileCheckpointStorage:
+    """Return file checkpoint storage scoped to a single continuation bucket."""
+    storage_key = hashlib.sha256(storage_id.encode("utf-8")).hexdigest()
+    return FileCheckpointStorage(str(CHECKPOINTS_ROOT / storage_key))
 
 
 def _workflow_prompt_from_messages(messages: Any) -> str:
@@ -198,6 +214,7 @@ def create_workflow() -> Workflow:
 
     return (
         WorkflowBuilder(
+            name="local_responses_slogan_workflow",
             start_executor=writer_ex,
             output_from=[formatter_ex],
         )
@@ -207,7 +224,7 @@ def create_workflow() -> Workflow:
 
 
 app = FastAPI()
-state = WorkflowState(create_workflow)
+state = WorkflowState(create_workflow, cache_target=False)
 
 
 @app.post("/responses", response_model=None)
@@ -220,15 +237,18 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse:  # noqa: 
 
     session_id = responses_session_id(body)
     response_id = create_response_id()
-    lookup_id = session_id or response_id
 
     target = await state.get_target()
-    checkpoint_id = checkpoint_cursor_store.get(lookup_id)
-    if checkpoint_id is not None:
+    if session_id is not None and (checkpoint_cursor := checkpoint_cursor_store.get(session_id)) is not None:
         # Restore first. Workflow.run does not allow `message` and
         # `checkpoint_id` in the same call.
-        await target.run(checkpoint_id=checkpoint_id, checkpoint_storage=checkpoint_storage)
+        await target.run(
+            checkpoint_id=checkpoint_cursor["checkpoint_id"],
+            checkpoint_storage=_checkpoint_storage_for(checkpoint_cursor["storage_id"]),
+        )
 
+    storage_id = session_id if session_id is not None and session_id.startswith("conv_") else response_id
+    checkpoint_storage = _checkpoint_storage_for(storage_id)
     result = await target.run(
         message=_workflow_prompt_from_messages(run["messages"]),
         checkpoint_storage=checkpoint_storage,
@@ -238,9 +258,10 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse:  # noqa: 
     if latest is not None:
         # Responses `previous_response_id` can point to any response id. Store
         # the current response id as the cursor for this workflow continuation.
-        cursors = {response_id: latest.checkpoint_id}
-        if lookup_id.startswith("conv_"):
-            cursors[lookup_id] = latest.checkpoint_id
+        cursor = CheckpointCursor(checkpoint_id=latest.checkpoint_id, storage_id=storage_id)
+        cursors = {response_id: cursor}
+        if session_id is not None and session_id.startswith("conv_"):
+            cursors[session_id] = cursor
         checkpoint_cursor_store.set_many(cursors)
 
     return JSONResponse(

@@ -870,32 +870,62 @@ async def responses_from_streaming_run(
     )
 
     model: str | None = None
-    async for update in stream:
-        if model is None:
-            model = _model_from_update(update)
-        if update.text:
-            yield _sse_event(
-                "response.output_text.delta",
-                {
-                    "type": "response.output_text.delta",
-                    "delta": update.text,
-                },
-            )
+    updates: list[AgentResponseUpdate] = []
+    try:
+        async for update in stream:
+            updates.append(update)
+            if model is None:
+                model = _model_from_update(update)
+            if update.text:
+                yield _sse_event(
+                    "response.output_text.delta",
+                    {
+                        "type": "response.output_text.delta",
+                        "delta": update.text,
+                    },
+                )
 
-    final = await stream.get_final_response()
-    payload = responses_from_run(final, response_id=response_id, session_id=session_id)
-    if model is not None:
-        # The finalized `AgentResponse` never carries a raw representation
-        # (see `_model_from_update`), so prefer the model observed on the
-        # stream's own chunks over `responses_from_run`'s "agent" fallback.
-        payload["model"] = model
-    yield _sse_event(
-        "response.completed",
-        {
-            "type": "response.completed",
-            "response": payload,
-        },
-    )
+        final = await stream.get_final_response()
+        payload = responses_from_run(final, response_id=response_id, session_id=session_id)
+        if model is not None:
+            # The finalized `AgentResponse` never carries a raw representation
+            # (see `_model_from_update`), so prefer the model observed on the
+            # stream's own chunks over `responses_from_run`'s "agent" fallback.
+            payload["model"] = model
+        yield _sse_event(
+            "response.completed",
+            {
+                "type": "response.completed",
+                "response": payload,
+            },
+        )
+    except Exception as exc:
+        partial_text = "".join(update.text for update in updates if update.text)
+        response_kwargs: dict[str, Any] = {
+            "id": response_id,
+            "object": "response",
+            "created_at": int(time.time()),
+            "status": "failed",
+            "model": model or "agent",
+            "output": _text_output_items(partial_text, status="failed"),
+            "parallel_tool_calls": False,
+            "tool_choice": "auto",
+            "tools": [],
+            "metadata": {},
+            "error": {
+                "code": "server_error",
+                "message": str(exc),
+            },
+        }
+        if session_id is not None and session_id.startswith("conv_"):
+            response_kwargs["conversation"] = {"id": session_id}
+        yield _sse_event(
+            "response.failed",
+            {
+                "type": "response.failed",
+                "response": _response_payload(OpenAIResponse(**response_kwargs)),
+            },
+        )
 
 
 __all__ = [

@@ -19,6 +19,7 @@ since only the state object has both the store and the resolved target.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Generic, Protocol, TypedDict, TypeVar, cast, runtime_checkable
@@ -168,9 +169,11 @@ class AgentState(Generic[AgentT]):
         self._target_source = target
         self._cache_target = cache_target
         self._cached_target: AgentT | None = None
+        self._target_lock = asyncio.Lock()
         if not callable(target) and not inspect.isawaitable(target):
             self._cached_target = target
         self._session_store: SessionStore = session_store if session_store is not None else SessionStore()
+        self._session_locks: dict[str, asyncio.Lock] = {}
 
     async def get_target(self) -> AgentT:
         """Return the resolved target.
@@ -182,11 +185,19 @@ class AgentState(Generic[AgentT]):
         if self._cache_target and self._cached_target is not None:
             return self._cached_target
 
+        if self._cache_target:
+            async with self._target_lock:
+                if self._cached_target is not None:
+                    return self._cached_target
+                target = self._target_source() if callable(self._target_source) else self._target_source
+                if inspect.isawaitable(target):
+                    target = await target
+                self._cached_target = target
+                return target
+
         target = self._target_source() if callable(self._target_source) else self._target_source
         if inspect.isawaitable(target):
             target = await target
-        if self._cache_target:
-            self._cached_target = target
         return target
 
     @property
@@ -217,12 +228,16 @@ class AgentState(Generic[AgentT]):
         Returns:
             The stored or newly created ``AgentSession``.
         """
-        session = await self._session_store.get(session_id)
-        if session is None:
-            target = await self.get_target()
-            session = target.create_session(session_id=session_id)
-            await self._session_store.set(session_id, session)
-        return session
+        if not session_id:
+            raise ValueError("session_id must be a non-empty string")
+        session_lock = self._session_locks.setdefault(session_id, asyncio.Lock())
+        async with session_lock:
+            session = await self._session_store.get(session_id)
+            if session is None:
+                target = await self.get_target()
+                session = target.create_session(session_id=session_id)
+                await self._session_store.set(session_id, session)
+            return session
 
     async def set_session(self, session_id: str, session: AgentSession) -> None:
         """Store ``session`` under ``session_id`` in this state's session store.
@@ -279,6 +294,7 @@ class WorkflowState(Generic[WorkflowT]):
         self._target_source = target
         self._cache_target = cache_target
         self._cached_target: WorkflowT | None = None
+        self._target_lock = asyncio.Lock()
         if not callable(target) and not inspect.isawaitable(target):
             self._cached_target = target
 
@@ -292,11 +308,19 @@ class WorkflowState(Generic[WorkflowT]):
         if self._cache_target and self._cached_target is not None:
             return self._cached_target
 
+        if self._cache_target:
+            async with self._target_lock:
+                if self._cached_target is not None:
+                    return self._cached_target
+                target = self._target_source() if callable(self._target_source) else self._target_source
+                if inspect.isawaitable(target):
+                    target = await target
+                self._cached_target = target
+                return target
+
         target = self._target_source() if callable(self._target_source) else self._target_source
         if inspect.isawaitable(target):
             target = await target
-        if self._cache_target:
-            self._cached_target = target
         return target
 
     @property

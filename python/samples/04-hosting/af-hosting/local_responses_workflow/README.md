@@ -13,7 +13,9 @@ The workflow writes a slogan with one Foundry-backed writer agent and a small
 deterministic formatter executor. That keeps the sample focused on native
 FastAPI routing, Responses helpers, `WorkflowState`, and app-owned checkpoint
 cursor storage. Both workflow checkpoints and the checkpoint cursor file are
-stored under the sample's local `storage/` root.
+stored under the sample's local `storage/` root. Checkpoints are scoped into
+per-continuation buckets so a "latest checkpoint" lookup cannot cross
+conversations.
 
 ## Production readiness
 
@@ -55,5 +57,6 @@ The script sends a follow-up using the first response id as
 running the next turn.
 
 > This sample uses local file storage under `storage/` for both workflow
-> checkpoints and checkpoint cursors. Replace it with production-grade durable
-> storage for multi-replica or transient hosting.
+> checkpoints and checkpoint cursors. The checkpoint bucket names are hashed
+> from the continuation id before they are used as directory names. Replace this
+> with production-grade durable storage for multi-replica or transient hosting.

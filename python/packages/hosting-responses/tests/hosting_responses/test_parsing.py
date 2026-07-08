@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Sequence
 from typing import cast
 
@@ -18,6 +19,11 @@ from agent_framework_hosting_responses import (
     responses_session_id,
     responses_to_run,
 )
+
+
+def _sse_payload(event: str) -> dict[str, object]:
+    data_line = next(line for line in event.splitlines() if line.startswith("data: "))
+    return cast("dict[str, object]", json.loads(data_line.removeprefix("data: ")))
 
 
 class TestMessagesFromResponsesInput:
@@ -233,3 +239,51 @@ class TestResponsesRunHelpers:
         assert "lo" in events[2]
         assert events[-1].startswith("event: response.completed")
         assert '"conversation":{"id":"conv_1"}' in events[-1]
+
+    async def test_responses_from_streaming_run_emits_failed_when_iteration_raises(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("partial")], role="assistant")
+            raise RuntimeError("upstream blew up")
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [
+            event
+            async for event in responses_from_streaming_run(
+                stream,
+                response_id="resp_new",
+                session_id="conv_1",
+            )
+        ]
+
+        assert events[0].startswith("event: response.created")
+        assert "response.output_text.delta" in events[1]
+        assert events[-1].startswith("event: response.failed")
+        payload = _sse_payload(events[-1])
+        response = cast("dict[str, object]", payload["response"])
+        error = cast("dict[str, object]", response["error"])
+        assert payload["type"] == "response.failed"
+        assert response["status"] == "failed"
+        assert response["conversation"] == {"id": "conv_1"}
+        assert error["message"] == "upstream blew up"
+        assert "partial" in events[-1]
+
+    async def test_responses_from_streaming_run_emits_failed_when_finalizer_raises(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("partial")], role="assistant")
+
+        def finalizer(items: Sequence[AgentResponseUpdate]) -> AgentResponse:
+            raise RuntimeError("finalizer blew up")
+
+        stream = ResponseStream(updates(), finalizer=finalizer)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+
+        assert events[0].startswith("event: response.created")
+        assert "response.output_text.delta" in events[1]
+        assert events[-1].startswith("event: response.failed")
+        payload = _sse_payload(events[-1])
+        response = cast("dict[str, object]", payload["response"])
+        error = cast("dict[str, object]", response["error"])
+        assert response["status"] == "failed"
+        assert error["message"] == "finalizer blew up"

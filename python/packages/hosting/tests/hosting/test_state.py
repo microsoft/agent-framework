@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 from collections.abc import AsyncIterator, Awaitable, Mapping
 from typing import Any, Literal, overload
@@ -212,6 +213,22 @@ class TestAgentState:
 
         assert isinstance(await state.get_target(), _FakeAgent)
 
+    async def test_bare_awaitable_target_is_awaited_once_for_concurrent_callers(self) -> None:
+        calls = 0
+
+        async def create_agent() -> _FakeAgent:
+            nonlocal calls
+            calls += 1
+            await asyncio.sleep(0)
+            return _FakeAgent()
+
+        state = AgentState(create_agent())
+
+        first, second = await asyncio.gather(state.get_target(), state.get_target())
+
+        assert first is second
+        assert calls == 1
+
     def test_cache_target_false_rejects_bare_awaitable(self) -> None:
         async def create_agent() -> _FakeAgent:
             return _FakeAgent()
@@ -232,6 +249,24 @@ class TestAgentState:
 
         assert first is second
         assert first.session_id == "session-1"
+        assert len(agent.created_sessions) == 1
+
+    async def test_get_or_create_session_creates_once_for_concurrent_callers(self) -> None:
+        class _YieldingSessionStore(SessionStore):
+            async def get(self, session_id: str) -> AgentSession | None:
+                await asyncio.sleep(0)
+                return await super().get(session_id)
+
+            async def set(self, session_id: str, session: AgentSession) -> None:
+                await asyncio.sleep(0)
+                await super().set(session_id, session)
+
+        agent = _FakeAgent()
+        state = AgentState(agent, session_store=_YieldingSessionStore())
+
+        sessions = await asyncio.gather(*(state.get_or_create_session("session-1") for _ in range(20)))
+
+        assert all(session is sessions[0] for session in sessions)
         assert len(agent.created_sessions) == 1
 
     async def test_get_or_create_session_reuses_a_session_set_on_the_state(self) -> None:
@@ -260,6 +295,22 @@ class TestWorkflowState:
 
         target = await state.get_target()
         assert isinstance(target, Workflow)
+
+    async def test_bare_awaitable_workflow_target_is_awaited_once_for_concurrent_callers(self) -> None:
+        calls = 0
+
+        async def create_workflow() -> Workflow:
+            nonlocal calls
+            calls += 1
+            await asyncio.sleep(0)
+            return _workflow_fixture("build_echo_workflow")()
+
+        state: WorkflowState[Workflow] = WorkflowState(create_workflow())
+
+        first, second = await asyncio.gather(state.get_target(), state.get_target())
+
+        assert first is second
+        assert calls == 1
 
     async def test_accepts_workflow_builder_instance_directly(self) -> None:
         """A ``WorkflowBuilder`` is not itself callable or awaitable; the state must
