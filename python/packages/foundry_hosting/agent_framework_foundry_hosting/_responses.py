@@ -1094,7 +1094,13 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         fc = cast(ItemFunctionToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(fc.call_id, fc.name, arguments=fc.arguments)],
+            contents=[
+                Content.from_function_call(
+                    fc.call_id,
+                    fc.name,
+                    arguments=fc.arguments,
+                )
+            ],
         )
 
     if item.type == "function_call_output":
@@ -1237,6 +1243,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
                     fs.id,
                     "file_search",
                     arguments=json.dumps({"queries": fs.queries}),
+                    informational_only=True,
                 )
             ],
         )
@@ -1245,7 +1252,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         ws = cast(ItemWebSearchToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(ws.id, "web_search")],
+            contents=[Content.from_function_call(ws.id, "web_search", informational_only=True)],
         )
 
     if item.type == "computer_call":
@@ -1257,6 +1264,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
                     cc.call_id,
                     "computer_use",
                     arguments=str(cc.action),
+                    informational_only=True,
                 )
             ],
         )
@@ -1272,7 +1280,14 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         ct = cast(ItemCustomToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(ct.call_id, ct.name, arguments=ct.input)],
+            contents=[
+                Content.from_function_call(
+                    ct.call_id,
+                    ct.name,
+                    arguments=ct.input,
+                    informational_only=True,
+                )
+            ],
         )
 
     if item.type == "custom_tool_call_output":
@@ -1304,6 +1319,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
                     ap.call_id,
                     "apply_patch",
                     arguments=str(ap.operation),
+                    informational_only=True,
                 )
             ],
         )
@@ -1367,7 +1383,13 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         fc = cast(OutputItemFunctionToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(fc.call_id, fc.name, arguments=fc.arguments)],
+            contents=[
+                Content.from_function_call(
+                    fc.call_id,
+                    fc.name,
+                    arguments=fc.arguments,
+                )
+            ],
         )
 
     if item.type == "function_call_output":
@@ -1511,6 +1533,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
                     fs.id,
                     "file_search",
                     arguments=json.dumps({"queries": fs.queries}),
+                    informational_only=True,
                 )
             ],
         )
@@ -1519,7 +1542,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         ws = cast(OutputItemWebSearchToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(ws.id, "web_search")],
+            contents=[Content.from_function_call(ws.id, "web_search", informational_only=True)],
         )
 
     if item.type == "computer_call":
@@ -1531,6 +1554,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
                     cc.call_id,
                     "computer_use",
                     arguments=str(cc.action),
+                    informational_only=True,
                 )
             ],
         )
@@ -1546,7 +1570,14 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         ct = cast(OutputItemCustomToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(ct.call_id, ct.name, arguments=ct.input)],
+            contents=[
+                Content.from_function_call(
+                    ct.call_id,
+                    ct.name,
+                    arguments=ct.input,
+                    informational_only=True,
+                )
+            ],
         )
 
     if item.type == "custom_tool_call_output":
@@ -1576,6 +1607,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
                     ap.call_id,
                     "apply_patch",
                     arguments=str(ap.operation),
+                    informational_only=True,
                 )
             ],
         )

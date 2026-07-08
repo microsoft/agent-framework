@@ -1626,6 +1626,10 @@ def _get_tool_map(
     return tool_list
 
 
+def _is_actionable_function_call(content: Content) -> bool:
+    return content.type == "function_call" and not content.informational_only
+
+
 async def _try_execute_function_calls(
     custom_args: dict[str, Any],
     attempt_idx: int,
@@ -1655,6 +1659,14 @@ async def _try_execute_function_calls(
     """
     from ._types import Content
 
+    function_calls = [
+        function_call
+        for function_call in function_calls
+        if function_call.type != "function_call" or _is_actionable_function_call(function_call)
+    ]
+    if not function_calls:
+        return ([], False)
+
     tool_map = _get_tool_map(tools)
     # The live tools list (when tools is the run-local list) is exposed on the
     # FunctionInvocationContext so tools can add/remove tools during the run.
@@ -1680,14 +1692,18 @@ async def _try_execute_function_calls(
             fcc_name,
             fcc_name in approval_tools,
         )
-        if fcc.type == "function_call" and fcc.name in approval_tools:
+        if _is_actionable_function_call(fcc) and fcc.name in approval_tools:
             logger.debug("Approval needed for function: %s", fcc.name)
             approval_needed = True
             break
-        if fcc.type == "function_call" and (fcc.name in declaration_only or fcc.name in additional_tool_names):
+        if _is_actionable_function_call(fcc) and (fcc.name in declaration_only or fcc.name in additional_tool_names):
             declaration_only_flag = True
             break
-        if config.get("terminate_on_unknown_calls", False) and fcc.type == "function_call" and fcc.name not in tool_map:
+        if (
+            config.get("terminate_on_unknown_calls", False)
+            and _is_actionable_function_call(fcc)
+            and fcc.name not in tool_map
+        ):
             raise KeyError(f'Error: Requested function "{fcc.name}" not found.')
     if approval_needed:
         # approval can only be needed for Function Call Content, not Approval Responses.
@@ -2182,7 +2198,7 @@ def _extract_function_calls(response: ChatResponse) -> list[Content]:
     function_calls: list[Content] = []
     for message in response.messages:
         for item in message.contents:
-            if item.type != "function_call":
+            if not _is_actionable_function_call(item):
                 continue
             if item.call_id and item.call_id in function_results:
                 continue
@@ -2793,7 +2809,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 )
 
                 if not any(
-                    item.type in ("function_call", "function_approval_request")
+                    item.type == "function_approval_request" or _is_actionable_function_call(item)
                     for msg in response.messages
                     for item in msg.contents
                 ):

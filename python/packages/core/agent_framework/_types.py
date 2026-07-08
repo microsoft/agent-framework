@@ -496,6 +496,7 @@ class Content:
         name: str | None = None,
         arguments: str | Mapping[str, Any] | None = None,
         exception: str | None = None,
+        informational_only: bool = False,
         result: Any = None,
         items: Sequence[Content] | None = None,
         # Hosted file/vector store fields
@@ -556,6 +557,7 @@ class Content:
         self.name = name
         self.arguments = arguments
         self.exception = exception
+        self.informational_only = informational_only or type == "mcp_server_tool_call"
         self.result = result
         self.items = items
         self.file_id = file_id
@@ -805,17 +807,39 @@ class Content:
         *,
         arguments: str | Mapping[str, Any] | None = None,
         exception: str | None = None,
+        informational_only: bool = False,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
     ) -> ContentT:
-        """Create function call content."""
+        """Create function call content.
+
+        Args:
+            call_id: The model- or service-provided identifier for this function call. Function results use the
+                same ID to indicate which call they answer.
+            name: The function name requested by the model or service.
+
+        Keyword Args:
+            arguments: The arguments for the requested function call. May be a JSON string, a mapping that can be
+                serialized as arguments, or None when no arguments were provided.
+            exception: Error information associated with the function call, if the provider returned the call in an
+                error state.
+            informational_only: Whether the function call is present only for transcript fidelity and should not be
+                executed by Agent Framework function invocation.
+            annotations: Optional annotations attached to this content item.
+            additional_properties: Extra provider-specific properties to preserve with the content item.
+            raw_representation: The original provider-specific object or payload this content item was created from.
+
+        Returns:
+            Function call content.
+        """
         return cls(
             "function_call",
             call_id=call_id,
             name=name,
             arguments=arguments,
             exception=exception,
+            informational_only=informational_only,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1184,13 +1208,36 @@ class Content:
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
     ) -> ContentT:
-        """Create MCP server tool call content."""
+        """Create MCP server tool call content.
+
+        MCP server tool calls are provider-hosted tool calls that the model/service
+        already routed to a remote MCP server. They are recorded for transcript
+        fidelity and for matching provider-returned MCP tool results, but they are
+        not local function invocation requests. The returned content is always
+        marked ``informational_only=True``.
+
+        Args:
+            call_id: The model- or service-provided identifier for this MCP tool call.
+            tool_name: The remote MCP tool name that was called.
+
+        Keyword Args:
+            server_name: The remote MCP server label or name, when provided by the service.
+            arguments: The arguments sent to the remote MCP tool. May be a JSON string,
+                a mapping, or None when no arguments were provided.
+            annotations: Optional annotations attached to this content item.
+            additional_properties: Extra provider-specific properties to preserve with the content item.
+            raw_representation: The original provider-specific object or payload this content item was created from.
+
+        Returns:
+            MCP server tool call content.
+        """
         return cls(
             "mcp_server_tool_call",
             call_id=call_id,
             tool_name=tool_name,
             server_name=server_name,
             arguments=arguments,
+            informational_only=True,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1323,6 +1370,7 @@ class Content:
             "name",
             "arguments",
             "exception",
+            "informational_only",
             "result",
             "items",
             "file_id",
@@ -1355,6 +1403,8 @@ class Content:
         for field in fields_to_capture:
             value = getattr(self, field, None)
             if field in exclude:
+                continue
+            if field == "informational_only" and (self.type != "function_call" or not value):
                 continue
             if exclude_none and value is None:
                 continue
@@ -1499,6 +1549,8 @@ class Content:
             name=getattr(self, "name", getattr(other, "name", None)),
             arguments=arguments,
             exception=getattr(self, "exception", None) or getattr(other, "exception", None),
+            informational_only=getattr(self, "informational_only", False)
+            or getattr(other, "informational_only", False),
             additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
             raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),
         )
