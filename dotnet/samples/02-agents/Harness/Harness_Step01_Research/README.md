@@ -9,6 +9,7 @@ Key features showcased:
 - **Web Search** — the agent can search the web for current information via `ResponseTool.CreateWebSearchTool()`
 - **TodoProvider** — the agent creates and manages a todo list to track research questions
 - **AgentModeProvider** — the agent switches between "plan" mode (breaking down the topic) and "execute" mode (answering each research question)
+- **TodoCompletionLoopEvaluator** — in "execute" mode the agent loops automatically, re-invoking itself until every todo item is complete (capped by `LoopAgentOptions.MaxIterations`). The loop is scoped to "execute" mode, so "plan" mode stays interactive. The `HarnessAgent` wraps itself in a `LoopAgent` automatically whenever `LoopEvaluators` is supplied.
 - **Interactive conversation** — you can review the agent's plan, provide feedback, and approve before execution begins
 - **Streaming output** — responses are streamed token-by-token for a natural experience
 - **`/todos` command** — view the current todo list at any time without invoking the agent
@@ -47,7 +48,7 @@ The sample starts an interactive conversation loop. You can:
 1. **Enter a research topic** — the agent will analyze it and create a plan with todos
 2. **Review and adjust** — provide feedback on the plan, ask for changes, or approve it
 3. **Type `/todos`** — to see the current todo list at any time
-4. **Watch execution** — once approved, tell the agent to proceed and it will work through each todo
+4. **Watch execution** — once approved, the agent will switch to "execute" mode and process each todo autonomously until the whole plan is complete
 5. **Type `exit`** — to end the session
 
 The prompt and agent output are colored by the current mode: **cyan** during planning, **green** during execution.

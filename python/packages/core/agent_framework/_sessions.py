@@ -44,6 +44,7 @@ _STATE_TYPE_REGISTRY: dict[str, type] = {}
 
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
+ServiceSessionId: TypeAlias = Mapping[str, Any]
 
 
 def _default_json_dumps(value: Any) -> str:
@@ -96,7 +97,7 @@ _register_state_type = register_state_type
 def _serialize_value(value: Any) -> Any:
     """Serialize a single value, handling objects with to_dict() and Pydantic models."""
     if hasattr(value, "to_dict") and callable(value.to_dict):
-        return value.to_dict()  # pyright: ignore[reportUnknownMemberType]
+        return value.to_dict()
     # Pydantic BaseModel support — import lazily to avoid hard dep at module level
     with suppress(ImportError):
         from pydantic import BaseModel
@@ -176,7 +177,7 @@ class SessionContext:
         self,
         *,
         session_id: str | None = None,
-        service_session_id: str | None = None,
+        service_session_id: str | ServiceSessionId | None = None,
         input_messages: list[Message],
         context_messages: dict[str, list[Message]] | None = None,
         instructions: list[str] | None = None,
@@ -759,7 +760,7 @@ class AgentSession:
         self,
         *,
         session_id: str | None = None,
-        service_session_id: str | None = None,
+        service_session_id: str | ServiceSessionId | None = None,
     ):
         """Initialize the session.
 

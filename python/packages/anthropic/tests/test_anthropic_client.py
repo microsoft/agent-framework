@@ -2,11 +2,12 @@
 import os
 import re
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 from agent_framework import (
+    Agent,
     ChatMiddlewareLayer,
     ChatOptions,
     ChatResponseUpdate,
@@ -64,7 +65,7 @@ def create_test_anthropic_client(
     client._last_call_id_name = None
     client._tool_name_aliases = {}
     client.additional_properties = {}
-    client.middleware = None
+    cast(Any, client).middleware = None
     client.additional_beta_flags = []
     client.chat_middleware = []
     client.function_middleware = []
@@ -134,6 +135,16 @@ def test_anthropic_client_wraps_raw_client_with_standard_layer_order() -> None:
     assert not issubclass(RawAnthropicClient, FunctionInvocationLayer)
     assert not issubclass(RawAnthropicClient, ChatMiddlewareLayer)
     assert not issubclass(RawAnthropicClient, ChatTelemetryLayer)
+
+
+def test_agent_accepts_anthropic_clients() -> None:
+    raw_client = RawAnthropicClient(api_key="test-api-key", model="claude-3-5-sonnet-20241022")
+    raw_agent = Agent(client=raw_client, instructions="test agent")
+    assert raw_agent.client is raw_client
+
+    client = AnthropicClient(api_key="test-api-key", model="claude-3-5-sonnet-20241022")
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
 
 
 def test_anthropic_client_init_auto_create_client(
@@ -660,9 +671,64 @@ def test_prepare_messages_for_anthropic_without_system(
 
     result = client._prepare_messages_for_anthropic(messages)
 
-    assert len(result) == 2
+    assert len(result) == 3
     assert result[0]["role"] == "user"
     assert result[1]["role"] == "assistant"
+    assert result[2]["role"] == "user"
+    assert result[2]["content"] == "Continue"
+
+
+def test_prepare_messages_for_anthropic_does_not_append_after_tool_use(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Do not append plain user text after assistant tool_use blocks."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [
+        Message(role="user", contents=["What's the weather?"]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="call_123",
+                    name="get_weather",
+                    arguments={"location": "Seattle"},
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_anthropic(messages)
+
+    assert len(result) == 2
+    assert result[1]["role"] == "assistant"
+    assert result[1]["content"][0]["type"] == "tool_use"
+
+
+def test_prepare_messages_for_anthropic_splits_assistant_embedded_tool_results(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Assistant-embedded tool_result blocks must move to user-role Anthropic messages."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="call_1", name="first", arguments={}),
+                Content.from_function_result(call_id="call_1", result="ok"),
+                Content.from_function_call(call_id="call_2", name="second", arguments={}),
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_anthropic(messages)
+
+    assert [message["role"] for message in result] == ["assistant", "user", "assistant"]
+    assert [[block["type"] for block in message["content"]] for message in result] == [
+        ["tool_use"],
+        ["tool_result"],
+        ["tool_use"],
+    ]
+    assert result[1]["content"][0]["tool_use_id"] == "call_1"
 
 
 # Tool Conversion Tests
@@ -907,6 +973,84 @@ async def test_prepare_options_with_system_message(
 
     assert run_options["system"] == "You are helpful."
     assert len(run_options["messages"]) == 1  # System message not in messages list
+
+
+async def test_prepare_options_with_text_instructions_and_system_message(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Text instructions should preserve an existing leading system message."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    messages = [
+        Message(role="system", contents=["You are helpful."]),
+        Message(role="user", contents=["Hello"]),
+    ]
+
+    run_options = client._prepare_options(messages, {"instructions": "Be concise."})
+
+    assert run_options["system"] == "Be concise.\n\nYou are helpful."
+    assert len(run_options["messages"]) == 1
+
+
+async def test_prepare_options_with_structured_system_blocks(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Structured Anthropic instructions should populate the system request parameter."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [Message(role="user", contents=["Hello"])]
+    system_blocks = [
+        {
+            "type": "text",
+            "text": "Stable instructions",
+            "cache_control": {"type": "ephemeral", "ttl": "1h"},
+        }
+    ]
+
+    run_options = client._prepare_options(messages, {"instructions": system_blocks})
+
+    assert run_options["system"] == system_blocks
+    assert run_options["messages"][0]["role"] == "user"
+
+
+async def test_prepare_options_structured_system_blocks_reject_conflicts(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Structured system blocks should not silently merge with other system instruction sources."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [Message(role="system", contents=["Generic system"]), Message(role="user", contents=["Hello"])]
+    options = {"instructions": [{"type": "text", "text": "Structured"}]}
+
+    with pytest.raises(ValueError, match="structured Anthropic instructions"):
+        client._prepare_options(messages, options)
+
+
+async def test_prepare_options_splits_assistant_embedded_tool_results(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Final Anthropic request kwargs should contain Anthropic-valid tool_result role groups."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [
+        Message(role="user", contents=["Run both tools."]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="call_1", name="first", arguments={}),
+                Content.from_function_result(call_id="call_1", result="ok"),
+                Content.from_function_call(call_id="call_2", name="second", arguments={}),
+            ],
+        ),
+    ]
+    chat_options = ChatOptions()
+
+    run_options = client._prepare_options(messages, chat_options)
+
+    prepared_messages = run_options["messages"]
+    assert [message["role"] for message in prepared_messages] == ["user", "assistant", "user", "assistant"]
+    assert [[block["type"] for block in message["content"]] for message in prepared_messages[1:]] == [
+        ["tool_use"],
+        ["tool_result"],
+        ["tool_use"],
+    ]
 
 
 async def test_anthropic_shell_tool_is_invoked_in_function_loop(
@@ -1417,7 +1561,7 @@ async def test_inner_get_response_streaming(mock_anthropic_client: MagicMock) ->
     chat_options = ChatOptions(max_tokens=10)
 
     chunks: list[ChatResponseUpdate] = []
-    async for chunk in client._inner_get_response(  # type: ignore[attr-defined]
+    async for chunk in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
         messages=messages, options=chat_options, stream=True
     ):
         if chunk:
@@ -1443,7 +1587,7 @@ async def test_inner_get_response_ignores_options_stream_streaming(
     messages = [Message(role="user", contents=["Hi"])]
     options: dict[str, Any] = {"max_tokens": 10, "stream": False}
 
-    async for _ in client._inner_get_response(  # type: ignore[attr-defined]
+    async for _ in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
         messages=messages,
         options=options,
         stream=True,
@@ -1840,6 +1984,74 @@ def test_prepare_response_format_pydantic_model(
     assert result["type"] == "json_schema"
     assert result["schema"]["additionalProperties"] is False
     assert "properties" in result["schema"]
+
+
+async def test_prepare_options_uses_output_config_for_response_format(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """``response_format`` is forwarded as GA ``output_config.format`` (not the deprecated ``output_format``).
+
+    The deprecated ``output_format`` parameter, gated by the
+    ``structured-outputs-2025-11-13`` beta flag, produced concatenated /
+    malformed JSON when combined with tools. The GA ``output_config`` shape
+    works correctly with tools, so we emit that and no longer set the beta
+    flag.
+    """
+
+    class StructuredOut(BaseModel):
+        answer: str
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [Message(role="user", contents=["Hello"])]
+    chat_options = ChatOptions[StructuredOut](max_tokens=100, response_format=StructuredOut)
+
+    run_options = client._prepare_options(messages, chat_options)
+
+    assert "output_format" not in run_options
+    assert "output_config" in run_options
+    fmt = run_options["output_config"]["format"]
+    assert fmt["type"] == "json_schema"
+    assert fmt["schema"]["additionalProperties"] is False
+    assert "answer" in fmt["schema"]["properties"]
+    # The deprecated structured-outputs beta flag is no longer needed on the
+    # GA path and must not leak into ``betas``.
+    assert "structured-outputs-2025-11-13" not in run_options["betas"]
+
+
+async def test_prepare_options_preserves_caller_supplied_output_config_effort(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A caller-supplied ``output_config.effort`` (e.g. adaptive thinking) survives the format merge."""
+
+    class StructuredOut(BaseModel):
+        answer: str
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [Message(role="user", contents=["Hello"])]
+    # ``output_config`` is provider-specific; pass it through additional kwargs
+    # the way a caller would when configuring adaptive thinking.
+    run_options = client._prepare_options(
+        messages,
+        ChatOptions[StructuredOut](max_tokens=100, response_format=StructuredOut),
+        output_config={"effort": "high"},
+    )
+
+    output_config = run_options["output_config"]
+    assert output_config["effort"] == "high"
+    assert output_config["format"]["type"] == "json_schema"
+    assert "answer" in output_config["format"]["schema"]["properties"]
+
+
+async def test_prepare_options_no_response_format_omits_output_config(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Without ``response_format``, no ``output_config`` is added implicitly."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [Message(role="user", contents=["Hello"])]
+    run_options = client._prepare_options(messages, ChatOptions(max_tokens=100))
+
+    assert "output_config" not in run_options
+    assert "output_format" not in run_options
 
 
 # Message Preparation Tests
@@ -2254,6 +2466,8 @@ def test_prepare_options_with_instructions(mock_anthropic_client: MagicMock) -> 
     # Instructions should be prepended as system message
     assert result["model"] == "claude-3-5-sonnet-20241022"
     assert result["max_tokens"] == 1024
+    assert result["system"] == "You are a helpful assistant"
+    assert result["messages"] == [{"role": "user", "content": [{"type": "text", "text": "Hello"}]}]
 
 
 def test_prepare_options_missing_model(mock_anthropic_client: MagicMock) -> None:
@@ -2262,7 +2476,7 @@ def test_prepare_options_missing_model(mock_anthropic_client: MagicMock) -> None
     client.model = ""  # Set empty model
 
     messages = [Message(role="user", contents=[Content.from_text("Hello")])]
-    options = {}
+    options: dict[str, Any] = {}
 
     try:
         client._prepare_options(messages, options)
@@ -2350,10 +2564,11 @@ def test_parse_usage_with_cache_tokens(mock_anthropic_client: MagicMock) -> None
     result = client._parse_usage_from_anthropic(mock_usage)
 
     assert result is not None
+    result_dict = cast("dict[str, Any]", result)
     assert result["output_token_count"] == 50
     assert result["input_token_count"] == 100
-    assert result["anthropic.cache_creation_input_tokens"] == 20
-    assert result["anthropic.cache_read_input_tokens"] == 30
+    assert result_dict["anthropic.cache_creation_input_tokens"] == 20
+    assert result_dict["anthropic.cache_read_input_tokens"] == 30
     assert result["cache_creation_input_token_count"] == 20
     assert result["cache_read_input_token_count"] == 30
 
@@ -2371,9 +2586,10 @@ def test_parse_usage_preserves_zero_cache_tokens(mock_anthropic_client: MagicMoc
     result = client._parse_usage_from_anthropic(mock_usage)
 
     assert result is not None
-    assert result["anthropic.cache_creation_input_tokens"] == 0
+    result_dict = cast("dict[str, Any]", result)
+    assert result_dict["anthropic.cache_creation_input_tokens"] == 0
     assert result["cache_creation_input_token_count"] == 0
-    assert result["anthropic.cache_read_input_tokens"] == 0
+    assert result_dict["anthropic.cache_read_input_tokens"] == 0
     assert result["cache_read_input_token_count"] == 0
 
 
@@ -2743,6 +2959,7 @@ def test_parse_citations_char_location(mock_anthropic_client: MagicMock) -> None
 
     result = client._parse_citations_from_anthropic(mock_block)
 
+    assert result is not None
     assert len(result) > 0
 
 
@@ -2766,6 +2983,7 @@ def test_parse_citations_page_location(mock_anthropic_client: MagicMock) -> None
 
     result = client._parse_citations_from_anthropic(mock_block)
 
+    assert result is not None
     assert len(result) > 0
 
 
@@ -2791,6 +3009,7 @@ def test_parse_citations_content_block_location(
 
     result = client._parse_citations_from_anthropic(mock_block)
 
+    assert result is not None
     assert len(result) > 0
 
 
@@ -2813,6 +3032,7 @@ def test_parse_citations_web_search_location(mock_anthropic_client: MagicMock) -
 
     result = client._parse_citations_from_anthropic(mock_block)
 
+    assert result is not None
     assert len(result) > 0
 
 
@@ -2839,6 +3059,7 @@ def test_parse_citations_search_result_location(
 
     result = client._parse_citations_from_anthropic(mock_block)
 
+    assert result is not None
     assert len(result) > 0
 
 

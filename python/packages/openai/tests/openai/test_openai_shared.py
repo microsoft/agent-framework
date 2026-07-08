@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import TracebackType
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,6 +20,17 @@ from agent_framework_openai._shared import (
 class _AsyncTokenCredentialStub(AsyncTokenCredential):
     async def get_token(self, *scopes: str, **kwargs: object):
         raise NotImplementedError
+
+    async def close(self) -> None:
+        pass
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None = None,
+        exc_value: BaseException | None = None,
+        traceback: TracebackType | None = None,
+    ) -> None:
+        pass
 
 
 class _TokenCredentialStub(TokenCredential):
@@ -55,7 +68,7 @@ def test_resolve_azure_callable_token_provider_passthrough() -> None:
 
 def test_resolve_azure_invalid_credential_raises() -> None:
     with pytest.raises(ValueError, match="credential"):
-        _resolve_azure_credential_to_token_provider(object())  # type: ignore[arg-type]
+        _resolve_azure_credential_to_token_provider(cast(Any, object()))
 
 
 async def test_ensure_async_token_provider_wraps_sync_provider() -> None:

@@ -26,7 +26,6 @@ Prerequisites:
 - Ensure Azurite and the Durable Task Scheduler emulator are running
 """
 
-import json
 import logging
 import os
 from dataclasses import dataclass
@@ -43,7 +42,7 @@ from agent_framework import (
     handler,
 )
 from agent_framework.azure import AgentFunctionApp
-from agent_framework.openai import OpenAIChatCompletionClient
+from agent_framework.openai import OpenAIChatCompletionClient, OpenAIChatCompletionOptions
 from azure.identity.aio import AzureCliCredential, get_bearer_token_provider
 from pydantic import BaseModel
 from typing_extensions import Never
@@ -142,17 +141,12 @@ class FinalReport:
 
 
 @executor(id="input_router")
-async def input_router(doc: str, ctx: WorkflowContext[DocumentInput]) -> None:
-    """Route input document to parallel processors.
+async def input_router(document: DocumentInput, ctx: WorkflowContext[DocumentInput]) -> None:
+    """Route the input document to the parallel processors.
 
-    Accepts a JSON string from the HTTP request and converts to DocumentInput.
+    The durable engine reconstructs ``DocumentInput`` from the client's JSON
+    payload before delivery, mirroring in-process execution.
     """
-    # Parse the JSON string input
-    data = json.loads(doc) if isinstance(doc, str) else doc
-    document = DocumentInput(
-        document_id=data.get("document_id", "unknown"),
-        content=data.get("content", ""),
-    )
     logger.info("[input_router] Routing document: %s", document.document_id)
     await ctx.send_message(document)
 
@@ -375,7 +369,7 @@ def _create_workflow() -> Workflow:
             "Return JSON with fields: sentiment (positive/negative/neutral), "
             "confidence (0.0-1.0), and explanation (brief reasoning)."
         ),
-        default_options={"response_format": SentimentResult},
+        default_options=OpenAIChatCompletionOptions[Any](response_format=SentimentResult),
     )
 
     keyword_agent = Agent(
@@ -386,7 +380,7 @@ def _create_workflow() -> Workflow:
             "from the given text. Return JSON with fields: keywords (list of strings), "
             "and categories (list of topic categories)."
         ),
-        default_options={"response_format": KeywordResult},
+        default_options=OpenAIChatCompletionOptions[Any](response_format=KeywordResult),
     )
 
     # Create summary agent for Pattern 3 (mixed parallel)
@@ -398,7 +392,7 @@ def _create_workflow() -> Workflow:
             "provide a concise summary. Return JSON with fields: summary (brief text), "
             "and key_points (list of main takeaways)."
         ),
-        default_options={"response_format": SummaryResult},
+        default_options=OpenAIChatCompletionOptions[Any](response_format=SummaryResult),
     )
 
     # Create executor instances
@@ -406,7 +400,7 @@ def _create_workflow() -> Workflow:
 
     # Build workflow with parallel patterns
     return (
-        WorkflowBuilder(start_executor=input_router)
+        WorkflowBuilder(name="parallel_review", start_executor=input_router)
         # Pattern 1: Fan-out to two executors (run in parallel)
         .add_fan_out_edges(
             source=input_router,

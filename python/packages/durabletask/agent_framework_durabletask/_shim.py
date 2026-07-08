@@ -12,7 +12,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Generic, Literal, TypeVar
 
-from agent_framework import AgentSession, SupportsAgentRun, normalize_messages
+from agent_framework import AgentSession, ServiceSessionId, SupportsAgentRun, normalize_messages
 from agent_framework._types import AgentRunInputs
 
 from ._executors import DurableAgentExecutor
@@ -137,8 +137,10 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
         """Create a new agent session via the provider."""
         return self._executor.get_new_session(self.name)
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+    def get_session(self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
         """Retrieve an existing session via the provider."""
+        if not isinstance(service_session_id, str):
+            raise ValueError("DurableAIAgent requires service_session_id to be a string")
         return self._executor.get_new_session(self.name, service_session_id=service_session_id, session_id=session_id)
 
     def _normalize_messages(self, messages: AgentRunInputs | None) -> str:

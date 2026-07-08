@@ -20,7 +20,7 @@
 // indirect prompt injection in an uploaded file.
 //
 // Required environment variables:
-//   FOUNDRY_PROJECT_ENDPOINT         - Azure AI Foundry project endpoint
+//   FOUNDRY_PROJECT_ENDPOINT         - Foundry project endpoint
 //   FOUNDRY_MODEL    - Model deployment name (default: gpt-4o)
 //
 // Optional:
@@ -179,7 +179,6 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), credential)
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
-builder.Services.AddDevTemporaryLocalContributorSetup(); // Local Docker debugging only - must not be used in production.
 
 var app = builder.Build();
 app.MapFoundryResponses();

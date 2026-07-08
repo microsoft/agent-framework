@@ -1,21 +1,19 @@
-#requires -Version 7
+﻿#requires -Version 7
 <#
 .SYNOPSIS
   Local smoke test for the Hosted-MemoryAgent sample.
 .DESCRIPTION
-  Publishes the sample, builds the contributor Docker image, runs the container twice with two
-  distinct HOSTED_USER_ISOLATION_KEY values, drives a multi-turn conversation per user via curl
-  invocations, and asserts that each user only sees their own remembered details.
-  Exits non-zero on failure.
+  Publishes the sample, builds the contributor Docker image, runs ONE container, and drives two
+  users (alice, bob) against it by varying the x-agent-user-id request header. Asserts that each
+  user only sees their own remembered details. Exits non-zero on failure.
 
   Prerequisites:
     - Docker
     - az login (token is fetched from the host)
     - .env populated with FOUNDRY_PROJECT_ENDPOINT and model deployments
 .NOTES
-  This script is for local Docker debugging only. The Foundry platform supplies the isolation
-  keys for every inbound request in production and the dev fallback used here must not be
-  enabled in production deployments.
+  The x-agent-user-id header is set here only to simulate distinct users locally. On the Foundry
+  platform it is supplied automatically for every request.
 #>
 
 [CmdletBinding()]
@@ -44,13 +42,11 @@ Write-Host '==> Fetching bearer token ...'
 $bearer = az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv
 if (-not $bearer) { throw 'Failed to obtain bearer token. Run az login.' }
 
-function Start-Container([string]$UserKey, [string]$ChatKey, [string]$ContainerName) {
+function Start-Container([string]$ContainerName) {
     docker rm -f $ContainerName 2>$null | Out-Null
     docker run -d --name $ContainerName -p ${Port}:8088 `
         -e AGENT_NAME=hosted-memory-agent `
         -e AZURE_BEARER_TOKEN=$bearer `
-        -e HOSTED_USER_ISOLATION_KEY=$UserKey `
-        -e HOSTED_CHAT_ISOLATION_KEY=$ChatKey `
         --env-file .env `
         $ImageName | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "docker run failed for $ContainerName." }
@@ -58,11 +54,14 @@ function Start-Container([string]$UserKey, [string]$ChatKey, [string]$ContainerN
     Start-Sleep -Seconds 6
 }
 
-function Invoke-Agent([string]$Prompt, [string]$PreviousResponseId = $null) {
+function Invoke-Agent([string]$Prompt, [string]$UserId, [string]$PreviousResponseId = $null) {
     $body = @{ input = $Prompt; model = 'hosted-memory-agent' }
     if ($PreviousResponseId) { $body['previous_response_id'] = $PreviousResponseId }
     $json = $body | ConvertTo-Json -Compress
-    $resp = Invoke-RestMethod -Method Post -Uri "http://localhost:$Port/responses" -ContentType 'application/json' -Body $json
+    # x-agent-user-id is the identity the Foundry platform injects in production. Sending it locally
+    # is how a contributor drives per-user isolation.
+    $headers = @{ 'x-agent-user-id' = $UserId }
+    $resp = Invoke-RestMethod -Method Post -Uri "http://localhost:$Port/responses" -ContentType 'application/json' -Headers $headers -Body $json
     return $resp
 }
 
@@ -81,23 +80,23 @@ function Assert-NotContains([string]$Haystack, [string]$Needle, [string]$Label) 
 }
 
 try {
+    # One container serves BOTH users; per-user isolation is driven purely by the x-agent-user-id
+    # header, exactly as the Foundry platform does in production (there the platform sets it).
+    Start-Container -ContainerName 'hosted-memory-smoke'
+
     Write-Host '==> Phase 1: alice teaches the agent her trip details ...'
-    Start-Container -UserKey 'alice' -ChatKey 'alice-chat-1' -ContainerName 'hosted-memory-smoke-alice'
-    $r1 = Invoke-Agent -Prompt 'Hi! My name is Taylor and I am planning a hiking trip to Patagonia in November.'
-    $r2 = Invoke-Agent -Prompt 'I am travelling with my sister and we love finding scenic viewpoints.' -PreviousResponseId $r1.id
+    $r1 = Invoke-Agent -UserId 'alice' -Prompt 'Hi! My name is Taylor and I am planning a hiking trip to Patagonia in November.'
+    $r2 = Invoke-Agent -UserId 'alice' -Prompt 'I am travelling with my sister and we love finding scenic viewpoints.' -PreviousResponseId $r1.id
 
     Write-Host "==> Waiting $RecallDelaySeconds s for memory extraction ..."
     Start-Sleep -Seconds $RecallDelaySeconds
 
-    $r3 = Invoke-Agent -Prompt 'What do you already know about my upcoming trip?' -PreviousResponseId $r2.id
+    $r3 = Invoke-Agent -UserId 'alice' -Prompt 'What do you already know about my upcoming trip?' -PreviousResponseId $r2.id
     $aliceText = ($r3.output | ForEach-Object { $_.content | ForEach-Object { $_.text } }) -join ' '
     Assert-Contains $aliceText 'Patagonia' 'alice recall: Patagonia'
 
-    docker rm -f hosted-memory-smoke-alice | Out-Null
-
-    Write-Host '==> Phase 2: bob starts a fresh container with a different user isolation key ...'
-    Start-Container -UserKey 'bob' -ChatKey 'bob-chat-1' -ContainerName 'hosted-memory-smoke-bob'
-    $b1 = Invoke-Agent -Prompt 'Hello, what trip am I planning?'
+    Write-Host '==> Phase 2: bob asks the SAME container with a different x-agent-user-id ...'
+    $b1 = Invoke-Agent -UserId 'bob' -Prompt 'Hello, what trip am I planning?'
     $bobText = ($b1.output | ForEach-Object { $_.content | ForEach-Object { $_.text } }) -join ' '
     Assert-NotContains $bobText 'Patagonia' 'bob isolation: no leak of alice memories'
 
@@ -105,6 +104,5 @@ try {
     Write-Host '==> All smoke assertions passed.'
 }
 finally {
-    docker rm -f hosted-memory-smoke-alice 2>$null | Out-Null
-    docker rm -f hosted-memory-smoke-bob 2>$null | Out-Null
+    docker rm -f hosted-memory-smoke 2>$null | Out-Null
 }

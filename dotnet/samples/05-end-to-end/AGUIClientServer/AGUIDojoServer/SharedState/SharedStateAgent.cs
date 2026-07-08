@@ -3,6 +3,8 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using AGUI.Abstractions;
+using AGUI.Server;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -30,8 +32,9 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (options is not ChatClientAgentRunOptions { ChatOptions.AdditionalProperties: { } properties } chatRunOptions ||
-            !properties.TryGetValue("ag_ui_state", out JsonElement state))
+        if (options is not ChatClientAgentRunOptions { ChatOptions: { } chatOptions } chatRunOptions ||
+            !chatOptions.TryGetRunAgentInput(out RunAgentInput? agentInput) ||
+            agentInput.State is not { ValueKind: not JsonValueKind.Undefined } state)
         {
             await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
             {

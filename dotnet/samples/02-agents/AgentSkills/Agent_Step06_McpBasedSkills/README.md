@@ -32,3 +32,12 @@ $env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"
 ```powershell
 dotnet run
 ```
+
+## Security Considerations
+
+Discovering skills over MCP means an external MCP server controls what skill content (including
+instructions and, for archive-type entries, extracted files) reaches the agent. A compromised or
+untrustworthy server could return adversarial content designed to manipulate the agent (indirect
+prompt injection) or to exfiltrate data through skill instructions/scripts. Only connect `UseMcpSkills`
+to MCP servers you have vetted and trust, and keep the conservative archive size/file-count limits in
+`AgentMcpSkillsSourceOptions` unless you have a specific reason to raise them.
