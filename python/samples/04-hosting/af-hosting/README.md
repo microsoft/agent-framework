@@ -10,6 +10,7 @@ clients, authentication, response construction, and deployment shape.
 | Sample | What it shows | Packaging |
 |---|---|---|
 | [`local_responses/`](./local_responses) | One agent + one `@tool` + native FastAPI route + Responses helper functions + `AgentState` / `SessionStore`. | **Local only.** Start here to learn the helper seam. |
+| [`local_responses_workflow/`](./local_responses_workflow) | A workflow target behind a native FastAPI route using Responses helper functions, `WorkflowState`, explicit `CheckpointStorage`, and an app-owned checkpoint cursor. | **Local only.** |
 
 Each sample is self-contained with its own `pyproject.toml`, server `app.py`,
 calling script(s), and `storage/` directory. Samples use `[tool.uv.sources]`
@@ -28,5 +29,5 @@ Those samples use the Foundry-managed protocol surface with no
 |---|---|---|
 | Server stack | App-owned FastAPI + hosting protocol helpers | Foundry Hosted Agents runtime |
 | Protocol surface | The app exposes the route and calls helpers | The platform exposes Responses + Invocations |
-| Run target | Local Hypercorn (`local_responses/`) | Hosted Agents or local container targeting the Hosted Agents contract |
+| Run target | Local Hypercorn (`local_responses/`, `local_responses_workflow/`) | Hosted Agents or local container targeting the Hosted Agents contract |
 | When to pick this | You need custom hosting code or want to learn the helper seam | You want the Foundry-managed hosting surface |

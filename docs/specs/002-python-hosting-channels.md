@@ -178,7 +178,9 @@ The target may be:
 - synchronous `target` only after a target is already available/resolved.
 
 Workflow checkpointing uses Agent Framework's existing `CheckpointStorage` abstraction directly. Apps that need
-per-session workflow resume should keep an app-owned cursor such as `session_id -> checkpoint_id`:
+per-session workflow resume should keep an app-owned cursor such as `session_id -> checkpoint_id`. When the app uses
+file-backed cursor storage, the file-based checkpoint storage should share the same app storage root, for example
+`storage/checkpoints/` beside `storage/checkpoint_cursors.json`:
 
 ```python
 # session_id must already be authenticated and authorized for this caller
@@ -270,8 +272,9 @@ The application builder decides whether the server is persistent or transient.
   reliable boundary, must not rely on in-memory `SessionStore` state between calls. They need a durable session store or
   a service-owned continuation id.
 - Workflow hosts must choose an explicit `CheckpointStorage` and, when they need per-session resume, a durable
-  `session_id -> checkpoint_id` cursor. In-process workflow state and in-memory checkpoint cursors do not survive
-  transient execution.
+  `session_id -> checkpoint_id` cursor. File-backed checkpoint storage and file-backed cursor storage should live under
+  the same app storage root. In-process workflow state and in-memory checkpoint cursors do not survive transient
+  execution.
 
 ## Minimal FastAPI Responses shape
 

@@ -11,6 +11,18 @@ This sample demonstrates the helper-first hosting shape:
 3. FastAPI owns the route, request parsing, policy decisions, and response
    object.
 
+Production readiness
+---
+This sample is not a full-fledged production deployment. Before exposing this
+route to callers, add authentication and authorization at the infrastructure
+layer, the FastAPI app layer, or inside the route body.
+
+Session continuation deserves particular care: treat ``previous_response_id``
+and ``conversation_id`` as untrusted request values, authorize the caller
+before loading or storing a session for those ids, and partition durable session
+storage by tenant/user as appropriate for your application. See
+``README.md#production-readiness``.
+
 Run
 ---
 ``app`` is a module-level FastAPI ASGI app. Recommended local launch::

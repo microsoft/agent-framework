@@ -32,6 +32,17 @@ What the route demonstrates:
 `app:app` is a module-level FastAPI ASGI app; recommended local launch is
 Hypercorn.
 
+## Production readiness
+
+This is not a full-fledged production deployment. Before exposing this pattern
+to callers, add authentication and authorization at the infrastructure layer,
+the FastAPI app layer, or inside the route body.
+
+Session continuation deserves particular care: treat `previous_response_id` and
+`conversation_id` as untrusted request values, authorize the caller before
+loading or storing a session for those ids, and partition any durable session
+store by tenant/user as appropriate for your application.
+
 ## Run
 
 ```bash
