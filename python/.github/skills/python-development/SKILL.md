@@ -95,6 +95,15 @@ from ._agents import Agent
 from ._types import Message, ChatResponse
 ```
 
+Special case: the root `agent_framework/__init__.py` uses lazy runtime exports. For root public API changes:
+- Add the symbol to `_LAZY_MODULE_EXPORTS` and keep `_LAZY_EXPORTS` derived from it.
+- Keep the explicit runtime `__all__` synchronized; it is still required for `from agent_framework import *`.
+- Add the same public symbol to `agent_framework/__init__.pyi` so pyright, mypy, and editors see the typed surface.
+- Put runtime deprecation behavior in the owning module via that module's `__getattr__`; avoid root-level
+  special-case branches for individual deprecated exports.
+- Identity aliases are appropriate in `.pyi` stubs because they mark re-exported names for type checkers; avoid them
+  in runtime `.py` modules unless there is a specific compatibility reason.
+
 ## Performance Guidelines
 
 - Cache expensive computations (e.g., JSON schema generation)

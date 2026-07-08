@@ -23,12 +23,8 @@ from typing import (
 )
 from uuid import uuid4
 
-from pydantic import BaseModel
-
-from . import _tools as _tool_utils  # pyright: ignore[reportPrivateUsage]
 from ._clients import BaseChatClient, SupportsChatGetResponse
 from ._docstrings import apply_layered_docstring
-from ._mcp import LOG_LEVEL_MAPPING, MCPTool
 from ._middleware import AgentMiddlewareLayer, FunctionInvocationContext, MiddlewareTypes, categorize_middleware
 from ._serialization import SerializationMixin
 from ._sessions import (
@@ -37,10 +33,10 @@ from ._sessions import (
     HistoryProvider,
     InMemoryHistoryProvider,
     PerServiceCallHistoryPersistingMiddleware,
+    ServiceSessionId,
     SessionContext,
     is_local_history_conversation_id,
 )
-from ._tools import FunctionInvocationLayer, FunctionTool, ToolTypes, normalize_tools
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -49,6 +45,7 @@ from ._types import (
     ChatResponseUpdate,
     Message,
     ResponseStream,
+    _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
     map_chat_to_agent_update,
     normalize_messages,
 )
@@ -56,13 +53,9 @@ from .exceptions import AgentInvalidRequestException, AgentInvalidResponseExcept
 from .observability import AgentTelemetryLayer
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
-if sys.version_info >= (3, 12):
-    pass  # type: ignore # pragma: no cover
-else:
-    pass  # type: ignore[import] # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import Self, TypedDict  # pragma: no cover
 else:
@@ -71,22 +64,54 @@ else:
 if TYPE_CHECKING:
     from mcp import types
     from mcp.server.lowlevel import Server
+    from pydantic import BaseModel
 
     from ._compaction import CompactionStrategy, TokenizerProtocol
+    from ._mcp import MCPTool
+    from ._tools import FunctionTool, ToolTypes
     from ._types import ChatOptions
 
 logger = logging.getLogger("agent_framework")
 
-_append_unique_tools = _tool_utils._append_unique_tools  # pyright: ignore[reportPrivateUsage]
-_get_tool_name = _tool_utils._get_tool_name  # pyright: ignore[reportPrivateUsage]
-
-ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+if TYPE_CHECKING:
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+else:
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=Any)
 OptionsCoT = TypeVar(
     "OptionsCoT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="ChatOptions[None]",
     covariant=True,
 )
+
+
+def _append_unique_tools(
+    existing_tools: list[ToolTypes],
+    new_tools: Sequence[ToolTypes],
+    *,
+    duplicate_error_message: str | None = None,
+) -> list[ToolTypes]:
+    from ._tools import _append_unique_tools as append_unique_tools  # pyright: ignore[reportPrivateUsage]
+
+    return append_unique_tools(
+        existing_tools,
+        new_tools,
+        duplicate_error_message=duplicate_error_message,
+    )
+
+
+def _normalize_tools(
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+) -> list[ToolTypes]:
+    from ._tools import normalize_tools
+
+    return normalize_tools(tools)
+
+
+def _get_tool_name(tool: Any) -> str | None:  # pyright: ignore[reportUnusedFunction]
+    from ._tools import _get_tool_name as get_tool_name  # pyright: ignore[reportPrivateUsage]
+
+    return get_tool_name(tool)
 
 
 def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -109,8 +134,8 @@ def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
         if value is None:
             continue
         if key == "tools" and (result.get("tools") or value):
-            base_tools = normalize_tools(result.get("tools"))
-            override_tools = normalize_tools(value)
+            base_tools = _normalize_tools(result.get("tools"))
+            override_tools = _normalize_tools(value)
             result["tools"] = _append_unique_tools(
                 list(base_tools),
                 override_tools,
@@ -231,7 +256,12 @@ class SupportsAgentRun(Protocol):
 
                     return AgentSession(session_id=session_id)
 
-                def get_session(self, service_session_id: str, *, session_id: str | None = None):
+                def get_session(
+                    self,
+                    service_session_id: str | ServiceSessionId,
+                    *,
+                    session_id: str | None = None,
+                ):
                     from agent_framework import AgentSession
 
                     return AgentSession(service_session_id=service_session_id, session_id=session_id)
@@ -307,7 +337,12 @@ class SupportsAgentRun(Protocol):
         """Creates a new conversation session."""
         ...
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+    def get_session(
+        self,
+        service_session_id: str | ServiceSessionId,
+        *,
+        session_id: str | None = None,
+    ) -> AgentSession:
         """Gets or creates a session for a service-managed session ID."""
         ...
 
@@ -431,7 +466,12 @@ class BaseAgent(SerializationMixin):
         """
         return AgentSession(session_id=session_id)
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+    def get_session(
+        self,
+        service_session_id: str | ServiceSessionId,
+        *,
+        session_id: str | None = None,
+    ) -> AgentSession:
         """Get a session for a service-managed session ID.
 
         Only use this to create a session continuing that session id from a service.
@@ -447,6 +487,41 @@ class BaseAgent(SerializationMixin):
             A new AgentSession instance with service_session_id set.
         """
         return AgentSession(session_id=session_id, service_session_id=service_session_id)
+
+    def _get_chat_conversation_id(self, session: AgentSession | None) -> str | None:
+        """Get the chat conversation id to forward to generic chat clients.
+
+        Args:
+            session: The active session for this run.
+
+        Returns:
+            The conversation id when it is a string, otherwise None.
+
+        Raises:
+            AgentInvalidRequestException: If the session contains a structured
+                service_session_id that this generic chat path cannot forward.
+        """
+        service_session_id = session.service_session_id if session is not None else None
+        if service_session_id is None:
+            return None
+        if isinstance(service_session_id, str):
+            return service_session_id
+        raise AgentInvalidRequestException(
+            "This agent expects a string service_session_id for provider conversation continuation. "
+            "Received a structured service_session_id; use a compatible agent/session shape for this provider."
+        )
+
+    def _get_otel_conversation_id(self, session: AgentSession | None) -> str | None:
+        """Get the OTel conversation id for ``gen_ai.conversation.id``.
+
+        Args:
+            session: The active session for this run.
+
+        Returns:
+            A string conversation id, or None when no string id is available.
+        """
+        service_session_id = session.service_session_id if session else None
+        return service_session_id if isinstance(service_session_id, str) else None
 
     async def _run_after_providers(
         self,
@@ -570,6 +645,8 @@ class BaseAgent(SerializationMixin):
             # TODO(Copilot): update once #4331 merges
             return final_response.text
 
+        from ._tools import FunctionTool
+
         return FunctionTool(
             name=tool_name,
             description=tool_description,
@@ -582,7 +659,7 @@ class BaseAgent(SerializationMixin):
 # region Agent
 
 
-class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
+class RawAgent(BaseAgent, Generic[OptionsCoT]):
     """A Chat Client Agent without middleware or telemetry layers.
 
     This is the core chat agent implementation. For most use cases,
@@ -719,6 +796,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         """
         opts = dict(default_options) if default_options else {}
 
+        from ._mcp import MCPTool
+        from ._tools import FunctionInvocationLayer
+
         if not isinstance(client, FunctionInvocationLayer) and isinstance(client, BaseChatClient):
             logger.warning(
                 "The provided chat client does not support function invoking, this might limit agent capabilities."
@@ -745,7 +825,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
         # We ignore the MCP Servers here and store them separately,
         # we add their functions to the tools list at runtime
-        normalized_tools = normalize_tools(tools_)
+        normalized_tools = _normalize_tools(tools_)
         self.mcp_tools: list[MCPTool] = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
 
@@ -811,8 +891,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             return []
 
         # A live service-managed session id takes precedence over the resolved conversation id.
-        if session and session.service_session_id:
-            conversation_id = session.service_session_id
+        # Structured values are validated by _get_chat_conversation_id before generic forwarding.
+        session_conversation_id = self._get_chat_conversation_id(session)
+        if session_conversation_id:
+            conversation_id = session_conversation_id
         # Without service-side storage the middleware persists locally and drives the function
         # loop with a local sentinel, which cannot be reconciled with an existing service-managed
         # conversation. When the service stores history, an existing conversation id is expected.
@@ -1029,24 +1111,28 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         if not response:
             raise AgentInvalidResponseException("Chat client did not return a response.")
 
-        await self._finalize_response(
-            response=response,
-            agent_name=context["agent_name"],
-            session=context["session"],
-            session_context=context["session_context"],
+        for message in response.messages:
+            if message.author_name is None:
+                message.author_name = context["agent_name"]
+
+        session = context["session"]
+        if (
+            session
+            and response.conversation_id
+            and not is_local_history_conversation_id(response.conversation_id)
+            and session.service_session_id != response.conversation_id
+        ):
+            session.service_session_id = response.conversation_id
+
+        agent_response = _build_agent_response_from_chat_response(
+            response,
+            response_format=context["chat_options"].get("response_format"),
             suppress_response_id=context["suppress_response_id"],
         )
-        return AgentResponse(
-            messages=response.messages,
-            response_id=None if context["suppress_response_id"] else response.response_id,
-            created_at=response.created_at,
-            usage_details=response.usage_details,
-            value=response.value,
-            response_format=context["chat_options"].get("response_format"),
-            continuation_token=response.continuation_token,
-            raw_representation=response,
-            additional_properties=response.additional_properties,
-        )
+        session_context = context["session_context"]
+        session_context._response = agent_response  # type: ignore[assignment]
+        await self._run_after_providers(session=session, context=session_context)
+        return agent_response
 
     def _parse_streaming_response(
         self,
@@ -1074,12 +1160,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             ):
                 session.service_session_id = conversation_id
 
-            suppress_response_id = context["suppress_response_id"]
             session_context = context["session_context"]
-            session_context._response = AgentResponse(  # type: ignore[assignment]
-                messages=response.messages,
-                response_id=None if suppress_response_id else response.response_id,
-            )
+            if context["suppress_response_id"]:
+                response.response_id = None
+            session_context._response = response  # type: ignore[assignment]
             await self._run_after_providers(session=session, context=session_context)
 
         def _propagate_conversation_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
@@ -1128,7 +1212,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         response_format: Any | None = None,
     ) -> AgentResponse[Any]:
         """Finalize response updates into a single AgentResponse."""
-        return AgentResponse.from_updates(  # pyright: ignore[reportUnknownVariableType]
+        return AgentResponse.from_updates(
             updates,
             output_format_type=response_format,
         )
@@ -1197,12 +1281,15 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         # Resolve conversation_id from the same combined view so an agent-level default is honored
         # when the runtime omits it (a live session id still takes precedence below).
         effective_conversation_id = effective_options.get("conversation_id")
+        session_conversation_id = self._get_chat_conversation_id(session)
         # Auto-inject InMemoryHistoryProvider when session is provided, no context providers
         # registered, and no service-side storage indicators
         if (
             session is not None
-            and not self.context_providers
-            and not session.service_session_id
+            and not any(
+                provider.load_messages for provider in self.context_providers if isinstance(provider, HistoryProvider)
+            )
+            and not session_conversation_id
             and not effective_conversation_id
             and not service_stores_history
         ):
@@ -1251,11 +1338,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             }
 
         agent_name = self._get_agent_name()
-        base_tools = normalize_tools(chat_options.pop("tools", None))
+        from ._mcp import MCPTool
+
+        base_tools = _normalize_tools(chat_options.pop("tools", None))
         mcp_duplicate_message = "Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool."
 
         # Normalize tools
-        normalized_tools = normalize_tools(tools_)
+        normalized_tools = _normalize_tools(tools_)
 
         # Resolve final tool list (configured tools + runtime provided tools + local MCP server tools)
         final_tools = list(base_tools)
@@ -1269,7 +1358,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     duplicate_error_message=mcp_duplicate_message,
                 )
             else:
-                _append_unique_tools(final_tools, [tool])  # type: ignore[list-item]
+                _append_unique_tools(final_tools, [tool])
 
         for mcp_server in self.mcp_tools:
             if not mcp_server.is_connected:
@@ -1289,7 +1378,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
         # Build options dict from run() options merged with provided options
         run_opts: dict[str, Any] = {
-            "conversation_id": active_session.service_session_id
+            "conversation_id": self._get_chat_conversation_id(active_session)
             if active_session
             else opts.pop("conversation_id", None),
             "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
@@ -1374,48 +1463,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             "function_invocation_kwargs": additional_function_arguments,
         }
 
-    async def _finalize_response(
-        self,
-        response: ChatResponse,
-        agent_name: str,
-        session: AgentSession | None,
-        session_context: SessionContext,
-        suppress_response_id: bool = False,
-    ) -> None:
-        """Finalize response by setting author names and running after_run providers.
-
-        Args:
-            response: The chat response to finalize.
-            agent_name: The name of the agent to set as author.
-            session: The conversation session.
-            session_context: The invocation context.
-            suppress_response_id: When True, omit the raw service response ID from the public response.
-        """
-        # Ensure that the author name is set for each message in the response.
-        for message in response.messages:
-            if message.author_name is None:
-                message.author_name = agent_name
-
-        # Propagate conversation_id back to session (e.g. thread ID from Assistants API).
-        # For Responses-style APIs this can rotate every turn (response_id-based continuation),
-        # so refresh when a newer value is returned.
-        if (
-            session
-            and response.conversation_id
-            and not is_local_history_conversation_id(response.conversation_id)
-            and session.service_session_id != response.conversation_id
-        ):
-            session.service_session_id = response.conversation_id
-
-        # Set the response on the context for after_run providers
-        session_context._response = AgentResponse(  # type: ignore[assignment]
-            messages=response.messages,
-            response_id=None if suppress_response_id else response.response_id,
-        )
-
-        # Run after_run providers (reverse order)
-        await self._run_after_providers(session=session, context=session_context)
-
     async def _prepare_session_and_messages(
         self,
         *,
@@ -1477,7 +1524,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             if provider_session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.before_run(
-                agent=self,  # type: ignore[arg-type]
+                agent=self,
                 session=provider_session,
                 context=session_context,
                 state=provider_session.state.setdefault(provider.source_id, {}),
@@ -1532,6 +1579,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             raise ModuleNotFoundError(
                 "`mcp` is required to use `Agent.as_mcp_server()`. Please install `mcp`."
             ) from exc
+        from ._mcp import LOG_LEVEL_MAPPING
 
         server_args: dict[str, Any] = {
             "name": server_name,
@@ -1543,7 +1591,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         if kwargs:
             server_args.update(kwargs)
 
-        server: Server[Any] = Server(**server_args)  # type: ignore[call-arg]
+        server: Server[Any] = Server(**server_args)
 
         agent_tool = self.as_tool(name=self._get_agent_name())
 
@@ -1557,7 +1605,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 except Exception as e:
                     logger.error("Failed to send log message to server: %s", e)
 
-        @server.list_tools()  # type: ignore
+        @server.list_tools()
         async def _list_tools() -> list[types.Tool]:  # type: ignore
             """List all tools in the agent."""
             schema = agent_tool.parameters()
@@ -1571,7 +1619,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             await _log(level="debug", data=f"Agent tool: {agent_tool}")
             return [tool]
 
-        @server.call_tool()  # type: ignore
+        @server.call_tool()
         async def _call_tool(  # type: ignore
             name: str, arguments: dict[str, Any]
         ) -> Sequence[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource]:
@@ -1603,18 +1651,18 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             # Convert result to MCP content.
             # Currently only text items are forwarded over MCP; rich content
             # (images, audio) is not yet supported in the MCP server path.
-            mcp_content: list[types.TextContent | types.ImageContent | types.EmbeddedResource] = []  # type: ignore[attr-defined]
+            mcp_content: list[types.TextContent | types.ImageContent | types.EmbeddedResource] = []
             for c in result:
                 if c.type == "text" and c.text:
-                    mcp_content.append(types.TextContent(type="text", text=c.text))  # type: ignore[attr-defined]
+                    mcp_content.append(types.TextContent(type="text", text=c.text))
                 elif c.type in ("data", "uri"):
                     logger.warning(
                         "MCP server does not yet forward rich content (images, audio) "
                         "in tool results. Rich content items will be omitted."
                     )
-            return mcp_content or [types.TextContent(type="text", text="")]  # type: ignore[attr-defined]
+            return mcp_content or [types.TextContent(type="text", text="")]
 
-        @server.set_logging_level()  # type: ignore
+        @server.set_logging_level()
         async def _set_logging_level(level: types.LoggingLevel) -> None:  # type: ignore
             """Set the logging level for the server."""
             logger.setLevel(LOG_LEVEL_MAPPING[level])
@@ -1712,9 +1760,9 @@ class Agent(
         """Run the agent."""
         super_run = cast(
             "Callable[..., Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]]",
-            super().run,  # type: ignore[misc]
+            super().run,
         )
-        return super_run(  # type: ignore[no-any-return]
+        return super_run(
             messages=messages,
             stream=stream,
             session=session,

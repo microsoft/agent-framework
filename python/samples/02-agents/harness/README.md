@@ -18,6 +18,8 @@ from a chat client.
 | MemoryContextProvider | File-based durable memory (when `memory_store` provided) |
 | SkillsProvider | File-based skill discovery and progressive loading |
 | Shell tool | Shell command execution + environment probing (when `shell_executor` provided) |
+| Tool approval | "Don't ask again" standing rules + heuristic auto-approval (enabled by default) |
+| Looping | Re-invoke the agent until a `loop_should_continue` predicate is satisfied (when provided) |
 | OpenTelemetry | Built-in observability |
 
 Each feature can be disabled or customized via keyword arguments.
@@ -26,7 +28,9 @@ Each feature can be disabled or customized via keyword arguments.
 
 | File | Description |
 |------|-------------|
-| `harness_research.py` | Interactive research assistant with web search and planning workflow |
+| `harness_research.py` | Interactive research assistant with web search, a plan/execute workflow, and an execute-mode loop that re-invokes the agent until every todo is complete |
+| `harness_data_processing.py` | Data-processing assistant over a folder of CSV files, demonstrating file-access tools and tool approval |
+| [`build_your_own_claw/`](./build_your_own_claw/README.md) | *Build your own claw* blog series — a personal finance assistant built step by step |
 
 ## Running
 
@@ -38,9 +42,29 @@ export FOUNDRY_MODEL="your-model-deployment-name"
 # Authenticate with Azure (required for AzureCliCredential)
 az login
 
-# Run the research sample
-python samples/02-agents/harness/harness_research.py
+# Run a sample against the released agent-framework (PEP 723 isolated env)
+uv run samples/02-agents/harness/harness_research.py
 ```
+
+### Running against the local repo
+
+To run a sample against your **local** `agent-framework` checkout (so it picks
+up uncommitted changes), use the workspace environment instead of the isolated
+PEP 723 env. From the `python/` directory, run the script with `uv run python`
+and add the `textual` UI dependency the harness console needs:
+
+```bash
+uv run --with textual python samples/02-agents/harness/harness_research.py
+uv run --with textual python samples/02-agents/harness/harness_data_processing.py
+```
+
+The workspace environment already provides the editable `agent-framework`
+packages plus the samples' other dependencies (`rich`, `python-dotenv`,
+`azure-identity`); only `textual` needs to be supplied with `--with`.
+
+> Note: invoking `uv run python <script>` (with `python`) bypasses the PEP 723
+> metadata and uses the workspace env; `uv run <script>` (without `python`)
+> uses the isolated env with the released package.
 
 ## Key Concepts
 
@@ -114,3 +138,27 @@ async with LocalShellTool(acknowledge_unsafe=True) as shell:
     )
 ```
 
+
+## Security Considerations
+
+Several harness capabilities extend the agent's trust boundary to external systems the developer
+configures. Each is opt-in and requires explicit configuration by the developer, who is responsible
+for vetting the external service, agent, skill source, or provider before enabling it:
+
+- **`background_agents`** (`BackgroundAgentsProvider`) — delegates work to developer-supplied agents,
+  which receive input from the parent and whose output is fed back into its context. A compromised
+  agent could exfiltrate data or inject adversarial content via indirect prompt injection. Vet all
+  supplied agents.
+- **External skill sources** (`skills_provider` with e.g. `MCPSkillsSource`) — load skill content,
+  and potentially scripts, from a remote source. A compromised source could return adversarial skills
+  (indirect prompt injection) or exfiltrate data. Only enable sources you trust.
+- **`AgentLoopMiddleware.with_judge`** — sends the request and the agent's latest response to a second,
+  external judge chat client on every iteration. A compromised judge could exfiltrate that data or
+  return manipulated feedback. Trust the judge as much as the primary model.
+- **`SummarizationStrategy`** (via `before_compaction_strategy` / `after_compaction_strategy`) — calls
+  out to an LLM whose output permanently becomes chat history. A compromised summarization service
+  could inject unsafe, persistent instructions. Only use a service you trust as much as the primary
+  model.
+- **Telemetry** — when observability is enabled, telemetry destinations are developer-configured.
+  Default telemetry is metadata only; enabling sensitive data additionally emits raw message content,
+  tool arguments, and tool results. See the [observability samples](../observability/README.md).

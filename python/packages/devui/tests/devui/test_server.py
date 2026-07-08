@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import MockAgent
+from conftest import MockAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 from fastapi.testclient import TestClient
 
 import agent_framework_devui
@@ -586,7 +586,7 @@ def test_serve_allows_non_loopback_with_explicit_token(monkeypatch):
     import uvicorn
 
     monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
-    run_args = {}
+    run_args: dict[str, int | str] = {}
 
     def fake_run(_app, *, host, port, **_kwargs):
         run_args["host"] = host

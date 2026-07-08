@@ -15,6 +15,7 @@ from ag_ui.core import (
     BaseEvent,
     CustomEvent,
     MessagesSnapshotEvent,
+    RunErrorEvent,
     RunStartedEvent,
     StateSnapshotEvent,
     TextMessageContentEvent,
@@ -46,6 +47,8 @@ from ._orchestration._predictive_state import PredictiveStateHandler
 from ._orchestration._tooling import collect_server_tools, merge_tools, register_additional_client_tools
 from ._run_common import (
     FlowState,
+    _approval_interrupt_for_function_call,  # type: ignore
+    _approval_steps_response_schema,  # type: ignore
     _build_run_finished_event,  # type: ignore
     _close_reasoning_block,  # type: ignore
     _emit_content,  # type: ignore
@@ -54,10 +57,16 @@ from ._run_common import (
     _has_only_tool_calls,  # type: ignore
     _normalize_resume_interrupts,  # type: ignore
     _reconstruct_messages_from_thread_snapshot,  # type: ignore
+    _resume_contract_error,  # type: ignore
     _resolve_ui_payload,  # type: ignore
     _stringify_tool_result,  # type: ignore
 )
-from ._snapshots import AGUIThreadSnapshot, _DEFAULT_STATE_INPUT_KEY, _SNAPSHOT_SCOPE_INPUT_KEY
+from ._snapshots import (
+    _DEFAULT_STATE_INPUT_KEY,
+    _SNAPSHOT_SCOPE_INPUT_KEY,
+    AGUIThreadSnapshot,
+    _clear_thread_snapshot_interrupt,
+)
 from ._utils import (
     canonical_function_arguments,
     convert_agui_tools_to_agent_framework,
@@ -174,10 +183,18 @@ def _extract_approved_state_updates(
     return updates
 
 
-def _resume_to_tool_messages(resume_payload: Any) -> list[dict[str, Any]]:
+def _resume_to_tool_messages(
+    resume_payload: Any,
+    *,
+    exclude_interrupt_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
     """Convert a resume payload into AG-UI tool messages for approval continuation."""
     result: list[dict[str, Any]] = []
     for interrupt in _normalize_resume_interrupts(resume_payload):
+        if interrupt.get("status") not in {None, "resolved"}:
+            continue
+        if exclude_interrupt_ids and interrupt["id"] in exclude_interrupt_ids:
+            continue
         value = interrupt.get("value")
         content: str
         if isinstance(value, str):
@@ -416,13 +433,27 @@ class _PendingApproval(TypedDict):
 
     name: str
     arguments: str | None
+    request_id: str | None
+    interrupt_id: str | None
 
 
 PendingApprovalEntry = _PendingApproval | str
+PendingApprovalKey = tuple[str, str]
 
 
-def _make_pending_approval_entry(name: str, arguments: str | None) -> _PendingApproval:
-    return {"name": name, "arguments": arguments}
+def _pending_approval_key(thread_id: str, interrupt_id: str) -> PendingApprovalKey:
+    """Build a structured pending-approval key scoped by thread and interrupt id."""
+    return (thread_id, interrupt_id)
+
+
+def _make_pending_approval_entry(
+    name: str,
+    arguments: str | None,
+    *,
+    request_id: str | None = None,
+    interrupt_id: str | None = None,
+) -> _PendingApproval:
+    return {"name": name, "arguments": arguments, "request_id": request_id, "interrupt_id": interrupt_id}
 
 
 def _pending_approval_name(entry: PendingApprovalEntry) -> str | None:
@@ -437,7 +468,328 @@ def _pending_approval_arguments(entry: PendingApprovalEntry) -> str | None:
     return entry["arguments"]
 
 
-def _evict_oldest_approvals(registry: dict[str, PendingApprovalEntry], max_size: int = 10_000) -> None:
+def _parse_json_object(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return cast(dict[str, Any], value)
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return cast(dict[str, Any], parsed) if isinstance(parsed, dict) else None
+
+
+def _thread_has_pending_approvals(
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] | None,
+    thread_id: str,
+) -> bool:
+    if not pending_approvals:
+        return False
+    return any(key[0] == thread_id for key in pending_approvals)
+
+
+def _pending_approval_interrupt_ids(
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] | None,
+    thread_id: str,
+) -> set[str]:
+    if not pending_approvals:
+        return set()
+    interrupt_ids: set[str] = set()
+    for key, entry in pending_approvals.items():
+        if key[0] != thread_id:
+            continue
+        if isinstance(entry, str):
+            interrupt_ids.add(key[1])
+            continue
+        interrupt_id = entry.get("interrupt_id") or entry.get("request_id") or key[1]
+        interrupt_ids.add(str(interrupt_id))
+    return interrupt_ids
+
+
+def _stored_pending_approval_interrupt_ids(interrupts: list[dict[str, Any]] | None) -> set[str]:
+    """Return stored interrupt ids that require server-side approval registry validation."""
+    if not interrupts:
+        return set()
+    interrupt_ids: set[str] = set()
+    for interrupt in interrupts:
+        metadata = interrupt.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        agent_framework_metadata = metadata.get("agent_framework")
+        if not isinstance(agent_framework_metadata, dict):
+            continue
+        if agent_framework_metadata.get("type") != "function_approval_request":
+            continue
+        if agent_framework_metadata.get("confirmation_tool_call_id"):
+            continue
+        interrupt_id = interrupt.get("id") or interrupt.get("interruptId")
+        if interrupt_id:
+            interrupt_ids.add(str(interrupt_id))
+    return interrupt_ids
+
+
+def _find_pending_approval_entry(
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] | None,
+    thread_id: str,
+    interrupt_id: str,
+) -> PendingApprovalEntry | None:
+    if pending_approvals is None:
+        return None
+    return pending_approvals.get(_pending_approval_key(thread_id, interrupt_id))
+
+
+def _pending_approval_alias_keys(
+    thread_id: str,
+    entry: PendingApprovalEntry,
+    *ids: str | None,
+) -> set[PendingApprovalKey]:
+    aliases = {item for item in ids if item}
+    if not isinstance(entry, str):
+        request_id = entry.get("request_id")
+        interrupt_id = entry.get("interrupt_id")
+        if request_id:
+            aliases.add(request_id)
+        if interrupt_id:
+            aliases.add(interrupt_id)
+    return {_pending_approval_key(thread_id, alias) for alias in aliases}
+
+
+def _consume_pending_approval_entry(
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry],
+    thread_id: str,
+    entry: PendingApprovalEntry,
+    *ids: str | None,
+) -> None:
+    for alias_key in _pending_approval_alias_keys(thread_id, entry, *ids):
+        pending_approvals.pop(alias_key, None)
+
+
+def _approval_arguments_match_pending(pending_arguments: str | None, response_arguments: str | None) -> bool:
+    return pending_arguments is None or response_arguments == pending_arguments
+
+
+def _json_schema_value_matches(original_value: Any, edited_value: Any) -> bool:
+    if isinstance(original_value, bool):
+        return isinstance(edited_value, bool)
+    if isinstance(original_value, int) and not isinstance(original_value, bool):
+        return isinstance(edited_value, int) and not isinstance(edited_value, bool)
+    if isinstance(original_value, float):
+        return isinstance(edited_value, (int, float)) and not isinstance(edited_value, bool)
+    if isinstance(original_value, str):
+        return isinstance(edited_value, str)
+    if isinstance(original_value, list):
+        return isinstance(edited_value, list)
+    if isinstance(original_value, dict):
+        return isinstance(edited_value, dict)
+    return True
+
+
+def _canonical_approval_resume_messages(
+    resume_payload: Any,
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] | None,
+    thread_id: str,
+    expected_interrupt_ids: set[str] | None = None,
+) -> tuple[list[dict[str, Any]], set[str], set[str], RunErrorEvent | None]:
+    """Translate canonical ResumeEntry approvals into existing approval response messages."""
+    expected_ids = set(expected_interrupt_ids or set())
+    if pending_approvals is None:
+        if not expected_ids:
+            return [], set(), set(), None
+        entries, contract_error, contract_code = _resume_contract_error(
+            resume_payload,
+            expected_ids,
+            required_code="APPROVAL_RESUME_REQUIRED",
+            invalid_code="APPROVAL_RESUME_INVALID",
+            unknown_code="APPROVAL_RESUME_NOT_FOUND",
+            missing_code="APPROVAL_RESUME_MISSING_INTERRUPT",
+        )
+        if contract_error is not None and contract_code is not None:
+            return [], set(), set(), RunErrorEvent(message=contract_error, code=contract_code)
+        cancelled_expected_ids = {str(entry["interrupt_id"]) for entry in entries if entry.get("status") == "cancelled"}
+        if cancelled_expected_ids:
+            interrupt_id = next(str(entry["interrupt_id"]) for entry in entries if entry.get("status") == "cancelled")
+            return (
+                [],
+                cancelled_expected_ids,
+                cancelled_expected_ids,
+                RunErrorEvent(
+                    message=f"Approval resume for interruptId '{interrupt_id}' was cancelled.",
+                    code="APPROVAL_RESUME_CANCELLED",
+                ),
+            )
+        interrupt_id = entries[0]["interrupt_id"] if entries else sorted(expected_ids)[0]
+        return (
+            [],
+            set(),
+            set(),
+            RunErrorEvent(
+                message=f"No pending approval interrupt found for resume interruptId '{interrupt_id}'.",
+                code="APPROVAL_RESUME_NOT_FOUND",
+            ),
+        )
+
+    messages: list[dict[str, Any]] = []
+    handled_ids: set[str] = set()
+    cancelled_ids: set[str] = set()
+    pending_interrupt_ids = _pending_approval_interrupt_ids(pending_approvals, thread_id)
+    contract_interrupt_ids = expected_ids | pending_interrupt_ids
+    if not contract_interrupt_ids:
+        return messages, handled_ids, cancelled_ids, None
+
+    entries, contract_error, contract_code = _resume_contract_error(
+        resume_payload,
+        contract_interrupt_ids,
+        required_code="APPROVAL_RESUME_REQUIRED",
+        invalid_code="APPROVAL_RESUME_INVALID",
+        unknown_code="APPROVAL_RESUME_NOT_FOUND",
+        missing_code="APPROVAL_RESUME_MISSING_INTERRUPT",
+    )
+    if contract_error is not None and contract_code is not None:
+        return [], handled_ids, cancelled_ids, RunErrorEvent(message=contract_error, code=contract_code)
+
+    has_pending_for_thread = _thread_has_pending_approvals(pending_approvals, thread_id)
+    entries_by_interrupt_id: dict[str, PendingApprovalEntry | None] = {}
+    for entry in entries:
+        interrupt_id = cast(str, entry["interrupt_id"])
+        status = entry["status"]
+        pending_entry = _find_pending_approval_entry(pending_approvals, thread_id, interrupt_id)
+        if pending_entry is None:
+            if status == "cancelled" and interrupt_id in expected_ids:
+                handled_ids.add(interrupt_id)
+                cancelled_ids.add(interrupt_id)
+                entries_by_interrupt_id[interrupt_id] = None
+                continue
+            if has_pending_for_thread or interrupt_id in expected_ids:
+                return (
+                    [],
+                    handled_ids,
+                    cancelled_ids,
+                    RunErrorEvent(
+                        message=f"No pending approval interrupt found for resume interruptId '{interrupt_id}'.",
+                        code="APPROVAL_RESUME_NOT_FOUND",
+                    ),
+                )
+            continue
+
+        handled_ids.add(interrupt_id)
+        entries_by_interrupt_id[interrupt_id] = pending_entry
+        if status == "cancelled":
+            cancelled_ids.add(interrupt_id)
+            continue
+        if status != "resolved":
+            return (
+                [],
+                handled_ids,
+                cancelled_ids,
+                RunErrorEvent(
+                    message=f"Unsupported approval resume status '{status}' for interruptId '{interrupt_id}'.",
+                    code="APPROVAL_RESUME_INVALID",
+                ),
+            )
+
+    if cancelled_ids:
+        for interrupt_id in cancelled_ids:
+            pending_entry = entries_by_interrupt_id.get(interrupt_id)
+            if pending_entry is not None:
+                _consume_pending_approval_entry(pending_approvals, thread_id, pending_entry, interrupt_id)
+        interrupt_id = next(str(entry["interrupt_id"]) for entry in entries if entry.get("status") == "cancelled")
+        return (
+            [],
+            handled_ids,
+            cancelled_ids,
+            RunErrorEvent(
+                message=f"Approval resume for interruptId '{interrupt_id}' was cancelled.",
+                code="APPROVAL_RESUME_CANCELLED",
+            ),
+        )
+
+    argument_updates: list[tuple[_PendingApproval, str]] = []
+    for entry in entries:
+        interrupt_id = cast(str, entry["interrupt_id"])
+        pending_entry = entries_by_interrupt_id.get(interrupt_id)
+        if pending_entry is None:
+            continue
+
+        payload = _parse_json_object(entry.get("payload"))
+        if payload is None:
+            return (
+                [],
+                handled_ids,
+                cancelled_ids,
+                RunErrorEvent(
+                    message=f"Approval resume for interruptId '{interrupt_id}' must include an object payload.",
+                    code="APPROVAL_RESUME_INVALID",
+                ),
+            )
+        accepted = payload.get("accepted", payload.get("approved"))
+        if not isinstance(accepted, bool):
+            return (
+                [],
+                handled_ids,
+                cancelled_ids,
+                RunErrorEvent(
+                    message=f"Approval resume for interruptId '{interrupt_id}' must include a boolean accepted value.",
+                    code="APPROVAL_RESUME_INVALID",
+                ),
+            )
+
+        pending_arguments = _pending_approval_arguments(pending_entry)
+        original_arguments = _parse_json_object(pending_arguments) or {}
+        edited_arguments = {key: value for key, value in payload.items() if key not in {"accepted", "approved"}}
+        if not set(edited_arguments).issubset(set(original_arguments)):
+            return (
+                [],
+                handled_ids,
+                cancelled_ids,
+                RunErrorEvent(
+                    message=f"Approval resume for interruptId '{interrupt_id}' includes unsupported edited arguments.",
+                    code="APPROVAL_RESUME_INVALID",
+                ),
+            )
+        for name, edited_value in edited_arguments.items():
+            original_value = original_arguments[name]
+            if not _json_schema_value_matches(original_value, edited_value):
+                return (
+                    [],
+                    handled_ids,
+                    cancelled_ids,
+                    RunErrorEvent(
+                        message=(
+                            f"Approval resume for interruptId '{interrupt_id}' has invalid type for edited "
+                            f"argument '{name}'."
+                        ),
+                        code="APPROVAL_RESUME_INVALID_RESPONSE",
+                    ),
+                )
+
+        merged_arguments = {**original_arguments, **edited_arguments}
+        if not isinstance(pending_entry, str):
+            argument_updates.append(
+                (pending_entry, json.dumps(make_json_safe(merged_arguments), sort_keys=True, separators=(",", ":")))
+            )
+        messages.append(
+            {
+                "role": "user",
+                "function_approvals": [
+                    {
+                        "id": interrupt_id,
+                        "call_id": interrupt_id,
+                        "name": _pending_approval_name(pending_entry) or "",
+                        "approved": accepted,
+                        "arguments": merged_arguments,
+                    }
+                ],
+            }
+        )
+
+    for pending_entry, arguments_json in argument_updates:
+        pending_entry["arguments"] = arguments_json
+
+    return messages, handled_ids, cancelled_ids, None
+
+
+def _evict_oldest_approvals(registry: dict[PendingApprovalKey, PendingApprovalEntry], max_size: int = 10_000) -> None:
     """Evict the oldest entries from the pending-approvals registry (LRU).
 
     Only effective when *registry* is an ``OrderedDict``;  plain dicts are
@@ -457,7 +809,7 @@ async def _resolve_approval_responses(
     tools: list[Any],
     agent: SupportsAgentRun,
     run_kwargs: dict[str, Any],
-    pending_approvals: dict[str, PendingApprovalEntry] | None = None,
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] | None = None,
     thread_id: str = "",
 ) -> list[Content]:
     """Execute approved function calls and replace approval content with results.
@@ -471,7 +823,7 @@ async def _resolve_approval_responses(
         agent: The agent instance (to get client and config)
         run_kwargs: Kwargs for tool execution
         pending_approvals: Server-side registry of pending approval requests.
-            Keys are ``{thread_id}:{request_id}``, values are function names.
+            Keys are ``(thread_id, request_id)``, values are function names.
             When provided, every approval response is validated against this
             registry to prevent bypass, function name spoofing, and replay.
         thread_id: The conversation thread ID used to scope registry keys.
@@ -500,7 +852,7 @@ async def _resolve_approval_responses(
         for resp in approved_responses + rejected_responses:
             resp_id = resp.id or ""
             resp_name = resp.function_call.name if resp.function_call else None
-            registry_key = f"{thread_id}:{resp_id}"
+            registry_key = _pending_approval_key(thread_id, resp_id)
 
             if registry_key not in pending_approvals:
                 logger.warning(
@@ -524,7 +876,7 @@ async def _resolve_approval_responses(
 
             pending_arguments = _pending_approval_arguments(pending_entry)
             response_arguments = canonical_function_arguments(resp.function_call)
-            if pending_arguments is not None and response_arguments != pending_arguments:
+            if not _approval_arguments_match_pending(pending_arguments, response_arguments):
                 logger.warning(
                     "Rejected approval response id=%s: function arguments mismatch",
                     resp_id,
@@ -533,7 +885,13 @@ async def _resolve_approval_responses(
                 continue
 
             # Valid — consume entry to prevent replay
-            del pending_approvals[registry_key]
+            _consume_pending_approval_entry(
+                pending_approvals,
+                thread_id,
+                pending_entry,
+                resp_id,
+                resp.function_call.call_id if resp.function_call else None,
+            )
             if resp.approved:
                 validated.append(resp)
             else:
@@ -594,7 +952,7 @@ async def _resolve_approval_responses(
             Content.from_function_result(call_id=call_id, result="Error: Tool call invocation failed.")
         )
 
-    _replace_approval_contents_with_results(messages, fcc_todo, approved_results)  # type: ignore
+    _replace_approval_contents_with_results(messages, fcc_todo, approved_results)
 
     # Post-process: Convert user messages with function_result content to proper tool messages.
     # After _replace_approval_contents_with_results, approved tool calls have their results
@@ -718,8 +1076,11 @@ def _build_messages_snapshot(
 
     # Add assistant message with tool calls only (no content)
     if flow.pending_tool_calls:
+        tool_call_message_id = (
+            generate_event_id() if flow.accumulated_text else (flow.message_id or generate_event_id())
+        )
         tool_call_message = {
-            "id": flow.message_id or generate_event_id(),
+            "id": tool_call_message_id,
             "role": "assistant",
             "tool_calls": flow.pending_tool_calls.copy(),
         }
@@ -732,10 +1093,7 @@ def _build_messages_snapshot(
     # This is a separate message from the tool calls message to maintain
     # the expected AG-UI protocol format (see issue #3619)
     if flow.accumulated_text:
-        # Use a new ID for the content message if we had tool calls (separate message)
-        content_message_id = (
-            generate_event_id() if flow.pending_tool_calls else (flow.message_id or generate_event_id())
-        )
+        content_message_id = flow.message_id or generate_event_id()
         all_messages.append(
             {
                 "id": content_message_id,
@@ -834,7 +1192,7 @@ async def run_agent_stream(
     input_data: dict[str, Any],
     agent: SupportsAgentRun,
     config: AgentConfig,
-    pending_approvals: dict[str, PendingApprovalEntry] | None = None,
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] | None = None,
 ) -> AsyncGenerator[BaseEvent]:
     """Run agent and yield AG-UI events.
 
@@ -846,7 +1204,7 @@ async def run_agent_stream(
         agent: The Agent Framework agent to run
         config: Agent configuration
         pending_approvals: Optional server-side registry of pending approval
-            requests.  Keys are ``{thread_id}:{request_id}``, values are
+            requests.  Keys are ``(thread_id, request_id)``, values are
             function names.  When provided, approval responses are validated
             against this registry to prevent bypass, spoofing, and replay.
 
@@ -876,9 +1234,16 @@ async def run_agent_stream(
         return
 
     stored_snapshot: AGUIThreadSnapshot | None = None
+    stored_pending_approval_interrupt_ids: set[str] = set()
+    seeded_resume_from_snapshot = False
     if config.snapshot_store is not None and snapshot_scope is not None:
         stored_snapshot = await config.snapshot_store.get(scope=snapshot_scope, thread_id=thread_id)
-        if stored_snapshot is not None and resume_payload is None:
+        if stored_snapshot is not None:
+            stored_pending_approval_interrupt_ids = _stored_pending_approval_interrupt_ids(stored_snapshot.interrupt)
+        if stored_snapshot is not None and resume_payload is not None and stored_pending_approval_interrupt_ids:
+            raw_messages = [copy.deepcopy(message) for message in stored_snapshot.messages] + raw_messages
+            seeded_resume_from_snapshot = True
+        elif stored_snapshot is not None:
             raw_messages = _reconstruct_messages_from_thread_snapshot(
                 stored_messages=stored_snapshot.messages,
                 incoming_messages=raw_messages,
@@ -921,9 +1286,35 @@ async def run_agent_stream(
             current_state=flow.current_state,
         )
 
-    resume_messages = _resume_to_tool_messages(resume_payload)
+    approval_resume_messages, handled_resume_ids, cancelled_resume_ids, resume_error = (
+        _canonical_approval_resume_messages(
+            resume_payload,
+            pending_approvals,
+            thread_id,
+            expected_interrupt_ids=stored_pending_approval_interrupt_ids or None,
+        )
+    )
+    if resume_error is not None:
+        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        if (
+            getattr(resume_error, "code", None) == "APPROVAL_RESUME_CANCELLED"
+            and config.snapshot_store is not None
+            and snapshot_scope is not None
+        ):
+            await _clear_thread_snapshot_interrupt(
+                snapshot_store=config.snapshot_store,
+                scope=snapshot_scope,
+                thread_id=thread_id,
+                interrupt_ids=cancelled_resume_ids or None,
+            )
+        yield resume_error
+        return
+    resume_messages = _resume_to_tool_messages(resume_payload, exclude_interrupt_ids=handled_resume_ids)
     if available_interrupts:
         logger.debug("Received available interrupts metadata: %s", available_interrupts)
+    if approval_resume_messages:
+        logger.info(f"Appending {len(approval_resume_messages)} synthesized approval resume message(s).")
+        raw_messages.extend(approval_resume_messages)
     if resume_messages:
         logger.info(f"Appending {len(resume_messages)} synthesized resume message(s) to AG-UI input.")
         raw_messages.extend(resume_messages)
@@ -1015,9 +1406,9 @@ async def run_agent_stream(
         # Persist the completed confirmation turn with interrupt=None so hydration
         # does not replay the stale pending interrupt after the user responded.
         persisted_messages = snapshot_messages + _text_events_to_snapshot_messages(confirmation_events)
-        if resume_payload is not None and stored_snapshot is not None:
-            # Resume requests carry only the synthesized interrupt response, so prepend
-            # the stored thread history to avoid persisting a truncated thread.
+        if resume_payload is not None and stored_snapshot is not None and not seeded_resume_from_snapshot:
+            # Generic resume requests carry only the synthesized response, so prepend
+            # stored history unless this run already seeded raw messages from it.
             persisted_messages = [copy.deepcopy(message) for message in stored_snapshot.messages] + persisted_messages
         await _save_thread_snapshot(
             config=config,
@@ -1092,10 +1483,16 @@ async def run_agent_stream(
             # Register pending approval requests so we can validate responses later
             if content_type == "function_approval_request" and pending_approvals is not None:
                 if content.id and content.function_call and content.function_call.name:
-                    pending_approvals[f"{thread_id}:{content.id}"] = _make_pending_approval_entry(
+                    canonical_interrupt_id = content.function_call.call_id or content.id
+                    pending_entry = _make_pending_approval_entry(
                         content.function_call.name,
                         canonical_function_arguments(content.function_call),
+                        request_id=str(content.id),
+                        interrupt_id=str(canonical_interrupt_id),
                     )
+                    pending_approvals[_pending_approval_key(thread_id, str(content.id))] = pending_entry
+                    if canonical_interrupt_id:
+                        pending_approvals[_pending_approval_key(thread_id, str(canonical_interrupt_id))] = pending_entry
                     # Evict oldest entries if the registry exceeds a safe bound (LRU)
                     _evict_oldest_approvals(pending_approvals, max_size=10_000)
                 else:
@@ -1250,17 +1647,17 @@ async def run_agent_stream(
                         flow.tool_calls_ended.add(confirm_id)  # Mark as ended since we emit End event
                         flow.waiting_for_approval = True
                         flow.interrupts.append(
-                            {
-                                "id": str(confirm_id),
-                                "value": {
-                                    "type": "function_approval_request",
-                                    "function_call": {
-                                        "call_id": tool_call_id,
-                                        "name": tool_name,
-                                        "arguments": function_arguments,
-                                    },
-                                },
-                            }
+                            _approval_interrupt_for_function_call(
+                                interrupt_id=str(confirm_id),
+                                function_call=Content.from_function_call(
+                                    call_id=tool_call_id,
+                                    name=tool_name,
+                                    arguments=function_arguments,
+                                ),
+                                message=f"Approve the proposed changes from {tool_name}?",
+                                response_schema=_approval_steps_response_schema(),
+                                metadata={"confirmation_tool_call_id": confirm_id},
+                            )
                         )
 
     # Close any open reasoning block
@@ -1297,9 +1694,9 @@ async def run_agent_stream(
     # Always emit RunFinished - confirm_changes tool call is complete (Start -> Args -> End)
     # The UI will show confirmation dialog and send a new request when user responds
     persisted_messages = latest_messages_snapshot
-    if resume_payload is not None and stored_snapshot is not None:
-        # Resume requests carry only the synthesized interrupt response, so prepend
-        # the stored thread history to avoid persisting a truncated thread.
+    if resume_payload is not None and stored_snapshot is not None and not seeded_resume_from_snapshot:
+        # Generic resume requests carry only the synthesized response, so prepend
+        # stored history unless this run already seeded raw messages from it.
         persisted_messages = [copy.deepcopy(message) for message in stored_snapshot.messages] + persisted_messages
     await _save_thread_snapshot(
         config=config,

@@ -2,7 +2,7 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
@@ -35,14 +35,14 @@ public static class Program
 {
     private static async Task Main()
     {
-        // Set up the Azure OpenAI client
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
-        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
+        // Set up the Azure AI Foundry client
+        var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+        var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
+        AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
         // Create agents
-        AIAgent spamDetectionAgent = GetSpamDetectionAgent(chatClient);
-        AIAgent emailAssistantAgent = GetEmailAssistantAgent(chatClient);
+        AIAgent spamDetectionAgent = GetSpamDetectionAgent(aiProjectClient, deploymentName);
+        AIAgent emailAssistantAgent = GetEmailAssistantAgent(aiProjectClient, deploymentName);
 
         // Create executors
         var spamDetectionExecutor = new SpamDetectionExecutor(spamDetectionAgent);
@@ -111,11 +111,12 @@ public static class Program
     /// Creates a spam detection agent.
     /// </summary>
     /// <returns>A ChatClientAgent configured for spam detection</returns>
-    private static ChatClientAgent GetSpamDetectionAgent(IChatClient chatClient) =>
-        new(chatClient, new ChatClientAgentOptions()
+    private static ChatClientAgent GetSpamDetectionAgent(AIProjectClient client, string model) =>
+        client.AsAIAgent(new ChatClientAgentOptions()
         {
             ChatOptions = new()
             {
+                ModelId = model,
                 Instructions = "You are a spam detection assistant that identifies spam emails. Be less confident in your assessments.",
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<DetectionResult>()
             }
@@ -125,11 +126,12 @@ public static class Program
     /// Creates an email assistant agent.
     /// </summary>
     /// <returns>A ChatClientAgent configured for email assistance</returns>
-    private static ChatClientAgent GetEmailAssistantAgent(IChatClient chatClient) =>
-        new(chatClient, new ChatClientAgentOptions()
+    private static ChatClientAgent GetEmailAssistantAgent(AIProjectClient client, string model) =>
+        client.AsAIAgent(new ChatClientAgentOptions()
         {
             ChatOptions = new()
             {
+                ModelId = model,
                 Instructions = "You are an email assistant that helps users draft responses to emails with professionalism.",
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<EmailResponse>()
             }

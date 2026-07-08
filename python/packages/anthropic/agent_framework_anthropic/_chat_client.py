@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
+from typing import Any, ClassVar, Final, Generic, Literal, TypedDict, cast
 
 from agent_framework import (
     Annotation,
@@ -31,7 +31,9 @@ from agent_framework._telemetry import get_user_agent
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.observability import ChatTelemetryLayer
-from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex
+from anthropic import AsyncAnthropic, AsyncAnthropicFoundry
+from anthropic.lib.bedrock import AsyncAnthropicBedrock
+from anthropic.lib.vertex import AsyncAnthropicVertex
 from anthropic.types.beta import (
     BetaContentBlock,
     BetaMessage,
@@ -39,6 +41,7 @@ from anthropic.types.beta import (
     BetaRawContentBlockDelta,
     BetaRawMessageStreamEvent,
     BetaTextBlock,
+    BetaTextBlockParam,
     BetaUsage,
 )
 from anthropic.types.beta.beta_bash_code_execution_tool_result_error import (
@@ -52,17 +55,17 @@ from anthropic.types.beta.beta_encrypted_code_execution_result_block import Beta
 from pydantic import BaseModel
 
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 
 
 __all__ = [
@@ -76,7 +79,6 @@ logger = logging.getLogger("agent_framework.anthropic")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
 BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
-STRUCTURED_OUTPUTS_BETA_FLAG: Final[str] = "structured-outputs-2025-11-13"
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 AnthropicAsyncClient = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex
@@ -124,8 +126,9 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
         response_format: Structured output schema.
         metadata: Request metadata with user_id for tracking.
         user: User identifier, translates to ``metadata.user_id`` in Anthropic API.
-        instructions: System instructions for the model,
-            translates to ``system`` in Anthropic API.
+        instructions: System instructions for the model, translating to ``system`` in
+            the Anthropic API. Use a string for generic instructions or structured
+            Anthropic system blocks when you need prompt-cache ``cache_control``.
         top_k: Number of top tokens to consider for sampling.
         service_tier: Service tier ("auto" or "standard_only").
         thinking: Extended thinking configuration for Claude models.
@@ -143,6 +146,9 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
 
     # Extended thinking (Claude models)
     thinking: ThinkingConfig
+
+    # Anthropic-native structured system prompt support
+    instructions: str | Sequence[BetaTextBlockParam]  # type: ignore[misc]
 
     # Skills
     container: dict[str, Any]
@@ -243,7 +249,7 @@ class RawAnthropicClient(
         Use ``AnthropicClient`` instead for a fully-featured client with all layers applied.
     """
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "anthropic"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "anthropic"
 
     def __init__(
         self,
@@ -539,7 +545,7 @@ class RawAnthropicClient(
         if stream:
             # Streaming mode
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
-                async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):  # type: ignore[misc]
+                async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
                     parsed_chunk = self._process_stream_event(chunk)
                     if parsed_chunk:
                         yield parsed_chunk
@@ -548,7 +554,7 @@ class RawAnthropicClient(
 
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
-            message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)  # type: ignore[misc]
+            message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
             return self._process_message(message, options)
 
         return _get_response()
@@ -571,13 +577,6 @@ class RawAnthropicClient(
         Returns:
             A dictionary of run options for the Anthropic client.
         """
-        # Prepend instructions from options if they exist
-        instructions = options.get("instructions")
-        if instructions:
-            from agent_framework._types import prepend_instructions_to_messages
-
-            messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
-
         # Start with a copy of options, excluding keys we handle separately
         run_options: dict[str, Any] = {
             k: v for k, v in options.items() if v is not None and k not in {"instructions", "response_format"}
@@ -598,6 +597,16 @@ class RawAnthropicClient(
         _apply_option_translations(filtered_kwargs)
         run_options.update(filtered_kwargs)
 
+        # system message - Anthropic expects system instructions as a separate request parameter
+        instructions = options.get("instructions")
+        if instructions is not None:
+            if self._is_text_instructions(instructions):
+                run_options["system"] = self._prepare_text_instructions_for_anthropic(messages, instructions)
+            else:
+                run_options["system"] = self._extract_structured_instructions(messages, instructions)
+        elif messages and isinstance(messages[0], Message) and messages[0].role == "system":
+            run_options["system"] = messages[0].text
+
         # model
         if not run_options.get("model"):
             if not self.model:
@@ -610,10 +619,6 @@ class RawAnthropicClient(
 
         # messages
         run_options["messages"] = self._prepare_messages_for_anthropic(messages)
-
-        # system message - first system message is passed as instructions
-        if messages and isinstance(messages[0], Message) and messages[0].role == "system":
-            run_options["system"] = messages[0].text
 
         # betas
         run_options["betas"] = self._prepare_betas(options)
@@ -632,14 +637,49 @@ class RawAnthropicClient(
         if tools_config := self._prepare_tools_for_anthropic(options):
             run_options.update(tools_config)
 
-        # response_format - use native output_format for structured outputs
+        # response_format - emit Anthropic's GA ``output_config.format`` shape.
+        # The deprecated ``output_format`` parameter (gated by the
+        # ``structured-outputs-2025-11-13`` beta flag) produced concatenated /
+        # malformed JSON when combined with tools — the GA path does not.
+        # Merge into any caller-supplied ``output_config`` so e.g. the
+        # adaptive-thinking ``effort`` setting survives the transformation.
         response_format = options.get("response_format")
         if response_format is not None:
-            run_options["output_format"] = self._prepare_response_format(response_format)
-            # Add the structured outputs beta flag
-            run_options["betas"].add(STRUCTURED_OUTPUTS_BETA_FLAG)
+            output_config = dict(run_options.get("output_config") or {})
+            output_config["format"] = self._prepare_response_format(response_format)
+            run_options["output_config"] = output_config
 
         return run_options
+
+    def _extract_structured_instructions(
+        self,
+        messages: Sequence[Message],
+        instructions: Any,
+    ) -> Sequence[BetaTextBlockParam] | Sequence[Mapping[str, Any]]:
+        if messages and isinstance(messages[0], Message) and messages[0].role == "system":
+            raise ValueError("structured Anthropic instructions cannot be combined with a leading system message.")
+
+        return cast(Sequence[BetaTextBlockParam] | Sequence[Mapping[str, Any]], instructions)
+
+    def _prepare_text_instructions_for_anthropic(self, messages: Sequence[Message], instructions: Any) -> str:
+        if isinstance(instructions, str):
+            text_instructions = instructions
+        else:
+            text_instructions = "\n\n".join(cast(Sequence[str], instructions))
+
+        if messages and isinstance(messages[0], Message) and messages[0].role == "system":
+            return "\n\n".join(part for part in [text_instructions, messages[0].text] if part)
+
+        return text_instructions
+
+    def _is_text_instructions(self, instructions: Any) -> bool:
+        if isinstance(instructions, str):
+            return True
+
+        if not isinstance(instructions, Sequence):
+            return False
+
+        return all(isinstance(instruction, str) for instruction in cast(Sequence[object], instructions))
 
     def _prepare_betas(self, options: Mapping[str, Any]) -> set[str]:
         """Prepare the beta flags for the Anthropic API request.
@@ -657,7 +697,7 @@ class RawAnthropicClient(
         }
 
     def _prepare_response_format(self, response_format: type[BaseModel] | dict[str, Any]) -> dict[str, Any]:
-        """Prepare the output_format parameter for structured output.
+        """Build the ``output_config.format`` payload for Anthropic structured outputs.
 
         Args:
             response_format: Either a Pydantic model class or a dict with the schema specification.
@@ -665,7 +705,8 @@ class RawAnthropicClient(
                 or direct format with "schema" key, or the raw schema dict itself.
 
         Returns:
-            A dictionary representing the output_format for Anthropic's structured outputs.
+            A ``{"type": "json_schema", "schema": ...}`` dict — the value placed
+            under ``output_config["format"]`` on the GA structured-outputs path.
         """
         if isinstance(response_format, dict):
             if "json_schema" in response_format:
@@ -696,11 +737,79 @@ class RawAnthropicClient(
 
         This skips the first message if it is a system message,
         as Anthropic expects system instructions as a separate parameter.
+
+        Anthropic's API requires that the conversation ends with a user message.
+        If the last message is from the assistant, a synthetic user turn is
+        appended when it will not break Anthropic tool_use/tool_result pairing.
         """
         # first system message is passed as instructions
         if messages and isinstance(messages[0], Message) and messages[0].role == "system":
-            return [self._prepare_message_for_anthropic(msg) for msg in messages[1:]]
-        return [self._prepare_message_for_anthropic(msg) for msg in messages]
+            msgs = list(messages[1:])
+        else:
+            msgs = list(messages)
+
+        result: list[dict[str, Any]] = []
+        for msg in msgs:
+            result.extend(self._prepare_message_groups_for_anthropic(msg))
+
+        # Anthropic requires the conversation to end with a user message.
+        # Append a synthetic user turn so chained agent outputs work as
+        # valid context for the next agent without rewriting the assistant message.
+        if result and result[-1].get("role") == "assistant" and not self._message_has_tool_use(result[-1]):
+            result.append({"role": "user", "content": "Continue"})
+
+        return result
+
+    def _prepare_message_groups_for_anthropic(self, message: Message) -> list[dict[str, Any]]:
+        """Prepare a Message and split Anthropic content blocks into valid role groups."""
+        prepared_message = self._prepare_message_for_anthropic(message)
+        content = prepared_message.get("content")
+        if not isinstance(content, list):
+            return [prepared_message]
+
+        default_role = cast(str, prepared_message.get("role", "user"))
+        result: list[dict[str, Any]] = []
+        current_role: str | None = None
+        current_content: list[dict[str, Any]] = []
+
+        for content_block in cast(list[dict[str, Any]], content):
+            block_role = self._role_for_anthropic_content_block(content_block, default_role)
+            if current_content and current_role != block_role:
+                result.append({"role": current_role, "content": current_content})
+                current_content = []
+            current_role = block_role
+            current_content.append(content_block)
+
+        if current_content:
+            result.append({"role": current_role or default_role, "content": current_content})
+
+        return result or [prepared_message]
+
+    def _role_for_anthropic_content_block(self, content_block: Mapping[str, Any], default_role: str) -> str:
+        """Return the Anthropic message role required for a content block."""
+        match content_block:
+            case {"type": "tool_use" | "mcp_tool_use" | "server_tool_use"}:
+                return "assistant"
+            case {"type": "tool_result" | "mcp_tool_result"}:
+                return "user"
+            case _:
+                return default_role
+
+    def _message_has_tool_use(self, message: dict[str, Any]) -> bool:
+        """Return whether an Anthropic message contains tool_use blocks."""
+        content: object = message.get("content")
+        if not isinstance(content, list):
+            return False
+
+        content_blocks = cast(list[object], content)
+        for content_block in content_blocks:
+            match content_block:
+                case {"type": "tool_use" | "mcp_tool_use" | "server_tool_use"}:
+                    return True
+                case _:
+                    pass
+
+        return False
 
     def _prepare_message_for_anthropic(self, message: Message) -> dict[str, Any]:
         """Prepare a Message for the Anthropic client.
@@ -723,7 +832,7 @@ class RawAnthropicClient(
                         a_content.append({
                             "type": "image",
                             "source": {
-                                "data": _get_data_bytes_as_str(content),  # type: ignore[attr-defined]
+                                "data": _get_data_bytes_as_str(content),
                                 "media_type": content.media_type,
                                 "type": "base64",
                             },
@@ -755,7 +864,7 @@ class RawAnthropicClient(
                                 tool_content.append({
                                     "type": "image",
                                     "source": {
-                                        "data": _get_data_bytes_as_str(item),  # type: ignore[attr-defined]
+                                        "data": _get_data_bytes_as_str(item),
                                         "media_type": item.media_type,
                                         "type": "base64",
                                     },
@@ -1023,9 +1132,11 @@ class RawAnthropicClient(
         if usage.input_tokens is not None:
             usage_details["input_token_count"] = usage.input_tokens
         if usage.cache_creation_input_tokens is not None:
-            usage_details["anthropic.cache_creation_input_tokens"] = usage.cache_creation_input_tokens  # type: ignore[typeddict-unknown-key]
+            usage_details["anthropic.cache_creation_input_tokens"] = usage.cache_creation_input_tokens
+            usage_details["cache_creation_input_token_count"] = usage.cache_creation_input_tokens
         if usage.cache_read_input_tokens is not None:
-            usage_details["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens  # type: ignore[typeddict-unknown-key]
+            usage_details["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens
+            usage_details["cache_read_input_token_count"] = usage.cache_read_input_tokens
         return usage_details
 
     def _parse_contents_from_anthropic(

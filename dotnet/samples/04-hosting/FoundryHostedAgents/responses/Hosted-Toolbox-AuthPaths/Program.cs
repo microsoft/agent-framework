@@ -11,7 +11,7 @@
 //
 // Required environment variables:
 //   AZURE_AI_PROJECT_ENDPOINT (local-dev) OR FOUNDRY_PROJECT_ENDPOINT (hosted runtime)
-//                                     - Azure AI Foundry project endpoint. The Foundry hosted
+//                                     - Foundry project endpoint. The Foundry hosted
 //                                       runtime auto-injects FOUNDRY_PROJECT_ENDPOINT; locally
 //                                       set AZURE_AI_PROJECT_ENDPOINT (the AF-repo convention).
 //   TOOLBOX_NAME                      - Name of the Foundry Toolbox to load
@@ -62,7 +62,7 @@ TokenCredential credential = new ChainedTokenCredential(
     new DefaultAzureCredential());
 
 // Notes on toolbox wiring — there are two ways to attach a Foundry Toolbox to an agent:
-//   - Server-side "baked-in" (what this sample uses): calling AddFoundryToolboxes(name)
+//   - Server-side "baked-in" (what this sample uses): calling AddFoundryToolboxes(credential, name)
 //     below registers the toolbox with the Foundry.Hosting layer, which resolves that
 //     toolbox's MCP tools once at startup and automatically makes them available to the
 //     agent on every request. The agent code does nothing per request.
@@ -94,7 +94,7 @@ builder.Services.AddFoundryResponses(agent);
 // Pre-register the toolbox name so FoundryToolboxService resolves the foundry-toolbox://
 // marker at request time. With FOUNDRY_PROJECT_ENDPOINT injected by the platform, startup
 // MCP tools/list against the toolbox proxy is typically <100ms in-region.
-builder.Services.AddFoundryToolboxes(toolboxName);
+builder.Services.AddFoundryToolboxes(credential, toolboxName);
 
 var app = builder.Build();
 app.MapFoundryResponses();

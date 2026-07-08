@@ -23,6 +23,7 @@ from agent_framework import (
     Message,
     ResponseStream,
     ToolTypes,
+    UsageDetails,
     load_settings,
     normalize_messages,
     normalize_tools,
@@ -42,9 +43,9 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import StreamEvent, TextBlock
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # pragma: no cover
 else:
@@ -377,6 +378,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         self._default_options = opts
         self._started = False
         self._current_session_id: str | None = None
+        self._structured_output: Any = None
 
     def _normalize_tools(
         self,
@@ -392,7 +394,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         non_builtin_tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] = []
         if not isinstance(tools, list):
-            tools = [tools]  # type: ignore[assignment, reportUnknownVariableType]
+            tools = [tools]
         for tool in tools:  # type: ignore[reportUnknownVariableType]
             if isinstance(tool, str):
                 self._builtin_tools.append(tool)
@@ -400,7 +402,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                 non_builtin_tools.append(tool)  # type: ignore[union-attr, reportUnknownArgumentType]
         if not non_builtin_tools:
             return
-        self._custom_tools.extend(normalize_tools(non_builtin_tools))  # type: ignore[reportUnknownVariableType]
+        self._custom_tools.extend(normalize_tools(non_builtin_tools))
 
     async def __aenter__(self) -> RawClaudeAgent[OptionsT]:
         """Start the agent when entering async context."""
@@ -685,11 +687,10 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         Returns:
             An AgentResponse with structured_output set as value if present.
         """
-        structured_output = getattr(self, "_structured_output", None)
-        return AgentResponse.from_updates(updates, value=structured_output)
+        return AgentResponse.from_updates(updates, value=self._structured_output)
 
     @overload
-    def run(  # type: ignore[override]
+    def run(
         self,
         messages: AgentRunInputs | None = None,
         *,
@@ -700,7 +701,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
     ) -> Awaitable[AgentResponse[Any]]: ...
 
     @overload
-    def run(  # type: ignore[override]
+    def run(
         self,
         messages: AgentRunInputs | None = None,
         *,
@@ -717,7 +718,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         stream: bool = False,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,  # type: ignore
+        **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent with the given messages.
 
@@ -757,7 +758,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         session = session or self.create_session()
 
         # Ensure we're connected to the right session
-        await self._ensure_session(session.service_session_id)
+        await self._ensure_session(self._get_chat_conversation_id(session))
 
         if not self._client:
             raise RuntimeError("Claude SDK client not initialized.")
@@ -823,6 +824,34 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                     raise AgentException(f"Claude API error: {error_msg}")
                 session_id = message.session_id
                 structured_output = message.structured_output
+                usage = message.usage or {}
+                input_tokens = usage.get("input_tokens")
+                output_tokens = usage.get("output_tokens")
+                total_token_count = (
+                    input_tokens + output_tokens
+                    if isinstance(input_tokens, int) and isinstance(output_tokens, int)
+                    else None
+                )
+                usage_details = UsageDetails(**{
+                    key: value
+                    for key, value in {
+                        "input_token_count": input_tokens,
+                        "output_token_count": output_tokens,
+                        "total_token_count": total_token_count,
+                        "cache_creation_input_token_count": usage.get("cache_creation_input_tokens"),
+                        "cache_read_input_token_count": usage.get("cache_read_input_tokens"),
+                    }.items()
+                    if isinstance(value, int)
+                })
+                finish_reason = message.stop_reason
+                if usage_details or finish_reason:
+                    yield AgentResponseUpdate(
+                        contents=[Content.from_usage(usage_details, raw_representation=message)]
+                        if usage_details
+                        else None,
+                        finish_reason=cast(Any, finish_reason),
+                        raw_representation=message,
+                    )
 
         # Update session with session ID
         if session_id:
@@ -853,7 +882,7 @@ class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[Options
                 print(response.text)
     """
 
-    @overload  # type: ignore[override]
+    @overload
     def run(
         self,
         messages: AgentRunInputs | None = None,
@@ -870,7 +899,7 @@ class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[Options
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
-    @overload  # type: ignore[override]
+    @overload
     def run(
         self,
         messages: AgentRunInputs | None = None,
@@ -887,7 +916,7 @@ class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[Options
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
-    def run(  # pyright: ignore[reportIncompatibleMethodOverride]  # type: ignore[override]
+    def run(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         messages: AgentRunInputs | None = None,
         *,

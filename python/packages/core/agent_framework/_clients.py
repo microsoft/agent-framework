@@ -25,14 +25,8 @@ from typing import (
     runtime_checkable,
 )
 
-from pydantic import BaseModel
-
 from ._docstrings import apply_layered_docstring
 from ._serialization import SerializationMixin
-from ._tools import (
-    FunctionInvocationConfiguration,
-    ToolTypes,
-)
 from ._types import (
     ChatResponse,
     ChatResponseUpdate,
@@ -46,17 +40,20 @@ from ._types import (
 )
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from ._agents import Agent
     from ._compaction import CompactionStrategy, TokenizerProtocol
     from ._middleware import (
         MiddlewareTypes,
     )
+    from ._tools import ToolTypes
     from ._types import ChatOptions
 
 
@@ -78,7 +75,10 @@ OptionsContraT = TypeVar(
 )
 
 # Used for the overloads that capture the response model type from options
-ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+if TYPE_CHECKING:
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+else:
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=Any)
 
 
 @runtime_checkable
@@ -346,7 +346,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         response_format: Any | None = None,
     ) -> ChatResponse[Any]:
         """Finalize response updates into a single ChatResponse."""
-        return ChatResponse.from_updates(  # pyright: ignore[reportUnknownVariableType]
+        return ChatResponse.from_updates(
             updates,
             output_format_type=response_format,
         )
@@ -517,7 +517,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             return self._inner_get_response(
                 messages=messages,
                 stream=stream,
-                options=options or {},  # type: ignore[arg-type]
+                options=options or {},
                 **merged_client_kwargs,
             )
 
@@ -580,7 +580,6 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         context_providers: Sequence[Any] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         require_per_service_call_history_persistence: bool = False,
-        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: Mapping[str, Any] | None = None,
@@ -611,7 +610,6 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 service-managed conversation is the source of truth (persistence still happens
                 after each model call). When no HistoryProvider is present, this flag has no
                 effect (no middleware is installed and nothing is persisted).
-            function_invocation_configuration: Optional function invocation configuration override.
             compaction_strategy: Optional agent-level compaction override. When omitted,
                 client-level compaction defaults remain in effect for each call.
             tokenizer: Optional agent-level tokenizer override. When omitted,
@@ -656,8 +654,6 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             "tokenizer": tokenizer,
             "additional_properties": dict(additional_properties) if additional_properties is not None else None,
         }
-        if function_invocation_configuration is not None:
-            agent_kwargs["function_invocation_configuration"] = function_invocation_configuration
 
         return Agent(**agent_kwargs)
 
@@ -984,7 +980,13 @@ class BaseEmbeddingClient(SerializationMixin, ABC, Generic[EmbeddingInputT, Embe
 
 def _apply_get_response_docstrings() -> None:
     """Align layered chat-client docstrings with the lowest public implementation."""
-    from ._middleware import ChatMiddlewareLayer
+    try:
+        from ._middleware import ChatMiddlewareLayer
+    except ImportError as exc:
+        if exc.name == "agent_framework._middleware" and "partially initialized module" in str(exc):
+            return
+        raise
+
     from ._tools import FunctionInvocationLayer
     from .observability import ChatTelemetryLayer
 

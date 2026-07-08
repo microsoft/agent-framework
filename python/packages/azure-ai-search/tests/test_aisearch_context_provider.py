@@ -2,7 +2,10 @@
 # pyright: reportPrivateUsage=false
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -11,7 +14,12 @@ from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import SettingNotFoundError
 from azure.core.credentials import AzureKeyCredential
 
-from agent_framework_azure_ai_search._context_provider import AzureAISearchContextProvider
+from agent_framework_azure_ai_search import _context_provider
+from agent_framework_azure_ai_search._context_provider import (
+    AzureAISearchContextProvider,
+    KnowledgeBaseOutputModeLiteral,
+    RetrievalReasoningEffortLiteral,
+)
 
 # -- Helpers -------------------------------------------------------------------
 
@@ -82,9 +90,9 @@ def mock_search_client_empty() -> AsyncMock:
     return client
 
 
-def _make_provider(**overrides) -> AzureAISearchContextProvider:
+def _make_provider(**overrides: Any) -> AzureAISearchContextProvider:
     """Create a semantic-mode provider with mocked internals (skips auto-discovery)."""
-    defaults = {
+    defaults: dict[str, Any] = {
         "source_id": AzureAISearchContextProvider.DEFAULT_SOURCE_ID,
         "endpoint": "https://test.search.windows.net",
         "index_name": "test-index",
@@ -94,6 +102,44 @@ def _make_provider(**overrides) -> AzureAISearchContextProvider:
     provider = AzureAISearchContextProvider(**defaults)
     provider._auto_discovered_vector_field = True  # skip auto-discovery
     return provider
+
+
+# -- Preview-feature stubs ----------------------------------------------------
+# The stable/GA azure-search-documents SDK (api-version 2026-04-01) does not ship the
+# preview-only agentic symbols (output mode, low/medium reasoning effort, image content,
+# messages-based retrieval request). These stubs let the preview code paths be exercised
+# deterministically regardless of which SDK is installed.
+
+
+class _StubReasoningEffort:
+    def __init__(self, *args: object, **kwargs: object) -> None: ...
+
+
+class _StubOutputMode:
+    EXTRACTIVE_DATA = "extractiveData"
+    ANSWER_SYNTHESIS = "answerSynthesis"
+
+
+class _StubRetrievalRequest:
+    """Lenient stand-in for the preview KnowledgeBaseRetrievalRequest that accepts any kwargs."""
+
+    def __init__(self, **kwargs: object) -> None:
+        self.__dict__.update(kwargs)
+
+
+@contextmanager
+def force_preview_features() -> Iterator[None]:
+    """Force preview-only agentic features on (with lightweight stubs)."""
+    with patch.multiple(
+        _context_provider,
+        _preview_agentic_features_available=True,
+        KBRetrievalMinimalReasoningEffort=_StubReasoningEffort,
+        KBRetrievalMediumReasoningEffort=_StubReasoningEffort,
+        KBRetrievalLowReasoningEffort=_StubReasoningEffort,
+        KBRetrievalOutputMode=_StubOutputMode,
+        KnowledgeBaseRetrievalRequest=_StubRetrievalRequest,
+    ):
+        yield
 
 
 # -- Initialization: semantic mode ---------------------------------------------
@@ -207,7 +253,7 @@ class TestInitAgenticValidation:
 
     def test_both_index_and_kb_raises(self) -> None:
         with pytest.raises(SettingNotFoundError, match="multiple were set"):
-            AzureAISearchContextProvider(
+            cast(Any, AzureAISearchContextProvider)(
                 source_id="s",
                 endpoint="https://test.search.windows.net",
                 index_name="idx",
@@ -229,7 +275,7 @@ class TestInitAgenticValidation:
 
     def test_missing_model_raises(self) -> None:
         with pytest.raises(ValueError, match="model"):
-            AzureAISearchContextProvider(
+            cast(Any, AzureAISearchContextProvider)(
                 source_id="s",
                 endpoint="https://test.search.windows.net",
                 index_name="idx",
@@ -250,7 +296,7 @@ class TestInitAgenticValidation:
 
     def test_agentic_missing_aoai_url_with_index_raises(self) -> None:
         with pytest.raises(ValueError, match="azure_openai_resource_url"):
-            AzureAISearchContextProvider(
+            cast(Any, AzureAISearchContextProvider)(
                 source_id="s",
                 endpoint="https://test.search.windows.net",
                 index_name="idx",
@@ -315,6 +361,121 @@ class TestInitAgenticValidation:
         assert provider._use_existing_knowledge_base is False
 
 
+# -- client construction + stable/preview feature gating ----------------------
+
+
+class TestClientConstruction:
+    """The provider must not pin an api-version; the installed SDK picks its own default."""
+
+    def test_common_client_kwargs_has_no_api_version(self) -> None:
+        provider = _make_provider()
+        kwargs = provider._common_client_kwargs()
+        assert "user_agent" in kwargs
+        assert "api_version" not in kwargs
+
+    def test_search_client_built_without_api_version(self) -> None:
+        with patch("agent_framework_azure_ai_search._context_provider.SearchClient") as mock_sc:
+            _make_provider()
+        _, kwargs = mock_sc.call_args
+        assert "api_version" not in kwargs
+
+    def test_index_client_built_without_api_version_agentic(self) -> None:
+        with patch("agent_framework_azure_ai_search._context_provider.SearchIndexClient") as mock_ic:
+            AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                knowledge_base_name="kb",
+                api_key="key",
+                mode="agentic",
+            )
+        _, kwargs = mock_ic.call_args
+        assert "api_version" not in kwargs
+
+
+class TestPreviewFeatureGating:
+    """Auto-detect gating: preview-only agentic options require the preview (prerelease) build."""
+
+    def _agentic(
+        self,
+        *,
+        knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
+        retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
+    ) -> AzureAISearchContextProvider:
+        return AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            knowledge_base_name="kb",
+            api_key="key",
+            mode="agentic",
+            knowledge_base_output_mode=knowledge_base_output_mode,
+            retrieval_reasoning_effort=retrieval_reasoning_effort,
+        )
+
+    def test_answer_synthesis_rejected_without_preview_sdk(self) -> None:
+        with (
+            patch.object(_context_provider, "_preview_agentic_features_available", False),
+            pytest.raises(ValueError, match="answer_synthesis"),
+        ):
+            self._agentic(knowledge_base_output_mode="answer_synthesis")
+
+    def test_medium_effort_rejected_without_preview_sdk(self) -> None:
+        with (
+            patch.object(_context_provider, "_preview_agentic_features_available", False),
+            pytest.raises(ValueError, match="reasoning_effort"),
+        ):
+            self._agentic(retrieval_reasoning_effort="medium")
+
+    def test_low_effort_rejected_without_preview_sdk(self) -> None:
+        with (
+            patch.object(_context_provider, "_preview_agentic_features_available", False),
+            pytest.raises(ValueError, match="reasoning_effort"),
+        ):
+            self._agentic(retrieval_reasoning_effort="low")
+
+    def test_defaults_allowed_without_preview_sdk(self) -> None:
+        with patch.object(_context_provider, "_preview_agentic_features_available", False):
+            provider = self._agentic()
+        assert provider.knowledge_base_output_mode == "extractive_data"
+        assert provider.retrieval_reasoning_effort == "minimal"
+
+    def test_preview_options_allowed_with_preview_sdk(self) -> None:
+        with patch.object(_context_provider, "_preview_agentic_features_available", True):
+            provider = self._agentic(
+                knowledge_base_output_mode="answer_synthesis",
+                retrieval_reasoning_effort="medium",
+            )
+        assert provider.knowledge_base_output_mode == "answer_synthesis"
+        assert provider.retrieval_reasoning_effort == "medium"
+
+    async def test_kb_creation_omits_preview_fields_on_stable_sdk(self) -> None:
+        provider = _make_provider()
+        provider._knowledge_base_initialized = False
+        provider._use_existing_knowledge_base = False
+        provider.knowledge_base_name = "test-kb"
+        provider.azure_openai_resource_url = "https://aoai.openai.azure.com"
+        provider.azure_openai_model = "gpt-4"
+        provider.index_name = "test-index"
+
+        captured: dict[str, object] = {}
+
+        async def _capture(kb: object) -> None:
+            captured["kb"] = kb
+
+        mock_index_client = AsyncMock()
+        mock_index_client.get_knowledge_source.return_value = Mock()
+        mock_index_client.create_or_update_knowledge_base = AsyncMock(side_effect=_capture)
+        provider._index_client = mock_index_client
+
+        with (
+            patch.object(_context_provider, "_preview_agentic_features_available", False),
+            patch("agent_framework_azure_ai_search._context_provider.KnowledgeBaseRetrievalClient") as mock_cls,
+        ):
+            mock_cls.return_value = AsyncMock()
+            await provider._ensure_knowledge_base()
+
+        kb = captured["kb"]
+        assert getattr(kb, "output_mode", None) is None
+        assert getattr(kb, "retrieval_reasoning_effort", None) is None
+
+
 # -- __aenter__ / __aexit__ ---------------------------------------------------
 
 
@@ -359,7 +520,10 @@ class TestBeforeRunSemantic:
             session_id="s1",
         )
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_search_client.search.assert_awaited_once()
@@ -374,7 +538,10 @@ class TestBeforeRunSemantic:
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(input_messages=[], session_id="s1")
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_search_client.search.assert_not_awaited()
@@ -390,7 +557,10 @@ class TestBeforeRunSemantic:
             session_id="s1",
         )
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_search_client_empty.search.assert_awaited_once()
@@ -407,7 +577,10 @@ class TestBeforeRunSemantic:
             session_id="s1",
         )
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         msgs = ctx.context_messages[provider.source_id]
@@ -433,7 +606,10 @@ class TestBeforeRunFiltering:
             session_id="s1",
         )
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_search_client.search.assert_awaited_once()
@@ -452,7 +628,10 @@ class TestBeforeRunFiltering:
             session_id="s1",
         )
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_search_client.search.assert_not_awaited()
@@ -467,7 +646,10 @@ class TestBeforeRunFiltering:
             session_id="s1",
         )
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_search_client.search.assert_not_awaited()
@@ -486,7 +668,10 @@ class TestBeforeRunFiltering:
             session_id="s1",
         )
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         call_kwargs = mock_search_client.search.call_args[1]
@@ -819,9 +1004,13 @@ class TestSemanticSearch:
 
         await provider._semantic_search("sem query")
         call_kwargs = mock_client.search.call_args[1]
+        # Must be plain strings: in azure-search-documents 12.x these are non-str enums whose
+        # str() form ("querytype.semantic") is rejected by the service.
         assert call_kwargs["query_type"] == "semantic"
+        assert isinstance(call_kwargs["query_type"], str)
         assert call_kwargs["semantic_configuration_name"] == "my-semantic-config"
-        assert "query_caption" in call_kwargs
+        assert call_kwargs["query_caption"] == "extractive"
+        assert isinstance(call_kwargs["query_caption"], str)
 
     async def test_vector_k_with_semantic_config(self) -> None:
         provider = _make_provider(semantic_configuration_name="sc", top_k=3)
@@ -1182,9 +1371,12 @@ class TestAgenticSearch:
         mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
         provider._retrieval_client = mock_retrieval
 
-        with patch(
-            "agent_framework_azure_ai_search._context_provider.KnowledgeBaseMessageTextContent",
-            type(mock_content),
+        with (
+            force_preview_features(),
+            patch(
+                "agent_framework_azure_ai_search._context_provider.KnowledgeBaseMessageTextContent",
+                type(mock_content),
+            ),
         ):
             results = await provider._agentic_search([
                 Message(role="user", contents=["question"]),
@@ -1253,9 +1445,12 @@ class TestAgenticSearch:
         mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
         provider._retrieval_client = mock_retrieval
 
-        with patch(
-            "agent_framework_azure_ai_search._context_provider.KnowledgeBaseMessageTextContent",
-            type(mock_content),
+        with (
+            force_preview_features(),
+            patch(
+                "agent_framework_azure_ai_search._context_provider.KnowledgeBaseMessageTextContent",
+                type(mock_content),
+            ),
         ):
             results = await provider._agentic_search([Message(role="user", contents=["query"])])
 
@@ -1310,6 +1505,57 @@ class TestAgenticSearch:
         assert len(results) == 1
         assert results[0].text == "No results found from Knowledge Base."
 
+    async def test_requests_reference_source_data_per_source(self) -> None:
+        # Regression for #5095: the retrieval request must carry
+        # knowledge_source_params with include_reference_source_data=True for
+        # each resolved knowledge source, otherwise ref.source_data is always
+        # None even when the source has source_data_fields configured.
+        provider = _make_provider()
+        provider._knowledge_base_initialized = True
+        provider.knowledge_base_name = "kb"
+        provider.retrieval_reasoning_effort = "minimal"
+        provider._knowledge_source_names = ["test-index-source"]
+
+        mock_result = Mock()
+        mock_result.response = []
+        mock_result.references = None
+
+        mock_retrieval = AsyncMock()
+        mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
+        provider._retrieval_client = mock_retrieval
+
+        await provider._agentic_search([Message(role="user", contents=["query"])])
+
+        mock_retrieval.retrieve.assert_awaited_once()
+        request = mock_retrieval.retrieve.call_args.kwargs["retrieval_request"]
+        params = request.knowledge_source_params
+        assert params is not None
+        assert len(params) == 1
+        assert params[0].knowledge_source_name == "test-index-source"
+        assert params[0].include_reference_source_data is True
+
+    async def test_no_source_params_when_no_sources(self) -> None:
+        # When no knowledge source names are resolved, the request must not
+        # carry an empty/placeholder knowledge_source_params list.
+        provider = _make_provider()
+        provider._knowledge_base_initialized = True
+        provider.knowledge_base_name = "kb"
+        provider.retrieval_reasoning_effort = "minimal"
+        provider._knowledge_source_names = []
+
+        mock_result = Mock()
+        mock_result.response = []
+        mock_result.references = None
+
+        mock_retrieval = AsyncMock()
+        mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
+        provider._retrieval_client = mock_retrieval
+
+        await provider._agentic_search([Message(role="user", contents=["query"])])
+
+        request = mock_retrieval.retrieve.call_args.kwargs["retrieval_request"]
+        assert request.knowledge_source_params is None
+
 
 # -- before_run: agentic mode --------------------------------------------------
 
@@ -1336,7 +1582,6 @@ class TestPrepareMessagesForKbSearch:
         assert result[0].content[0].text == "hello"
 
     def test_image_uri_content(self) -> None:
-
         img = Content.from_uri(uri="https://example.com/photo.png", media_type="image/png")
         messages = [Message(role="user", contents=[img])]
         result = AzureAISearchContextProvider._prepare_messages_for_kb_search(messages)
@@ -1347,7 +1592,6 @@ class TestPrepareMessagesForKbSearch:
         assert result[0].content[0].image.url == "https://example.com/photo.png"
 
     def test_mixed_text_and_image_content(self) -> None:
-
         text = Content.from_text("describe this image")
         img = Content.from_uri(uri="https://example.com/img.jpg", media_type="image/jpeg")
         messages = [Message(role="user", contents=[text, img])]
@@ -1373,10 +1617,12 @@ class TestPrepareMessagesForKbSearch:
         msg = Message(role="user", contents=["fallback text"])
         result = AzureAISearchContextProvider._prepare_messages_for_kb_search([msg])
         assert len(result) == 1
+        from azure.search.documents.knowledgebases.models import KnowledgeBaseMessageTextContent
+
+        assert isinstance(result[0].content[0], KnowledgeBaseMessageTextContent)
         assert result[0].content[0].text == "fallback text"
 
     def test_data_uri_image(self) -> None:
-
         img = Content.from_data(data=b"\x89PNG", media_type="image/png")
         messages = [Message(role="user", contents=[img])]
         result = AzureAISearchContextProvider._prepare_messages_for_kb_search(messages)
@@ -1459,18 +1705,19 @@ class TestParseReferencesToAnnotations:
         assert result[0]["raw_representation"] is ref
 
     def test_remote_sharepoint_captures_sensitivity_label(self) -> None:
-        from azure.search.documents.knowledgebases.models import (
-            KnowledgeBaseRemoteSharePointReference,
-            SharePointSensitivityLabelInfo,
+        # KnowledgeBaseRemoteSharePointReference is preview-only; a SimpleNamespace fake keeps this
+        # test runnable on the stable/GA SDK while exercising the same parsing branches.
+        ref = SimpleNamespace(
+            id="ref-6",
+            activity_source=0,
+            reranker_score=None,
+            source_data=None,
+            web_url="https://sp.example.com/doc",
+            search_sensitivity_label_info=SimpleNamespace(
+                display_name="Confidential", sensitivity_label_id="lbl-1", is_encrypted=True
+            ),
         )
-
-        label = SharePointSensitivityLabelInfo(
-            display_name="Confidential", sensitivity_label_id="lbl-1", is_encrypted=True
-        )
-        ref = KnowledgeBaseRemoteSharePointReference(
-            id="ref-6", activity_source=0, web_url="https://sp.example.com/doc", search_sensitivity_label_info=label
-        )
-        result = AzureAISearchContextProvider._parse_references_to_annotations([ref])
+        result = AzureAISearchContextProvider._parse_references_to_annotations(cast(Any, [ref]))
         assert result[0]["url"] == "https://sp.example.com/doc"
         sl = result[0]["additional_properties"]["sensitivity_label"]
         assert sl["display_name"] == "Confidential"
@@ -1487,7 +1734,7 @@ class TestParseReferencesToAnnotations:
             KnowledgeBaseSearchIndexReference(id="ref-a", activity_source=0),
             KnowledgeBaseWebReference(id="ref-b", activity_source=1, url="https://example.com"),
         ]
-        result = AzureAISearchContextProvider._parse_references_to_annotations(refs)
+        result = AzureAISearchContextProvider._parse_references_to_annotations(refs)  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type]
         assert len(result) == 2
         assert result[0]["additional_properties"]["activity_source"] == 0
         assert result[1]["additional_properties"]["activity_source"] == 1
@@ -1535,19 +1782,21 @@ class TestParseMessagesFromKbResponse:
 
     def test_image_content(self) -> None:
         from azure.search.documents.knowledgebases.models import (
+            KnowledgeBaseImageContent,
             KnowledgeBaseMessage,
             KnowledgeBaseMessageImageContent,
-            KnowledgeBaseMessageImageContentImage,
             KnowledgeBaseRetrievalResponse,
         )
 
+        # KnowledgeBaseImageContent is available on both the stable and preview SDKs and
+        # exposes ``url``, so the parsing assertion stays SDK-agnostic.
         response = KnowledgeBaseRetrievalResponse(
             response=[
                 KnowledgeBaseMessage(
                     role="assistant",
                     content=[
                         KnowledgeBaseMessageImageContent(
-                            image=KnowledgeBaseMessageImageContentImage(url="https://img.example.com/a.png")
+                            image=KnowledgeBaseImageContent(url="https://img.example.com/a.png")
                         )
                     ],
                 ),
@@ -1561,9 +1810,9 @@ class TestParseMessagesFromKbResponse:
 
     def test_mixed_text_and_image_content(self) -> None:
         from azure.search.documents.knowledgebases.models import (
+            KnowledgeBaseImageContent,
             KnowledgeBaseMessage,
             KnowledgeBaseMessageImageContent,
-            KnowledgeBaseMessageImageContentImage,
             KnowledgeBaseMessageTextContent,
             KnowledgeBaseRetrievalResponse,
         )
@@ -1575,7 +1824,7 @@ class TestParseMessagesFromKbResponse:
                     content=[
                         KnowledgeBaseMessageTextContent(text="description"),
                         KnowledgeBaseMessageImageContent(
-                            image=KnowledgeBaseMessageImageContentImage(url="https://img.example.com/b.png")
+                            image=KnowledgeBaseImageContent(url="https://img.example.com/b.png")
                         ),
                     ],
                 ),
@@ -1680,7 +1929,10 @@ class TestBeforeRunAgentic:
             type(mock_content),
         ):
             await provider.before_run(
-                agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+                agent=cast(Any, None),
+                session=session,
+                context=ctx,
+                state=session.state.setdefault(provider.source_id, {}),
             )  # type: ignore[arg-type]
 
         msgs = ctx.context_messages.get(provider.source_id, [])
