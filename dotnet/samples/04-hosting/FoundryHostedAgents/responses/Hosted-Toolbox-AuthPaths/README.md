@@ -1,14 +1,14 @@
-# Hosted Toolbox — Authentication Paths
+﻿# Hosted Toolbox — Authentication Paths
 
 A hosted Foundry agent backed by a single Foundry Toolbox that bundles MCP tools using **three different authentication paths**. The educational surface lives in the toolbox configuration (which you provision in the Foundry portal) and in this README — the agent code itself is identical to the existing [`Hosted-Toolbox/`](../Hosted-Toolbox/) sample.
 
-Drive the agent interactively across the auth paths with the shared [`Using-Samples/SimpleAgent/`](../Using-Samples/SimpleAgent/) REPL client, pointed at this agent.
+Drive the agent across the auth paths with the shared [`Using-Samples/SimpleAgent/`](../Using-Samples/SimpleAgent/) REPL client, pointed at this agent. For the **OAuth user-consent** path (#4 below), use the dedicated [`Using-Samples/Hosted-Toolbox-AuthPaths-Client/`](../Using-Samples/Hosted-Toolbox-AuthPaths-Client/) REPL, which detects the consent request, **prints the consent link** and waits for you to press Enter once you have signed in, then re-sends. It never auto-opens a browser, so it works in headless, SSH, and container shells.
 
 ## What this sample teaches
 
 | Aspect | This sample | Existing siblings |
 |---|---|---|
-| Toolbox marker pattern | `FoundryAITool.CreateHostedMcpToolbox(name)` + `AddFoundryToolboxes(name)` | Same as [`Hosted-Toolbox/`](../Hosted-Toolbox/) |
+| Toolbox marker pattern | `FoundryAITool.CreateHostedMcpToolbox(name)` + `AddFoundryToolboxes(credential, name)` | Same as [`Hosted-Toolbox/`](../Hosted-Toolbox/) |
 | Tools per toolbox | **Three MCP tools, each with a different auth method** | `Hosted-Toolbox/`: typically one demo tool |
 | Consumption | Server-side (Foundry resolves the marker) | Same |
 | Client | Shared [`Using-Samples/SimpleAgent/`](../Using-Samples/SimpleAgent/) REPL, pointed at this agent | `Hosted-Toolbox/`: any client |
@@ -26,6 +26,9 @@ The sample's purpose is to enumerate every authentication path a Foundry toolbox
 | 1 | **Key-based via project connection** | GitHub MCP at `https://api.githubcopilot.com/mcp` | `CustomKeys` | A PAT stored as `Authorization: Bearer <pat>` lives in the Foundry connection. The toolbox proxy reads it server-side and injects on every MCP call. | The upstream service only accepts API keys or PATs. |
 | 2 | **Microsoft Entra — agent identity** | Any Azure Cognitive Services MCP endpoint your project can reach (e.g., Language service MCP) | `AgenticIdentityToken` | Foundry mints an Entra token for the agent's own identity (`instance_identity` in the new agent object model), scoped to the connection's `audience`, and forwards it to the MCP server. The agent identity must hold the required role (typically `Cognitive Services User`) on the target resource. | Per-agent least-privilege access to Entra-protected services. Recommended default for new agents. |
 | 3 | **Inline `Authorization` (anti-pattern)** | `https://gitmcp.io/Azure/azure-rest-api-specs` | none | A literal bearer string lives on the toolbox tool entry's `authorization` field. **Do not do this in production** — there's no rotation, no secret store, no per-user identity. Shown for completeness. | Local-dev or public MCP servers that accept any (or no) bearer. |
+| 4 | **OAuth — per-user consent (delegated)** | Any per-user OAuth-protected MCP target (e.g. delegated Microsoft Graph, a Logic Apps connector) | `OAuth` connection | The first call for a user has no stored token, so the proxy returns `CONSENT_REQUIRED`. The agent surfaces an `oauth_consent_request` with a consent link and marks the response `incomplete`. The user consents out of band; the proxy then stores their delegated token (bound to the user, not the conversation) and performs the on-behalf-of exchange on every subsequent call. | The tool must act **as the end user** against a downstream that requires delegated consent. |
+
+> **Path #4 needs the OAuth-aware client.** The shared `SimpleAgent/` REPL ignores the consent request and the call simply stays incomplete. Use [`Using-Samples/Hosted-Toolbox-AuthPaths-Client/`](../Using-Samples/Hosted-Toolbox-AuthPaths-Client/) instead — it prints the consent link, waits for you to press Enter after you have signed in, then re-sends the prompt. The user's token never touches the container or the client; consent and the OBO exchange happen entirely between the user, the identity provider, and the toolbox proxy.
 
 ## Prerequisites
 
@@ -115,7 +118,7 @@ Each entry should also carry:
 
 ### Sidebar — what the toolbox-creation code looks like
 
-This sample assumes the toolbox already exists; it does not provision one programmatically. For an end-to-end code example of toolbox creation from a publisher script (suitable for a CI/CD pipeline), see [`02-agents/AgentsWithFoundry/Agent_Step25_FoundryToolboxMcp/Program.cs`](../../../../02-agents/AgentsWithFoundry/Agent_Step25_FoundryToolboxMcp/Program.cs) — its `CreateSampleToolboxAsync` helper uses `AgentAdministrationClient.GetAgentToolboxes().CreateToolboxVersionAsync(...)` and is the canonical pattern.
+This sample assumes the toolbox already exists; it does not provision one programmatically. For an end-to-end code example of toolbox creation from a publisher script (suitable for a CI/CD pipeline), see [`02-agents/AgentProviders/foundry/Agent_Step25_FoundryToolboxMcp/Program.cs`](../../../../02-agents/AgentProviders/foundry/Agent_Step25_FoundryToolboxMcp/Program.cs) — its `CreateSampleToolboxAsync` helper uses `AgentAdministrationClient.GetAgentToolboxes().CreateToolboxVersionAsync(...)` and is the canonical pattern.
 
 ## Run the agent
 
@@ -167,11 +170,16 @@ One per auth path so each tool gets exercised at least once:
 List the latest 3 issues in microsoft/agent-framework.            # path #1 — GitHub MCP (key)
 Detect the language of "Bonjour le monde".                        # path #2 — Language MCP (agent identity)
 What's the latest API version for Microsoft.CognitiveServices?    # path #3 — gitmcp.io (inline Authorization)
+Send a test email to myself.                                      # path #4 — OAuth user consent (use the OAuth client)
 ```
+
+> Path #4 triggers the consent flow on first use. Run it from [`Using-Samples/Hosted-Toolbox-AuthPaths-Client/`](../Using-Samples/Hosted-Toolbox-AuthPaths-Client/), not `SimpleAgent/`.
 
 ## Troubleshooting / partial-failure semantics
 
-`AddFoundryToolboxes` resolves the toolbox at startup by listing its tools via MCP `tools/list`. This enumeration is **all-or-nothing**: if *any* single tool source fails to enumerate, the Foundry toolbox proxy returns a top-level JSON-RPC error (`-32007`) instead of a partial list, the hosting package marks the toolbox startup as failed, `/readiness` returns 503, and *every* invoke against the agent returns **HTTP 424** — even for the auth paths that are configured correctly. So one misconfigured connection or one bad `allowed_tools` entry bricks the whole agent at startup, not just at tool-call time. Get each source enumerating cleanly before deploying. Symptoms per auth path:
+`AddFoundryToolboxes` resolves the toolbox at startup by listing its tools via MCP `tools/list`. For **hard** errors this enumeration is **all-or-nothing**: if *any* single tool source fails to enumerate (a bad `allowed_tools` name, a rejected key or Entra token, an unreachable upstream), the Foundry toolbox proxy returns a top-level JSON-RPC error (`-32007`) instead of a partial list, the hosting package marks the toolbox startup as failed, `/readiness` returns 503, and *every* invoke against the agent returns **HTTP 424** — even for the auth paths that are configured correctly. So one misconfigured connection or one bad `allowed_tools` entry bricks the whole agent at startup. Get each source enumerating cleanly before deploying.
+
+**Exception — OAuth consent (path #4) does not brick the container.** When a source fails enumeration purely because it needs per-user OAuth consent (`CONSENT_REQUIRED`), the hosting package keeps the container **healthy and routable**: `/readiness` stays 200 and the consent requirement is surfaced per-request as an `oauth_consent_request` with a consent link. The user consents (via the [`Hosted-Toolbox-AuthPaths-Client/`](../Using-Samples/Hosted-Toolbox-AuthPaths-Client/) REPL), re-sends, and enumeration is retried so the tool becomes available. A *mix* of `CONSENT_REQUIRED` and any non-consent error is still treated as a hard failure (consent alone cannot make enumeration succeed). Symptoms per auth path:
 
 | Symptom | Likely cause |
 |---|---|

@@ -29,7 +29,7 @@ from agent_framework import (  # noqa: E402
     handler,
     response_handler,
 )
-from workflow_as_agent_reflection_pattern import (  # noqa: E402
+from workflow_as_agent_reflection_pattern import (  # pyrefly: ignore[missing-import]  # noqa: E402
     ReviewRequest,
     ReviewResponse,
     Worker,

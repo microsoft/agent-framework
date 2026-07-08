@@ -212,7 +212,7 @@ class TaskStepsAgentWithExecution(AgentFrameworkWorkflow):
             logger.info("Making SECOND LLM call to generate summary after step execution")
 
             # Get the underlying chat agent and client
-            chat_agent = self._base_agent.agent  # type: ignore
+            chat_agent = self._base_agent.agent
             client = chat_agent.client  # type: ignore
 
             # Build messages for summary call

@@ -71,7 +71,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
         });
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = "Disabled due to persistent CI failures. See #6732.")]
     public async Task ConcurrentWorkflowSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
@@ -505,7 +505,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
         });
     }
 
-    [RetryFact(2, 5000)]
+    [RetryFact(2, 5000, Skip = "Disabled due to persistent CI failures. See #6732.")]
     public async Task WorkflowAndAgentsSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);

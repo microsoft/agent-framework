@@ -7,7 +7,7 @@ This sample is the Azure AI Search counterpart to `Hosted-TextRag`. Where `Hoste
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- An Azure AI Foundry project with a deployed model (e.g., `gpt-4o`)
+- A Foundry project with a deployed model (e.g., `gpt-4o`)
 - An Azure AI Search service ([create one](https://learn.microsoft.com/azure/search/search-create-service-portal))
 - **A pre-provisioned search index** with the schema and content described in the next section
 - Azure CLI logged in (`az login`)

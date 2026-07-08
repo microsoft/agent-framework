@@ -14,7 +14,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_With_CustomImplementation",
-            ProjectPath = "samples/02-agents/AgentProviders/Agent_With_CustomImplementation",
+            ProjectPath = "samples/02-agents/AgentProviders/custom/Agent_With_CustomImplementation",
             RequiredEnvironmentVariables = [],
             ExpectedOutputDescription =
             [
@@ -27,7 +27,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_With_AzureOpenAIChatCompletion",
-            ProjectPath = "samples/02-agents/AgentProviders/Agent_With_AzureOpenAIChatCompletion",
+            ProjectPath = "samples/02-agents/AgentProviders/azure/Agent_With_AzureOpenAIChatCompletion",
             RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
@@ -40,7 +40,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_With_AzureOpenAIResponses",
-            ProjectPath = "samples/02-agents/AgentProviders/Agent_With_AzureOpenAIResponses",
+            ProjectPath = "samples/02-agents/AgentProviders/azure/Agent_With_AzureOpenAIResponses",
             RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
@@ -53,7 +53,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_With_AzureAIProject",
-            ProjectPath = "samples/02-agents/AgentProviders/Agent_With_AzureAIProject",
+            ProjectPath = "samples/02-agents/AgentProviders/azure/Agent_With_AzureAIProject",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             MustContain = ["Latest agent version id:"],
@@ -67,7 +67,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_With_AzureFoundryModel",
-            ProjectPath = "samples/02-agents/AgentProviders/Agent_With_AzureFoundryModel",
+            ProjectPath = "samples/02-agents/AgentProviders/azure/Agent_With_AzureFoundryModel",
             RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_OPENAI_API_KEY", "AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
@@ -335,8 +335,8 @@ internal static class AgentsSamples
         {
             Name = "Agent_Step01_FileBasedSkills",
             ProjectPath = "samples/02-agents/AgentSkills/Agent_Step01_FileBasedSkills",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             MustContain =
             [
                 "Converting units with file-based skills",
@@ -354,8 +354,8 @@ internal static class AgentsSamples
         {
             Name = "Agent_Step06_McpBasedSkills",
             ProjectPath = "samples/02-agents/AgentSkills/Agent_Step06_McpBasedSkills",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             MustContain =
             [
                 "Discovering MCP-based skills",
@@ -477,12 +477,12 @@ internal static class AgentsSamples
             ],
         },
 
-        // ── AgentsWithFoundry ────────────────────────────────────────────────
+        // ── Foundry ───────────────────────────────────────────────────────────
 
         new SampleDefinition
         {
             Name = "FoundryAgent_Step00_FoundryAgentLifecycle",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step00_FoundryAgentLifecycle",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step00_FoundryAgentLifecycle",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
@@ -495,7 +495,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step01_Basics",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step01_Basics",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step01_Basics",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
@@ -508,7 +508,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step02.1_MultiturnConversation",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step02.1_MultiturnConversation",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step02.1_MultiturnConversation",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
@@ -522,7 +522,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step02.2_MultiturnWithServerConversations",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step02.2_MultiturnWithServerConversations",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step02.2_MultiturnWithServerConversations",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
@@ -535,7 +535,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step03_UsingFunctionTools",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step03_UsingFunctionTools",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step03_UsingFunctionTools",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
@@ -550,7 +550,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step04_UsingFunctionToolsWithApprovals",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step04_UsingFunctionToolsWithApprovals",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step04_UsingFunctionToolsWithApprovals",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             Inputs = ["Y", "Y", "Y"],
@@ -566,7 +566,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step05_StructuredOutput",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step05_StructuredOutput",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step05_StructuredOutput",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             MustContain = ["Assistant Output:", "Name:"],
@@ -581,7 +581,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step06_PersistedConversations",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step06_PersistedConversations",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step06_PersistedConversations",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
@@ -594,7 +594,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step08_DependencyInjection",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step08_DependencyInjection",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step08_DependencyInjection",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             Inputs = ["Tell me a joke about a pirate", ""],
@@ -609,7 +609,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step10_UsingImages",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step10_UsingImages",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step10_UsingImages",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
@@ -623,7 +623,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step11_AsFunctionTool",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step11_AsFunctionTool",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step11_AsFunctionTool",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
@@ -637,7 +637,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step12_Middleware",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step12_Middleware",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step12_Middleware",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             Inputs = ["Y", "Y", "Y"],
@@ -653,7 +653,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step13_Plugins",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step13_Plugins",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step13_Plugins",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
@@ -667,7 +667,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step14_CodeInterpreter",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step14_CodeInterpreter",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step14_CodeInterpreter",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
@@ -682,7 +682,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step16_FileSearch",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step16_FileSearch",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step16_FileSearch",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             MustContain = ["--- Running File Search Agent ---"],
@@ -696,12 +696,12 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step17_OpenAPITools",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step17_OpenAPITools",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step17_OpenAPITools",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
             [
-                "The output should contain a list of countries or information about countries that use the EUR currency.",
+                "The output should contain the current EUR exchange rate against USD and GBP as numeric values.",
                 "The output should not contain error messages or stack traces.",
             ],
         },
@@ -720,7 +720,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_With_A2A",
-            ProjectPath = "samples/02-agents/AgentProviders/Agent_With_A2A",
+            ProjectPath = "samples/02-agents/AgentProviders/a2a/Agent_With_A2A",
             RequiredEnvironmentVariables = ["A2A_AGENT_HOST"],
             SkipReason = "Requires an external A2A agent host.",
         },
@@ -728,7 +728,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_With_Anthropic",
-            ProjectPath = "samples/02-agents/AgentProviders/Agent_With_Anthropic",
+            ProjectPath = "samples/02-agents/AgentProviders/anthropic/Agent_With_Anthropic",
             RequiredEnvironmentVariables = ["ANTHROPIC_API_KEY"],
             OptionalEnvironmentVariables = ["ANTHROPIC_CHAT_MODEL_NAME", "ANTHROPIC_RESOURCE"],
             ExpectedOutputDescription =
@@ -741,7 +741,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_With_GitHubCopilot",
-            ProjectPath = "samples/02-agents/AgentProviders/Agent_With_GitHubCopilot",
+            ProjectPath = "samples/02-agents/AgentProviders/github-copilot/Agent_With_GitHubCopilot",
             RequiredEnvironmentVariables = [],
             // The sample prompts for shell command approval; provide "Y" for each possible permission request
             Inputs = ["Y", "Y", "Y"],
@@ -756,7 +756,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_With_GoogleGemini",
-            ProjectPath = "samples/02-agents/AgentProviders/Agent_With_GoogleGemini",
+            ProjectPath = "samples/02-agents/AgentProviders/google-gemini/Agent_With_GoogleGemini",
             RequiredEnvironmentVariables = ["GOOGLE_GENAI_API_KEY"],
             OptionalEnvironmentVariables = ["GOOGLE_GENAI_MODEL"],
             MustContain =
@@ -774,7 +774,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_With_ONNX",
-            ProjectPath = "samples/02-agents/AgentProviders/Agent_With_ONNX",
+            ProjectPath = "samples/02-agents/AgentProviders/onnx/Agent_With_ONNX",
             RequiredEnvironmentVariables = ["ONNX_MODEL_PATH"],
             SkipReason = "Requires local ONNX model.",
         },
@@ -782,7 +782,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_With_Ollama",
-            ProjectPath = "samples/02-agents/AgentProviders/Agent_With_Ollama",
+            ProjectPath = "samples/02-agents/AgentProviders/ollama/Agent_With_Ollama",
             RequiredEnvironmentVariables = ["OLLAMA_ENDPOINT", "OLLAMA_MODEL_NAME"],
             SkipReason = "Requires local Ollama server.",
         },
@@ -790,7 +790,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_With_OpenAIChatCompletion",
-            ProjectPath = "samples/02-agents/AgentProviders/Agent_With_OpenAIChatCompletion",
+            ProjectPath = "samples/02-agents/AgentProviders/openai/Agent_With_OpenAIChatCompletion",
             RequiredEnvironmentVariables = ["OPENAI_API_KEY"],
             OptionalEnvironmentVariables = ["OPENAI_CHAT_MODEL_NAME"],
             ExpectedOutputDescription =
@@ -803,7 +803,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_With_OpenAIResponses",
-            ProjectPath = "samples/02-agents/AgentProviders/Agent_With_OpenAIResponses",
+            ProjectPath = "samples/02-agents/AgentProviders/openai/Agent_With_OpenAIResponses",
             RequiredEnvironmentVariables = ["OPENAI_API_KEY"],
             OptionalEnvironmentVariables = ["OPENAI_CHAT_MODEL_NAME"],
             ExpectedOutputDescription =
@@ -843,7 +843,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_Anthropic_Step01_Running",
-            ProjectPath = "samples/02-agents/AgentWithAnthropic/Agent_Anthropic_Step01_Running",
+            ProjectPath = "samples/02-agents/AgentProviders/anthropic/Agent_Anthropic_Step01_Running",
             RequiredEnvironmentVariables = ["ANTHROPIC_API_KEY"],
             OptionalEnvironmentVariables = ["ANTHROPIC_CHAT_MODEL_NAME"],
             ExpectedOutputDescription =
@@ -857,7 +857,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_Anthropic_Step02_Reasoning",
-            ProjectPath = "samples/02-agents/AgentWithAnthropic/Agent_Anthropic_Step02_Reasoning",
+            ProjectPath = "samples/02-agents/AgentProviders/anthropic/Agent_Anthropic_Step02_Reasoning",
             RequiredEnvironmentVariables = ["ANTHROPIC_API_KEY"],
             OptionalEnvironmentVariables = ["ANTHROPIC_CHAT_MODEL_NAME"],
             MustContain =
@@ -880,7 +880,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_Anthropic_Step03_UsingFunctionTools",
-            ProjectPath = "samples/02-agents/AgentWithAnthropic/Agent_Anthropic_Step03_UsingFunctionTools",
+            ProjectPath = "samples/02-agents/AgentProviders/anthropic/Agent_Anthropic_Step03_UsingFunctionTools",
             RequiredEnvironmentVariables = ["ANTHROPIC_API_KEY"],
             OptionalEnvironmentVariables = ["ANTHROPIC_CHAT_MODEL_NAME"],
             ExpectedOutputDescription =
@@ -894,7 +894,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_Anthropic_Step04_UsingSkills",
-            ProjectPath = "samples/02-agents/AgentWithAnthropic/Agent_Anthropic_Step04_UsingSkills",
+            ProjectPath = "samples/02-agents/AgentProviders/anthropic/Agent_Anthropic_Step04_UsingSkills",
             RequiredEnvironmentVariables = ["ANTHROPIC_API_KEY"],
             OptionalEnvironmentVariables = ["ANTHROPIC_CHAT_MODEL_NAME"],
             MustContain =
@@ -921,7 +921,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_OpenAI_Step01_Running",
-            ProjectPath = "samples/02-agents/AgentWithOpenAI/Agent_OpenAI_Step01_Running",
+            ProjectPath = "samples/02-agents/AgentProviders/openai/Agent_OpenAI_Step01_Running",
             RequiredEnvironmentVariables = ["OPENAI_API_KEY"],
             OptionalEnvironmentVariables = ["OPENAI_CHAT_MODEL_NAME"],
             ExpectedOutputDescription =
@@ -934,7 +934,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_OpenAI_Step02_Reasoning",
-            ProjectPath = "samples/02-agents/AgentWithOpenAI/Agent_OpenAI_Step02_Reasoning",
+            ProjectPath = "samples/02-agents/AgentProviders/openai/Agent_OpenAI_Step02_Reasoning",
             RequiredEnvironmentVariables = ["OPENAI_API_KEY"],
             OptionalEnvironmentVariables = ["OPENAI_CHAT_MODEL_NAME"],
             MustContain =
@@ -954,7 +954,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_OpenAI_Step03_CreateFromChatClient",
-            ProjectPath = "samples/02-agents/AgentWithOpenAI/Agent_OpenAI_Step03_CreateFromChatClient",
+            ProjectPath = "samples/02-agents/AgentProviders/openai/Agent_OpenAI_Step03_CreateFromChatClient",
             RequiredEnvironmentVariables = ["OPENAI_API_KEY"],
             OptionalEnvironmentVariables = ["OPENAI_CHAT_MODEL_NAME"],
             ExpectedOutputDescription =
@@ -968,7 +968,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_OpenAI_Step04_CreateFromOpenAIResponseClient",
-            ProjectPath = "samples/02-agents/AgentWithOpenAI/Agent_OpenAI_Step04_CreateFromOpenAIResponseClient",
+            ProjectPath = "samples/02-agents/AgentProviders/openai/Agent_OpenAI_Step04_CreateFromOpenAIResponseClient",
             RequiredEnvironmentVariables = ["OPENAI_API_KEY"],
             OptionalEnvironmentVariables = ["OPENAI_CHAT_MODEL_NAME"],
             ExpectedOutputDescription =
@@ -982,7 +982,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "Agent_OpenAI_Step05_Conversation",
-            ProjectPath = "samples/02-agents/AgentWithOpenAI/Agent_OpenAI_Step05_Conversation",
+            ProjectPath = "samples/02-agents/AgentProviders/openai/Agent_OpenAI_Step05_Conversation",
             RequiredEnvironmentVariables = ["OPENAI_API_KEY"],
             OptionalEnvironmentVariables = ["OPENAI_CHAT_MODEL_NAME"],
             MustContain =
@@ -1029,7 +1029,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step07_Observability",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step07_Observability",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step07_Observability",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME", "APPLICATIONINSIGHTS_CONNECTION_STRING"],
             SkipReason = "Requires Application Insights / OpenTelemetry infrastructure.",
@@ -1038,7 +1038,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step09_UsingMcpClientAsTools",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step09_UsingMcpClientAsTools",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step09_UsingMcpClientAsTools",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
@@ -1051,16 +1051,16 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step15_ComputerUse",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step15_ComputerUse",
-            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step15_ComputerUse",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "AZURE_AI_COMPUTER_USE_DEPLOYMENT_NAME"],
+            OptionalEnvironmentVariables = [],
             ExpectedOutputDescription = ["The output should show a computer automation session processing simulated browser screenshots with iteration steps and a final response describing search results."],
         },
 
         new SampleDefinition
         {
             Name = "FoundryAgent_Step18_BingCustomSearch",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step18_BingCustomSearch",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step18_BingCustomSearch",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT", "AZURE_AI_MODEL_DEPLOYMENT_NAME", "AZURE_AI_CUSTOM_SEARCH_CONNECTION_ID", "AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME"],
             SkipReason = "Requires Bing Custom Search connection.",
         },
@@ -1068,7 +1068,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step19_SharePoint",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step19_SharePoint",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step19_SharePoint",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT", "AZURE_AI_MODEL_DEPLOYMENT_NAME", "SHAREPOINT_PROJECT_CONNECTION_ID"],
             SkipReason = "Requires SharePoint connection.",
         },
@@ -1076,7 +1076,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step20_MicrosoftFabric",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step20_MicrosoftFabric",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step20_MicrosoftFabric",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT", "AZURE_AI_MODEL_DEPLOYMENT_NAME", "FABRIC_PROJECT_CONNECTION_ID"],
             SkipReason = "Requires Microsoft Fabric connection.",
         },
@@ -1084,7 +1084,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step21_WebSearch",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step21_WebSearch",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step21_WebSearch",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
@@ -1097,7 +1097,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step22_MemorySearch",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step22_MemorySearch",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step22_MemorySearch",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT", "AZURE_AI_MODEL_DEPLOYMENT_NAME", "AZURE_AI_EMBEDDING_DEPLOYMENT_NAME"],
             OptionalEnvironmentVariables = ["AZURE_AI_MEMORY_STORE_ID"],
             MustContain = ["Agent created with Memory Search tool. Starting conversation..."],
@@ -1111,7 +1111,7 @@ internal static class AgentsSamples
         new SampleDefinition
         {
             Name = "FoundryAgent_Step23_LocalMCP",
-            ProjectPath = "samples/02-agents/AgentsWithFoundry/Agent_Step23_LocalMCP",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step23_LocalMCP",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription = ["The output should show an agent using the Microsoft Learn MCP server to search for documentation and provide a response."],

@@ -18,9 +18,11 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import threading
 import uuid
 from collections.abc import Awaitable, Callable, MutableMapping
+from copy import deepcopy
 from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, cast
@@ -36,6 +38,7 @@ from ._types import Content, Message
 
 if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
+    from ._mcp import MCPTool
 
 __all__ = [
     "SECURITY_TOOL_INSTRUCTIONS",
@@ -48,7 +51,9 @@ __all__ = [
     "LabeledMessage",
     "PolicyEnforcementFunctionMiddleware",
     "SecureAgentConfig",
+    "SecureMCPToolProxy",
     "VariableReferenceContent",
+    "apply_mcp_security_labels",
     "check_confidentiality_allowed",
     "combine_labels",
     "get_current_middleware",
@@ -61,6 +66,15 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+_BRACKETED_VAR_REF_RE = re.compile(r"^\[\s*(var_[0-9a-fA-F]+)\s*\]$")
+
+# Tools that consume variable IDs literally (as opaque references) and therefore
+# must NOT have ``var_xxx`` arguments expanded to stored content before execution.
+# ``inspect_variable`` looks the ID up itself; ``quarantined_llm`` resolves the
+# ``variable_ids`` list internally. Expanding their arguments would replace the ID
+# with the content and break the lookup.
+_VARIABLE_ID_CONSUMERS = frozenset({"inspect_variable", "quarantined_llm"})
 
 
 def _get_additional_properties(obj: Any) -> dict[str, Any]:
@@ -536,7 +550,7 @@ class LabeledMessage(Message):
         if isinstance(content, str):
             contents = [content]
         elif isinstance(content, list):
-            contents = cast(list[Any], content)  # type: ignore[redundant-cast]
+            contents = cast(list[Any], content)
         else:
             contents = [str(content)] if content is not None else []
 
@@ -671,124 +685,6 @@ class LabeledMessage(Message):
 _current_middleware = threading.local()
 
 
-def _parse_github_mcp_labels(labels_data: dict[str, Any]) -> ContentLabel | None:
-    """Parse security labels from GitHub MCP server format.
-
-    The GitHub MCP server returns per-field labels in the format:
-    {
-        "labels": {
-            "title": {"integrity": "low", "confidentiality": ["public"]},
-            "body": {"integrity": "low", "confidentiality": ["public"]},
-            "user": {"integrity": "high", "confidentiality": ["public"]},
-            ...
-        }
-    }
-
-    Confidentiality uses a "readers lattice":
-    - ["public"] → PUBLIC (anyone can read)
-    - ["user_id_1", "user_id_2", ...] → PRIVATE (only specific collaborators can read)
-
-    This function extracts the most restrictive (lowest integrity, highest confidentiality)
-    label across all fields, focusing on user-controlled content like "body" and "title".
-
-    Args:
-        labels_data: The "labels" dict from additional_properties containing per-field labels.
-
-    Returns:
-        A ContentLabel with the most restrictive integrity/confidentiality found,
-        or None if parsing fails.
-    """
-    if not isinstance(labels_data, dict):
-        return None
-
-    # Priority fields to check (user-controlled content that may be untrusted)
-    priority_fields = ["body", "title", "content", "message", "text", "description"]
-
-    # GitHub MCP uses "low" for untrusted user content and "high" for system-controlled
-    # Map GitHub MCP integrity values to our IntegrityLabel enum
-    integrity_map = {
-        "low": IntegrityLabel.UNTRUSTED,
-        "medium": IntegrityLabel.UNTRUSTED,  # Treat medium as untrusted for safety
-        "high": IntegrityLabel.TRUSTED,
-    }
-
-    # Initialize with most permissive labels; we'll tighten them based on field values
-    most_restrictive_integrity = IntegrityLabel.TRUSTED
-    most_restrictive_confidentiality = ConfidentialityLabel.PUBLIC
-
-    def parse_confidentiality_from_readers(conf_value: Any) -> ConfidentialityLabel:
-        """Parse confidentiality from GitHub's readers lattice format.
-
-        GitHub MCP uses a readers lattice:
-        - ["public"] means anyone can read → PUBLIC
-        - ["user_id_1", "user_id_2", ...] means only those users → PRIVATE
-        """
-        if isinstance(conf_value, list):
-            conf_candidates = cast(list[Any], conf_value)  # type: ignore[redundant-cast]
-            conf_list: list[str] = [item for item in conf_candidates if isinstance(item, str)]
-            if len(conf_list) == 1 and conf_list[0].lower() == "public":
-                return ConfidentialityLabel.PUBLIC
-            if conf_list:
-                # Non-empty list of user IDs = private/restricted access
-                return ConfidentialityLabel.PRIVATE
-            # Empty list - treat as public
-            return ConfidentialityLabel.PUBLIC
-        if isinstance(conf_value, str):
-            if conf_value.lower() == "public":
-                return ConfidentialityLabel.PUBLIC
-            if conf_value.lower() in ("private", "internal", "confidential"):
-                return ConfidentialityLabel.PRIVATE
-            if conf_value.lower() == "user_identity":
-                return ConfidentialityLabel.USER_IDENTITY
-        # Default to public
-        return ConfidentialityLabel.PUBLIC
-
-    # First check priority fields (user-controlled content)
-    for field in priority_fields:
-        if field in labels_data:
-            field_label = labels_data[field]
-            if isinstance(field_label, dict):
-                field_label_dict = cast(dict[str, Any], field_label)
-                # Parse integrity
-                integrity_str = str(field_label_dict.get("integrity", "")).lower()
-                if integrity_str in integrity_map:
-                    field_integrity = integrity_map[integrity_str]
-                    # UNTRUSTED is more restrictive than TRUSTED
-                    if field_integrity == IntegrityLabel.UNTRUSTED:
-                        most_restrictive_integrity = IntegrityLabel.UNTRUSTED
-
-                # Parse confidentiality using readers lattice
-                conf_value = field_label_dict.get("confidentiality")
-                field_conf = parse_confidentiality_from_readers(conf_value)
-                # Higher confidentiality is more restrictive
-                if field_conf.value > most_restrictive_confidentiality.value:
-                    most_restrictive_confidentiality = field_conf
-
-    # Also check all other fields for completeness
-    for field, field_label in labels_data.items():
-        if field not in priority_fields and isinstance(field_label, dict):
-            field_label_dict = cast(dict[str, Any], field_label)
-            # Parse integrity
-            integrity_str = str(field_label_dict.get("integrity", "")).lower()
-            if integrity_str in integrity_map:
-                field_integrity = integrity_map[integrity_str]
-                if field_integrity == IntegrityLabel.UNTRUSTED:
-                    most_restrictive_integrity = IntegrityLabel.UNTRUSTED
-
-            # Parse confidentiality using readers lattice
-            conf_value = field_label_dict.get("confidentiality")
-            if conf_value is not None:
-                field_conf = parse_confidentiality_from_readers(conf_value)
-                if field_conf.value > most_restrictive_confidentiality.value:
-                    most_restrictive_confidentiality = field_conf
-
-    return ContentLabel(
-        integrity=most_restrictive_integrity,
-        confidentiality=most_restrictive_confidentiality,
-        metadata={"source": "github_mcp_labels"},
-    )
-
-
 @experimental(feature_id=ExperimentalFeature.FIDES)
 class LabelTrackingFunctionMiddleware(FunctionMiddleware):
     """Middleware that tracks and propagates security labels through tool invocations.
@@ -919,15 +815,216 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         old_label = self._context_label
         self._context_label = combine_labels(self._context_label, new_content_label)
 
-        if old_label.integrity != self._context_label.integrity:
+        if old_label != self._context_label:
             logger.info(
-                f"Context integrity changed: {old_label.integrity.value} -> {self._context_label.integrity.value}"
+                f">>> CONTEXT TAINT: [{old_label.integrity.value}, {old_label.confidentiality.value}] "
+                f"-> [{self._context_label.integrity.value}, {self._context_label.confidentiality.value}] "
+                f"(new content: [{new_content_label.integrity.value}, {new_content_label.confidentiality.value}])"
             )
-        if old_label.confidentiality != self._context_label.confidentiality:
-            logger.info(
-                f"Context confidentiality changed: {old_label.confidentiality.value} -> "
-                f"{self._context_label.confidentiality.value}"
+        else:
+            logger.debug(
+                "Context label unchanged: [%s, %s]",
+                self._context_label.integrity.value,
+                self._context_label.confidentiality.value,
             )
+
+    @staticmethod
+    def _extract_primary_tool_content(expanded_content: Any) -> Any:
+        """Return the tool-visible content for an expanded variable payload.
+
+        Some hidden results are stored as rich payloads containing fields such as
+        ``response``, ``security_label``, and ``metadata``. Tool arguments should
+        only receive the primary content they would normally have seen without
+        variable indirection.
+        """
+        if isinstance(expanded_content, dict):
+            content_map = cast(dict[str, Any], expanded_content)
+            if "response" in content_map:
+                return content_map["response"]
+            return content_map
+
+        if isinstance(expanded_content, str):
+            stripped = expanded_content.strip()
+            if stripped.startswith("{") and stripped.endswith("}"):
+                with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
+                    parsed = json.loads(stripped)
+                    if isinstance(parsed, dict):
+                        parsed_map = cast(dict[str, Any], parsed)
+                        if "response" in parsed_map:
+                            return parsed_map["response"]
+
+        return expanded_content
+
+    def _expand_variable_reference(self, value: Any) -> Any:
+        """Expand variable references (e.g., ``[var_abc123]``) to stored content.
+
+        This enables direct tool chaining where models pass variable placeholders as
+        arguments to subsequent local/MCP tool calls.
+
+        Accepts two reference forms:
+
+        1. **Bracketed** (canonical): ``[var_abc123]`` — the documented form models
+           are instructed to emit.
+        2. **Bare** (lenient fallback): ``var_abc123`` — some models drop the
+           brackets when copying a variable id into a tool argument. To prevent
+           the literal token from leaking into a destination (e.g. a write to a
+           public README), we also resolve bare ``var_<hex>`` tokens that
+           correspond to a known stored variable. A warning is logged on every
+           bare expansion so the failure mode remains observable.
+
+        When a stored variable is a dict with a ``response`` key (e.g., from
+        ``quarantined_llm``), only the ``response`` value is extracted and
+        returned, ensuring tools receive main content without metadata fields.
+        """
+        if isinstance(value, str):
+            # Unanchored bracketed pattern (canonical form).
+            bracketed_pattern = r"\[\s*(var_[0-9a-fA-F]+)\s*\]"
+            # Word-boundary bare token. Require >=8 hex chars to limit false
+            # positives on unrelated strings that happen to contain "var_*".
+            # Variable ids generated by ContentVariableStore are 16 hex chars.
+            bare_pattern = r"\bvar_[0-9a-fA-F]{8,}\b"
+
+            bracketed_matches = re.findall(bracketed_pattern, value)
+            bare_matches = re.findall(bare_pattern, value)
+
+            if not bracketed_matches and not bare_matches:
+                return value
+
+            # Whole-string canonical match: ``[var_xxx]``
+            if len(bracketed_matches) == 1:
+                whole_bracketed = _BRACKETED_VAR_REF_RE.match(value)
+                if whole_bracketed is not None:
+                    variable_id = whole_bracketed.group(1)
+                    try:
+                        expanded_content, _ = self._variable_store.retrieve(variable_id)
+                        extracted = self._extract_primary_tool_content(expanded_content)
+                        if extracted is not expanded_content:
+                            logger.info(
+                                f"Expanded variable placeholder '{value}' for tool argument "
+                                f"(extracted primary content from stored payload)"
+                            )
+                            return extracted
+                        logger.info(f"Expanded variable placeholder '{value}' for tool argument")
+                        return expanded_content
+                    except KeyError:
+                        logger.warning(f"Variable placeholder '{value}' could not be resolved")
+                        return value
+
+            # Whole-string bare match: ``var_xxx`` (no brackets). Only treat as
+            # a variable reference if the id actually exists in the store; this
+            # keeps random strings that happen to look like ``var_xxx`` from
+            # being silently mangled.
+            whole_bare = re.fullmatch(r"\s*(var_[0-9a-fA-F]{8,})\s*", value)
+            if whole_bare is not None and not bracketed_matches:
+                variable_id = whole_bare.group(1)
+                try:
+                    expanded_content, _ = self._variable_store.retrieve(variable_id)
+                    extracted = self._extract_primary_tool_content(expanded_content)
+                    logger.warning(
+                        f"Expanded BARE (non-bracketed) variable reference '{value.strip()}' "
+                        "for tool argument. Models should wrap variable references in '[ ]' brackets; "
+                        "accepting bare form to prevent the literal id from leaking to a destination."
+                    )
+                    if extracted is not expanded_content:
+                        return extracted
+                    return expanded_content
+                except KeyError:
+                    # Not a known variable id; leave string untouched.
+                    return value
+
+            # Embedded substitutions. Apply bracketed pass first, then bare pass
+            # on the result so that ``[var_xxx]`` is never double-handled.
+            def replace_bracketed(match_obj: Any) -> str:
+                variable_id = match_obj.group(1)
+                try:
+                    expanded_content, _ = self._variable_store.retrieve(variable_id)
+                    extracted = self._extract_primary_tool_content(expanded_content)
+                    if extracted is not expanded_content:
+                        logger.info(
+                            f"Expanded embedded variable placeholder '[{variable_id}]' in tool argument "
+                            f"(extracted primary content from stored payload)"
+                        )
+                        return str(extracted)
+                    logger.info(f"Expanded embedded variable placeholder '[{variable_id}]' in tool argument")
+                    return str(expanded_content)
+                except KeyError:
+                    logger.warning(f"Variable placeholder '[{variable_id}]' could not be resolved")
+                    return match_obj.group(0)
+
+            result = re.sub(bracketed_pattern, replace_bracketed, value)
+
+            def replace_bare(match_obj: Any) -> str:
+                variable_id = match_obj.group(0)
+                try:
+                    expanded_content, _ = self._variable_store.retrieve(variable_id)
+                    extracted = self._extract_primary_tool_content(expanded_content)
+                    logger.warning(
+                        f"Expanded embedded BARE (non-bracketed) variable reference '{variable_id}' "
+                        "in tool argument. Models should wrap variable references in '[ ]' brackets."
+                    )
+                    if extracted is not expanded_content:
+                        return str(extracted)
+                    return str(expanded_content)
+                except KeyError:
+                    # Not a known variable id; leave the token in place.
+                    return match_obj.group(0)
+
+            return re.sub(bare_pattern, replace_bare, result)
+
+        if isinstance(value, BaseModel):
+            return self._expand_variable_reference(value.model_dump())
+
+        if isinstance(value, dict):
+            value_dict = cast(dict[str, Any], value)
+            return {k: self._expand_variable_reference(v) for k, v in value_dict.items()}
+
+        if isinstance(value, list):
+            value_list = cast(list[Any], value)
+            return [self._expand_variable_reference(item) for item in value_list]
+
+        if isinstance(value, tuple):
+            value_tuple = cast(tuple[Any, ...], value)
+            return tuple(self._expand_variable_reference(item) for item in value_tuple)
+
+        return value
+
+    def _expand_variable_references_in_context(self, context: FunctionInvocationContext) -> None:
+        """Resolve bracketed variable placeholders in invocation arguments in-place.
+
+        Expands [var_xxx] placeholders to their stored content before tool execution.
+        Original unexpanded arguments are preserved in metadata for message reconstruction,
+        ensuring that function_call Content messages keep placeholders hidden from the LLM.
+
+        Tools in ``_VARIABLE_ID_CONSUMERS`` (e.g. ``inspect_variable``) take variable
+        IDs as literal references and resolve them internally, so their arguments are
+        left untouched — expanding them would replace the ID with content and break
+        the lookup.
+        """
+        if context.function.name in _VARIABLE_ID_CONSUMERS:
+            return
+
+        if context.arguments:
+            args_before = str(context.arguments)[:200] if context.arguments else ""
+            context.arguments = self._expand_variable_reference(context.arguments)
+            args_after = str(context.arguments)[:200] if context.arguments else ""
+            has_var_ref_before = "[var_" in args_before
+            has_var_ref_after = "[var_" in args_after
+            if has_var_ref_before or has_var_ref_after:
+                logger.info(
+                    "Variable expansion for '%s': had_ref_before=%s, had_ref_after=%s",
+                    context.function.name,
+                    has_var_ref_before,
+                    has_var_ref_after,
+                )
+                if has_var_ref_before and not has_var_ref_after:
+                    logger.info(
+                        "Expanded variable references from: %s... to: %s...",
+                        args_before[:100],
+                        args_after[:100],
+                    )
+
+        if context.kwargs:
+            context.kwargs = cast(dict[str, Any], self._expand_variable_reference(context.kwargs))
 
     def _get_input_labels(self, context: FunctionInvocationContext) -> list[ContentLabel]:
         """Extract security labels from tool input arguments.
@@ -975,7 +1072,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                 for v in value_dict.values():
                     _extract_labels_recursive(v)
             elif isinstance(value, (list, tuple)):
-                value_items = cast(list[Any] | tuple[Any, ...], value)  # type: ignore[redundant-cast]
+                value_items = cast(list[Any] | tuple[Any, ...], value)
                 # Recurse into list/tuple items
                 for item in value_items:
                     _extract_labels_recursive(item)
@@ -1034,7 +1131,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         import json as _json
 
         if isinstance(result, list):
-            result_list = cast(list[Any], result)  # type: ignore[redundant-cast]
+            result_list = cast(list[Any], result)
             if all(isinstance(c, Content) for c in result_list):
                 return cast(list[Content], result_list)
         if isinstance(result, Content):
@@ -1047,19 +1144,22 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             text = str(cast(object, result))
         return [Content.from_text(text)]
 
-    def _should_hide(self, label: ContentLabel) -> bool:
+    def _should_hide(self, label: ContentLabel, function_name: str | None = None) -> bool:
         """Decide whether a Content item with *label* should be hidden.
 
-        An item is hidden when **all three** conditions hold:
+        An item is hidden when **all four** conditions hold:
         1. ``auto_hide_untrusted`` is enabled.
         2. The item's integrity matches the ``hide_threshold`` (UNTRUSTED).
         3. The conversation context is still TRUSTED (no point hiding if context
            is already tainted).
+        4. The producing tool is not ``inspect_variable`` (inspection must expose
+           content and taint context by design).
         """
         return (
             self.auto_hide_untrusted
             and label.integrity == self.hide_threshold
             and self._context_label.integrity == IntegrityLabel.TRUSTED
+            and function_name != "inspect_variable"
         )
 
     @staticmethod
@@ -1163,6 +1263,15 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                 f"{self._context_label.confidentiality.value}"
             )
 
+            # Store original unexpanded arguments for message reconstruction before expanding
+            if "original_arguments_for_messages" not in context.metadata:
+                # Deep copy to preserve original state
+                context.metadata["original_arguments_for_messages"] = deepcopy(context.arguments)
+
+            # Expand bracketed variable references in arguments BEFORE tool execution
+            # so that tools receive expanded content, but keep originals for message history
+            self._expand_variable_references_in_context(context)
+
             # Execute the function
             await call_next()
 
@@ -1207,7 +1316,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         original_items = self._ensure_content_list(context.result)
 
         # Process items — apply per-item labels + hide untrusted items
-        processed, result_label = self._process_result_with_embedded_labels(
+        processed, result_label, visible_result_label = self._process_result_with_embedded_labels(
             original_items,
             function_name,
             fallback_label=fallback_label,
@@ -1216,16 +1325,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         context.result = processed
         context.metadata["result_label"] = result_label
 
-        # Determine whether the entire result was hidden (all items became
-        # variable references that were NOT variable references before).
-        entire_result_hidden = all(self._is_variable_reference(item) for item in processed) and not all(
-            self._is_variable_reference(item) for item in original_items
-        )
-
-        if entire_result_hidden:
-            # Untrusted content is NOT in the LLM context — don't taint integrity.
-            # However, confidentiality MUST be updated: even hidden PRIVATE data
-            # could be revealed by approving the variable reference.
+        # Hidden items never enter the main LLM context, so only visible items
+        # may affect integrity taint. Confidentiality still reflects the most
+        # restrictive label across the entire tool result, including hidden items.
+        if visible_result_label is None:
             if result_label.confidentiality != self._context_label.confidentiality:
                 old_conf = self._context_label.confidentiality
                 hidden_label = ContentLabel(
@@ -1245,8 +1348,13 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                     f"{self._context_label.confidentiality.value}"
                 )
         else:
-            # Some content entered context — update context label fully
-            self._update_context_label(result_label)
+            # Only visible content can taint integrity; hidden content still
+            # contributes confidentiality to later policy decisions.
+            exposed_label = ContentLabel(
+                integrity=visible_result_label.integrity,
+                confidentiality=result_label.confidentiality,
+            )
+            self._update_context_label(exposed_label)
             logger.info(
                 f"Context label after processing '{function_name}': "
                 f"{self._context_label.integrity.value}, "
@@ -1282,7 +1390,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         items: list[Content],
         function_name: str,
         fallback_label: ContentLabel,
-    ) -> tuple[list[Content], ContentLabel]:
+    ) -> tuple[list[Content], ContentLabel, ContentLabel | None]:
         """Process Content items, respecting per-item embedded labels.
 
         This implements the first tier of the label propagation priority:
@@ -1304,27 +1412,33 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             fallback_label: Label to use when an item has no embedded label.
 
         Returns:
-            Tuple of (processed_content_list, combined_label).
+            Tuple of (processed_content_list, combined_label, visible_combined_label).
             - processed_content_list: list[Content] with untrusted items replaced
             - combined_label: Most restrictive label across all items
+            - visible_combined_label: Most restrictive label across items that
+              remained visible to the LLM after hiding, or ``None`` if every
+              result item was hidden behind a variable reference
         """
         processed: list[Content] = []
         item_labels: list[ContentLabel] = []
+        visible_item_labels: list[ContentLabel] = []
 
         for item in items:
             item_label = self._extract_content_label(item, fallback_label)
             item_labels.append(item_label)
 
-            if self._should_hide(item_label):
+            if self._should_hide(item_label, function_name):
                 hidden = self._hide_item(item, item_label, function_name)
                 processed.append(hidden)
             else:
                 # Attach this item's own label (preserves per-item granularity)
                 item.additional_properties["security_label"] = item_label.to_dict()
                 processed.append(item)
+                visible_item_labels.append(item_label)
 
         combined = combine_labels(*item_labels) if item_labels else fallback_label
-        return processed, combined
+        visible_combined = combine_labels(*visible_item_labels) if visible_item_labels else None
+        return processed, combined, visible_combined
 
     def _extract_content_label(
         self,
@@ -1335,8 +1449,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
 
         Checks (in order):
         1. ``additional_properties.security_label`` (explicit label)
-        2. ``additional_properties.labels`` (GitHub MCP format)
-        3. Falls back to ``fallback_label``
+        2. Falls back to ``fallback_label``
 
         Args:
             item: The Content item to inspect.
@@ -1354,23 +1467,6 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                 return ContentLabel.from_dict(cast(dict[str, Any], label_data))
             except Exception as e:
                 logger.warning(f"Failed to parse security_label from Content: {e}")
-
-        # Check for GitHub MCP server labels format
-        github_labels = additional_props.get("labels")
-        if github_labels and isinstance(github_labels, (dict, list)):
-            try:
-                if isinstance(github_labels, list) and github_labels:
-                    github_labels = cast(dict[str, Any], github_labels[0]) if isinstance(github_labels[0], dict) else {}
-                item_label = _parse_github_mcp_labels(cast(dict[str, Any], github_labels))
-                if item_label:
-                    logger.info(
-                        f"Parsed GitHub MCP labels for Content item: "
-                        f"integrity={item_label.integrity.value}, "
-                        f"confidentiality={item_label.confidentiality.value}"
-                    )
-                    return item_label
-            except Exception as e:
-                logger.warning(f"Failed to parse GitHub MCP labels from Content: {e}")
 
         # No embedded label — use fallback
         return fallback_label
@@ -1595,7 +1691,16 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
 
     def _build_function_call_content(self, context: FunctionInvocationContext) -> Content:
         """Reconstruct the current function call as Content for approval requests."""
-        if isinstance(context.arguments, BaseModel):
+        # Use original unexpanded arguments if available (preserves [var_xxx] placeholders)
+        original_args = context.metadata.get("original_arguments_for_messages")
+        if original_args is not None:
+            if isinstance(original_args, BaseModel):
+                arguments = original_args.model_dump()
+            elif isinstance(original_args, dict):
+                arguments = cast(dict[str, Any], original_args)
+            else:
+                arguments = dict(original_args)
+        elif isinstance(context.arguments, BaseModel):
             arguments: dict[str, Any] = context.arguments.model_dump()
         else:
             arguments = dict(context.arguments)
@@ -1937,6 +2042,17 @@ class SecureAgentConfig(ContextProvider):
         policy_enforcer: Optional PolicyEnforcementFunctionMiddleware instance.
         auto_hide_untrusted: Whether to automatically hide untrusted content.
 
+    Note:
+        The quarantine chat client is stored per-instance (see ``get_quarantine_client``)
+        but is *also* registered in a single process-global slot via
+        ``set_quarantine_client``. The ``quarantined_llm`` tool always reads that global
+        slot, so the behavior is **last-writer-wins**: when multiple ``SecureAgentConfig``
+        instances are constructed in the same process with different ``quarantine_chat_client``
+        values, the most recently constructed instance's client is the one every agent's
+        ``quarantined_llm`` tool will use. Running multiple instances is supported, but they
+        share this one global quarantine client rather than each using their own. If you need
+        distinct quarantine clients per agent, run them in separate processes.
+
     Examples:
         .. code-block:: python
 
@@ -1993,7 +2109,9 @@ class SecureAgentConfig(ContextProvider):
                 If provided, the quarantined_llm tool will make actual isolated LLM calls
                 instead of returning placeholder responses. This client should ideally be
                 a separate instance using a cheaper model (e.g., gpt-4o-mini) since it
-                processes untrusted content.
+                processes untrusted content. Note: this client is registered in a
+                process-global slot shared by all instances (last-writer-wins); see the
+                class docstring for details on running multiple instances.
             source_id: Optional source identifier for context provider attribution.
                 Defaults to "secure_agent".
         """
@@ -2228,6 +2346,30 @@ inspect_variable(variable_id="var_abc123", reason="Need to determine data format
 
 ⚠️ WARNING: After inspecting, the content is exposed. Only inspect when necessary.
 
+### Passing Variable References to OTHER Tools (e.g. write/send/post tools):
+
+When you want a tool OTHER than `quarantined_llm`/`inspect_variable` to receive the
+hidden content as one of its arguments (for example, writing the data to a file, posting
+it to a chat, or committing it to a repository), put the variable reference inside the
+argument string wrapped in square brackets: ``[var_abc123]``. The middleware will
+substitute the brackets with the real content at execution time.
+
+**CORRECT** — wrap the id in brackets:
+```
+push_files(files=[{"path": "report.md", "content": "## Summary\n[var_abc123]"}])
+write_file(path="out.txt", content="[var_abc123]")
+```
+
+**INCORRECT** — do NOT pass the bare id, do NOT quote it, do NOT prefix it:
+```
+write_file(content="var_abc123")           # ❌ bare id, will be written verbatim
+write_file(content="${var_abc123}")        # ❌ wrong syntax
+write_file(content="<var_abc123>")         # ❌ wrong syntax
+```
+
+Always use the exact form ``[var_<hex>]``. The id is opaque — do NOT shorten,
+truncate, or modify it.
+
 ### Best Practices:
 
 1. **Prefer `quarantined_llm` over `inspect_variable`** - process data safely whenever possible
@@ -2235,6 +2377,7 @@ inspect_variable(variable_id="var_abc123", reason="Need to determine data format
 3. **Never assume content** - if you see a VariableReferenceContent, use these tools
 4. **Chain operations** - you can use quarantined_llm output to inform next steps
 5. **Pass variable_ids directly** - don't try to access .variable_id, just pass the ID string
+6. **Wrap in brackets when embedding in tool arguments** - use ``[var_xxx]``, never bare ``var_xxx``
 """
 
 
@@ -2485,6 +2628,32 @@ class InspectVariableInput(BaseModel):
     reason: str | None = Field(default=None, description="Reason for inspecting this variable (for audit purposes)")
 
 
+def _inspect_variable_result_parser(result: Any) -> list[Content]:
+    """Parse ``inspect_variable``'s dict result while preserving its security label.
+
+    ``inspect_variable`` returns a dict whose ``security_label`` field carries the
+    label of the inspected content (which may be ``USER_IDENTITY`` or any other
+    confidentiality level). The default :meth:`FunctionTool.parse_result`
+    serializes that dict to plain text, dropping the label from
+    ``Content.additional_properties``. The middleware's Tier 1 label extraction
+    then misses it and falls back to the tool's default confidentiality,
+    downgrading the real label.
+
+    This parser stamps the inspected label back onto the produced Content so
+    ``LabelTrackingFunctionMiddleware`` propagates it faithfully. The error path
+    (``security_label`` is ``None``) is left unstamped so it safely falls back to
+    the tool's default label.
+    """
+    contents = FunctionTool.parse_result(result)
+    label = cast(dict[str, Any], result).get("security_label") if isinstance(result, dict) else None
+    if label and contents:
+        first = contents[0]
+        props = first.additional_properties or {}
+        props["security_label"] = label
+        first.additional_properties = props
+    return contents
+
+
 @tool(
     description=(
         "Inspect the content of a variable stored in the ContentVariableStore. "
@@ -2493,6 +2662,7 @@ class InspectVariableInput(BaseModel):
         "The context label will be marked as UNTRUSTED after inspection."
     ),
     approval_mode="never_require",
+    result_parser=_inspect_variable_result_parser,
     additional_properties={
         "confidentiality": "private",
         # No source_integrity declared: output inherits the label of the
@@ -2684,3 +2854,525 @@ def get_security_tools() -> list[FunctionTool]:
             )
     """
     return [quarantined_llm, inspect_variable]
+
+
+# =============================================================================
+# MCP Auto-Labeling
+# =============================================================================
+
+
+def _map_mcp_annotations_to_labels(
+    annotations: Any | None,
+    *,
+    default_integrity: IntegrityLabel = IntegrityLabel.UNTRUSTED,
+) -> tuple[IntegrityLabel, ConfidentialityLabel | None, bool]:
+    """Map MCP ToolAnnotations to FIDES security labels.
+
+    Uses the MCP hint fields (``readOnlyHint``, ``openWorldHint``)
+    to infer an appropriate ``source_integrity``,
+    ``max_allowed_confidentiality``, and ``accepts_untrusted`` flag.
+
+    Mapping rules (conservative - when in doubt, default to UNTRUSTED *source*
+    and PUBLIC-only *sink*):
+
+        * ``readOnlyHint=True`` -> ``accepts_untrusted=True`` (pure data source,
+            safe to call even when the context is tainted - it cannot exfiltrate)
+      and **no** ``max_allowed_confidentiality`` cap.
+    * ``readOnlyHint`` is anything other than ``True`` (``False`` *or* missing)
+            -> treated as a potential write / exfiltration sink:
+      ``max_allowed_confidentiality = PUBLIC`` and ``accepts_untrusted = False``.
+      This matters because real-world servers (e.g. GitHub's MCP) declare
+      ``readOnlyHint=True`` on read tools but leave the field unset on write
+      tools, so a strict ``readOnlyHint=False`` check would miss them.
+        * ``openWorldHint=True`` -> integrity ``UNTRUSTED`` (tool touches external
+            data); ``openWorldHint=False`` -> ``TRUSTED``.
+        * If ``openWorldHint`` is missing, integrity remains ``default_integrity``.
+        * All hints absent / ``None`` -> ``default_integrity`` (UNTRUSTED by default),
+      ``max_allowed_confidentiality=PUBLIC``, ``accepts_untrusted=False``.
+
+    Args:
+        annotations: An MCP ``ToolAnnotations`` object (or ``None``).
+        default_integrity: Fallback integrity when hints are absent.
+
+    Returns:
+        A ``(integrity, max_confidentiality, accepts_untrusted)`` tuple.
+        ``max_confidentiality`` is ``None`` for read-only / source tools and
+        ``PUBLIC`` for sinks.  ``accepts_untrusted`` is ``True`` for read-only
+        tools that are safe to invoke in a tainted context.
+    """
+    if annotations is None:
+        # No annotations at all - treat as both UNTRUSTED-by-default and a
+        # potential sink (max_conf=PUBLIC). We have no signal that the tool is
+        # safe to receive PRIVATE data, so we err on the side of blocking
+        # exfiltration.
+        return (default_integrity, ConfidentialityLabel.PUBLIC, False)
+
+    read_only: bool | None = getattr(annotations, "readOnlyHint", None)
+    open_world: bool | None = getattr(annotations, "openWorldHint", None)
+
+    # --- Determine integrity ---
+    integrity = default_integrity
+
+    if open_world is True:
+        # Interacts with external entities -> untrusted data
+        integrity = IntegrityLabel.UNTRUSTED
+    elif open_world is False:
+        # Closed-world tool (e.g., local memory) -> data is trusted
+        integrity = IntegrityLabel.TRUSTED
+
+    # --- Determine max_allowed_confidentiality (sink detection) ---
+    # Conservative rule: only tools that *explicitly* declare ``readOnlyHint=True``
+    # are treated as pure data sources. Everything else - including tools whose
+    # server omits the hint entirely - is treated as a potential write / sink
+    # and capped at PUBLIC confidentiality. This matters because many real
+    # servers (notably GitHub's MCP) declare ``readOnlyHint=True`` on read
+    # tools but leave *all* hints as ``None`` on their write tools
+    # (``push_files``, ``create_or_update_file``, ``create_pull_request``,
+    # ``create_repository``, ``merge_pull_request``, ...). Without this default,
+    # those write tools would bypass the exfiltration gate entirely.
+    max_confidentiality: ConfidentialityLabel | None = None
+    if read_only is not True:
+        max_confidentiality = ConfidentialityLabel.PUBLIC
+
+    # --- Determine accepts_untrusted ---
+    # Read-only tools are pure data sources; they cannot exfiltrate data,
+    # so they are safe to call even when the agent context is tainted.
+    accepts_untrusted = read_only is True
+
+    return (integrity, max_confidentiality, accepts_untrusted)
+
+
+@experimental(feature_id=ExperimentalFeature.FIDES)
+async def apply_mcp_security_labels(
+    mcp_tool: Any,
+    *,
+    default_integrity: IntegrityLabel = IntegrityLabel.UNTRUSTED,
+    annotation_overrides: dict[str, tuple[IntegrityLabel, ConfidentialityLabel | None]] | None = None,
+    mark_write_tools_as_sinks: bool = True,
+) -> None:
+    """Auto-assign FIDES security labels to every tool loaded from an MCP server.
+
+    Reads the MCP ``ToolAnnotations`` hints (``readOnlyHint``, ``openWorldHint``)
+    that the server advertises for
+    each tool and translates them into ``source_integrity`` and
+    ``max_allowed_confidentiality`` entries in each ``FunctionTool``'s
+    ``additional_properties``.  The existing
+    :class:`LabelTrackingFunctionMiddleware` picks these up automatically
+    (Tier 2 label propagation), so **no middleware changes are needed**.
+
+    Call this **after** the ``MCPTool`` is connected (tools already loaded).
+
+    Args:
+        mcp_tool: A connected ``MCPTool`` instance (``MCPStdioTool``,
+            ``MCPStreamableHTTPTool``, ``MCPWebsocketTool``).
+        default_integrity: Integrity label to assign when the server provides
+            no annotations.  Defaults to ``UNTRUSTED`` (conservative).
+        annotation_overrides: Optional per-tool-name overrides.  Keys are
+            *remote* MCP tool names (as the server exposes them).  Values are
+            ``(IntegrityLabel, ConfidentialityLabel | None)`` tuples that
+            replace the annotation-derived labels entirely.
+        mark_write_tools_as_sinks: When ``True`` (default), non-read-only
+            tools get ``max_allowed_confidentiality=PUBLIC`` to prevent data
+            exfiltration via tool arguments.
+
+    Raises:
+        RuntimeError: If the ``MCPTool`` is not connected.
+
+    Examples:
+        .. code-block:: python
+
+            async with MCPStdioTool(name="github", command="gh-mcp", args=["stdio"]) as mcp:
+                await apply_mcp_security_labels(mcp)
+                agent = ChatCompletionAgent(
+                    chat_client=client,
+                    tools=[mcp],
+                    context_providers=[SecureAgentConfig(chat_client=client)],
+                )
+    """
+    if not getattr(mcp_tool, "is_connected", False):
+        raise RuntimeError(
+            "MCPTool is not connected. Call connect() or use 'async with' before applying security labels."
+        )
+
+    session = getattr(mcp_tool, "session", None)
+    if session is None:
+        raise RuntimeError("MCPTool has no active session.")
+
+    # ------------------------------------------------------------------
+    # 1. Fetch tool list (with annotations) from the server
+    # ------------------------------------------------------------------
+    from mcp import types as mcp_types
+
+    annotation_map: dict[str, Any] = {}  # remote_name → ToolAnnotations | None
+    params: mcp_types.PaginatedRequestParams | None = None
+    while True:
+        tool_list = await session.list_tools(params=params)
+        for t in tool_list.tools:
+            annotation_map[t.name] = t.annotations
+        if not tool_list or not tool_list.nextCursor:
+            break
+        params = mcp_types.PaginatedRequestParams(cursor=tool_list.nextCursor)
+
+    # ------------------------------------------------------------------
+    # 2. Patch each FunctionTool's additional_properties
+    # ------------------------------------------------------------------
+    overrides = annotation_overrides or {}
+    functions: list[FunctionTool] = getattr(mcp_tool, "functions", [])
+
+    for func in functions:
+        props = func.additional_properties
+        if props is None:
+            props = {}
+            func.additional_properties = props
+
+        remote_name: str | None = props.get("_mcp_remote_name")
+        if remote_name is None:
+            continue
+
+        # Check for explicit per-tool override first
+        if remote_name in overrides:
+            integrity, max_conf = overrides[remote_name]
+            accepts_untrusted = False  # overrides must opt-in explicitly
+        else:
+            annotations = annotation_map.get(remote_name)
+            integrity, max_conf, accepts_untrusted = _map_mcp_annotations_to_labels(
+                annotations, default_integrity=default_integrity
+            )
+
+        # Patch source_integrity (Tier 2 - read by LabelTrackingFunctionMiddleware)
+        props["source_integrity"] = integrity.value
+
+        # Patch sink constraint
+        if mark_write_tools_as_sinks and max_conf is not None:
+            props["max_allowed_confidentiality"] = max_conf.value
+
+        # Allow read-only tools to execute even when context is tainted;
+        # explicitly block write tools in untrusted contexts.
+        props["accepts_untrusted"] = accepts_untrusted
+
+        logger.info(
+            "MCP auto-label: tool=%s integrity=%s max_confidentiality=%s accepts_untrusted=%s",
+            remote_name,
+            integrity.value,
+            max_conf.value if max_conf else "none",
+            accepts_untrusted,
+        )
+
+
+# Sentinel key set by MCPTool._parse_tool_result_from_mcp on every produced
+# Content carrying the per-call ``_meta`` payload from the MCP server.  We
+# parse the well-known ``ifc`` sub-key into a ContentLabel here; other future
+# ``_meta`` keys can be interpreted by additional consumers without touching
+# the transport layer.
+_MCP_RESULT_META_KEY = "_meta"
+
+
+def _label_from_mcp_meta(meta: Any) -> ContentLabel | None:
+    """Best-effort parse of an MCP server ``_meta`` payload into a ``ContentLabel``.
+
+    Looks under ``meta["ifc"]`` for an ``integrity`` and ``confidentiality``
+    pair using the wire vocabulary advertised by IFC-aware MCP servers
+    (e.g. the GitHub MCP server's ``ifc`` schema: integrity is one of
+    ``"trusted" | "untrusted"`` and confidentiality is one of
+    ``"public" | "private"``).  Returns ``None`` when the payload is missing,
+    not a dict, or contains values outside the known vocabularies, which lets
+    callers fall back to a statically derived label.
+    """
+    if not isinstance(meta, dict):
+        return None
+    meta_map = cast(dict[str, Any], meta)
+    ifc = meta_map.get("ifc")
+    if not isinstance(ifc, dict):
+        return None
+    ifc_map = cast(dict[str, Any], ifc)
+    integ_raw = ifc_map.get("integrity")
+    conf_raw = ifc_map.get("confidentiality")
+    try:
+        integrity = IntegrityLabel(integ_raw) if integ_raw is not None else None
+        confidentiality = ConfidentialityLabel(conf_raw) if conf_raw is not None else None
+    except ValueError:
+        logger.debug("MCP _meta.ifc had unknown label values: %r", ifc_map)
+        return None
+    if integrity is None or confidentiality is None:
+        logger.debug("MCP _meta.ifc missing integrity/confidentiality: %r", ifc_map)
+        return None
+    return ContentLabel(integrity=integrity, confidentiality=confidentiality)
+
+
+def _stamp_mcp_content_labels(contents: Any, static_label: ContentLabel) -> Any:
+    """Stamp ``security_label`` on each Content in an MCP tool result.
+
+    The per-item label is sourced from ``additional_properties["_meta"]``
+    (set by :meth:`MCPTool._parse_tool_result_from_mcp`) when the server
+    provided a parseable ``ifc`` payload; otherwise ``static_label`` is used.
+    The sentinel ``_meta`` key is consumed (removed) regardless
+    so downstream layers don't re-process it.
+
+    By design the server-supplied label always wins over the static label.
+    Composition-time invariants (e.g. confidentiality ceilings on write
+    tools) are still enforced by :class:`LabelTrackingFunctionMiddleware`
+    and :class:`PolicyEnforcementFunctionMiddleware` via the standard
+    label-combination semantics.
+    """
+    if not isinstance(contents, list):
+        return contents
+    contents_list = cast(list[Any], contents)
+    for item in contents_list:
+        if not isinstance(item, Content):
+            continue
+        props = item.additional_properties or {}
+        server_meta = props.pop(_MCP_RESULT_META_KEY, None)
+        dynamic = _label_from_mcp_meta(server_meta) if server_meta else None
+        label = dynamic or static_label
+        props["security_label"] = label.to_dict()
+        item.additional_properties = props
+    return contents_list
+
+
+def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: IntegrityLabel) -> None:
+    """Replace ``func_tool.func`` with a wrapper that stamps IFC labels on results.
+
+    The wrapper preserves the original signature and binding behaviour
+    (FunctionTool already cached ``_context_parameter_name`` from the
+    original callable) and merely post-processes the returned
+    ``list[Content]``.  ``str`` returns are left untouched because there are
+    no per-item containers to stamp.
+    """
+    original = func_tool.func
+    if original is None or getattr(original, "_ifc_wrapped", False):
+        return
+
+    # Derive the static fallback label from the FunctionTool's own
+    # additional_properties (populated by apply_mcp_security_labels above).
+    props = func_tool.additional_properties or {}
+    try:
+        static_integrity = IntegrityLabel(props.get("source_integrity", default_integrity.value))
+    except ValueError:
+        static_integrity = default_integrity
+    try:
+        static_conf = ConfidentialityLabel(props.get("max_allowed_confidentiality", ConfidentialityLabel.PUBLIC.value))
+    except ValueError:
+        static_conf = ConfidentialityLabel.PUBLIC
+    static_label = ContentLabel(integrity=static_integrity, confidentiality=static_conf)
+
+    async def _wrapped(*args: Any, **kwargs: Any) -> Any:
+        import inspect as _inspect
+
+        res = original(*args, **kwargs)
+        if _inspect.isawaitable(res):
+            res = await res
+        return _stamp_mcp_content_labels(res, static_label)
+
+    _wrapped._ifc_wrapped = True  # type: ignore[attr-defined]
+    func_tool.func = _wrapped
+
+
+@experimental(feature_id=ExperimentalFeature.FIDES)
+class SecureMCPToolProxy:
+    """Convenience wrapper that auto-labels MCP tools on connection.
+
+    Wraps any ``MCPTool`` subclass and calls
+    :func:`apply_mcp_security_labels` automatically when entering the async
+    context manager (or when :meth:`connect` is called explicitly).
+
+    The proxy delegates ``functions``, ``is_connected``, and ``name`` to the
+    wrapped tool.  Pass ``proxy.tools`` (or ``proxy.functions``) directly to
+    the agent's ``tools=`` parameter.
+
+    There are two ways to create a proxy:
+
+    1. **Wrap an existing MCPTool** (local binary, WebSocket, or HTTP)::
+
+        async with SecureMCPToolProxy(
+            MCPStdioTool(name="github", command="gh-mcp", args=["stdio"])
+        ) as proxy:
+            agent = Agent(client=client, tools=proxy.tools, ...)
+
+    2. **Provide a URL** (auto-creates ``MCPStreamableHTTPTool`` internally)::
+
+        async with SecureMCPToolProxy(
+            url="https://mcp.example.com/",
+            headers={"Authorization": "Bearer <token>"},
+            name="my-mcp",
+        ) as proxy:
+            agent = Agent(client=client, tools=proxy.tools, ...)
+
+    The URL mode ensures the MCP server is called **locally** by your
+    application (not by the model provider), so
+    :class:`LabelTrackingFunctionMiddleware` and
+    :class:`PolicyEnforcementFunctionMiddleware` can intercept every tool
+    call.  This is in contrast to the *hosted MCP* approach
+    (``client.get_mcp_tool()``) where the provider calls the MCP server
+    remotely and security middleware is bypassed entirely.
+
+    Args:
+        mcp_tool: An ``MCPTool`` instance to wrap.  Mutually exclusive with
+            *url*.
+        url: URL of a remote MCP server.  When provided, the proxy creates
+            an ``MCPStreamableHTTPTool`` internally.  Mutually exclusive with
+            *mcp_tool*.
+        headers: HTTP headers (e.g. auth tokens) sent with every request
+            when using *url* mode.
+        name: Tool name used when creating the internal
+            ``MCPStreamableHTTPTool`` (defaults to ``"mcp"``).
+        description: Tool description for the internal tool.
+        default_integrity: Default integrity for tools without annotations.
+        annotation_overrides: Per-tool-name label overrides (keyed by remote
+            MCP tool name).
+        mark_write_tools_as_sinks: Whether to restrict write tools to PUBLIC
+            confidentiality.
+    """
+
+    def __init__(
+        self,
+        mcp_tool: MCPTool | None = None,
+        *,
+        url: str | None = None,
+        headers: dict[str, str] | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        default_integrity: IntegrityLabel = IntegrityLabel.UNTRUSTED,
+        annotation_overrides: dict[str, tuple[IntegrityLabel, ConfidentialityLabel | None]] | None = None,
+        mark_write_tools_as_sinks: bool = True,
+    ) -> None:
+        """Initialize a secure proxy for an MCP tool or MCP URL endpoint.
+
+        Provide exactly one of ``mcp_tool`` or ``url``.
+
+        Args:
+            mcp_tool: An ``MCPTool`` instance to wrap. Mutually exclusive with ``url``.
+
+        Keyword Args:
+            url: URL of a remote MCP server. When provided, the proxy creates an
+                ``MCPStreamableHTTPTool`` internally. Mutually exclusive with ``mcp_tool``.
+            headers: HTTP headers (e.g. auth tokens) sent with every request when using
+                ``url`` mode.
+            name: Tool name used when creating the internal ``MCPStreamableHTTPTool``
+                (defaults to ``"mcp"``).
+            description: Tool description for the internal tool.
+            default_integrity: Default integrity for tools without annotations.
+                Defaults to ``IntegrityLabel.UNTRUSTED``.
+            annotation_overrides: Per-tool-name label overrides keyed by remote MCP tool name.
+            mark_write_tools_as_sinks: Whether to restrict write tools to PUBLIC
+                confidentiality. Defaults to ``True``.
+
+        Raises:
+            ValueError: If both ``mcp_tool`` and ``url`` are provided, or if neither is provided.
+        """
+        if mcp_tool is not None and url is not None:
+            raise ValueError("Provide either 'mcp_tool' or 'url', not both.")
+        if mcp_tool is None and url is None:
+            raise ValueError("Provide either 'mcp_tool' (an MCPTool instance) or 'url' (a remote MCP server URL).")
+
+        if url is not None:
+            from httpx import AsyncClient, Timeout
+
+            from ._mcp import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT, MCPStreamableHTTPTool
+
+            static_headers = dict(headers or {})
+            # Pass headers via an AsyncClient so they are included on ALL requests
+            # (including session.initialize()), not just tool calls. Using
+            # header_provider alone only sets headers via a ContextVar that is
+            # populated during call_tool() and would be empty during initialization,
+            # causing 401s that silently manifest as anyio cancel-scope errors.
+            http_client = (
+                AsyncClient(
+                    headers=static_headers,
+                    follow_redirects=True,
+                    timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
+                )
+                if static_headers
+                else None
+            )
+            mcp_tool = MCPStreamableHTTPTool(
+                name=name or "mcp",
+                url=url,
+                http_client=http_client,
+                description=description,
+            )
+
+        # The validation above guarantees a tool is set (passed directly or built
+        # from ``url``); declare the attribute as non-optional ``MCPTool``.
+        self._mcp_tool: MCPTool = cast(MCPTool, mcp_tool)
+        self._default_integrity = default_integrity
+        self._annotation_overrides = annotation_overrides
+        self._mark_write_tools_as_sinks = mark_write_tools_as_sinks
+
+    # -- Async context manager --
+
+    async def __aenter__(self) -> SecureMCPToolProxy:
+        """Enter context, connect the wrapped tool, and apply labels."""
+        await self._mcp_tool.__aenter__()
+        await self._apply_labels()
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Exit context and close the wrapped MCP tool."""
+        await self._mcp_tool.__aexit__(exc_type, exc_val, exc_tb)
+
+    # -- Explicit connect/disconnect --
+
+    async def connect(self) -> None:
+        """Connect the underlying MCPTool and apply security labels."""
+        await self._mcp_tool.connect()
+        await self._apply_labels()
+
+    async def disconnect(self) -> None:
+        """Disconnect the underlying MCPTool."""
+        await self._mcp_tool.close()
+
+    async def refresh_labels(self) -> None:
+        """Re-apply labels/wrappers for tools added while connected.
+
+        Some MCP servers can expose additional tools during a long-lived
+        connection. Call this to re-run annotation mapping and wrap newly
+        discovered tool callables without reconnecting.
+        """
+        if not self.is_connected:
+            raise RuntimeError("MCPTool is not connected. Connect before refreshing labels.")
+        await self._apply_labels()
+
+    # -- Delegated properties --
+
+    @property
+    def name(self) -> str:
+        """Return the wrapped MCP tool name."""
+        return self._mcp_tool.name
+
+    @property
+    def is_connected(self) -> bool:
+        """Return whether the wrapped MCP tool is connected."""
+        return self._mcp_tool.is_connected
+
+    @property
+    def functions(self) -> list[FunctionTool]:
+        """Return the wrapped MCP tool function list."""
+        return self._mcp_tool.functions
+
+    @property
+    def tools(self) -> list[FunctionTool]:
+        """Alias for :attr:`functions` - the labeled tool list."""
+        return self.functions
+
+    @property
+    def mcp_tool(self) -> Any:
+        """Access the underlying ``MCPTool`` instance."""
+        return self._mcp_tool
+
+    # -- Internal --
+
+    async def _apply_labels(self) -> None:
+        await apply_mcp_security_labels(
+            self._mcp_tool,
+            default_integrity=self._default_integrity,
+            annotation_overrides=self._annotation_overrides,
+            mark_write_tools_as_sinks=self._mark_write_tools_as_sinks,
+        )
+        # After static labels are stamped on each FunctionTool, install a
+        # per-tool wrapper that consumes any server-provided ``_meta.ifc``
+        # payload propagated by MCPTool and translates it into per-Content
+        # ``security_label`` entries.  The server-supplied label always wins
+        # over the static label; the static label is the fallback when the
+        # server omits ``_meta`` (or it cannot be parsed).
+        for func_tool in getattr(self._mcp_tool, "functions", []):
+            _wrap_mcp_function_for_ifc(func_tool, self._default_integrity)

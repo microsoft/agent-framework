@@ -66,7 +66,7 @@ class _OpenAICompatBackend(FileSearchBackend):
             vector_store_id=vector_store_id,
             file_id=uploaded.id,
         )
-        return uploaded.id  # type: ignore[no-any-return]
+        return uploaded.id
 
     async def delete_file(self, file_id: str) -> None:
         await self._client.files.delete(file_id)

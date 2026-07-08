@@ -11,7 +11,7 @@ from agent_framework import AgentSession
 from agent_framework.foundry import FoundryAgent
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import VersionRefIndicator
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -124,7 +124,7 @@ async def main() -> None:
                 if chunk.text:
                     print(chunk.text, end="", flush=True)
         finally:
-            if session.service_session_id is not None:
+            if isinstance(session.service_session_id, str):
                 await project_client.beta.agents.delete_session(
                     agent_name=agent_name,
                     session_id=session.service_session_id,

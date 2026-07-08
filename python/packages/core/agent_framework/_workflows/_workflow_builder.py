@@ -36,9 +36,9 @@ from ._workflow import (
 )
 
 if sys.version_info >= (3, 11):
-    from typing import Self  # type: ignore # pragma: no cover
+    from typing import Self  # pragma: no cover
 else:
-    from typing_extensions import Self  # type: ignore # pragma: no cover
+    from typing_extensions import Self  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
@@ -182,7 +182,7 @@ class WorkflowBuilder:
         # New executor
         self._executors[executor.id] = executor
         # Add an internal edge group for each unique executor
-        self._edge_groups.append(InternalEdgeGroup(executor.id))  # type: ignore[call-arg]
+        self._edge_groups.append(InternalEdgeGroup(executor.id))
 
         return executor.id
 
@@ -199,13 +199,13 @@ class WorkflowBuilder:
             An Executor instance, wrapping the agent if necessary.
         """
         try:  # Local import to avoid hard dependency at import time
-            from agent_framework import SupportsAgentRun  # type: ignore
+            from agent_framework import SupportsAgentRun
         except Exception:  # pragma: no cover - defensive
-            SupportsAgentRun = object  # type: ignore
+            SupportsAgentRun = object
 
         if isinstance(candidate, Executor):  # Already an executor
             return candidate
-        if isinstance(candidate, SupportsAgentRun):  # type: ignore[arg-type]
+        if isinstance(candidate, SupportsAgentRun):
             # Reuse existing wrapper for the same agent instance if present
             agent_instance_id = str(id(candidate))
             existing = self._agent_wrappers.get(agent_instance_id)
@@ -329,7 +329,7 @@ class WorkflowBuilder:
         target_execs = [self._maybe_wrap_agent(t) for t in targets]
         source_id = self._add_executor(source_exec)
         target_ids = [self._add_executor(t) for t in target_execs]
-        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids))  # type: ignore[call-arg]
+        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids))
 
         return self
 
@@ -410,13 +410,13 @@ class WorkflowBuilder:
         internal_cases: list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault] = []
         for case in cases:
             # Allow case targets to be agents
-            case.target = self._maybe_wrap_agent(case.target)  # type: ignore[arg-type]
+            case.target = self._maybe_wrap_agent(case.target)
             self._add_executor(case.target)
             if isinstance(case, Default):
                 internal_cases.append(SwitchCaseEdgeGroupDefault(target_id=case.target.id))
             else:
                 internal_cases.append(SwitchCaseEdgeGroupCase(condition=case.condition, target_id=case.target.id))
-        self._edge_groups.append(SwitchCaseEdgeGroup(source_id, internal_cases))  # type: ignore[call-arg]
+        self._edge_groups.append(SwitchCaseEdgeGroup(source_id, internal_cases))
 
         return self
 
@@ -502,7 +502,7 @@ class WorkflowBuilder:
         target_execs = [self._maybe_wrap_agent(t) for t in targets]
         source_id = self._add_executor(source_exec)
         target_ids = [self._add_executor(t) for t in target_execs]
-        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids, selection_func))  # type: ignore[call-arg]
+        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids, selection_func))
 
         return self
 
@@ -557,7 +557,7 @@ class WorkflowBuilder:
         target_exec = self._maybe_wrap_agent(target)
         source_ids = [self._add_executor(s) for s in source_execs]
         target_id = self._add_executor(target_exec)
-        self._edge_groups.append(FanInEdgeGroup(source_ids, target_id))  # type: ignore[call-arg]
+        self._edge_groups.append(FanInEdgeGroup(source_ids, target_id))
 
         return self
 

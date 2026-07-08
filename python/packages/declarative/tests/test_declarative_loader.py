@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 
+from agent_framework_declarative._loader import ProviderTypeMapping
 from agent_framework_declarative._models import (
     AgentDefinition,
     AgentManifest,
@@ -25,6 +26,7 @@ from agent_framework_declarative._models import (
     McpServerToolNeverRequireApprovalMode,
     McpServerToolSpecifyApprovalMode,
     McpTool,
+    Model,
     ModelResource,
     ObjectProperty,
     OpenApiTool,
@@ -706,6 +708,9 @@ model:
         token = _safe_mode_context.set(True)  # Ensure we're in safe mode
         try:
             result = agent_schema_dispatch(yaml_module.safe_load(yaml_content))
+            assert isinstance(result, PromptAgent)
+            assert isinstance(result.model, Model)
+            assert isinstance(result.model.connection, ApiKeyConnection)
 
             # The API key should NOT be resolved (still has the PowerFx expression)
             assert result.model.connection.apiKey == "=Env.MY_API_KEY"
@@ -741,6 +746,9 @@ model:
         token = _safe_mode_context.set(False)  # Disable safe mode
         try:
             result = agent_schema_dispatch(yaml_module.safe_load(yaml_content))
+            assert isinstance(result, PromptAgent)
+            assert isinstance(result.model, Model)
+            assert isinstance(result.model.connection, ApiKeyConnection)
 
             # The API key should be resolved from environment
             assert result.model.connection.apiKey == "secret-key-123"
@@ -1127,11 +1135,13 @@ model:
         from agent_framework_declarative import AgentFactory
 
         # Define a custom provider mapping
-        custom_mappings = {
+        custom_mappings: dict[str, ProviderTypeMapping] = {
             "CustomProvider.Chat": {
                 "package": "agent_framework.openai",
                 "name": "OpenAIChatClient",
                 "model_field": "model",
+                "endpoint_field": None,
+                "api_key_field": None,
             },
         }
 
@@ -1424,7 +1434,13 @@ class TestProviderResponseFormat:
         prompt_agent = self._make_mock_prompt_agent(with_output_schema=True)
         mock_provider_class, mock_provider_instance = self._make_mock_provider()
 
-        mapping = {"package": "some_module", "name": "SomeProvider"}
+        mapping: ProviderTypeMapping = {
+            "package": "some_module",
+            "name": "SomeProvider",
+            "model_field": "model",
+            "endpoint_field": None,
+            "api_key_field": None,
+        }
         factory = AgentFactory()
 
         original_import = builtins.__import__
@@ -1458,7 +1474,13 @@ class TestProviderResponseFormat:
         prompt_agent = self._make_mock_prompt_agent(with_output_schema=False)
         mock_provider_class, mock_provider_instance = self._make_mock_provider()
 
-        mapping = {"package": "some_module", "name": "SomeProvider"}
+        mapping: ProviderTypeMapping = {
+            "package": "some_module",
+            "name": "SomeProvider",
+            "model_field": "model",
+            "endpoint_field": None,
+            "api_key_field": None,
+        }
         factory = AgentFactory()
 
         original_import = builtins.__import__
