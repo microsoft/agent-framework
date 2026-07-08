@@ -1,0 +1,74 @@
+### ============================================================================
+### Sub-workflow HITL Sample - Nested Human-in-the-Loop behind one surface
+### ============================================================================
+### The HITL pause lives inside an inner workflow (human_review) that the outer
+### workflow (moderation_pipeline) embeds via WorkflowExecutor. The nested request
+### surfaces with a qualified id (review_sub~0~{requestId}); you respond against the
+### top-level instance and the host routes it to the owning child orchestration.
+###
+### This sample hosts no AI agents, so it needs only Azurite + the DTS emulator.
+###
+### Prerequisites:
+### 1. Start Azurite: azurite --silent --location .
+### 2. Start the Durable Task Scheduler emulator (localhost:8080)
+### 3. Run: func start
+### ============================================================================
+
+
+### ============================================================================
+### 1. Start the Workflow with Content for Moderation (will approve)
+### ============================================================================
+### Starts the outer workflow. It runs intake, then the embedded human_review
+### sub-workflow pauses for approval as a child orchestration.
+
+POST http://localhost:7071/api/workflow/moderation_pipeline/run
+Content-Type: application/json
+
+{
+  "content_id": "article-001",
+  "title": "Introduction to AI in Healthcare",
+  "body": "Artificial intelligence is improving healthcare by enabling faster diagnosis, personalized treatment plans, and better patient outcomes."
+}
+
+
+### ============================================================================
+### 2. Start Workflow with Spammy Content (will reject)
+### ============================================================================
+
+POST http://localhost:7071/api/workflow/moderation_pipeline/run
+Content-Type: application/json
+
+{
+  "content_id": "article-002",
+  "title": "Get Rich Quick",
+  "body": "Click here NOW to make $10,000 overnight! GUARANTEED! Limited time offer!"
+}
+
+
+### ============================================================================
+### 3. Check Workflow Status (shows the nested pending HITL request)
+### ============================================================================
+### Replace INSTANCE_ID with the value returned from the run call. The
+### pendingHumanInputRequests entry carries a qualified requestId of the form
+### "review_sub~0~<uuid>" because the pause lives in the sub-workflow.
+
+@instanceId = REPLACE_WITH_INSTANCE_ID
+
+GET http://localhost:7071/api/workflow/moderation_pipeline/status/{{instanceId}}
+
+
+### ============================================================================
+### 4. Respond to the nested HITL request (approve)
+### ============================================================================
+### Use the qualified requestId from the status response verbatim. The host
+### resolves it to the owning child orchestration.
+
+@requestId = REPLACE_WITH_QUALIFIED_REQUEST_ID
+
+POST http://localhost:7071/api/workflow/moderation_pipeline/respond/{{instanceId}}/{{requestId}}
+Content-Type: application/json
+
+{
+  "approved": true,
+  "reviewer_notes": "Looks good."
+}

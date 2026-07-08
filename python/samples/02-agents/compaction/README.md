@@ -23,3 +23,14 @@ uv run samples/02-agents/compaction/custom.py
 uv run samples/02-agents/compaction/tiktoken_tokenizer.py
 uv run samples/02-agents/compaction/compaction_provider.py  # requires OPENAI_API_KEY
 ```
+
+## Security Considerations
+
+Most compaction strategies in this folder (`TruncationStrategy`, `SlidingWindowStrategy`,
+`SelectiveToolCallCompactionStrategy`, `ToolResultCompactionStrategy`) only remove or reorder
+existing messages and carry no additional risk. `SummarizationStrategy` is the exception: it
+calls out to an LLM to produce replacement summary content that permanently becomes part of
+chat history. A compromised or malicious summarization service could return a summary
+containing unsafe instructions, creating a persistent indirect-prompt-injection vector. Using
+`SummarizationStrategy` is optional and requires explicit configuration — only point its
+chat client at a summarization service you trust as much as the primary model.

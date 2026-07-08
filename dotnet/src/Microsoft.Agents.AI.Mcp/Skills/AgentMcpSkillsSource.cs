@@ -62,6 +62,16 @@ namespace Microsoft.Agents.AI;
 ///   and reconciles instead of doing so on every call.</description></item>
 /// </list>
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong> This source discovers and loads skills — including full
+/// skill instructions and, for <c>archive</c>-type entries, files extracted to local disk — from a
+/// remote MCP server that the caller connects to explicitly (via <c>UseMcpSkills</c>); it is never
+/// enabled by default. A compromised, malicious, or simply untrustworthy MCP server can return
+/// adversarial skill content designed to manipulate the agent through indirect prompt injection, or
+/// instructions/scripts designed to exfiltrate data once loaded and, for script-capable skills,
+/// executed. Only connect this source to MCP servers you trust, and review archive extraction limits (<see cref="AgentMcpSkillsSourceOptions"/>)
+/// to bound the impact of a malicious server.
+/// </para>
 /// </remarks>
 internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
 {

@@ -12,7 +12,7 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHttpClient().AddLogging();
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.TypeInfoResolverChain.Add(RecipeSerializerContext.Default));
-builder.Services.AddAGUI();
+builder.Services.AddAGUIServer();
 
 // Configure to listen on port 8888
 builder.WebHost.UseUrls("http://localhost:8888");
@@ -61,6 +61,6 @@ AIAgent baseAgent = chatClient.AsAIAgent(
 AIAgent agent = new SharedStateAgent(baseAgent, jsonOptions.SerializerOptions);
 
 // Map the AG-UI agent endpoint
-app.MapAGUI("/", agent);
+app.MapAGUIServer("/", agent);
 
 await app.RunAsync();
