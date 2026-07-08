@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
+    Agent,
     BaseChatClient,
     ChatResponseUpdate,
     Content,
@@ -19,6 +20,7 @@ from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
 from openai import AsyncStream
+from pydantic import BaseModel
 from pytest import fixture
 
 from agent_framework_ollama import OllamaChatClient
@@ -71,6 +73,12 @@ def ollama_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  #
 @fixture
 def chat_history() -> list[Message]:
     return []
+
+
+def test_agent_accepts_ollama_chat_client(ollama_unit_test_env: dict[str, str]) -> None:
+    client = OllamaChatClient()
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
 
 
 @fixture
@@ -279,6 +287,43 @@ async def test_cmc_response_format_dict(
     assert result.value is not None
     assert isinstance(result.value, dict)
     assert result.value["answer"] == "test"
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_response_format_pydantic_model(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    """A Pydantic model class is converted to a JSON schema dict for Ollama's ``format``.
+
+    Ollama only accepts ``''``, ``'json'``, or a JSON-schema dict for ``format``; a model
+    class would fail request construction. The class is still kept for typed parsing of
+    the response, matching OpenAI/Foundry behavior.
+    """
+
+    class Answer(BaseModel):
+        answer: str
+
+    mock_chat.return_value = OllamaChatResponse(
+        message=OllamaMessage(content='{"answer": "test"}', role="assistant"),
+        model="test",
+        eval_count=1,
+        prompt_eval_count=1,
+        created_at="2024-01-01T00:00:00Z",
+    )
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient()
+    result = await ollama_client.get_response(messages=chat_history, options={"response_format": Answer})
+
+    # Outgoing ``format`` must be the JSON schema dict, not the model class.
+    assert mock_chat.await_args is not None
+    assert mock_chat.await_args.kwargs["format"] == Answer.model_json_schema()
+
+    # Typed parsing still works because the original model class is preserved.
+    assert isinstance(result.value, Answer)
+    assert result.value.answer == "test"
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)

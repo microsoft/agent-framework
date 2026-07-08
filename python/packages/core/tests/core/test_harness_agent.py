@@ -25,6 +25,7 @@ from agent_framework import (
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
+    ServiceSessionId,
     SkillsProvider,
     TodoProvider,
     create_harness_agent,
@@ -171,6 +172,21 @@ def test_create_harness_agent_uses_custom_file_stores() -> None:
     assert access_provider.store is access_store
 
 
+def test_create_harness_agent_file_access_approval_opt_outs() -> None:
+    """The file_access_ approval flags should reach the FileAccessProvider."""
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        file_access_disable_readonly_tool_approval=True,
+        file_access_disable_write_tool_approval=True,
+    )
+
+    access_provider = next(p for p in agent.context_providers if isinstance(p, FileAccessProvider))
+    assert access_provider.disable_readonly_tool_approval is True
+    assert access_provider.disable_write_tool_approval is True
+
+
 def test_create_harness_agent_default_file_stores_are_filesystem(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -197,6 +213,42 @@ def test_create_harness_agent_skills_paths_adds_provider() -> None:
         max_context_window_tokens=128_000,
         max_output_tokens=16_384,
         skills_paths=["./test-skills"],
+    )
+    provider_types = [type(p) for p in agent.context_providers]
+    assert SkillsProvider in provider_types
+
+
+def test_create_harness_agent_skills_paths_single_str() -> None:
+    """skills_paths should accept a single str (not wrapped in a list)."""
+    agent = create_harness_agent(
+        client=_FakeChatClient(),
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        skills_paths="./test-skills",
+    )
+    provider_types = [type(p) for p in agent.context_providers]
+    assert SkillsProvider in provider_types
+
+
+def test_create_harness_agent_skills_paths_single_path(tmp_path: Path) -> None:
+    """skills_paths should accept a single pathlib.Path (not wrapped in a list)."""
+    agent = create_harness_agent(
+        client=_FakeChatClient(),
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        skills_paths=tmp_path,
+    )
+    provider_types = [type(p) for p in agent.context_providers]
+    assert SkillsProvider in provider_types
+
+
+def test_create_harness_agent_skills_paths_sequence_of_paths(tmp_path: Path) -> None:
+    """skills_paths should accept a sequence of pathlib.Path objects."""
+    agent = create_harness_agent(
+        client=_FakeChatClient(),
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        skills_paths=[tmp_path, tmp_path / "sub"],
     )
     provider_types = [type(p) for p in agent.context_providers]
     assert SkillsProvider in provider_types
@@ -509,7 +561,12 @@ class _FakeBackgroundAgent:
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+    def get_session(
+        self,
+        service_session_id: str | ServiceSessionId,
+        *,
+        session_id: str | None = None,
+    ) -> AgentSession:
         return AgentSession(service_session_id=service_session_id, session_id=session_id)
 
     async def run(self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any) -> Any:

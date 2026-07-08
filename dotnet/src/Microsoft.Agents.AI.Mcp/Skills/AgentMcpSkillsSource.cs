@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -38,6 +39,39 @@ namespace Microsoft.Agents.AI;
 /// If <c>skill://index.json</c> is absent, unreadable, empty, or fails to parse, this source returns an
 /// empty list.
 /// </para>
+/// <para>
+/// <b>Thread safety and archive reconciliation.</b> For <c>archive</c>-type skills, every call to
+/// <see cref="GetSkillsAsync"/> reconciles a shared on-disk directory: it extracts newly advertised
+/// skills, re-extracts existing ones, and prunes those the server no longer advertises. Because that
+/// work mutates files (and internal state) that concurrent calls would also touch, running it from
+/// multiple threads at once could corrupt the directory or surface partially-extracted skills. To
+/// prevent this, the archive reconciliation is guarded by a per-instance lock: only one call performs
+/// it at a time, and other concurrent callers wait and then run sequentially.
+/// </para>
+/// <para>
+/// This keeps the directory consistent but means concurrent (and repeated) calls do not share work —
+/// each one re-contacts the MCP server and re-reconciles. To avoid that redundant work, place a caching
+/// layer in front of this source (for example, via <see cref="AgentSkillsProviderBuilder"/>, which adds
+/// one by default):
+/// <list type="bullet">
+///   <item><description>When the server's skills do not change at runtime, cache with no isolation key
+///   (the default <see cref="CachingAgentSkillsSourceOptions.CacheIsolationKeySelector"/>), so a single
+///   fetch and reconciliation is shared by all callers for the lifetime of the cache.</description></item>
+///   <item><description>When the server's skills can change, additionally set
+///   <see cref="CachingAgentSkillsSourceOptions.RefreshInterval"/> so the cache periodically re-fetches
+///   and reconciles instead of doing so on every call.</description></item>
+/// </list>
+/// </para>
+/// <para>
+/// <strong>Security considerations:</strong> This source discovers and loads skills — including full
+/// skill instructions and, for <c>archive</c>-type entries, files extracted to local disk — from a
+/// remote MCP server that the caller connects to explicitly (via <c>UseMcpSkills</c>); it is never
+/// enabled by default. A compromised, malicious, or simply untrustworthy MCP server can return
+/// adversarial skill content designed to manipulate the agent through indirect prompt injection, or
+/// instructions/scripts designed to exfiltrate data once loaded and, for script-capable skills,
+/// executed. Only connect this source to MCP servers you trust, and review archive extraction limits (<see cref="AgentMcpSkillsSourceOptions"/>)
+/// to bound the impact of a malicious server.
+/// </para>
 /// </remarks>
 internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
 {
@@ -46,19 +80,15 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     /// </summary>
     private const string IndexUri = "skill://index.json";
 
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "The MCP client is supplied and owned by the caller, who is responsible for disposing it.")]
     private readonly McpClient _client;
     private readonly ILogger _logger;
     private readonly Dictionary<string, IMcpSkillEntryLoader> _loaders;
-    private readonly TimeSpan? _refreshInterval;
-
-    private IList<AgentSkill>? _cachedSkills;
-    private DateTime _lastRefreshedUtc;
-    private Task<IList<AgentSkill>>? _refreshTask;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentMcpSkillsSource"/> class.
     /// </summary>
-    /// <param name="client">An MCP client connected to a server that exposes Agent Skills resources.</param>
+    /// <param name="client">An MCP client connected to a server that exposes Agent Skills resources. The caller retains ownership of the client and is responsible for disposing it.</param>
     /// <param name="options">Optional options that control archive-distributed skill handling.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     public AgentMcpSkillsSource(McpClient client, AgentMcpSkillsSourceOptions? options = null, ILoggerFactory? loggerFactory = null)
@@ -74,88 +104,10 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         ];
 
         this._loaders = loaders.ToDictionary(l => l.EntryType, StringComparer.OrdinalIgnoreCase);
-        this._refreshInterval = options?.RefreshInterval;
     }
 
     /// <inheritdoc/>
-    public override async Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
-    {
-        if (this.TryGetCachedSkills() is { } cached)
-        {
-            return cached;
-        }
-
-        // Use CAS to ensure only one concurrent refresh runs; other callers await the same task.
-        var tcs = new TaskCompletionSource<IList<AgentSkill>>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        if (Interlocked.CompareExchange(ref this._refreshTask, tcs.Task, null) is { } existing)
-        {
-            // Wait for the in-flight refresh but let this caller cancel its own wait independently
-            // without aborting the shared refresh work.
-            return await existing.WaitAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        try
-        {
-            // The refresh owner uses CancellationToken.None so that a single caller's cancellation
-            // does not abort the shared refresh for all concurrent waiters.
-            var skills = await this.GetCoreSkillsAsync(CancellationToken.None).ConfigureAwait(false);
-
-            this.UpdateCache(skills);
-
-            tcs.SetResult(skills);
-
-            // Allow the current caller to observe cancellation without impacting other awaiters.
-            cancellationToken.ThrowIfCancellationRequested();
-
-            return skills;
-        }
-        catch (Exception ex)
-        {
-            tcs.TrySetException(ex);
-            throw;
-        }
-        finally
-        {
-            this._refreshTask = null;
-        }
-    }
-
-    /// <summary>
-    /// Returns the cached skill list if caching is enabled and the cache is still fresh;
-    /// otherwise returns <see langword="null"/>.
-    /// </summary>
-    private IList<AgentSkill>? TryGetCachedSkills()
-    {
-        if (this._refreshInterval is null || this._cachedSkills is null)
-        {
-            return null;
-        }
-
-        TimeSpan cacheAge = DateTime.UtcNow - this._lastRefreshedUtc;
-
-        if (cacheAge >= this._refreshInterval.Value)
-        {
-            return null;
-        }
-
-        return this._cachedSkills;
-    }
-
-    /// <summary>
-    /// Stores the skill list and records the refresh timestamp for cache freshness checks.
-    /// </summary>
-    private void UpdateCache(IList<AgentSkill> skills)
-    {
-        this._cachedSkills = skills;
-        this._lastRefreshedUtc = DateTime.UtcNow;
-    }
-
-    /// <summary>
-    /// Reads the skill index from the MCP server, dispatches entries to registered loaders, and
-    /// returns the aggregated skill list.
-    /// </summary>
-    private async Task<IList<AgentSkill>> GetCoreSkillsAsync(CancellationToken cancellationToken)
+    public override async Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
         McpSkillIndex? index = await this.TryReadIndexAsync(cancellationToken).ConfigureAwait(false);
 
@@ -185,12 +137,26 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         foreach (var loader in this._loaders.Values)
         {
             var entries = entriesByType.TryGetValue(loader.EntryType, out List<McpSkillIndexEntry>? matched) ? matched : [];
-            skills.AddRange(await loader.LoadAsync(entries, cancellationToken).ConfigureAwait(false));
+            skills.AddRange(await loader.LoadAsync(entries, context, cancellationToken).ConfigureAwait(false));
         }
 
         LogSkillsLoadedTotal(this._logger, skills.Count);
 
         return skills;
+    }
+
+    /// <inheritdoc/>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            foreach (var loader in this._loaders.Values)
+            {
+                (loader as IDisposable)?.Dispose();
+            }
+        }
+
+        base.Dispose(disposing);
     }
 
     private async Task<McpSkillIndex?> TryReadIndexAsync(CancellationToken cancellationToken)

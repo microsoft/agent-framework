@@ -437,6 +437,11 @@ class TestAgentSession:
         session = AgentSession(service_session_id="svc-456")
         assert session.service_session_id == "svc-456"
 
+    def test_service_session_id_accepts_structured_mapping(self) -> None:
+        service_session_id = {"context_id": "ctx-123", "task_id": "task-456", "task_state": "working"}
+        session = AgentSession(service_session_id=service_session_id)
+        assert session.service_session_id == service_session_id
+
     def test_to_dict(self) -> None:
         session = AgentSession(session_id="s1", service_session_id="svc1")
         session.state = {"key": "value"}
@@ -465,6 +470,14 @@ class TestAgentSession:
         restored = AgentSession.from_dict(json.loads(json_str))
         assert restored.session_id == "rt-1"
         assert restored.state == {"messages": ["a", "b"], "count": 42}
+
+    def test_roundtrip_with_structured_service_session_id(self) -> None:
+        service_session_id = {"context_id": "ctx-123", "task_id": "task-456", "task_state": "working"}
+        session = AgentSession(session_id="rt-2", service_session_id=service_session_id)
+        json_str = json.dumps(session.to_dict())
+        restored = AgentSession.from_dict(json.loads(json_str))
+        assert restored.session_id == "rt-2"
+        assert restored.service_session_id == service_session_id
 
     def test_from_dict_missing_state(self) -> None:
         data = {"session_id": "s1"}

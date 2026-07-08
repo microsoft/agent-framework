@@ -2,7 +2,7 @@
 
 A hosted Foundry agent that loads tools from a single Foundry Toolbox via the AF Foundry hosting bridge.
 
-`AddFoundryToolboxes(name)` registers a `FoundryToolboxService` that connects to the Foundry Toolboxes MCP proxy at startup, discovers the toolbox's bundled tools via `tools/list`, and makes them available to the agent on every request. The agent code does nothing per request; the toolbox is baked in on the server.
+`AddFoundryToolboxes(credential, name)` registers a `FoundryToolboxService` that connects to the Foundry Toolboxes MCP proxy at startup, discovers the toolbox's bundled tools via `tools/list`, and makes them available to the agent on every request. The agent code does nothing per request; the toolbox is baked in on the server.
 
 This is the minimal toolbox intro. For a richer walkthrough where a single toolbox bundles three MCP tools each authenticated differently, see [`Hosted-Toolbox-AuthPaths/`](../Hosted-Toolbox-AuthPaths/).
 

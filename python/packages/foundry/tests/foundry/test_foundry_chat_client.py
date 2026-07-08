@@ -12,7 +12,7 @@ from typing import Annotated, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import ChatResponse, Content, Message, SupportsChatGetResponse, tool
+from agent_framework import Agent, ChatResponse, Content, Message, SupportsChatGetResponse, tool
 from agent_framework._telemetry import get_user_agent
 from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
 from agent_framework_openai import OpenAIContentFilterException
@@ -1412,3 +1412,17 @@ def test_parse_chunk_surfaces_oauth_consent_requested_event() -> None:
     assert consent_contents[0].consent_link == "https://consent-host.example.com/authorize?code=xyz"
     assert update.role == "assistant"
     assert update.raw_representation is mock_event
+
+
+def test_agent_accepts_foundry_chat_clients() -> None:
+    mock_project = MagicMock()
+    mock_openai = _make_mock_openai_client()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    raw_client = RawFoundryChatClient(project_client=mock_project, model="test-model")
+    raw_agent = Agent(client=raw_client, instructions="test agent")
+    assert raw_agent.client is raw_client
+
+    client = FoundryChatClient(project_client=mock_project, model="test-model")
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client

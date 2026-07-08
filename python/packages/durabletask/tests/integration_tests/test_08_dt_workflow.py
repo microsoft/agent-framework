@@ -5,7 +5,7 @@
 Exercises the standalone (non-Azure-Functions) workflow path:
 - ``DurableAIAgentWorker.configure_workflow`` auto-registers the agent entities,
   non-agent executor activities, and the workflow orchestrator.
-- A client starts the workflow by scheduling ``WORKFLOW_ORCHESTRATOR_NAME``.
+- A client starts the workflow by scheduling its ``dafx-{workflow_name}`` orchestration.
 - Conditional routing sends spam to a non-agent handler and legitimate email
   through a second agent and a sender executor.
 """
@@ -16,7 +16,10 @@ from typing import Any, Protocol
 import pytest
 from durabletask.client import OrchestrationStatus
 
-from agent_framework_durabletask import WORKFLOW_ORCHESTRATOR_NAME, DurableAIAgentClient
+from agent_framework_durabletask import DurableAIAgentClient, workflow_orchestrator_name
+
+# Must match the workflow name in samples/04-hosting/durabletask/08_workflow/worker.py
+WORKFLOW_NAME = "email_triage"
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -50,7 +53,7 @@ class TestStandaloneWorkflow:
     def test_legitimate_email_drafts_response(self) -> None:
         """A legitimate email routes through the email agent and is 'sent'."""
         instance_id = self.dts_client.schedule_new_orchestration(
-            orchestrator=WORKFLOW_ORCHESTRATOR_NAME,
+            orchestrator=workflow_orchestrator_name(WORKFLOW_NAME),
             input=(
                 "Hi team, just a reminder about our sprint planning meeting tomorrow at 10 AM. "
                 "Please review the agenda in Jira."
@@ -69,7 +72,7 @@ class TestStandaloneWorkflow:
     def test_spam_email_handled(self) -> None:
         """A spam email routes to the non-agent spam handler."""
         instance_id = self.dts_client.schedule_new_orchestration(
-            orchestrator=WORKFLOW_ORCHESTRATOR_NAME,
+            orchestrator=workflow_orchestrator_name(WORKFLOW_NAME),
             input="URGENT! You've won $1,000,000! Click here now to claim your prize! Limited time offer!",
         )
 

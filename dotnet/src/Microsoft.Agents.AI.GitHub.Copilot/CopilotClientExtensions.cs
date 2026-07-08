@@ -63,7 +63,7 @@ public static class CopilotClientExtensions
         string? id = null,
         string? name = null,
         string? description = null,
-        IList<AITool>? tools = null,
+        IList<AIFunctionDeclaration>? tools = null,
         string? instructions = null)
     {
         Throw.IfNull(client);

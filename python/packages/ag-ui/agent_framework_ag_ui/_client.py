@@ -27,7 +27,7 @@ from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvo
 from agent_framework.observability import ChatTelemetryLayer
 
 from ._event_converters import AGUIEventConverter
-from ._http_service import AGUIHttpService
+from ._http_service import AGUIHttpService, _serialize_available_interrupts, _serialize_resume
 from ._message_adapters import agent_framework_messages_to_agui
 from ._utils import convert_tools_to_agui_format
 
@@ -430,17 +430,16 @@ class AGUIChatClient(
 
         converter = AGUIEventConverter()
 
+        available_interrupts = options.get("available_interrupts", options.get("availableInterrupts"))
+
         async for event in self._http_service.post_run(
             thread_id=thread_id,
             run_id=run_id,
             messages=agui_messages,
             state=state,
             tools=agui_tools,
-            available_interrupts=cast(
-                list[dict[str, Any]] | None,
-                options.get("available_interrupts") or options.get("availableInterrupts"),
-            ),
-            resume=cast(dict[str, Any] | None, options.get("resume")),
+            available_interrupts=_serialize_available_interrupts(cast(Sequence[Any] | None, available_interrupts)),
+            resume=_serialize_resume(options.get("resume")),
         ):
             logger.debug(f"[AGUIChatClient] Raw AG-UI event: {event}")
             update = converter.convert_event(event)
