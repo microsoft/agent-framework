@@ -11,7 +11,7 @@ pattern, hosted on a standalone Durable Task worker (no Azure Functions).
 
 - a durable entity for each agent executor,
 - a durable activity for each non-agent executor, and
-- the workflow orchestrator (named ``WORKFLOW_ORCHESTRATOR_NAME``).
+- the workflow orchestrator (named ``dafx-{workflow.name}``).
 
 When the workflow calls ``ctx.request_info``, the orchestrator pauses and records
 the open request in its custom status. An external client discovers the request
@@ -63,6 +63,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 CONTENT_ANALYZER_AGENT_NAME = "ContentAnalyzerAgent"
+WORKFLOW_NAME = "content_moderation"
 
 CONTENT_ANALYZER_INSTRUCTIONS = (
     "You are a content moderation assistant that analyzes user-submitted content for policy compliance. "
@@ -285,7 +286,7 @@ def create_workflow() -> Workflow:
     publish_executor = PublishExecutor()
 
     return (
-        WorkflowBuilder(start_executor=input_router)
+        WorkflowBuilder(name=WORKFLOW_NAME, start_executor=input_router)
         .add_edge(input_router, content_analyzer_agent)
         .add_edge(content_analyzer_agent, content_analyzer_executor)
         .add_edge(content_analyzer_executor, human_review_executor)

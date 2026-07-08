@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from agent_framework import (
+    Agent,
     ChatMiddlewareLayer,
     ChatOptions,
     ChatResponseUpdate,
@@ -134,6 +135,16 @@ def test_anthropic_client_wraps_raw_client_with_standard_layer_order() -> None:
     assert not issubclass(RawAnthropicClient, FunctionInvocationLayer)
     assert not issubclass(RawAnthropicClient, ChatMiddlewareLayer)
     assert not issubclass(RawAnthropicClient, ChatTelemetryLayer)
+
+
+def test_agent_accepts_anthropic_clients() -> None:
+    raw_client = RawAnthropicClient(api_key="test-api-key", model="claude-3-5-sonnet-20241022")
+    raw_agent = Agent(client=raw_client, instructions="test agent")
+    assert raw_agent.client is raw_client
+
+    client = AnthropicClient(api_key="test-api-key", model="claude-3-5-sonnet-20241022")
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
 
 
 def test_anthropic_client_init_auto_create_client(
@@ -1973,6 +1984,74 @@ def test_prepare_response_format_pydantic_model(
     assert result["type"] == "json_schema"
     assert result["schema"]["additionalProperties"] is False
     assert "properties" in result["schema"]
+
+
+async def test_prepare_options_uses_output_config_for_response_format(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """``response_format`` is forwarded as GA ``output_config.format`` (not the deprecated ``output_format``).
+
+    The deprecated ``output_format`` parameter, gated by the
+    ``structured-outputs-2025-11-13`` beta flag, produced concatenated /
+    malformed JSON when combined with tools. The GA ``output_config`` shape
+    works correctly with tools, so we emit that and no longer set the beta
+    flag.
+    """
+
+    class StructuredOut(BaseModel):
+        answer: str
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [Message(role="user", contents=["Hello"])]
+    chat_options = ChatOptions[StructuredOut](max_tokens=100, response_format=StructuredOut)
+
+    run_options = client._prepare_options(messages, chat_options)
+
+    assert "output_format" not in run_options
+    assert "output_config" in run_options
+    fmt = run_options["output_config"]["format"]
+    assert fmt["type"] == "json_schema"
+    assert fmt["schema"]["additionalProperties"] is False
+    assert "answer" in fmt["schema"]["properties"]
+    # The deprecated structured-outputs beta flag is no longer needed on the
+    # GA path and must not leak into ``betas``.
+    assert "structured-outputs-2025-11-13" not in run_options["betas"]
+
+
+async def test_prepare_options_preserves_caller_supplied_output_config_effort(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A caller-supplied ``output_config.effort`` (e.g. adaptive thinking) survives the format merge."""
+
+    class StructuredOut(BaseModel):
+        answer: str
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [Message(role="user", contents=["Hello"])]
+    # ``output_config`` is provider-specific; pass it through additional kwargs
+    # the way a caller would when configuring adaptive thinking.
+    run_options = client._prepare_options(
+        messages,
+        ChatOptions[StructuredOut](max_tokens=100, response_format=StructuredOut),
+        output_config={"effort": "high"},
+    )
+
+    output_config = run_options["output_config"]
+    assert output_config["effort"] == "high"
+    assert output_config["format"]["type"] == "json_schema"
+    assert "answer" in output_config["format"]["schema"]["properties"]
+
+
+async def test_prepare_options_no_response_format_omits_output_config(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Without ``response_format``, no ``output_config`` is added implicitly."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [Message(role="user", contents=["Hello"])]
+    run_options = client._prepare_options(messages, ChatOptions(max_tokens=100))
+
+    assert "output_config" not in run_options
+    assert "output_format" not in run_options
 
 
 # Message Preparation Tests

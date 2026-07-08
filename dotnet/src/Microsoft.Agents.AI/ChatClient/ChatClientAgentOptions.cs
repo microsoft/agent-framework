@@ -148,7 +148,6 @@ public sealed class ChatClientAgentOptions
     /// <value>
     /// Default is <see langword="false"/>.
     /// </value>
-    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public bool RequirePerServiceCallChatHistoryPersistence { get; set; }
 
     /// <summary>
@@ -182,8 +181,8 @@ public sealed class ChatClientAgentOptions
     public bool EnableMessageInjection { get; set; }
 
     /// <summary>
-    /// Gets or sets a value indicating whether to store automatically approved function calls in the session state
-    /// for tools that do not require approval when they are returned alongside tools that do.
+    /// Gets or sets a value indicating whether to disable storing automatically approved function calls in the
+    /// session state for tools that do not require approval when they are returned alongside tools that do.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -192,24 +191,27 @@ public sealed class ChatClientAgentOptions
     /// items to <see cref="ToolApprovalRequestContent"/>, even for tools that do not require approval.
     /// </para>
     /// <para>
-    /// Setting this property to <see langword="true"/> injects an <see cref="NonApprovalRequiredFunctionBypassingChatClient"/>
-    /// decorator above <see cref="FunctionInvokingChatClient"/> in the pipeline. This decorator identifies approval
-    /// requests for non-approval-required tools, removes them from the response, and stores them in the session.
+    /// By default (when this property is <see langword="false"/>), an <see cref="ApprovalNotRequiredFunctionBypassingChatClient"/>
+    /// decorator is injected above <see cref="FunctionInvokingChatClient"/> in the pipeline. This decorator identifies approval
+    /// requests for tools that do not require approval, removes them from the response, and stores them in the session.
     /// On the next request, the stored items are automatically re-injected as approved, so the caller only needs
     /// to handle approval requests for tools that truly require human approval.
     /// </para>
     /// <para>
+    /// Set this property to <see langword="true"/> to disable this behavior, in which case all tool calls in a
+    /// response containing an approval-required tool are surfaced as approval requests.
+    /// </para>
+    /// <para>
     /// This option has no effect when <see cref="UseProvidedChatClientAsIs"/> is <see langword="true"/>.
-    /// When using a custom chat client stack, you can add an <see cref="NonApprovalRequiredFunctionBypassingChatClient"/>
-    /// manually via the <see cref="ChatClientBuilderExtensions.UseNonApprovalRequiredFunctionBypassing"/>
+    /// When using a custom chat client stack, you can add an <see cref="ApprovalNotRequiredFunctionBypassingChatClient"/>
+    /// manually via the <see cref="ChatClientBuilderExtensions.UseApprovalNotRequiredFunctionBypassing"/>
     /// extension method.
     /// </para>
     /// </remarks>
     /// <value>
     /// Default is <see langword="false"/>.
     /// </value>
-    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-    public bool EnableNonApprovalRequiredFunctionBypassing { get; set; }
+    public bool DisableApprovalNotRequiredFunctionBypassing { get; set; }
 
     /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
@@ -229,6 +231,6 @@ public sealed class ChatClientAgentOptions
             ThrowOnChatHistoryProviderConflict = this.ThrowOnChatHistoryProviderConflict,
             RequirePerServiceCallChatHistoryPersistence = this.RequirePerServiceCallChatHistoryPersistence,
             EnableMessageInjection = this.EnableMessageInjection,
-            EnableNonApprovalRequiredFunctionBypassing = this.EnableNonApprovalRequiredFunctionBypassing,
+            DisableApprovalNotRequiredFunctionBypassing = this.DisableApprovalNotRequiredFunctionBypassing,
         };
 }

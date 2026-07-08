@@ -1505,6 +1505,57 @@ class TestAgenticSearch:
         assert len(results) == 1
         assert results[0].text == "No results found from Knowledge Base."
 
+    async def test_requests_reference_source_data_per_source(self) -> None:
+        # Regression for #5095: the retrieval request must carry
+        # knowledge_source_params with include_reference_source_data=True for
+        # each resolved knowledge source, otherwise ref.source_data is always
+        # None even when the source has source_data_fields configured.
+        provider = _make_provider()
+        provider._knowledge_base_initialized = True
+        provider.knowledge_base_name = "kb"
+        provider.retrieval_reasoning_effort = "minimal"
+        provider._knowledge_source_names = ["test-index-source"]
+
+        mock_result = Mock()
+        mock_result.response = []
+        mock_result.references = None
+
+        mock_retrieval = AsyncMock()
+        mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
+        provider._retrieval_client = mock_retrieval
+
+        await provider._agentic_search([Message(role="user", contents=["query"])])
+
+        mock_retrieval.retrieve.assert_awaited_once()
+        request = mock_retrieval.retrieve.call_args.kwargs["retrieval_request"]
+        params = request.knowledge_source_params
+        assert params is not None
+        assert len(params) == 1
+        assert params[0].knowledge_source_name == "test-index-source"
+        assert params[0].include_reference_source_data is True
+
+    async def test_no_source_params_when_no_sources(self) -> None:
+        # When no knowledge source names are resolved, the request must not
+        # carry an empty/placeholder knowledge_source_params list.
+        provider = _make_provider()
+        provider._knowledge_base_initialized = True
+        provider.knowledge_base_name = "kb"
+        provider.retrieval_reasoning_effort = "minimal"
+        provider._knowledge_source_names = []
+
+        mock_result = Mock()
+        mock_result.response = []
+        mock_result.references = None
+
+        mock_retrieval = AsyncMock()
+        mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
+        provider._retrieval_client = mock_retrieval
+
+        await provider._agentic_search([Message(role="user", contents=["query"])])
+
+        request = mock_retrieval.retrieve.call_args.kwargs["retrieval_request"]
+        assert request.knowledge_source_params is None
+
 
 # -- before_run: agentic mode --------------------------------------------------
 

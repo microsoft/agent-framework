@@ -2,6 +2,8 @@
 
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using AGUI.Abstractions;
+using AGUI.Server;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -34,10 +36,9 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Check if the client sent state in the request
-        if (options is not ChatClientAgentRunOptions { ChatOptions.AdditionalProperties: { } properties } chatRunOptions ||
-            !properties.TryGetValue("ag_ui_state", out object? stateObj) ||
-            stateObj is not JsonElement state ||
-            state.ValueKind != JsonValueKind.Object)
+        if (options is not ChatClientAgentRunOptions { ChatOptions: { } chatOptions } chatRunOptions ||
+            !chatOptions.TryGetRunAgentInput(out RunAgentInput? agentInput) ||
+            agentInput.State is not { ValueKind: JsonValueKind.Object } state)
         {
             // No state management requested, pass through to inner agent
             await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))

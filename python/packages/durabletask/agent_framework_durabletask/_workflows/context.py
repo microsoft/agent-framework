@@ -98,6 +98,26 @@ class WorkflowOrchestrationContext(Protocol):
         """
         ...
 
+    def call_sub_orchestrator(self, name: str, input: Any, instance_id: str | None = None) -> Any:
+        """Create a yieldable task that runs a nested workflow as a child orchestration.
+
+        Used to drive a :class:`~agent_framework.WorkflowExecutor` node: the inner
+        workflow runs as its own durable orchestration (named ``dafx-{innerName}``),
+        independently checkpointed and observable, and its result flows back into
+        the parent's edge routing like any other executor's output.
+
+        Args:
+            name: The registered orchestration name to invoke (``dafx-{innerName}``).
+            input: The JSON-serializable input for the child orchestration.
+            instance_id: Optional deterministic child instance ID. The orchestrator
+                derives one from the parent instance so nested runs are discoverable
+                and replay-safe.
+
+        Returns:
+            A yieldable task whose result is the child orchestration's output.
+        """
+        ...
+
     def task_all(self, tasks: list[Any]) -> Any:
         """Create a yieldable composite task that completes when *all* tasks complete.
 

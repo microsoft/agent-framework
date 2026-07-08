@@ -1,5 +1,5 @@
 ### Analyze a document (triggers parallel workflow)
-POST http://localhost:7071/api/workflow/run
+POST http://localhost:7071/api/workflow/parallel_review/run
 Content-Type: application/json
 
 {
@@ -10,7 +10,7 @@ Content-Type: application/json
 ###
 
 ### Short document test
-POST http://localhost:7071/api/workflow/run
+POST http://localhost:7071/api/workflow/parallel_review/run
 Content-Type: application/json
 
 {
@@ -21,7 +21,7 @@ Content-Type: application/json
 ###
 
 ### Check workflow status
-GET http://localhost:7071/api/workflow/status/{{instanceId}}
+GET http://localhost:7071/api/workflow/parallel_review/status/{{instanceId}}
 
 ###
 

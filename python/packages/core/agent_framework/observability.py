@@ -28,7 +28,6 @@ from time import perf_counter, time_ns
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedDict, cast, overload
 
 from dotenv import load_dotenv
-from opentelemetry import context as otel_context
 from opentelemetry import metrics, trace
 
 from . import __version__ as version_info
@@ -691,6 +690,17 @@ class ObservabilitySettings:
 
     Warning:
         Sensitive events should only be enabled on test and development environments.
+
+    Security considerations:
+        Agent Framework emits telemetry via the standard OpenTelemetry APIs — it does not itself
+        contact any external system. Where that telemetry is sent (a local collector, a hosted
+        observability backend, the VS Code extension port, etc.) is entirely determined by the
+        exporters and pipeline the developer configures. By default, emitted telemetry is limited to
+        metadata (e.g. token counts, operation names, durations) and does not include message
+        content. Enabling ``enable_sensitive_data`` (env var ``ENABLE_SENSITIVE_DATA``) is an
+        explicit, separate opt-in that additionally emits raw chat message content, function-call
+        arguments, and function-call results — treat that data as sensitive and ensure it is not sent
+        to, or retained by, a telemetry backend you have not secured appropriately.
 
     Keyword Args:
         enable_instrumentation: Enable OpenTelemetry diagnostics. Default is True.
@@ -2190,6 +2200,8 @@ def _activate_span(span: trace.Span) -> Generator[None]:
     (and therefore the same async task / contextvars context), there is no risk
     of "Failed to detach context" warnings from cross-context cleanup.
     """
+    from opentelemetry import context as otel_context
+
     token = otel_context.attach(trace.set_span_in_context(span))
     try:
         yield
