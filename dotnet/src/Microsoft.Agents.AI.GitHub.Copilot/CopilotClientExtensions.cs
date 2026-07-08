@@ -6,7 +6,7 @@ using Microsoft.Agents.AI.GitHub.Copilot;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
-namespace GitHub.Copilot.SDK;
+namespace GitHub.Copilot;
 
 /// <summary>
 /// Provides extension methods for <see cref="CopilotClient"/>
@@ -63,7 +63,7 @@ public static class CopilotClientExtensions
         string? id = null,
         string? name = null,
         string? description = null,
-        IList<AITool>? tools = null,
+        IList<AIFunctionDeclaration>? tools = null,
         string? instructions = null)
     {
         Throw.IfNull(client);

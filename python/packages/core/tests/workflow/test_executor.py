@@ -214,7 +214,7 @@ async def test_executor_completed_event_includes_yielded_outputs():
 
     class YieldOnlyExecutor(Executor):
         @handler
-        async def handle(self, text: str, ctx: WorkflowContext[Never, str]) -> None:
+        async def handle(self, text: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
             await ctx.yield_output(text.upper())
 
     executor = YieldOnlyExecutor(id="yielder")
@@ -306,7 +306,7 @@ def test_executor_output_types_property():
         async def handle(self, text: str, ctx: WorkflowContext[int]) -> None:
             pass
 
-    executor = SingleOutputExecutor(id="single_output")
+    executor = SingleOutputExecutor(id="single_output")  # type: ignore[assignment]
     assert int in executor.output_types
     assert len(executor.output_types) == 1
 
@@ -316,7 +316,7 @@ def test_executor_output_types_property():
         async def handle(self, text: str, ctx: WorkflowContext[int | str]) -> None:
             pass
 
-    executor = UnionOutputExecutor(id="union_output")
+    executor = UnionOutputExecutor(id="union_output")  # type: ignore[assignment]
     assert int in executor.output_types
     assert str in executor.output_types
     assert len(executor.output_types) == 2
@@ -331,7 +331,7 @@ def test_executor_output_types_property():
         async def handle_number(self, num: int, ctx: WorkflowContext[bool]) -> None:
             pass
 
-    executor = MultiHandlerExecutor(id="multi_handler")
+    executor = MultiHandlerExecutor(id="multi_handler")  # type: ignore[assignment]
     assert int in executor.output_types
     assert bool in executor.output_types
     assert len(executor.output_types) == 2
@@ -355,7 +355,7 @@ def test_executor_workflow_output_types_property():
         async def handle(self, text: str, ctx: WorkflowContext[int, str]) -> None:
             pass
 
-    executor = WorkflowOutputExecutor(id="workflow_output")
+    executor = WorkflowOutputExecutor(id="workflow_output")  # type: ignore[assignment]
     assert str in executor.workflow_output_types
     assert len(executor.workflow_output_types) == 1
 
@@ -365,7 +365,7 @@ def test_executor_workflow_output_types_property():
         async def handle(self, text: str, ctx: WorkflowContext[int, str | bool]) -> None:
             pass
 
-    executor = UnionWorkflowOutputExecutor(id="union_workflow_output")
+    executor = UnionWorkflowOutputExecutor(id="union_workflow_output")  # type: ignore[assignment]
     assert str in executor.workflow_output_types
     assert bool in executor.workflow_output_types
     assert len(executor.workflow_output_types) == 2
@@ -380,7 +380,7 @@ def test_executor_workflow_output_types_property():
         async def handle_number(self, num: int, ctx: WorkflowContext[bool, float]) -> None:
             pass
 
-    executor = MultiHandlerWorkflowExecutor(id="multi_workflow")
+    executor = MultiHandlerWorkflowExecutor(id="multi_workflow")  # type: ignore[assignment]
     assert str in executor.workflow_output_types
     assert float in executor.workflow_output_types
     assert len(executor.workflow_output_types) == 2
@@ -388,10 +388,10 @@ def test_executor_workflow_output_types_property():
     # Test executor with Never for message output (only workflow output)
     class YieldOnlyExecutor(Executor):
         @handler
-        async def handle(self, text: str, ctx: WorkflowContext[Never, str]) -> None:
+        async def handle(self, text: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
             pass
 
-    executor = YieldOnlyExecutor(id="yield_only")
+    executor = YieldOnlyExecutor(id="yield_only")  # type: ignore[assignment]
     assert str in executor.workflow_output_types
     assert len(executor.workflow_output_types) == 1
     # Should have no message output types
@@ -604,7 +604,7 @@ class TestHandlerExplicitTypes:
 
         # Handler spec should have int as output type (explicit)
         handler_func = exec_instance._handlers[str]  # pyright: ignore[reportPrivateUsage]
-        assert handler_func._handler_spec["output_types"] == [int]  # pyright: ignore[reportFunctionMemberAccess]
+        assert handler_func._handler_spec["output_types"] == [int]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]  # pyright: ignore[reportFunctionMemberAccess]
 
         # Executor output_types property should reflect explicit type
         assert int in exec_instance.output_types
@@ -627,7 +627,7 @@ class TestHandlerExplicitTypes:
 
         # Output type should be list (explicit)
         handler_func = exec_instance._handlers[dict]  # pyright: ignore[reportPrivateUsage]
-        assert handler_func._handler_spec["output_types"] == [list]  # pyright: ignore[reportFunctionMemberAccess]
+        assert handler_func._handler_spec["output_types"] == [list]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]  # pyright: ignore[reportFunctionMemberAccess]
 
         # Verify can_handle
         assert exec_instance.can_handle(WorkflowMessage(data={"key": "value"}, source_id="mock"))
@@ -820,7 +820,7 @@ class TestHandlerExplicitTypes:
 
         # Handler spec should have bool as workflow_output_type (explicit)
         handler_func = exec_instance._handlers[str]  # pyright: ignore[reportPrivateUsage]
-        assert handler_func._handler_spec["workflow_output_types"] == [bool]  # pyright: ignore[reportFunctionMemberAccess]
+        assert handler_func._handler_spec["workflow_output_types"] == [bool]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]  # pyright: ignore[reportFunctionMemberAccess]
 
         # Executor workflow_output_types property should reflect explicit type
         assert bool in exec_instance.workflow_output_types
@@ -949,7 +949,7 @@ def test_handler_rejects_bounded_typevar_in_message_annotation():
         class BoundedGenericExecutor(Executor, Generic[_BT]):
             @handler
             async def process(self, message: _BT, ctx: WorkflowContext) -> None:
-                await ctx.send_message(message)
+                await ctx.send_message(message)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
 
 def test_handler_allows_concrete_types():
@@ -972,7 +972,7 @@ def test_handler_explicit_input_bypasses_typevar_check():
         async def echo(self, message, ctx: WorkflowContext) -> None:
             pass
 
-    exec_instance = GenericWithExplicit(id="explicit")
+    exec_instance = GenericWithExplicit(id="explicit")  # type: ignore[var-annotated]
     assert str in exec_instance.input_types
 
 

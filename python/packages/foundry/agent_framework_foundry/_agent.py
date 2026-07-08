@@ -41,17 +41,17 @@ from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
 from ._tools import _sanitize_foundry_response_tool  # pyright: ignore[reportPrivateUsage]
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework import (
@@ -145,7 +145,7 @@ def _build_agent_reference(agent_name: str, agent_version: str | None) -> dict[s
     return ref
 
 
-class RawFoundryAgentChatClient(  # type: ignore[misc]
+class RawFoundryAgentChatClient(
     RawOpenAIChatClient[FoundryAgentOptionsT],
     Generic[FoundryAgentOptionsT],
 ):
@@ -191,6 +191,7 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a raw Foundry Agent client.
 
@@ -211,6 +212,8 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
             compaction_strategy: Optional per-client compaction override.
             tokenizer: Optional tokenizer for compaction strategies.
             additional_properties: Additional properties stored on the client instance.
+            timeout: HTTP timeout in seconds for requests. When not provided, the
+                OpenAI SDK default is used (connect: 5s, total: 600s).
         """
         settings = load_settings(
             FoundryAgentSettings,
@@ -260,8 +263,11 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
             openai_client_kwargs["default_headers"] = dict(default_headers)
         if allow_preview:
             openai_client_kwargs["agent_name"] = self.agent_name
+        openai_client = self.project_client.get_openai_client(**openai_client_kwargs)
+        if timeout is not None:
+            openai_client = openai_client.with_options(timeout=timeout)
         super().__init__(
-            async_client=self.project_client.get_openai_client(**openai_client_kwargs),
+            async_client=openai_client,
             default_headers=default_headers,
             instruction_role=instruction_role,
             compaction_strategy=compaction_strategy,
@@ -359,6 +365,11 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         # ``agent_name`` instead, so skip there. See issue #5582.
         if not self.allow_preview:
             extra_body.setdefault("agent_reference", _build_agent_reference(self.agent_name, self.agent_version))
+            should_strip_model = _uses_foundry_agent_session(conversation_id) or (
+                conversation_id is None and options.get("model") is None
+            )
+            if should_strip_model:
+                run_options.pop("model", None)
         if extra_body:
             run_options["extra_body"] = extra_body
 
@@ -470,9 +481,7 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
             return self.agent_version
         if not self.allow_preview:
             return None
-        agent_details = await cast(Any, self.project_client.beta.agents).get(  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-            agent_name=self.agent_name
-        )
+        agent_details = await cast(Any, self.project_client.beta.agents).get(agent_name=self.agent_name)
         versions_object = getattr(agent_details, "versions", None)
         if not isinstance(versions_object, Mapping):
             raise TypeError("Foundry agent details did not include a versions mapping.")
@@ -490,7 +499,7 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
             await self.project_client.close()
 
 
-class _FoundryAgentChatClient(  # type: ignore[misc]
+class _FoundryAgentChatClient(
     FunctionInvocationLayer[FoundryAgentOptionsT],
     ChatMiddlewareLayer[FoundryAgentOptionsT],
     ChatTelemetryLayer[FoundryAgentOptionsT],
@@ -537,6 +546,7 @@ class _FoundryAgentChatClient(  # type: ignore[misc]
         additional_properties: dict[str, Any] | None = None,
         middleware: (Sequence[ChatAndFunctionMiddlewareTypes] | None) = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a Foundry Agent client with full middleware support.
 
@@ -556,6 +566,8 @@ class _FoundryAgentChatClient(  # type: ignore[misc]
             additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of middleware.
             function_invocation_configuration: Optional function invocation configuration.
+            timeout: HTTP timeout in seconds for requests. When not provided, the
+                OpenAI SDK default is used (connect: 5s, total: 600s).
         """
         super().__init__(
             project_endpoint=project_endpoint,
@@ -573,10 +585,11 @@ class _FoundryAgentChatClient(  # type: ignore[misc]
             additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
+            timeout=timeout,
         )
 
 
-class RawFoundryAgent(  # type: ignore[misc]
+class RawFoundryAgent(
     RawAgent[FoundryAgentOptionsT],
 ):
     """Raw Microsoft Foundry Agent without agent-level middleware or telemetry.
@@ -625,6 +638,7 @@ class RawFoundryAgent(  # type: ignore[misc]
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: Mapping[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a Foundry Agent.
 
@@ -657,6 +671,8 @@ class RawFoundryAgent(  # type: ignore[misc]
             compaction_strategy: Optional agent-level in-run compaction override.
             tokenizer: Optional agent-level tokenizer override.
             additional_properties: Additional properties stored on the local agent wrapper.
+            timeout: HTTP timeout in seconds for requests. When not provided, the
+                OpenAI SDK default is used (connect: 5s, total: 600s).
         """
         # Create the client
         actual_client_type = client_type or _FoundryAgentChatClient
@@ -675,6 +691,7 @@ class RawFoundryAgent(  # type: ignore[misc]
             "default_headers": default_headers,
             "env_file_path": env_file_path,
             "env_file_encoding": env_file_encoding,
+            "timeout": timeout,
         }
         if function_invocation_configuration is not None:
             if not issubclass(actual_client_type, FunctionInvocationLayer):
@@ -691,7 +708,7 @@ class RawFoundryAgent(  # type: ignore[misc]
             id=id,
             name=name or agent_name,
             description=description,
-            tools=tools,  # type: ignore[arg-type]
+            tools=tools,
             default_options=cast(FoundryAgentOptionsT | None, default_options),
             context_providers=context_providers,
             middleware=middleware,
@@ -728,7 +745,7 @@ class RawFoundryAgent(  # type: ignore[misc]
         if version := await self.client.get_agent_version():
             from azure.ai.projects.models import VersionRefIndicator
 
-            create_session_kwargs["version_indicator"] = VersionRefIndicator(agent_version=version)  # type: ignore
+            create_session_kwargs["version_indicator"] = VersionRefIndicator(agent_version=version)
 
         service_session = await self.client.project_client.beta.agents.create_session(**create_session_kwargs)
         agent_session_id = getattr(service_session, "agent_session_id", None)
@@ -736,6 +753,24 @@ class RawFoundryAgent(  # type: ignore[misc]
             raise ValueError("Hosted Foundry session creation did not return a non-empty agent_session_id.")
 
         return agent_session_id
+
+    async def create_conversation(self, *, session_id: str | None = None) -> AgentSession:
+        """Create a project-level Foundry conversation session.
+
+        This creates a server-side conversation through the Foundry project's OpenAI
+        client and returns an ``AgentSession`` configured to continue that
+        conversation.
+
+        Keyword Args:
+            session_id: Optional local session ID (generated if not provided).
+
+        Returns:
+            A new ``AgentSession`` whose ``service_session_id`` is the created
+            Foundry conversation ID.
+        """
+        client = cast(RawFoundryAgentChatClient, self.client)
+        conversation = await client.project_client.get_openai_client().conversations.create()
+        return self.get_session(service_session_id=conversation.id, session_id=session_id)
 
     @override
     async def _prepare_run_context(
@@ -912,6 +947,7 @@ class FoundryAgent(  # type: ignore[misc]
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: Mapping[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a Foundry Agent with full middleware and telemetry.
 
@@ -958,6 +994,8 @@ class FoundryAgent(  # type: ignore[misc]
             compaction_strategy: Optional agent-level in-run compaction override.
             tokenizer: Optional agent-level tokenizer override.
             additional_properties: Additional properties stored on the local agent wrapper.
+            timeout: HTTP timeout in seconds for requests. When not provided, the
+                OpenAI SDK default is used (connect: 5s, total: 600s).
         """
         super().__init__(
             project_endpoint=project_endpoint,
@@ -983,4 +1021,5 @@ class FoundryAgent(  # type: ignore[misc]
             compaction_strategy=compaction_strategy,
             tokenizer=tokenizer,
             additional_properties=additional_properties,
+            timeout=timeout,
         )

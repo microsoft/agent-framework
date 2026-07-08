@@ -41,17 +41,17 @@ from botocore.exceptions import ClientError
 from pydantic import BaseModel
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 logger = logging.getLogger("agent_framework.bedrock")
 
@@ -230,7 +230,7 @@ class BedrockChatClient(
 ):
     """Async chat client for Amazon Bedrock's Converse API with middleware, telemetry, and function invocation."""
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"
 
     def __init__(
         self,
@@ -371,7 +371,7 @@ class BedrockChatClient(
                 parsed_response = self._process_converse_response(response, options)
                 contents = list(parsed_response.messages[0].contents if parsed_response.messages else [])
                 if parsed_response.usage_details:
-                    contents.append(Content.from_usage(usage_details=parsed_response.usage_details))  # type: ignore[arg-type]
+                    contents.append(Content.from_usage(usage_details=parsed_response.usage_details))
                 raw_finish_reason = (
                     parsed_response.finish_reason if isinstance(parsed_response.finish_reason, str) else None
                 )
@@ -689,7 +689,12 @@ class BedrockChatClient(
             details["output_token_count"] = output_tokens
         if (total_tokens := usage.get("totalTokens")) is not None:
             details["total_token_count"] = total_tokens
-        return details
+        # Bedrock Converse reports these when prompt caching is active.
+        if (cache_read := usage.get("cacheReadInputTokens")) is not None:
+            details["cache_read_input_token_count"] = cache_read
+        if (cache_write := usage.get("cacheWriteInputTokens")) is not None:
+            details["cache_creation_input_token_count"] = cache_write
+        return details or None
 
     def _parse_message_contents(self, content_blocks: Sequence[dict[str, Any]]) -> list[Any]:
         contents: list[Any] = []
@@ -745,7 +750,7 @@ class BedrockChatClient(
                     Content.from_function_result(
                         call_id=tool_use_id if isinstance(tool_use_id, str) else self._generate_tool_call_id(),
                         result=result_value,
-                        exception=str(exception) if exception else None,  # type: ignore[arg-type]
+                        exception=str(exception) if exception else None,
                         raw_representation=block,
                     )
                 )
@@ -795,10 +800,7 @@ class BedrockChatClient(
             schema = copy.deepcopy(schema_src)
         else:
             if not isinstance(response_format, type) or not issubclass(response_format, BaseModel):
-                raise TypeError(
-                    "response_format must be None, a dict JSON schema, "
-                    "or a Pydantic BaseModel subclass."
-                )
+                raise TypeError("response_format must be None, a dict JSON schema, or a Pydantic BaseModel subclass.")
             # response_format is a Pydantic model class
             schema = response_format.model_json_schema()
             name = response_format.__name__
@@ -817,9 +819,7 @@ class BedrockChatClient(
         return {
             "textFormat": {
                 "type": "json_schema",
-                "structure": {
-                    "jsonSchema": json_schema
-                },
+                "structure": {"jsonSchema": json_schema},
             }
         }
 
@@ -840,9 +840,7 @@ class BedrockChatClient(
                 if node_id in visited:
                     return
                 visited.add(node_id)
-                if node.get("type") == "object" or (
-                    "properties" in node and "type" not in node
-                ):
+                if node.get("type") == "object" or ("properties" in node and "type" not in node):
                     existing = node.get("additionalProperties")
                     if existing is None or existing is True:
                         node["additionalProperties"] = False

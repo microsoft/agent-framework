@@ -28,9 +28,14 @@ builder.AddDevUI();
 builder.AddOpenAIChatCompletions();
 builder.AddOpenAIResponses();
 
-// When running in production, make sure to use an SessionIsolationKeyProvider, e.g. ClaimsIdentity-based
-// if using Claims-based Identity for Authentication/Authorization
+// IMPORTANT: In production, register a SessionIsolationKeyProvider to isolate sessions by authenticated caller.
+// Without this, contextId alone is the session key — any caller who knows a contextId can access that session.
+// Example using claims-based identity:
 // builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+
+// By default, NoopAgentSessionStore is used — sessions are not persisted across requests.
+// To enable multi-turn conversations, register a session store explicitly, e.g.:
+// agentBuilder.WithInMemorySessionStore();
 
 var pirateAgentBuilder = builder.AddAIAgent(
     "pirate",
@@ -152,8 +157,9 @@ builder.Services.AddKeyedSingleton<AIAgent>("my-di-matchingname-agent", (sp, nam
 pirateAgentBuilder.AddA2AServer();
 knightsKnavesAgentBuilder.AddA2AServer();
 
-// When running in production, make sure to use an SessionIsolationKeyProvider, e.g. ClaimsIdentity-based
-// if using Claims-based Identity for Authentication/Authorization
+// IMPORTANT: In production, register a SessionIsolationKeyProvider to isolate sessions by authenticated caller.
+// Without this, contextId alone is the session key — any caller who knows a contextId can access that session.
+// Example using claims-based identity:
 // builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 
 var app = builder.Build();

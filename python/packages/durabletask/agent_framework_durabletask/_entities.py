@@ -232,7 +232,7 @@ class AgentEntity:
                 stream_candidate = await stream_candidate
 
             return await self._consume_stream(
-                stream=stream_candidate,  # type: ignore[arg-type]
+                stream=stream_candidate,
                 callback_context=callback_context,
             )
         except TypeError as type_error:

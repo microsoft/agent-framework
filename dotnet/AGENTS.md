@@ -10,6 +10,10 @@ See `./.github/skills/build-and-test/SKILL.md` for detailed instructions on buil
 
 See `./.github/skills/project-structure/SKILL.md` for an overview of the project structure.
 
+## Pull Requests
+
+See `./.github/skills/pull-requests/SKILL.md` for guidance on writing PR descriptions and handling/resolving PR review comments.
+
 ### Core types
 
 - `AIAgent`: The abstract base class that all agents derive from, providing common methods for interacting with an agent.

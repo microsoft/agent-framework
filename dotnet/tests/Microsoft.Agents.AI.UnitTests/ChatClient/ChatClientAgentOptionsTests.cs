@@ -134,6 +134,7 @@ public class ChatClientAgentOptionsTests
             ClearOnChatHistoryProviderConflict = false,
             WarnOnChatHistoryProviderConflict = false,
             ThrowOnChatHistoryProviderConflict = false,
+            EnableNonApprovalRequiredFunctionBypassing = true,
         };
 
         // Act
@@ -150,6 +151,7 @@ public class ChatClientAgentOptionsTests
         Assert.Equal(original.ClearOnChatHistoryProviderConflict, clone.ClearOnChatHistoryProviderConflict);
         Assert.Equal(original.WarnOnChatHistoryProviderConflict, clone.WarnOnChatHistoryProviderConflict);
         Assert.Equal(original.ThrowOnChatHistoryProviderConflict, clone.ThrowOnChatHistoryProviderConflict);
+        Assert.Equal(original.EnableNonApprovalRequiredFunctionBypassing, clone.EnableNonApprovalRequiredFunctionBypassing);
 
         // ChatOptions should be cloned, not the same reference
         Assert.NotSame(original.ChatOptions, clone.ChatOptions);
