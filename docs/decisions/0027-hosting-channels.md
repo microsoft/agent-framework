@@ -83,6 +83,11 @@ Application or web-framework code owns:
 - request/response status codes and framework-specific error handling;
 - choosing the isolation/session id source for the current deployment and route.
 
+The application builder can make the server exactly as they see fit, but this is outside the responsibilities of this proposed scheme.
+This might include implementing other known API surfaces from vendors like OpenAI, such as creating conversations, vector stores, deleting things, etc.
+If they want they can build the full OpenAI API, but it will include code that does not rely on agent-framework-hosting, which is fine.
+They are responsible for what they expose.
+
 The optional execution-state helpers, if provided, are limited to shared execution state:
 
 - `AgentState`: one `SupportsAgentRun`-compatible target plus a `SessionStore`;
