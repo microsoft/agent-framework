@@ -73,7 +73,8 @@ _FRAMEWORK_MODULE_PREFIX = "agent_framework."
 # Module prefix for OpenAI SDK types that are always allowed
 _OPENAI_MODULE_PREFIX = "openai.types."
 
-_DENIED_ALLOWED_TYPE_KEYS: frozenset[str] = frozenset({
+# Module-level helpers remain blocked even when their package prefix is otherwise auto-allowed.
+_BLOCKED_FRAMEWORK_GLOBAL_KEYS: frozenset[str] = frozenset({
     "agent_framework._workflows._checkpoint_encoding:_RestrictedUnpickler",
     "agent_framework._workflows._checkpoint_encoding:_base64_to_unpickle",
     "agent_framework._workflows._checkpoint_encoding:decode_checkpoint_value",
@@ -139,13 +140,15 @@ class _RestrictedUnpickler(pickle.Unpickler):  # noqa: S301
     def find_class(self, module: str, name: str) -> type:
         type_key = f"{module}:{name}"
 
-        if type_key in _DENIED_ALLOWED_TYPE_KEYS:
+        if type_key in _BLOCKED_FRAMEWORK_GLOBAL_KEYS:
             raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for type '{type_key}'.")
 
         if type_key in _BUILTIN_ALLOWED_TYPE_KEYS or type_key in self._allowed_types:
-            return super().find_class(module, name)  # type: ignore[no-any-return]  # nosec
+            return super().find_class(module, name)  # nosec
 
         if module.startswith(_FRAMEWORK_MODULE_PREFIX) or module.startswith(_OPENAI_MODULE_PREFIX):
+            # Pickle dotted names traverse attributes on an allowed module; keep the prefix allowlist to concrete
+            # top-level classes rather than helper callables reachable through module attributes.
             if "." in name:
                 raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for type '{type_key}'.")
             resolved = super().find_class(module, name)  # nosec
@@ -233,7 +236,7 @@ def _encode(value: Any) -> Any:
 
     # Recursively encode dict values (keys become strings)
     if isinstance(value, dict):
-        typed_dict = cast(dict[Any, Any], value)  # type: ignore[redundant-cast]
+        typed_dict = cast(dict[Any, Any], value)
         if any(str(k) in _RESERVED_DICT_KEYS for k in typed_dict):
             return _encode_pickle(value)
         encoded_dict: dict[str, Any] = {str(k): _encode(v) for k, v in typed_dict.items()}
