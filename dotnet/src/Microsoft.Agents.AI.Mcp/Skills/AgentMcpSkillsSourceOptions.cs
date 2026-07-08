@@ -7,6 +7,13 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Configuration options for <see cref="AgentMcpSkillsSource"/>.
 /// </summary>
+/// <remarks>
+/// <strong>Security consideration:</strong> The archive limits (<see cref="ArchiveMaxFileCount"/>,
+/// <see cref="ArchiveMaxSizeBytes"/>, <see cref="ArchiveMaxUncompressedSizeBytes"/>) bound how much a
+/// single MCP server response can extract to local disk. Since the server supplying these archives is
+/// an external, potentially untrusted system, keep these limits conservative unless you have vetted the
+/// server and legitimately need to raise them.
+/// </remarks>
 public sealed class AgentMcpSkillsSourceOptions
 {
     /// <summary>

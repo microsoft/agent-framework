@@ -364,8 +364,22 @@ class AgentLoopMiddleware(AgentMiddleware):
         why its previous answer was judged incomplete. See :meth:`__init__` for the full meaning of
         each argument.
 
+        Security considerations:
+            Using a judge is an explicit opt-in — the caller must supply a ``judge_client`` — and
+            introduces a second external LLM boundary in addition to the agent's own model. On every
+            iteration the judge is sent the original request and the agent's latest response, both of
+            which may contain sensitive or untrusted content. A compromised or malicious judge
+            endpoint could exfiltrate that data, or return a manipulated :class:`JudgeVerdict` / gap
+            analysis that is fed back into the loop as feedback, potentially steering the agent via
+            indirect prompt injection. Only configure a ``judge_client`` that points at a service you
+            trust as much as the primary model.
+
         Args:
             judge_client: Chat client used to judge whether the original request was answered.
+                **Security:** this client is sent the original request and the agent's latest
+                response on every iteration, so only point it at a service you trust as much as the
+                primary model — see the security considerations above for the exfiltration and
+                prompt-injection risks of an untrusted judge.
 
         Keyword Args:
             criteria: Optional list of criteria the response must satisfy. When provided, they are

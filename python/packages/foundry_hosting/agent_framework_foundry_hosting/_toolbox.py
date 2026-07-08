@@ -8,7 +8,13 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import httpx
-from agent_framework import MCPSkillsSource, MCPStreamableHTTPTool, SkillsProvider, SkillsSource
+from agent_framework import (
+    MCPSkillsSource,
+    MCPStreamableHTTPTool,
+    SkillsProvider,
+    SkillsSource,
+    SkillsSourceContext,
+)
 from azure.ai.agentserver.core import get_request_context
 
 if TYPE_CHECKING:
@@ -246,7 +252,7 @@ class _FoundryToolboxSkillsSource(SkillsSource):
     def __init__(self, toolbox: FoundryToolbox) -> None:
         self._toolbox = toolbox
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         session = self._toolbox.session
         if session is None:
             raise RuntimeError(
@@ -254,4 +260,4 @@ class _FoundryToolboxSkillsSource(SkillsSource):
                 "Pass the toolbox to the agent (tools=...) or enter it as an async "
                 "context manager before the agent runs."
             )
-        return await MCPSkillsSource(client=session).get_skills()
+        return await MCPSkillsSource(client=session).get_skills(context)
