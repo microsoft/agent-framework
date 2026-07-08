@@ -13,7 +13,7 @@ from agent_framework import Agent, Content, FunctionTool, Message
 from google.genai import types
 from pydantic import BaseModel
 
-from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, ThinkingConfig
+from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, RawGeminiChatClient, ThinkingConfig
 
 
 def _has_gemini_integration_credentials() -> bool:
@@ -93,6 +93,8 @@ def _make_response(
     prompt_tokens: int | None = 10,
     output_tokens: int | None = 5,
     total_tokens: int | None = 15,
+    cached_tokens: int | None = None,
+    thoughts_tokens: int | None = None,
 ) -> MagicMock:
     """Build a mock types.GenerateContentResponse."""
     response = MagicMock()
@@ -113,6 +115,8 @@ def _make_response(
         usage.prompt_token_count = prompt_tokens
         usage.candidates_token_count = output_tokens
         usage.total_token_count = total_tokens
+        usage.cached_content_token_count = cached_tokens
+        usage.thoughts_token_count = thoughts_tokens
         response.usage_metadata = usage
     else:
         response.usage_metadata = None
@@ -136,6 +140,20 @@ def _make_gemini_client(
     mock._api_client._http_options.base_url = "https://generativelanguage.googleapis.com/"
     client = GeminiChatClient(client=mock, model=model)
     return client, mock
+
+
+def test_agent_accepts_gemini_chat_clients() -> None:
+    mock = MagicMock()
+    mock._api_client.vertexai = False
+    mock._api_client._http_options.base_url = "https://generativelanguage.googleapis.com/"
+
+    raw_client = RawGeminiChatClient(client=mock, model="gemini-2.5-flash")
+    raw_agent = Agent(client=raw_client, instructions="test agent")
+    assert raw_agent.client is raw_client
+
+    client, _ = _make_gemini_client(model="gemini-2.5-flash")
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
 
 
 def _parts(content: types.Content) -> list[types.Part]:
@@ -372,6 +390,27 @@ async def test_get_response_usage_details() -> None:
     assert response.usage_details["input_token_count"] == 20
     assert response.usage_details["output_token_count"] == 8
     assert response.usage_details["total_token_count"] == 28
+
+
+async def test_get_response_usage_details_includes_cached_and_reasoning_tokens() -> None:
+    """Surfaces Gemini cached-content and thinking token counts into the canonical usage fields."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(
+        return_value=_make_response(
+            [_make_part(text="Hi")],
+            prompt_tokens=20,
+            output_tokens=8,
+            total_tokens=28,
+            cached_tokens=12,
+            thoughts_tokens=6,
+        )
+    )
+
+    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+
+    assert response.usage_details is not None
+    assert response.usage_details["cache_read_input_token_count"] == 12
+    assert response.usage_details["reasoning_output_token_count"] == 6
 
 
 async def test_get_response_no_usage_when_metadata_absent() -> None:
@@ -684,6 +723,143 @@ def test_function_call_part_preserves_thought_signature_from_raw_part() -> None:
     assert parts[0].function_call.id == "call-1"
     assert parts[0].function_call.name == "get_weather"
     assert parts[0].function_call.args == {"location": "Paris"}
+
+
+# multimodal (data/uri) parts
+
+
+def test_data_content_converted_to_inline_data_part() -> None:
+    """Content.from_data is converted to a Gemini inline_data Part so images reach the model."""
+    import base64
+
+    client, _ = _make_gemini_client()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    content = Content.from_data(data=png, media_type="image/png")
+    assert content.type == "data"
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].inline_data is not None
+    assert parts[0].inline_data.mime_type == "image/png"
+    assert parts[0].inline_data.data == png
+
+
+def test_data_uri_content_converted_to_inline_data_part() -> None:
+    """A data URI created via Content.from_uri becomes an inline_data Part with decoded bytes."""
+    import base64
+
+    client, _ = _make_gemini_client()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    content = Content.from_uri(uri=f"data:image/png;base64,{base64.b64encode(png).decode()}")
+    assert content.type == "data"
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].inline_data is not None
+    assert parts[0].inline_data.mime_type == "image/png"
+    assert parts[0].inline_data.data == png
+
+
+def test_external_uri_content_converted_to_file_data_part() -> None:
+    """Content.from_uri with an external URL becomes a Gemini file_data Part."""
+    client, _ = _make_gemini_client()
+    content = Content.from_uri(uri="https://example.com/image.png", media_type="image/png")
+    assert content.type == "uri"
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].file_data is not None
+    assert parts[0].file_data.file_uri == "https://example.com/image.png"
+    assert parts[0].file_data.mime_type == "image/png"
+
+
+def test_text_and_image_content_both_reach_the_model() -> None:
+    """A multimodal message keeps both the text and the image parts."""
+    import base64
+
+    client, _ = _make_gemini_client()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    text = Content.from_text("What is in this image?")
+    image = Content.from_data(data=png, media_type="image/png")
+
+    parts = client._convert_message_contents([text, image], {})
+
+    assert len(parts) == 2
+    assert parts[0].text == "What is in this image?"
+    assert any(p.inline_data is not None for p in parts)
+
+
+def test_non_base64_data_uri_is_skipped(caplog: pytest.LogCaptureFixture) -> None:
+    """A data URI that is not base64-encoded is skipped with a warning rather than crashing."""
+    client, _ = _make_gemini_client()
+    content = Content.from_text("placeholder")
+    content.type = "data"  # type: ignore[assignment]
+    content.uri = "data:text/plain,hello"
+
+    with caplog.at_level(logging.WARNING):
+        parts = client._convert_message_contents([content], {})
+
+    assert parts == []
+    assert any("base64" in r.message for r in caplog.records)
+
+
+def test_data_uri_media_type_parameters_are_stripped() -> None:
+    """Parameters in a data URI media type (e.g. charset) are dropped before reaching Gemini."""
+    client, _ = _make_gemini_client()
+    content = Content.from_uri(uri="data:text/plain;charset=utf-8;base64,aGVsbG8=")
+    assert content.type == "data"
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].inline_data is not None
+    assert parts[0].inline_data.mime_type == "text/plain"
+
+
+def test_data_uri_media_type_detected_from_bytes_when_missing() -> None:
+    """When a data URI has no media_type, it is detected from the decoded bytes' magic bytes."""
+    import base64
+
+    client, _ = _make_gemini_client()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    content = Content.from_text("placeholder")
+    content.type = "data"  # type: ignore[assignment]
+    content.uri = f"data:;base64,{base64.b64encode(png).decode()}"
+    content.media_type = None
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].inline_data is not None
+    assert parts[0].inline_data.mime_type == "image/png"
+
+
+def test_external_uri_without_inferable_media_type_is_passed_through(caplog: pytest.LogCaptureFixture) -> None:
+    """A URI with no media_type and no guessable extension is sent as file_data without crashing."""
+    client, _ = _make_gemini_client()
+    content = Content.from_uri(uri="https://api.example.com/files/123")
+    assert content.type == "uri"
+    assert content.media_type is None
+
+    with caplog.at_level(logging.WARNING):
+        parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].file_data is not None
+    assert parts[0].file_data.file_uri == "https://api.example.com/files/123"
+    assert parts[0].file_data.mime_type is None
+    assert any("media_type" in r.message for r in caplog.records)
 
 
 # code execution parts

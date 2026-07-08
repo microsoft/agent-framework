@@ -36,7 +36,7 @@ Developers **must** ensure that:
    the set of reconstructible types to the minimum required by the application.
 4. Never pass untrusted external input to ``decode_checkpoint_value``. If you
    must accept external JSON that might contain checkpoint markers, sanitize it
-   first (for example, :func:`agent_framework_azurefunctions._serialization.strip_pickle_markers`).
+   first (for example, :func:`agent_framework_durabletask._workflows.serialization.strip_pickle_markers`).
 
 The allowlist is a mitigation that reduces attack surface but does not
 eliminate the inherent risks of deserializing untrusted pickle data.  Treat

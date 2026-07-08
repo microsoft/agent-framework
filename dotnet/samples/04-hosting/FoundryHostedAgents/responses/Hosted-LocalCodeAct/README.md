@@ -21,7 +21,7 @@ sample for the `agent-framework-local-codeact` package.
 - Python 3 available on `PATH` (used by `LocalCodeActProvider` to execute the
   embedded runner and validator). Override with the `LOCAL_CODEACT_PYTHON`
   environment variable if you need a specific interpreter path.
-- An Azure AI Foundry project with a deployed model (e.g., `gpt-4o`)
+- A Foundry project with a deployed model (e.g., `gpt-4o`)
 - Azure CLI logged in (`az login`)
 
 ## Configuration
@@ -32,7 +32,7 @@ Copy the template and fill in your project endpoint:
 cp .env.example .env
 ```
 
-Edit `.env` and set your Azure AI Foundry project endpoint:
+Edit `.env` and set your Foundry project endpoint:
 
 ```env
 FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>

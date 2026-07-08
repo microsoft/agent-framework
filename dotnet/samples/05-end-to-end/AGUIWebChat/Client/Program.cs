@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using AGUI.Client;
 using AGUIWebChatClient.Components;
-using Microsoft.Agents.AI.AGUI;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
@@ -13,8 +13,8 @@ string serverUrl = builder.Configuration["AGUI_SERVER_URL"] ?? "http://localhost
 
 builder.Services.AddHttpClient("aguiserver", httpClient => httpClient.BaseAddress = new Uri(serverUrl));
 
-builder.Services.AddChatClient(sp => new AGUIChatClient(
-    sp.GetRequiredService<IHttpClientFactory>().CreateClient("aguiserver"), "ag-ui"));
+builder.Services.AddChatClient(sp => new AGUIChatClient(new(
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient("aguiserver"), "ag-ui")));
 
 WebApplication app = builder.Build();
 

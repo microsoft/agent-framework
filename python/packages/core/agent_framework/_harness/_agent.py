@@ -24,6 +24,7 @@ from .._skills import SkillsProvider
 from ._background_agents import BackgroundAgentsProvider
 from ._file_access import AgentFileStore, FileAccessProvider, FileSystemAgentFileStore
 from ._file_memory import FileMemoryProvider
+from ._loop import DEFAULT_MAX_ITERATIONS, AgentLoopMiddleware
 from ._mode import AgentModeProvider
 from ._todo import TodoProvider
 from ._tool_approval import ToolApprovalMiddleware
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
     from .._compaction import CompactionStrategy, TokenizerProtocol
     from .._middleware import MiddlewareTypes
     from .._tools import ToolTypes
+    from ._loop import NextMessageCallable, ShouldContinueCallable
     from ._tool_approval import ToolApprovalRuleCallback
 
 logger = logging.getLogger(__name__)
@@ -132,8 +134,11 @@ def _assemble_context_providers(
     file_memory_store: AgentFileStore | None,
     disable_file_access: bool,
     file_access_store: AgentFileStore | None,
+    file_access_disable_write_tools: bool,
+    file_access_disable_readonly_tool_approval: bool,
+    file_access_disable_write_tool_approval: bool,
     skills_provider: SkillsProvider | None,
-    skills_paths: Sequence[str] | None,
+    skills_paths: str | Path | Sequence[str | Path] | None,
     background_agents: Sequence[SupportsAgentRun] | None,
     background_agents_instructions: str | None,
     shell_context_provider: ContextProvider | None,
@@ -165,13 +170,20 @@ def _assemble_context_providers(
     # Shared file access (on by default). Default store is rooted at ``{cwd}/working``.
     if not disable_file_access:
         access_store = file_access_store or FileSystemAgentFileStore(Path.cwd() / "working")
-        providers.append(FileAccessProvider(access_store))
+        providers.append(
+            FileAccessProvider(
+                access_store,
+                disable_write_tools=file_access_disable_write_tools,
+                disable_readonly_tool_approval=file_access_disable_readonly_tool_approval,
+                disable_write_tool_approval=file_access_disable_write_tool_approval,
+            )
+        )
 
     # Skills are opt-in: only added when skills_provider or skills_paths is provided.
     if skills_provider:
         providers.append(skills_provider)
     if skills_paths:
-        providers.append(SkillsProvider.from_paths(*skills_paths))
+        providers.append(SkillsProvider.from_paths(skills_paths))
 
     # Background agents are opt-in: only added when agents are provided.
     if background_agents:
@@ -260,8 +272,11 @@ def create_harness_agent(
     file_memory_store: AgentFileStore | None = None,
     disable_file_access: bool = False,
     file_access_store: AgentFileStore | None = None,
+    file_access_disable_write_tools: bool = False,
+    file_access_disable_readonly_tool_approval: bool = False,
+    file_access_disable_write_tool_approval: bool = False,
     skills_provider: SkillsProvider | None = None,
-    skills_paths: Sequence[str] | None = None,
+    skills_paths: str | Path | Sequence[str | Path] | None = None,
     background_agents: Sequence[SupportsAgentRun] | None = None,
     background_agents_instructions: str | None = None,
     shell_executor: ShellExecutor | None = None,
@@ -269,6 +284,9 @@ def create_harness_agent(
     disable_web_search: bool = False,
     disable_tool_auto_approval: bool = False,
     auto_approval_rules: Sequence[ToolApprovalRuleCallback] | None = None,
+    loop_should_continue: ShouldContinueCallable | None = None,
+    loop_next_message: NextMessageCallable | None = None,
+    loop_max_iterations: int | None = DEFAULT_MAX_ITERATIONS,
     otel_provider_name: str | None = None,
     context_providers: Sequence[ContextProvider] | None = None,
     middleware: Sequence[MiddlewareTypes] | None = None,
@@ -289,6 +307,7 @@ def create_harness_agent(
     - **BackgroundAgentsProvider** — delegate work to background sub-agents
     - **Tool approval** — "don't ask again" standing approval rules plus heuristic
       auto-approval callbacks
+    - **Looping** — re-run the agent until a ``should_continue`` predicate is satisfied
     - **OpenTelemetry** — observability via ``AgentTelemetryLayer``
 
     Each feature can be disabled or customized via keyword arguments.
@@ -368,15 +387,36 @@ def create_harness_agent(
         file_access_store: Custom AgentFileStore backing the FileAccessProvider. When None
             (and disable_file_access is False), a FileSystemAgentFileStore rooted at
             ``{cwd}/working`` is created. Ignored when disable_file_access is True.
+        file_access_disable_write_tools: When True, the FileAccessProvider advertises only its
+            read-only tools (read, ls, grep); the write tools (write, delete, replace,
+            replace_lines) are hidden. When False (default), all tools are advertised. Ignored
+            when disable_file_access is True.
+        file_access_disable_readonly_tool_approval: When True, the FileAccessProvider's read-only
+            tools (read, ls, grep) are registered with ``approval_mode="never_require"`` so they
+            run without host approval. When False (default), they require approval. Ignored when
+            disable_file_access is True.
+        file_access_disable_write_tool_approval: When True, the FileAccessProvider's write tools
+            (write, delete, replace, replace_lines) are registered with
+            ``approval_mode="never_require"`` so they run without host approval. When False
+            (default), they require approval. Ignored when disable_file_access is True.
         skills_provider: Custom SkillsProvider instance for code-defined skills.
             Can be combined with ``skills_paths`` to aggregate file and code-based skills.
+            **Security:** if the provider is configured with an external skill source (e.g.
+            :class:`~agent_framework.MCPSkillsSource`), the skill content it loads is untrusted input
+            — only enable sources you trust; see :class:`~agent_framework.SkillsSource`.
         skills_paths: Paths for file-based skill discovery (looks for SKILL.md files).
-            Can be combined with ``skills_provider``. When neither ``skills_provider``
-            nor ``skills_paths`` is provided, no SkillsProvider is added.
+            Accepts a single ``str`` or :class:`~pathlib.Path`, or a sequence of
+            ``str | Path``. Can be combined with ``skills_provider``. When neither
+            ``skills_provider`` nor ``skills_paths`` is provided, no SkillsProvider
+            is added.
         background_agents: Collection of agents available for background task delegation.
             When provided, a ``BackgroundAgentsProvider`` is automatically included,
             enabling the agent to start, monitor, and retrieve results from background tasks.
             Each agent must have a non-empty, unique name (case-insensitive).
+            **Security:** supplied agents receive text input from this agent and their output is fed
+            back into its context, so only supply agents you have vetted and trust — see
+            :class:`~agent_framework.BackgroundAgentsProvider` for the exfiltration and
+            prompt-injection risks of untrusted agents.
         background_agents_instructions: Optional instruction override for the
             ``BackgroundAgentsProvider``. May include ``{background_agents}`` placeholder
             which will be replaced with the agent listing.
@@ -403,6 +443,19 @@ def create_harness_agent(
             content and returns ``True`` to approve it. Rules are evaluated after standing rules
             (derived from prior user approvals) but before prompting the user. Only used when
             ``disable_tool_auto_approval`` is False.
+        loop_should_continue: Optional predicate that enables the looping middleware. When provided, the
+            agent is re-run in a loop (via :class:`~agent_framework.AgentLoopMiddleware`, wired as
+            the outermost middleware so each iteration is a full agent run including tool approval)
+            for as long as the predicate returns ``True``, up to ``loop_max_iterations``. If an
+            iteration returns a pending tool-approval request, the loop stops and returns it so the
+            caller can approve before continuing. When None (default), no loop is added.
+        loop_next_message: Optional callable controlling the input for the next loop iteration.
+            Only takes effect when ``loop_should_continue`` is set (otherwise no loop is added and
+            this is ignored).
+        loop_max_iterations: Safety cap on the number of loop iterations. ``None`` means unbounded;
+            a positive integer caps the loop (defaults to the loop middleware's default cap). Only
+            takes effect when ``loop_should_continue`` is set (otherwise no loop is added and this
+            is ignored).
         otel_provider_name: Custom OpenTelemetry provider/source name for telemetry.
         context_providers: Additional context providers to include after the built-in ones.
         middleware: Additional middleware to include.
@@ -460,6 +513,9 @@ def create_harness_agent(
         file_memory_store=file_memory_store,
         disable_file_access=disable_file_access,
         file_access_store=file_access_store,
+        file_access_disable_write_tools=file_access_disable_write_tools,
+        file_access_disable_readonly_tool_approval=file_access_disable_readonly_tool_approval,
+        file_access_disable_write_tool_approval=file_access_disable_write_tool_approval,
         skills_provider=skills_provider,
         skills_paths=skills_paths,
         background_agents=background_agents,
@@ -500,9 +556,21 @@ def create_harness_agent(
     # placed first so it sits outermost: it intercepts inbound "always approve" responses and
     # outbound approval requests at the caller boundary, and its re-invocation loop re-runs any
     # user-supplied middleware. ToolApprovalMiddleware requires an AgentSession at run time.
+    # When should_continue is supplied, the loop is prepended ahead of tool approval so it sits
+    # outermost of all: each loop iteration is a full agent run (including tool approval), and the
+    # loop's approval escape hatch returns any pending approval request to the caller.
     assembled_middleware: list[MiddlewareTypes] = []
     if not disable_tool_auto_approval:
         assembled_middleware.append(ToolApprovalMiddleware(auto_approval_rules=auto_approval_rules))
+    if loop_should_continue is not None:
+        assembled_middleware.insert(
+            0,
+            AgentLoopMiddleware(
+                loop_should_continue,
+                max_iterations=loop_max_iterations,
+                next_message=loop_next_message,
+            ),
+        )
     if middleware:
         assembled_middleware.extend(middleware)
 

@@ -8,6 +8,7 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI.Assistants;
+using OpenAI.Responses;
 
 const string AgentInstructions = "You are a personal math tutor. When asked a math question, write and run code using the python tool to answer the question.";
 const string AgentName = "CoderAgent-RAPI";
@@ -19,8 +20,38 @@ string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
+
+// The easiest way to add the hosted code interpreter is as follows:
+/*
 AIAgent agent = aiProjectClient.AsAIAgent(
     deploymentName,
+    instructions: AgentInstructions,
+    name: AgentName,
+    tools: [new HostedCodeInterpreterTool() { Inputs = [] }]);
+*/
+
+// However, by default the reponses API does not return the output items from the hosted code interpreter tool.
+// This is generally fine but for this sample we want to explicitly request those in the response generation configuration.
+AIAgent agent = aiProjectClient
+    .GetProjectOpenAIClient()
+    .GetProjectResponsesClient()
+    .AsIChatClient(deploymentName)
+    .AsBuilder()
+    .ConfigureOptions(x =>
+    {
+        var previousFactory = x.RawRepresentationFactory;
+        x.RawRepresentationFactory = state =>
+        {
+            var responseOptions = previousFactory?.Invoke(state) as CreateResponseOptions ?? new CreateResponseOptions();
+
+            // Ensure that the response includes tool output items from the hosted code interpreter
+            responseOptions.IncludedProperties.Add(IncludedResponseProperty.CodeInterpreterCallOutputs);
+
+            return responseOptions;
+        };
+    })
+    .Build()
+    .AsAIAgent(
     instructions: AgentInstructions,
     name: AgentName,
     tools: [new HostedCodeInterpreterTool() { Inputs = [] }]);
