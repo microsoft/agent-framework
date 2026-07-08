@@ -2136,7 +2136,7 @@ def _parse_structured_response_value(text: str, response_format: Any | None) -> 
 
 
 def _message_text_for_structured_response(message: Message) -> str:
-    return "".join(content.text for content in message.contents if content.type == "text")  # type: ignore[misc]
+    return "".join((content.text or "") for content in message.contents if content.type == "text")
 
 
 def _messages_text_for_structured_response(
