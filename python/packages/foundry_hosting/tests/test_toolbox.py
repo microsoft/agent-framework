@@ -145,7 +145,7 @@ async def test_close_closes_owned_http_client() -> None:
     )
     client = toolbox._httpx_client  # pyright: ignore[reportPrivateUsage]
     assert client is not None
-    client.aclose = AsyncMock()  # zuban: ignore
+    client.aclose = AsyncMock()  # type: ignore[method-assign]
 
     await toolbox.close()
 
