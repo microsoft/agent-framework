@@ -856,6 +856,14 @@ def test_agent_response_value_parses_split_structured_text_without_changing_mess
     assert response.value.response == "Hello"
 
 
+def test_chat_response_value_handles_text_content_without_text() -> None:
+    """ChatResponse.value should ignore text content with no text value."""
+    message = Message(role="assistant", contents=[Content.from_dict({"type": "text"})])
+    response = ChatResponse(messages=message, response_format=OutputModel)
+
+    assert response.value is None
+
+
 def test_parse_structured_response_value_empty_text_with_pydantic_model() -> None:
     """Empty text should return None instead of raising when response_format is a Pydantic model."""
     result = _parse_structured_response_value("", OutputModel)
