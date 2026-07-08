@@ -123,4 +123,4 @@ portal with this partition key configuration.
 
 See `samples/03-workflows/checkpoint/cosmos_workflow_checkpointing.py` for a standalone example,
 or `samples/03-workflows/checkpoint/cosmos_workflow_checkpointing_foundry.py` for an end-to-end
-example with Azure AI Foundry agents.
+example with Microsoft Foundry agents.

@@ -10,7 +10,7 @@ Key Features Demonstrated:
 1. Loading agent definitions from YAML using AgentFactory
 2. Configuring MCP tools with different authentication methods:
    - API key authentication (OpenAI.Responses provider)
-   - Azure AI Foundry connection references (Foundry provider)
+   - Microsoft Foundry connection references (Foundry provider)
 
 Authentication Options:
 - OpenAI.Responses: Supports inline API key auth via headers
@@ -66,7 +66,7 @@ tools:
 
 # Example 2: Azure AI with Foundry connection reference
 # No secrets in YAML - references a pre-configured Foundry connection by name
-# The connection stores credentials securely in Azure AI Foundry
+# The connection stores credentials securely in Microsoft Foundry
 YAML_AZURE_AI_WITH_FOUNDRY_CONNECTION = """
 kind: Prompt
 name: GitHubAgent

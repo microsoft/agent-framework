@@ -55,7 +55,7 @@ To use auto-approval rules, the agent must have ``ToolApprovalMiddleware`` in
 its middleware stack.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL (defaults to "gpt-4o-mini").
 """
 

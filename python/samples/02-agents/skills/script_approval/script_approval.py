@@ -40,7 +40,7 @@ To approve skill tools automatically instead of prompting, use
 ``samples/02-agents/skills/skills_auto_approval/skills_auto_approval.py``.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL (defaults to "gpt-4o-mini").
 """
 

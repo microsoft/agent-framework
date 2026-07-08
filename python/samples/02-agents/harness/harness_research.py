@@ -43,7 +43,7 @@ is scoped to ``"execute"`` mode so ``"plan"`` mode stays interactive.
 net.
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint URL
+    FOUNDRY_PROJECT_ENDPOINT — Microsoft Foundry project endpoint URL
     FOUNDRY_MODEL            — Model deployment name
 
 Authentication:

@@ -172,7 +172,7 @@ agent_framework/
 
 ### Foundry (`foundry/`)
 
-- **`FoundryChatClient`** - Chat client for Azure AI Foundry project endpoints
+- **`FoundryChatClient`** - Chat client for Microsoft Foundry project endpoints
 
 ## Key Patterns
 

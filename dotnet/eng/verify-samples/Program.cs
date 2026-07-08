@@ -19,7 +19,7 @@
 // Pre-build the solution before running, or pass --build to avoid missing build output failures.
 //
 // Required environment variables (for AI-powered verification):
-//   FOUNDRY_PROJECT_ENDPOINT  — Your Azure AI Foundry project endpoint
+//   FOUNDRY_PROJECT_ENDPOINT  — Your Microsoft Foundry project endpoint
 //   FOUNDRY_MODEL             — Model deployment name (optional, defaults to gpt-5.4-mini)
 
 using System.Diagnostics;

@@ -20,7 +20,7 @@ Only FunctionTool objects are accepted — hosted tools (code interpreter, file 
 web search, etc.) must be configured on the agent definition in the service.
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint
+    FOUNDRY_PROJECT_ENDPOINT — Microsoft Foundry project endpoint
     FOUNDRY_AGENT_NAME       — Name of the agent in Foundry
     FOUNDRY_AGENT_VERSION    — Version of the agent
 """

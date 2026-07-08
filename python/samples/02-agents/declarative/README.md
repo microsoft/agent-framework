@@ -37,7 +37,7 @@ Demonstrates how to create an agent with custom function tools using the declara
 
 Shows how to create an agent that can search and retrieve information from Microsoft Learn documentation using the Model Context Protocol (MCP).
 
-- Uses Azure AI Foundry client with MCP server integration
+- Uses Microsoft Foundry client with MCP server integration
 - Demonstrates async context managers for proper resource cleanup
 - Loads agent configuration from `declarative-agents/agent-samples/foundry/MicrosoftLearnAgent.yaml`
 - Uses Azure CLI credentials for authentication
@@ -45,13 +45,13 @@ Shows how to create an agent that can search and retrieve information from Micro
 
 **Requirements**: `pip install agent-framework-foundry`
 
-**Key concepts**: Azure AI Foundry integration, MCP server usage, async patterns, resource management
+**Key concepts**: Microsoft Foundry integration, MCP server usage, async patterns, resource management
 
 ### 3. **Inline YAML Agent** ([`inline_yaml.py`](./inline_yaml.py))
 
 Shows how to create an agent using an inline YAML string rather than a file.
 
-- Uses Azure AI Foundry v2 Client with instructions.
+- Uses Microsoft Foundry v2 Client with instructions.
 
 **Requirements**: `pip install agent-framework-foundry`
 
@@ -84,7 +84,7 @@ All the YAML configuration files referenced in these samples are located in the 
 
 - **`declarative-agents/agent-samples/azure/`** - Azure OpenAI agent configurations
 - **`declarative-agents/agent-samples/chatclient/`** - Chat client agent configurations with tools
-- **`declarative-agents/agent-samples/foundry/`** - Azure AI Foundry agent configurations
+- **`declarative-agents/agent-samples/foundry/`** - Microsoft Foundry agent configurations
 - **`declarative-agents/agent-samples/openai/`** - OpenAI agent configurations
 
 **Important**: These YAML files are **platform-agnostic** and work with both Python and .NET implementations of the Agent Framework. You can use the exact same YAML definition to create agents in either language, making it easy to share agent configurations across different technology stacks.
