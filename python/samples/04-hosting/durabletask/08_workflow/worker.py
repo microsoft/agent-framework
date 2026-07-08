@@ -54,6 +54,7 @@ logger = logging.getLogger(__name__)
 
 SPAM_AGENT_NAME = "SpamDetectionAgent"
 EMAIL_AGENT_NAME = "EmailAssistantAgent"
+WORKFLOW_NAME = "email_triage"
 
 SPAM_DETECTION_INSTRUCTIONS = (
     "You are a spam detection assistant that identifies spam emails. "
@@ -148,7 +149,7 @@ def create_workflow() -> Workflow:
     email_sender = EmailSenderExecutor(id="email_sender")
 
     return (
-        WorkflowBuilder(start_executor=spam_agent)
+        WorkflowBuilder(name=WORKFLOW_NAME, start_executor=spam_agent)
         .add_switch_case_edge_group(
             spam_agent,
             [

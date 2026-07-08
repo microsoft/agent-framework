@@ -15,8 +15,8 @@ public class InMemoryAgentFileStoreTests
         var store = new InMemoryAgentFileStore();
 
         // Act
-        await store.WriteFileAsync("notes.md", "Hello world");
-        var content = await store.ReadFileAsync("notes.md");
+        await store.WriteAsync("notes.md", "Hello world");
+        var content = await store.ReadAsync("notes.md");
 
         // Assert
         Assert.Equal("Hello world", content);
@@ -29,7 +29,7 @@ public class InMemoryAgentFileStoreTests
         var store = new InMemoryAgentFileStore();
 
         // Act
-        var content = await store.ReadFileAsync("nonexistent.md");
+        var content = await store.ReadAsync("nonexistent.md");
 
         // Assert
         Assert.Null(content);
@@ -40,11 +40,11 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("notes.md", "Original");
+        await store.WriteAsync("notes.md", "Original");
 
         // Act
-        await store.WriteFileAsync("notes.md", "Updated");
-        var content = await store.ReadFileAsync("notes.md");
+        await store.WriteAsync("notes.md", "Updated");
+        var content = await store.ReadAsync("notes.md");
 
         // Assert
         Assert.Equal("Updated", content);
@@ -55,14 +55,14 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("notes.md", "Content");
+        await store.WriteAsync("notes.md", "Content");
 
         // Act
-        var deleted = await store.DeleteFileAsync("notes.md");
+        var deleted = await store.DeleteAsync("notes.md");
 
         // Assert
         Assert.True(deleted);
-        Assert.Null(await store.ReadFileAsync("notes.md"));
+        Assert.Null(await store.ReadAsync("notes.md"));
     }
 
     [Fact]
@@ -72,7 +72,7 @@ public class InMemoryAgentFileStoreTests
         var store = new InMemoryAgentFileStore();
 
         // Act
-        var deleted = await store.DeleteFileAsync("nonexistent.md");
+        var deleted = await store.DeleteAsync("nonexistent.md");
 
         // Assert
         Assert.False(deleted);
@@ -83,13 +83,16 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("folder/file1.md", "Content 1");
-        await store.WriteFileAsync("folder/file2.md", "Content 2");
-        await store.WriteFileAsync("folder/sub/file3.md", "Content 3");
-        await store.WriteFileAsync("other/file4.md", "Content 4");
+        await store.WriteAsync("folder/file1.md", "Content 1");
+        await store.WriteAsync("folder/file2.md", "Content 2");
+        await store.WriteAsync("folder/sub/file3.md", "Content 3");
+        await store.WriteAsync("other/file4.md", "Content 4");
 
         // Act
-        var files = await store.ListFilesAsync("folder");
+        var files = (await store.ListChildrenAsync("folder"))
+            .Where(e => e.Type == FileStoreEntry.File)
+            .Select(e => e.Name)
+            .ToList();
 
         // Assert
         Assert.Equal(2, files.Count);
@@ -104,7 +107,10 @@ public class InMemoryAgentFileStoreTests
         var store = new InMemoryAgentFileStore();
 
         // Act
-        var files = await store.ListFilesAsync("empty");
+        var files = (await store.ListChildrenAsync("empty"))
+            .Where(e => e.Type == FileStoreEntry.File)
+            .Select(e => e.Name)
+            .ToList();
 
         // Assert
         Assert.Empty(files);
@@ -115,11 +121,14 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("root.md", "Content");
-        await store.WriteFileAsync("folder/nested.md", "Content");
+        await store.WriteAsync("root.md", "Content");
+        await store.WriteAsync("folder/nested.md", "Content");
 
         // Act
-        var files = await store.ListFilesAsync("");
+        var files = (await store.ListChildrenAsync(""))
+            .Where(e => e.Type == FileStoreEntry.File)
+            .Select(e => e.Name)
+            .ToList();
 
         // Assert
         Assert.Single(files);
@@ -131,11 +140,14 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange — the store is dumb; it returns all files including _description.md
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("folder/notes.md", "Content");
-        await store.WriteFileAsync("folder/notes_description.md", "Desc");
+        await store.WriteAsync("folder/notes.md", "Content");
+        await store.WriteAsync("folder/notes_description.md", "Desc");
 
         // Act
-        var files = await store.ListFilesAsync("folder");
+        var files = (await store.ListChildrenAsync("folder"))
+            .Where(e => e.Type == FileStoreEntry.File)
+            .Select(e => e.Name)
+            .ToList();
 
         // Assert
         Assert.Equal(2, files.Count);
@@ -148,7 +160,7 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("notes.md", "Content");
+        await store.WriteAsync("notes.md", "Content");
 
         // Act & Assert
         Assert.True(await store.FileExistsAsync("notes.md"));
@@ -169,11 +181,11 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("folder/notes.md", "The quick brown fox jumps over the lazy dog");
-        await store.WriteFileAsync("folder/other.md", "No match here");
+        await store.WriteAsync("folder/notes.md", "The quick brown fox jumps over the lazy dog");
+        await store.WriteAsync("folder/other.md", "No match here");
 
         // Act
-        var results = await store.SearchFilesAsync("folder", "brown fox");
+        var results = await store.SearchAsync("folder", "brown fox");
 
         // Assert
         Assert.Single(results);
@@ -186,10 +198,10 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("folder/notes.md", "Line one\nLine two with match\nLine three\nLine four with match");
+        await store.WriteAsync("folder/notes.md", "Line one\nLine two with match\nLine three\nLine four with match");
 
         // Act
-        var results = await store.SearchFilesAsync("folder", "match");
+        var results = await store.SearchAsync("folder", "match");
 
         // Assert
         Assert.Single(results);
@@ -205,10 +217,10 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("folder/notes.md", "Important Data Here");
+        await store.WriteAsync("folder/notes.md", "Important Data Here");
 
         // Act
-        var results = await store.SearchFilesAsync("folder", "important data");
+        var results = await store.SearchAsync("folder", "important data");
 
         // Assert
         Assert.Single(results);
@@ -219,10 +231,10 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("folder/notes.md", "Error: something went wrong\nWarning: check this\nInfo: all good");
+        await store.WriteAsync("folder/notes.md", "Error: something went wrong\nWarning: check this\nInfo: all good");
 
         // Act
-        var results = await store.SearchFilesAsync("folder", "error|warning");
+        var results = await store.SearchAsync("folder", "error|warning");
 
         // Assert
         Assert.Single(results);
@@ -236,10 +248,10 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("folder/code.cs", "var x = 42;\nvar y = 100;\nconst z = 7;");
+        await store.WriteAsync("folder/code.cs", "var x = 42;\nvar y = 100;\nconst z = 7;");
 
         // Act — regex matching lines starting with "var"
-        var results = await store.SearchFilesAsync("folder", @"^var\b");
+        var results = await store.SearchAsync("folder", @"^var\b");
 
         // Assert
         Assert.Single(results);
@@ -251,12 +263,12 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("folder/notes.md", "Important data");
-        await store.WriteFileAsync("folder/data.txt", "Important data");
-        await store.WriteFileAsync("folder/code.cs", "Important data");
+        await store.WriteAsync("folder/notes.md", "Important data");
+        await store.WriteAsync("folder/data.txt", "Important data");
+        await store.WriteAsync("folder/code.cs", "Important data");
 
         // Act — only search markdown files
-        var results = await store.SearchFilesAsync("folder", "Important", filePattern: "*.md");
+        var results = await store.SearchAsync("folder", "Important", globPattern: "*.md");
 
         // Assert
         Assert.Single(results);
@@ -268,13 +280,13 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("folder/notes.md", "match here");
-        await store.WriteFileAsync("folder/data.txt", "match here");
-        await store.WriteFileAsync("folder/code.cs", "match here");
+        await store.WriteAsync("folder/notes.md", "match here");
+        await store.WriteAsync("folder/data.txt", "match here");
+        await store.WriteAsync("folder/code.cs", "match here");
 
         // Act — search both md and txt files
-        var resultsMd = await store.SearchFilesAsync("folder", "match", filePattern: "*.md");
-        var resultsTxt = await store.SearchFilesAsync("folder", "match", filePattern: "*.txt");
+        var resultsMd = await store.SearchAsync("folder", "match", globPattern: "*.md");
+        var resultsTxt = await store.SearchAsync("folder", "match", globPattern: "*.txt");
 
         // Assert
         Assert.Single(resultsMd);
@@ -288,12 +300,12 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("folder/research_ai.md", "findings");
-        await store.WriteFileAsync("folder/research_ml.md", "findings");
-        await store.WriteFileAsync("folder/notes.md", "findings");
+        await store.WriteAsync("folder/research_ai.md", "findings");
+        await store.WriteAsync("folder/research_ml.md", "findings");
+        await store.WriteAsync("folder/notes.md", "findings");
 
         // Act
-        var results = await store.SearchFilesAsync("folder", "findings", filePattern: "research*");
+        var results = await store.SearchAsync("folder", "findings", globPattern: "research*");
 
         // Assert
         Assert.Equal(2, results.Count);
@@ -305,11 +317,11 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("folder/notes.md", "match");
-        await store.WriteFileAsync("folder/data.txt", "match");
+        await store.WriteAsync("folder/notes.md", "match");
+        await store.WriteAsync("folder/data.txt", "match");
 
         // Act
-        var results = await store.SearchFilesAsync("folder", "match", filePattern: null);
+        var results = await store.SearchAsync("folder", "match", globPattern: null);
 
         // Assert
         Assert.Equal(2, results.Count);
@@ -320,10 +332,10 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("folder/notes.md", "Some content");
+        await store.WriteAsync("folder/notes.md", "Some content");
 
         // Act
-        var results = await store.SearchFilesAsync("folder", "nonexistent query");
+        var results = await store.SearchAsync("folder", "nonexistent query");
 
         // Assert
         Assert.Empty(results);
@@ -334,11 +346,11 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("folder/notes.md", "Match here");
-        await store.WriteFileAsync("folder/sub/deep.md", "Match here too");
+        await store.WriteAsync("folder/notes.md", "Match here");
+        await store.WriteAsync("folder/sub/deep.md", "Match here too");
 
         // Act
-        var results = await store.SearchFilesAsync("folder", "Match");
+        var results = await store.SearchAsync("folder", "Match");
 
         // Assert
         Assert.Single(results);
@@ -352,10 +364,10 @@ public class InMemoryAgentFileStoreTests
         var store = new InMemoryAgentFileStore();
         string padding = new('A', 60);
         string content = $"{padding}MATCH_HERE{padding}";
-        await store.WriteFileAsync("folder/file.md", content);
+        await store.WriteAsync("folder/file.md", content);
 
         // Act
-        var results = await store.SearchFilesAsync("folder", "MATCH_HERE");
+        var results = await store.SearchAsync("folder", "MATCH_HERE");
 
         // Assert — snippet should contain the match and surrounding context (up to ±50 chars).
         Assert.Single(results);
@@ -372,10 +384,10 @@ public class InMemoryAgentFileStoreTests
         var store = new InMemoryAgentFileStore();
         string trailing = new('B', 80);
         string content = $"MATCH{trailing}";
-        await store.WriteFileAsync("folder/file.md", content);
+        await store.WriteAsync("folder/file.md", content);
 
         // Act
-        var results = await store.SearchFilesAsync("folder", "MATCH");
+        var results = await store.SearchAsync("folder", "MATCH");
 
         // Assert — snippet should start at the beginning of the file.
         Assert.Single(results);
@@ -390,10 +402,10 @@ public class InMemoryAgentFileStoreTests
         var store = new InMemoryAgentFileStore();
         string leading = new('C', 80);
         string content = $"{leading}MATCH";
-        await store.WriteFileAsync("folder/file.md", content);
+        await store.WriteAsync("folder/file.md", content);
 
         // Act
-        var results = await store.SearchFilesAsync("folder", "MATCH");
+        var results = await store.SearchAsync("folder", "MATCH");
 
         // Assert — snippet should end at the end of the file.
         Assert.Single(results);
@@ -408,10 +420,10 @@ public class InMemoryAgentFileStoreTests
         // because we require the word "UNIQUE" which only appears on line 3.
         var store = new InMemoryAgentFileStore();
         const string Content = "Line one has some text\nLine two is filler\nLine three has UNIQUE_MARKER here";
-        await store.WriteFileAsync("folder/file.md", Content);
+        await store.WriteAsync("folder/file.md", Content);
 
         // Act
-        var results = await store.SearchFilesAsync("folder", "UNIQUE_MARKER");
+        var results = await store.SearchAsync("folder", "UNIQUE_MARKER");
 
         // Assert — snippet should be from around line 3, not line 1.
         Assert.Single(results);
@@ -429,10 +441,10 @@ public class InMemoryAgentFileStoreTests
         string line2 = new string('Y', 60) + "FIND_ME" + new string('Z', 60);
         string line3 = new('W', 100);
         string content = $"{line1}\n{line2}\n{line3}";
-        await store.WriteFileAsync("folder/file.md", content);
+        await store.WriteAsync("folder/file.md", content);
 
         // Act
-        var results = await store.SearchFilesAsync("folder", "FIND_ME");
+        var results = await store.SearchAsync("folder", "FIND_ME");
 
         // Assert — snippet should contain the match from line 2.
         Assert.Single(results);
@@ -451,8 +463,8 @@ public class InMemoryAgentFileStoreTests
         var store = new InMemoryAgentFileStore();
 
         // Act
-        await store.WriteFileAsync("folder\\file.md", "Content");
-        var content = await store.ReadFileAsync("folder/file.md");
+        await store.WriteAsync("folder\\file.md", "Content");
+        var content = await store.ReadAsync("folder/file.md");
 
         // Assert
         Assert.Equal("Content", content);
@@ -465,7 +477,7 @@ public class InMemoryAgentFileStoreTests
         var store = new InMemoryAgentFileStore();
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => store.WriteFileAsync("../escape.md", "Content"));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.WriteAsync("../escape.md", "Content"));
     }
 
     [Fact]
@@ -475,7 +487,7 @@ public class InMemoryAgentFileStoreTests
         var store = new InMemoryAgentFileStore();
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => store.ReadFileAsync("folder/../../escape.md"));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.ReadAsync("folder/../../escape.md"));
     }
 
     [Fact]
@@ -485,7 +497,7 @@ public class InMemoryAgentFileStoreTests
         var store = new InMemoryAgentFileStore();
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => store.WriteFileAsync("/etc/passwd", "Content"));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.WriteAsync("/etc/passwd", "Content"));
     }
 
     [Fact]
@@ -495,8 +507,8 @@ public class InMemoryAgentFileStoreTests
         var store = new InMemoryAgentFileStore();
 
         // Act
-        await store.WriteFileAsync("notes..md", "Content");
-        var content = await store.ReadFileAsync("notes..md");
+        await store.WriteAsync("notes..md", "Content");
+        var content = await store.ReadAsync("notes..md");
 
         // Assert
         Assert.Equal("Content", content);
@@ -509,7 +521,7 @@ public class InMemoryAgentFileStoreTests
         var store = new InMemoryAgentFileStore();
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => store.WriteFileAsync("C:\\temp\\file.md", "Content"));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.WriteAsync("C:\\temp\\file.md", "Content"));
     }
 
     [Fact]
@@ -519,7 +531,7 @@ public class InMemoryAgentFileStoreTests
         var store = new InMemoryAgentFileStore();
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => store.ListFilesAsync("../other"));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.ListChildrenAsync("../other"));
     }
 
     [Fact]
@@ -529,7 +541,7 @@ public class InMemoryAgentFileStoreTests
         var store = new InMemoryAgentFileStore();
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => store.ListDirectoriesAsync("../other"));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.ListChildrenAsync("../other"));
     }
 
     [Fact]
@@ -537,12 +549,12 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("notes.md", "Match here");
-        await store.WriteFileAsync("reports/q1.md", "Match here too");
-        await store.WriteFileAsync("reports/2024/q2.md", "Match here as well");
+        await store.WriteAsync("notes.md", "Match here");
+        await store.WriteAsync("reports/q1.md", "Match here too");
+        await store.WriteAsync("reports/2024/q2.md", "Match here as well");
 
         // Act
-        var results = await store.SearchFilesAsync("", "Match", filePattern: null, recursive: true);
+        var results = await store.SearchAsync("", "Match", globPattern: null, recursive: true);
 
         // Assert
         Assert.Equal(3, results.Count);
@@ -555,12 +567,12 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("notes.md", "Match here");
-        await store.WriteFileAsync("reports/q1.md", "Match here too");
-        await store.WriteFileAsync("reports/2024/q2.md", "Match here as well");
+        await store.WriteAsync("notes.md", "Match here");
+        await store.WriteAsync("reports/q1.md", "Match here too");
+        await store.WriteAsync("reports/2024/q2.md", "Match here as well");
 
         // Act
-        var results = await store.SearchFilesAsync("", "Match", filePattern: "reports/**", recursive: true);
+        var results = await store.SearchAsync("", "Match", globPattern: "reports/**", recursive: true);
 
         // Assert
         Assert.Equal(2, results.Count);
@@ -573,12 +585,12 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("notes.md", "Match here");
-        await store.WriteFileAsync("reports/q1.txt", "Match here too");
-        await store.WriteFileAsync("reports/2024/q2.md", "Match here as well");
+        await store.WriteAsync("notes.md", "Match here");
+        await store.WriteAsync("reports/q1.txt", "Match here too");
+        await store.WriteAsync("reports/2024/q2.md", "Match here as well");
 
         // Act
-        var results = await store.SearchFilesAsync("", "Match", filePattern: "**/*.md", recursive: true);
+        var results = await store.SearchAsync("", "Match", globPattern: "**/*.md", recursive: true);
 
         // Assert
         Assert.Equal(2, results.Count);
@@ -591,13 +603,16 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("root.md", "x");
-        await store.WriteFileAsync("reports/q1.md", "x");
-        await store.WriteFileAsync("reports/2024/q2.md", "x");
-        await store.WriteFileAsync("images/logo.png", "x");
+        await store.WriteAsync("root.md", "x");
+        await store.WriteAsync("reports/q1.md", "x");
+        await store.WriteAsync("reports/2024/q2.md", "x");
+        await store.WriteAsync("images/logo.png", "x");
 
         // Act
-        var directories = await store.ListDirectoriesAsync("");
+        var directories = (await store.ListChildrenAsync(""))
+            .Where(e => e.Type == FileStoreEntry.Directory)
+            .Select(e => e.Name)
+            .ToList();
 
         // Assert
         var sorted = string.Join(",", directories.OrderBy(d => d, StringComparer.Ordinal));
@@ -609,12 +624,15 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("reports/q1.md", "x");
-        await store.WriteFileAsync("reports/2024/q2.md", "x");
-        await store.WriteFileAsync("reports/2025/q3.md", "x");
+        await store.WriteAsync("reports/q1.md", "x");
+        await store.WriteAsync("reports/2024/q2.md", "x");
+        await store.WriteAsync("reports/2025/q3.md", "x");
 
         // Act
-        var directories = await store.ListDirectoriesAsync("reports");
+        var directories = (await store.ListChildrenAsync("reports"))
+            .Where(e => e.Type == FileStoreEntry.Directory)
+            .Select(e => e.Name)
+            .ToList();
 
         // Assert
         var sorted = string.Join(",", directories.OrderBy(d => d, StringComparer.Ordinal));
@@ -626,10 +644,13 @@ public class InMemoryAgentFileStoreTests
     {
         // Arrange
         var store = new InMemoryAgentFileStore();
-        await store.WriteFileAsync("root.md", "x");
+        await store.WriteAsync("root.md", "x");
 
         // Act
-        var directories = await store.ListDirectoriesAsync("");
+        var directories = (await store.ListChildrenAsync(""))
+            .Where(e => e.Type == FileStoreEntry.Directory)
+            .Select(e => e.Name)
+            .ToList();
 
         // Assert
         Assert.Empty(directories);

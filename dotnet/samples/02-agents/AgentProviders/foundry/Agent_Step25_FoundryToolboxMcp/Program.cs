@@ -90,7 +90,7 @@ static async Task<string> CreateSampleToolboxAsync(string name, string endpoint,
     // Delete existing toolbox if present (ignore 404).
     try
     {
-        await toolboxClient.DeleteToolboxAsync(name);
+        await toolboxClient.DeleteAsync(name);
         Console.WriteLine($"Deleted existing toolbox '{name}'");
     }
     catch (ClientResultException ex) when (ex.Status == 404)
@@ -99,12 +99,13 @@ static async Task<string> CreateSampleToolboxAsync(string name, string endpoint,
     }
 
     // Create a fresh version with a single MCP tool.
-    ProjectsAgentTool mcpTool = ProjectsAgentTool.AsProjectTool(ResponseTool.CreateMcpTool(
-        serverLabel: "api-specs",
-        serverUri: new Uri("https://gitmcp.io/Azure/azure-rest-api-specs"),
-        toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.NeverRequireApproval)));
+    MCPToolboxTool mcpTool = new("api-specs")
+    {
+        ServerUri = new Uri("https://gitmcp.io/Azure/azure-rest-api-specs"),
+        ToolCallApprovalPolicy = new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.NeverRequireApproval),
+    };
 
-    ToolboxVersion created = (await toolboxClient.CreateToolboxVersionAsync(
+    ToolboxVersion created = (await toolboxClient.CreateVersionAsync(
         name: name,
         tools: [mcpTool],
         description: "Sample toolbox with an MCP tool — created by Agent_Step25 sample.")).Value;

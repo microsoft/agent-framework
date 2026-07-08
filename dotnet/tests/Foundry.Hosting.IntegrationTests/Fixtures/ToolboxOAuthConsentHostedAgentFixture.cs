@@ -33,7 +33,7 @@ public sealed class ToolboxOAuthConsentHostedAgentFixture : HostedAgentFixture
 
     protected override void ConfigureEnvironment(IDictionary<string, string> environment)
     {
-        // Pass the toolbox name into the container so Program.cs wires AddFoundryToolboxes(name).
+        // Pass the toolbox name into the container so Program.cs wires AddFoundryToolboxes(credential, name).
         // IT_TOOLBOX_NAME is a non-reserved key (FOUNDRY_*/AGENT_* are forbidden by the platform).
         environment[ToolboxNameEnvironmentVariable] = this.ToolboxName;
     }
