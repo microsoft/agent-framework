@@ -25,7 +25,17 @@ import weakref
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from enum import Enum
 from time import perf_counter, time_ns
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedDict, cast, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Final,
+    Generic,
+    Literal,
+    TypedDict,
+    cast,
+    overload,
+)
 
 from dotenv import load_dotenv
 from opentelemetry import metrics, trace
@@ -45,7 +55,9 @@ if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace.export import SpanExporter
     from opentelemetry.trace import Tracer
-    from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
+    from opentelemetry.util._decorator import (
+        _AgnosticContextManager,  # type: ignore[reportPrivateUsage]
+    )
     from pydantic import BaseModel
 
     from ._agents import SupportsAgentRun
@@ -447,11 +459,15 @@ def _create_otlp_exporters(
     elif protocol in ("http/protobuf", "http"):
         # Import all HTTP exporters
         try:
-            from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter as HTTPLogExporter
+            from opentelemetry.exporter.otlp.proto.http._log_exporter import (
+                OTLPLogExporter as HTTPLogExporter,
+            )
             from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
                 OTLPMetricExporter as HTTPMetricExporter,
             )
-            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as HTTPSpanExporter
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+                OTLPSpanExporter as HTTPSpanExporter,
+            )
         except ImportError as exc:
             raise ImportError(
                 "opentelemetry-exporter-otlp-proto-http is required for OTLP HTTP exporters. "
@@ -901,9 +917,15 @@ class ObservabilitySettings:
         try:
             from opentelemetry._logs import set_logger_provider
             from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-            from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, LogRecordExporter
+            from opentelemetry.sdk._logs.export import (
+                BatchLogRecordProcessor,
+                LogRecordExporter,
+            )
             from opentelemetry.sdk.metrics import MeterProvider
-            from opentelemetry.sdk.metrics.export import MetricExporter, PeriodicExportingMetricReader
+            from opentelemetry.sdk.metrics.export import (
+                MetricExporter,
+                PeriodicExportingMetricReader,
+            )
             from opentelemetry.sdk.trace import TracerProvider
             from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
         except ModuleNotFoundError as ex:
@@ -1467,7 +1489,11 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             function_invocation_kwargs: Keyword arguments forwarded only to tool invocation layers.
             client_kwargs: Additional client-specific keyword arguments for downstream chat clients.
         """
-        from ._types import ChatResponse, ChatResponseUpdate, ResponseStream  # type: ignore[reportUnusedImport]
+        from ._types import (  # type: ignore[reportUnusedImport]
+            ChatResponse,
+            ChatResponseUpdate,
+            ResponseStream,
+        )
 
         global OBSERVABILITY_SETTINGS
         super_get_response = super().get_response  # type: ignore[misc]
@@ -2281,6 +2307,44 @@ _TOOL_OTEL_DEFINITION_CACHE: weakref.WeakKeyDictionary[Any, dict[str, Any] | Non
 _CACHE_MISS: Final = object()
 
 
+def _serialize_tool_definitions(tools: Any) -> str | None:
+    """Serialize tools into the OTel GenAI tool-definitions JSON string.
+
+    Returns ``None`` when no tool can be represented. Serialization is
+    best-effort: any failure is swallowed with a warning so telemetry never
+    raises into the caller. When a tool spec carries a value that is not
+    JSON-serializable, definitions are encoded individually so the offending
+    tool is skipped (and named in the warning) while the rest are still
+    captured.
+    """
+    try:
+        tools_dict = _tools_to_dict(tools)
+    except Exception:
+        logger.warning("Failed to build tool definitions for telemetry; skipping attribute.", exc_info=True)
+        return None
+    if not tools_dict:
+        return None
+    try:
+        return json.dumps(tools_dict, ensure_ascii=False)
+    except Exception:
+        # A tool spec holds a value that is not JSON-serializable. Encode each
+        # definition on its own so the rest are still captured and the offending
+        # tool is named in the warning.
+        serializable: list[dict[str, Any]] = []
+        for definition in tools_dict:
+            try:
+                json.dumps(definition, ensure_ascii=False)
+            except Exception:
+                logger.warning(
+                    "Failed to serialize tool definition for telemetry; skipping tool %r.",
+                    definition.get("name") or definition.get("type") or "<unknown>",
+                    exc_info=True,
+                )
+            else:
+                serializable.append(definition)
+        return json.dumps(serializable, ensure_ascii=False) if serializable else None
+
+
 def _tools_to_dict(
     tools: Any,
 ) -> list[dict[str, Any]] | None:
@@ -2366,7 +2430,12 @@ def _build_tool_otel_definition(tool_item: Any) -> dict[str, Any] | None:
     elif isinstance(tool_item, SerializationMixin):
         raw = tool_item.to_dict()
     elif isinstance(tool_item, Mapping):
-        raw = cast("Mapping[str, Any]", tool_item)
+        mapping_item = cast("Mapping[str, Any]", tool_item)
+        # Azure SDK tool models expose ``as_dict()``, which recursively converts
+        # the whole model (including nested non-dict Mapping values that are not
+        # JSON-serializable) into plain dicts; plain mappings are used as-is.
+        as_dict: Callable[[], Mapping[str, Any]] | None = getattr(mapping_item, "as_dict", None)
+        raw = as_dict() if callable(as_dict) else mapping_item
 
     if raw is None:
         logger.warning(
@@ -2478,7 +2547,7 @@ OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | Non
     # Tools with validation - returns None if no valid tools
     "tools": (
         OtelAttr.TOOL_DEFINITIONS,
-        lambda tools: json.dumps(tools_dict, ensure_ascii=False) if (tools_dict := _tools_to_dict(tools)) else None,
+        _serialize_tool_definitions,
         True,
         None,
     ),

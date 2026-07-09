@@ -3197,6 +3197,53 @@ def test_get_span_attributes_omits_tool_definitions_when_unparseable() -> None:
     assert OtelAttr.TOOL_DEFINITIONS not in attrs
 
 
+def test_get_span_attributes_skips_and_names_unserializable_tool(caplog: pytest.LogCaptureFixture) -> None:
+    """A tool whose definition isn't JSON-serializable is skipped by name; others survive."""
+    import json as _json
+
+    from agent_framework.observability import OtelAttr, _get_span_attributes
+
+    class _Unserializable:
+        pass
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        attrs = _get_span_attributes(
+            operation_name="chat",
+            provider_name="openai",
+            model="gpt-4",
+            tools=[
+                {"type": "web_search", "name": "good_tool"},
+                {"type": "code_interpreter", "name": "bad_tool", "container": _Unserializable()},
+            ],
+        )
+
+    # Serialization must not raise; the serializable tool is still captured and the bad one dropped.
+    definitions = _json.loads(attrs[OtelAttr.TOOL_DEFINITIONS])
+    assert definitions == [{"type": "web_search", "name": "good_tool"}]
+    # The warning names the offending tool so customers can identify it.
+    assert any("bad_tool" in record.getMessage() for record in caplog.records)
+
+
+def test_get_span_attributes_omits_tool_definitions_when_all_unserializable(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When every tool definition fails to serialize, the attribute is omitted (no raise)."""
+    from agent_framework.observability import OtelAttr, _get_span_attributes
+
+    class _Unserializable:
+        pass
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        attrs = _get_span_attributes(
+            operation_name="chat",
+            provider_name="openai",
+            tools=[{"type": "code_interpreter", "name": "bad_tool", "container": _Unserializable()}],
+        )
+
+    assert OtelAttr.TOOL_DEFINITIONS not in attrs
+    assert any("bad_tool" in record.getMessage() for record in caplog.records)
+
+
 def test_tools_to_dict_supports_pydantic_tool_models() -> None:
     """Pydantic-based tool specs are reshaped into the OTel GenAI tool-definition shape."""
     from pydantic import BaseModel
