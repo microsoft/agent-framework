@@ -1739,6 +1739,7 @@ async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGet
 
     # Child receives a separate AgentSession (not the parent object) to isolate
     # service_session_id, but shares the same state dict and session_id.
+    assert captured_session is not None
     assert captured_session is not parent_session
     assert captured_session.session_id == "parent-session-123"
     assert captured_session.state is parent_session.state
@@ -1821,6 +1822,7 @@ async def test_chat_agent_as_tool_propagate_session_clears_service_session_id(cl
         nonlocal captured_session
         captured_session = kwargs.get("session")
         # The child gets a different session object with isolated service_session_id
+        assert captured_session is not None
         assert captured_session is not parent_session
         assert captured_session.service_session_id is None
         # But shares the same state dict by reference
@@ -1884,6 +1886,7 @@ async def test_chat_agent_as_tool_propagate_session_no_service_session_id(client
     def capturing_run(*args: Any, **kwargs: Any) -> Any:
         nonlocal captured_session
         captured_session = kwargs.get("session")
+        assert captured_session is not None
         assert captured_session.service_session_id is None
         # Simulate the child's run populating service_session_id
         captured_session.service_session_id = "resp_child_leaked"
