@@ -138,6 +138,24 @@ class TestParseMCPSkillIndex:
 # ---------------------------------------------------------------------------
 
 
+class TestMCPSkillsExperimentalStage:
+    """Tests confirming the MCP skills types remain experimental (MCP_SKILLS)."""
+
+    def test_docstrings_include_experimental_warning(self) -> None:
+        assert MCPSkillResource.__doc__ is not None
+        assert MCPSkill.__doc__ is not None
+        assert MCPSkillsSource.__doc__ is not None
+
+        assert ".. warning:: Experimental" in MCPSkillResource.__doc__
+        assert ".. warning:: Experimental" in MCPSkill.__doc__
+        assert ".. warning:: Experimental" in MCPSkillsSource.__doc__
+
+    def test_feature_metadata_is_set(self) -> None:
+        for cls in (MCPSkillResource, MCPSkill, MCPSkillsSource):
+            assert getattr(cls, "__feature_stage__", None) == "experimental"
+            assert getattr(cls, "__feature_id__", None) == "MCP_SKILLS"
+
+
 class TestMCPSkillResource:
     """Tests for MCPSkillResource."""
 

@@ -64,7 +64,7 @@ from agent_framework.exceptions import (
 )
 from agent_framework.observability import ChatTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
-from openai.types.responses import FunctionShellToolParam
+from openai.types.responses import FunctionShellToolParam, ResponseCustomToolCall, ResponseToolSearchCall
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
 from openai.types.responses.function_tool_param import FunctionToolParam
 from openai.types.responses.parsed_response import (
@@ -131,6 +131,34 @@ _AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX = "response.azure_ai_search_call_output."
 # coalesces these markers into the most recent matching `mcp_call` input
 # item before returning, dropping any that are unmatched.
 _AF_MCP_PENDING_OUTPUT_KEY = "__af_pending_mcp_result__"
+
+
+def _mcp_call_ids_paired_with_reasoning(messages: Sequence[Message]) -> set[str]:
+    paired_call_ids: set[str] = set()
+    pending_reasoning_prefix = False
+
+    for message in messages:
+        has_reasoning = any(content.type == "text_reasoning" for content in message.contents)
+        has_mcp_call = False
+        for content in message.contents:
+            if content.type != "mcp_server_tool_call":
+                continue
+            has_mcp_call = True
+            if (has_reasoning or pending_reasoning_prefix) and content.call_id:
+                paired_call_ids.add(content.call_id)
+
+        if has_mcp_call:
+            pending_reasoning_prefix = False
+        elif (
+            message.role == "assistant"
+            and message.contents
+            and all(content.type == "text_reasoning" for content in message.contents)
+        ):
+            pending_reasoning_prefix = True
+        else:
+            pending_reasoning_prefix = False
+
+    return paired_call_ids
 
 
 class OpenAIContinuationToken(ContinuationToken):
@@ -1482,10 +1510,7 @@ class RawOpenAIChatClient(
         )
         drop_mcp_call_ids: set[str] = set()
         if drops_reasoning_without_storage:
-            for message in chat_messages:
-                for content in message.contents:
-                    if content.type == "mcp_server_tool_call" and content.call_id:
-                        drop_mcp_call_ids.add(content.call_id)
+            drop_mcp_call_ids = _mcp_call_ids_paired_with_reasoning(chat_messages)
 
         list_of_list = [
             self._prepare_message_for_openai(
@@ -2281,6 +2306,38 @@ class RawOpenAIChatClient(
             raw_representation=item,
         )
 
+    def _parse_hosted_function_call_content(
+        self,
+        item: ResponseCustomToolCall | ResponseToolSearchCall,
+        *,
+        name: str,
+        arguments: Any = None,
+    ) -> Content:
+        """Create informational-only function call content for hosted Responses items."""
+        additional_properties: dict[str, Any] = {"item_type": item.type}
+        match item.type:
+            case "custom_tool_call":
+                call_id = item.call_id
+                if item.id:
+                    additional_properties["item_id"] = item.id
+                if item.namespace:
+                    additional_properties["namespace"] = item.namespace
+            case "tool_search_call":
+                call_id = item.call_id or item.id
+                additional_properties["item_id"] = item.id
+                additional_properties["status"] = item.status
+                additional_properties["execution"] = item.execution
+                if item.created_by:
+                    additional_properties["created_by"] = item.created_by
+        return Content.from_function_call(
+            call_id=call_id,
+            name=name,
+            arguments=self._serialize_provider_payload(arguments),
+            informational_only=True,
+            additional_properties=additional_properties,
+            raw_representation=item,
+        )
+
     # region Parse methods
     def _parse_response_from_openai(
         self,
@@ -2484,6 +2541,18 @@ class RawOpenAIChatClient(
                             arguments=item.arguments,
                             additional_properties={"fc_id": item.id, "status": item.status},
                             raw_representation=item,
+                        )
+                    )
+                case "custom_tool_call":
+                    contents.append(
+                        self._parse_hosted_function_call_content(item, name=item.name, arguments=item.input)
+                    )
+                case "tool_search_call":
+                    contents.append(
+                        self._parse_hosted_function_call_content(
+                            item,
+                            name="tool_search",
+                            arguments=item.arguments,
                         )
                     )
                 case "web_search_call" | "file_search_call":
@@ -3084,6 +3153,24 @@ class RawOpenAIChatClient(
                     # Shell items are parsed here (not on `response.output_item.added`) because the
                     # command/output is only populated on the completed item.
                     contents.extend(self._shell_item_to_contents(done_item, local_shell_tool_name))
+                elif getattr(done_item, "type", None) == "custom_tool_call":
+                    custom_tool_call = cast(ResponseCustomToolCall, done_item)
+                    contents.append(
+                        self._parse_hosted_function_call_content(
+                            custom_tool_call,
+                            name=custom_tool_call.name,
+                            arguments=custom_tool_call.input,
+                        )
+                    )
+                elif getattr(done_item, "type", None) == "tool_search_call":
+                    tool_search_call = cast(ResponseToolSearchCall, done_item)
+                    contents.append(
+                        self._parse_hosted_function_call_content(
+                            tool_search_call,
+                            name="tool_search",
+                            arguments=tool_search_call.arguments,
+                        )
+                    )
                 elif getattr(done_item, "type", None) == _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
                     pass
             case _:

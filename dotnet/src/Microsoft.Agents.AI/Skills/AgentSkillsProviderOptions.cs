@@ -38,11 +38,8 @@ public sealed class AgentSkillsProviderOptions
     /// <remarks>
     /// When <see langword="false"/> (the default), the tool requires approval before invocation.
     /// When <see langword="true"/>, the tool can be invoked without approval.
-    /// If any other tool in the same response still requires approval, set
-    /// <see cref="ChatClientAgentOptions.EnableNonApprovalRequiredFunctionBypassing"/> to <see langword="true"/>
-    /// so this tool is not surfaced as an approval request.
     /// When approval is required, auto-approval rules (e.g. <see cref="AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule"/>
-    /// or <see cref="AgentSkillsProvider.AllToolsAutoApprovalRule"/>) can be used to automatically approve calls.
+    /// or <see cref="AgentSkillsProvider.AllToolsAutoApprovalRule"/>) can also be used to automatically approve calls.
     /// </remarks>
     public bool DisableLoadSkillApproval { get; set; }
 
@@ -52,11 +49,8 @@ public sealed class AgentSkillsProviderOptions
     /// <remarks>
     /// When <see langword="false"/> (the default), the tool requires approval before invocation.
     /// When <see langword="true"/>, the tool can be invoked without approval.
-    /// If any other tool in the same response still requires approval, set
-    /// <see cref="ChatClientAgentOptions.EnableNonApprovalRequiredFunctionBypassing"/> to <see langword="true"/>
-    /// so this tool is not surfaced as an approval request.
     /// When approval is required, auto-approval rules (e.g. <see cref="AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule"/>
-    /// or <see cref="AgentSkillsProvider.AllToolsAutoApprovalRule"/>) can be used to automatically approve calls.
+    /// or <see cref="AgentSkillsProvider.AllToolsAutoApprovalRule"/>) can also be used to automatically approve calls.
     /// </remarks>
     public bool DisableReadSkillResourceApproval { get; set; }
 
@@ -66,11 +60,8 @@ public sealed class AgentSkillsProviderOptions
     /// <remarks>
     /// When <see langword="false"/> (the default), the tool requires approval before invocation.
     /// When <see langword="true"/>, the tool can be invoked without approval.
-    /// If any other tool in the same response still requires approval, set
-    /// <see cref="ChatClientAgentOptions.EnableNonApprovalRequiredFunctionBypassing"/> to <see langword="true"/>
-    /// so this tool is not surfaced as an approval request.
     /// When approval is required, auto-approval rules (e.g. <see cref="AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule"/>
-    /// or <see cref="AgentSkillsProvider.AllToolsAutoApprovalRule"/>) can be used to automatically approve calls.
+    /// or <see cref="AgentSkillsProvider.AllToolsAutoApprovalRule"/>) can also be used to automatically approve calls.
     /// </remarks>
     public bool DisableRunSkillScriptApproval { get; set; }
 }

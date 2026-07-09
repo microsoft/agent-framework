@@ -76,7 +76,7 @@ public sealed class CopilotClientExtensionsTests
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions());
-        List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
+        List<AIFunctionDeclaration> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
 
         // Act
         var agent = copilotClient.AsAIAgent(tools: tools);

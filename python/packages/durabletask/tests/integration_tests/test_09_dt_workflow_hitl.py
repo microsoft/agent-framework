@@ -21,6 +21,9 @@ from agent_framework_durabletask import DurableWorkflowClient
 
 logging.basicConfig(level=logging.WARNING)
 
+# Must match the workflow name in samples/04-hosting/durabletask/09_workflow_hitl/worker.py
+WORKFLOW_NAME = "content_moderation"
+
 # Module-level markers
 pytestmark = [
     pytest.mark.flaky,
@@ -38,7 +41,7 @@ def _wait_for_hitl_request(
     """Poll until the workflow records at least one pending HITL request."""
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
-        pending = client.get_pending_hitl_requests(instance_id)
+        pending = client.get_pending_hitl_requests(instance_id, workflow_name=WORKFLOW_NAME)
         if pending:
             return pending
         time.sleep(2)
@@ -55,7 +58,7 @@ class TestStandaloneWorkflowHITL:
 
     def _run_case(self, submission: dict[str, Any], *, approve: bool) -> Any:
         """Start a moderation case, answer the HITL pause, and return the final output."""
-        instance_id = self.client.start_workflow(input=submission)
+        instance_id = self.client.start_workflow(input=submission, workflow_name=WORKFLOW_NAME)
 
         pending = _wait_for_hitl_request(self.client, instance_id)
         request = pending[0]
@@ -66,9 +69,10 @@ class TestStandaloneWorkflowHITL:
             instance_id,
             request["request_id"],
             {"approved": approve, "reviewer_notes": "Looks good." if approve else "Violates content policy."},
+            workflow_name=WORKFLOW_NAME,
         )
 
-        return self.client.await_workflow_output(instance_id, timeout_seconds=180)
+        return self.client.await_workflow_output(instance_id, workflow_name=WORKFLOW_NAME, timeout_seconds=180)
 
     def test_hitl_workflow_approval(self) -> None:
         """Appropriate content is approved after the reviewer says yes."""

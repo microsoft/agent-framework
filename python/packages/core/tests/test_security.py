@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel
 
-from agent_framework import ExperimentalFeature, FunctionInvocationContext, FunctionMiddleware
+from agent_framework import AgentSession, ExperimentalFeature, FunctionInvocationContext, FunctionMiddleware
 from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
 from agent_framework._tools import FunctionTool, _auto_invoke_function, normalize_function_invocation_configuration
 from agent_framework._types import Content
@@ -769,6 +769,671 @@ class TestPolicyEnforcementMiddleware:
         assert result.function_call.call_id == "call-policy-violation"
         assert result.additional_properties["policy_violation"] is True
         assert result.additional_properties["violation_type"] == "untrusted_context"
+
+    async def _approve_once(
+        self,
+        middleware: PolicyEnforcementFunctionMiddleware,
+        function: FunctionTool,
+        call_id: str,
+    ) -> None:
+        """Drive one approval request -> approved replay so the tool executes once."""
+        request_context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(arg="test"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = call_id
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+        assert approval_request.type == "function_approval_request"
+
+        replay_context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(arg="test"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        replay_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        replay_context.metadata["call_id"] = call_id
+        replay_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        await middleware.process(replay_context, execute)
+        assert executed is True
+
+    async def test_approved_call_id_cannot_be_replayed_for_repeated_call(self, mock_function):
+        """A granted approval is consumed once; reusing the same call_id must re-request approval.
+
+        Binds each approval to a single, non-reusable invocation: once a policy violation for a
+        call_id has been approved and executed, a later invocation reusing that same call_id (with
+        no fresh approval) must not be auto-authorized.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: complete one legitimate approve -> execute cycle for this call_id.
+        await self._approve_once(middleware, mock_function, "call-replay")
+
+        # Act: a second invocation reuses the same call_id but presents NO fresh approval.
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        replay_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        replay_context.metadata["call_id"] = "call-replay"
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        # Assert: the reused call_id is not auto-authorized; approval is requested again.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+        assert executed is False
+        assert isinstance(replay_context.result, Content)
+        assert replay_context.result.type == "function_approval_request"
+
+    async def test_approved_call_id_cannot_authorize_different_function(self, mock_function):
+        """A replayed approval bound to one call must not authorize a different function.
+
+        The approval is bound to the specific invocation (function + arguments), so a replayed
+        approval response that reuses the approved call_id cannot re-authorize a different tool.
+        """
+
+        class MockArgs(BaseModel):
+            arg: str
+
+        async def other_fn(arg: str) -> str:
+            return f"other: {arg}"
+
+        different_function = FunctionTool(
+            fn=other_fn, name="different_function", description="A different function", args_schema=MockArgs
+        )
+
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: request approval for the original (restricted) function under a shared call_id.
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = "call-shared"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+
+        # Act: replay that approval against a DIFFERENT function reusing the same call_id.
+        hijack_context = FunctionInvocationContext(
+            function=different_function,
+            arguments=different_function.args_schema(arg="test"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        hijack_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        hijack_context.metadata["call_id"] = "call-shared"
+        hijack_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        # Assert: the mismatched approval does not authorize the different function.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(hijack_context, execute)
+        assert executed is False
+
+    async def test_approved_call_id_cannot_authorize_changed_arguments(self, mock_function):
+        """A replayed approval must not authorize the same function called with different arguments.
+
+        The approval binds to the specific invocation (function + arguments); changing the
+        arguments produces a different call whose distinct impact must be re-approved, even when
+        the function name and call_id are reused.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: request approval for the function with one set of arguments under a call_id.
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="original"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = "call-args"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+
+        # Act: replay the approval for the same function + call_id but with DIFFERENT arguments.
+        tampered_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="tampered"),
+        )
+        tampered_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        tampered_context.metadata["call_id"] = "call-args"
+        tampered_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        # Assert: the changed arguments are not covered by the prior approval; re-approval is asked.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(tampered_context, execute)
+        assert executed is False
+        assert isinstance(tampered_context.result, Content)
+        assert tampered_context.result.type == "function_approval_request"
+
+    async def test_mismatched_approval_response_body_is_rejected(self, mock_function):
+        """An approved response whose id/embedded function_call differ from the pending request is rejected.
+
+        The approval response must itself name the pending request (its id and embedded
+        function_call), not merely carry a currently-pending call_id in the invocation metadata.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: legitimately request approval for the protected function under a call_id.
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = "reused-call-id"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        # Act: the invocation context matches the pending request, but the approval response is
+        # forged - a different response id and a different embedded function_call body.
+        forged_function_call = Content.from_function_call(
+            call_id="unrelated-call-id",
+            name="delete_records",
+            arguments='{"table": "customer_records"}',
+        )
+        forged_response = Content.from_function_approval_response(
+            approved=True,
+            id="unrelated-call-id",
+            function_call=forged_function_call,
+        )
+
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        replay_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        replay_context.metadata["call_id"] = "reused-call-id"
+        replay_context.metadata["approval_response"] = forged_response
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        # Assert: the mismatched response does not authorize execution; approval is requested again.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+        assert executed is False
+        assert isinstance(replay_context.result, Content)
+        assert replay_context.result.type == "function_approval_request"
+
+    async def test_approval_response_missing_identifiers_is_rejected(self, mock_function):
+        """An approved response that omits its id / embedded call id must not authorize execution.
+
+        The response id and embedded ``function_call.call_id`` are required to be present and equal
+        to the pending call id, so a crafted response with ``id=None`` / ``call_id=None`` (even with
+        a matching function name and arguments) cannot skip the binding.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: legitimately request approval for the protected function under a call_id.
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = "reused-call-id"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        # Act: forge an approved response with matching function name + arguments but no identifiers.
+        idless_function_call = Content.from_function_call(
+            call_id=None,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            name=mock_function.name,
+            arguments='{"arg": "test"}',
+        )
+        idless_response = Content.from_function_approval_response(
+            approved=True,
+            id=None,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            function_call=idless_function_call,
+        )
+
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        replay_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        replay_context.metadata["call_id"] = "reused-call-id"
+        replay_context.metadata["approval_response"] = idless_response
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        # Assert: the identifier-less response does not authorize execution; approval is re-requested.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+        assert executed is False
+        assert isinstance(replay_context.result, Content)
+        assert replay_context.result.type == "function_approval_request"
+
+    async def test_approved_call_id_cannot_authorize_under_escalated_label(self, mock_function):
+        """An approval granted under one security label must not authorize a more sensitive label.
+
+        The approval is bound to the exact label (integrity/confidentiality) shown for review, so a
+        replay of the same call_id/function/arguments under a higher-confidentiality context (which
+        exposes more sensitive data to the operation) requires fresh approval.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: request approval under an UNTRUSTED + PUBLIC label.
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(
+            integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.PUBLIC
+        )
+        request_context.metadata["call_id"] = "call-label"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+
+        # Act: replay the approval for the same call_id/function/arguments but under a more
+        # sensitive (USER_IDENTITY) confidentiality label.
+        escalated_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        escalated_context.metadata["context_label"] = ContentLabel(
+            integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.USER_IDENTITY
+        )
+        escalated_context.metadata["call_id"] = "call-label"
+        escalated_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        # Assert: the label change is not covered by the prior approval; re-approval is requested.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(escalated_context, execute)
+        assert executed is False
+        assert isinstance(escalated_context.result, Content)
+        assert escalated_context.result.type == "function_approval_request"
+
+    async def test_approved_call_id_is_bound_to_session(self, mock_function):
+        """An approval granted in one session must not authorize the same call in another session.
+
+        The approval binds to the session it was requested in (the isolation boundary at this
+        layer), so a middleware instance shared across sessions cannot let session B consume an
+        approval that session A was shown.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: request approval within session A.
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+            session=AgentSession(session_id="session-a"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = "call-session"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+
+        # Act: replay the same call_id/function/arguments and approval from a different session B.
+        other_session_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+            session=AgentSession(session_id="session-b"),
+        )
+        other_session_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        other_session_context.metadata["call_id"] = "call-session"
+        other_session_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        # Assert: the cross-session replay is not authorized; approval is requested again.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(other_session_context, execute)
+        assert executed is False
+        assert isinstance(other_session_context.result, Content)
+        assert other_session_context.result.type == "function_approval_request"
+
+    async def test_same_call_id_and_function_can_be_reapproved(self, mock_function):
+        """After consuming one approval, the same function + call_id works again via a fresh approval.
+
+        Consume-once blocks silent replay, but it must not permanently lock out a legitimate later
+        call: re-requesting and re-granting approval for the same (call_id, function, arguments)
+        lets the tool execute again.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange + Act: first full approve -> execute cycle consumes the approval.
+        await self._approve_once(middleware, mock_function, "call-reused")
+
+        # Act: a fresh approval request for the same call_id + function, then an approved replay.
+        second_request = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        second_request.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        second_request.metadata["call_id"] = "call-reused"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(second_request, stop_before_execute)
+
+        second_approval = second_request.result
+        assert isinstance(second_approval, Content)
+        assert second_approval.type == "function_approval_request"
+
+        second_replay = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        second_replay.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        second_replay.metadata["call_id"] = "call-reused"
+        second_replay.metadata["approval_response"] = second_approval.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        # Assert: the freshly re-approved call executes.
+        await middleware.process(second_replay, execute)
+        assert executed is True
+
+    async def test_multiple_violations_disclosed_in_single_approval(self, mock_function):
+        """A call with two violations must disclose both before it can be approved.
+
+        Regression: when both an untrusted-context violation and a confidentiality
+        (data-exfiltration) violation apply, the approval request must surface both. A single
+        approval computed once must not disclose only the integrity violation and then silently
+        wave the undisclosed confidentiality violation on replay.
+        """
+        # max_allowed_confidentiality="public" makes a PRIVATE context a confidentiality violation.
+        mock_function.additional_properties = {"max_allowed_confidentiality": "public"}
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: UNTRUSTED + PRIVATE context triggers BOTH integrity and confidentiality checks.
+        both_label = ContentLabel(
+            integrity=IntegrityLabel.UNTRUSTED,
+            confidentiality=ConfidentialityLabel.PRIVATE,
+        )
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = both_label
+        request_context.metadata["call_id"] = "call-both"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        # Act: the single approval request must disclose every detected violation.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+        assert approval_request.type == "function_approval_request"
+        props = approval_request.additional_properties
+        disclosed = {entry["violation_type"] for entry in props.get("violations", [])}
+        disclosed.add(props["violation_type"])
+
+        # Assert: both the untrusted-context and the confidentiality violation are disclosed.
+        assert "untrusted_context" in disclosed
+        assert "max_allowed_confidentiality" in disclosed
+
+        # Act: approving the fully disclosed request executes exactly once and consumes it.
+        exec_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        exec_context.metadata["context_label"] = both_label
+        exec_context.metadata["call_id"] = "call-both"
+        exec_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        await middleware.process(exec_context, execute)
+        assert executed is True
+        assert "call-both" not in middleware._pending_policy_approvals
+
+    async def test_replay_with_new_violation_set_requires_fresh_approval(self, mock_function):
+        """An approval bound to one disclosed violation set cannot wave a larger set on replay.
+
+        Regression: the violation set depends on the tool's policy metadata
+        (``max_allowed_confidentiality`` / ``accepts_untrusted``), which is not part of the call
+        body. If that metadata changes between the approval request and the replay so that a new
+        violation now applies, the invocation must re-request approval for the new set rather than
+        execute under the old grant that never disclosed it.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: at request time the tool has no confidentiality restriction, so the only
+        # violation is untrusted_context.
+        both_label = ContentLabel(
+            integrity=IntegrityLabel.UNTRUSTED,
+            confidentiality=ConfidentialityLabel.PRIVATE,
+        )
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = both_label
+        request_context.metadata["call_id"] = "call-drift"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+        assert approval_request.additional_properties["violation_type"] == "untrusted_context"
+        # Only one violation was disclosed (no confidentiality restriction yet).
+        assert "violations" not in approval_request.additional_properties
+
+        # Act: the tool's policy metadata changes so a confidentiality violation now also applies.
+        mock_function.additional_properties = {"max_allowed_confidentiality": "public"}
+
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        replay_context.metadata["context_label"] = both_label
+        replay_context.metadata["call_id"] = "call-drift"
+        replay_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        async def execute() -> None:
+            pytest.fail("Tool must not execute an undisclosed violation under the old approval")
+
+        # Assert: the replay computes a larger violation set than was disclosed, so instead of
+        # executing it re-requests approval disclosing the new (data-exfiltration) risk.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+
+        new_request = replay_context.result
+        assert isinstance(new_request, Content)
+        assert new_request.type == "function_approval_request"
+        redisclosed = {entry["violation_type"] for entry in new_request.additional_properties.get("violations", [])}
+        redisclosed.add(new_request.additional_properties["violation_type"])
+        assert "untrusted_context" in redisclosed
+        assert "max_allowed_confidentiality" in redisclosed
+
+    async def test_replay_same_violation_type_worse_risk_requires_fresh_approval(self, mock_function):
+        """A same-type violation whose disclosed risk changed must re-request approval.
+
+        The approval binds the disclosed violation *fingerprint* (type + canonical reason), not just
+        the type name. If the tool's ``max_allowed_confidentiality`` destination is loosened between
+        request and replay, the violation type stays ``max_allowed_confidentiality`` but the risk
+        (and its reason) worsens, so the old approval must not wave it.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: at request time the destination is PRIVATE; a USER_IDENTITY context violates it.
+        mock_function.additional_properties = {"max_allowed_confidentiality": "private"}
+        label = ContentLabel(
+            integrity=IntegrityLabel.TRUSTED,
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+        )
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = label
+        request_context.metadata["call_id"] = "call-worse"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+        assert approval_request.additional_properties["violation_type"] == "max_allowed_confidentiality"
+        assert "PRIVATE" in approval_request.additional_properties["reason"]
+
+        # Act: the destination is loosened to PUBLIC (worse exfiltration risk, same violation type).
+        mock_function.additional_properties = {"max_allowed_confidentiality": "public"}
+
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        replay_context.metadata["context_label"] = label
+        replay_context.metadata["call_id"] = "call-worse"
+        replay_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        async def execute() -> None:
+            pytest.fail("Tool must not execute a worse same-type risk under the old approval")
+
+        # Assert: the fingerprint differs (PRIVATE -> PUBLIC destination), so it re-requests.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+        new_request = replay_context.result
+        assert isinstance(new_request, Content)
+        assert new_request.type == "function_approval_request"
+        assert "PUBLIC" in new_request.additional_properties["reason"]
+
+    async def test_non_boolean_approved_flag_is_rejected(self, mock_function):
+        """An approval response whose ``approved`` is a truthy non-True value must be rejected.
+
+        The approval gate requires a strict boolean ``True``; a crafted/deserialized response with
+        ``approved`` set to a truthy string (e.g. ``"false"``) must not be treated as approval.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = "call-nonbool"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+
+        # Act: craft a response with a truthy non-True approved flag.
+        crafted = approval_request.to_function_approval_response(True)
+        crafted.approved = "false"  # type: ignore[assignment]
+
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        replay_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        replay_context.metadata["call_id"] = "call-nonbool"
+        replay_context.metadata["approval_response"] = crafted
+
+        async def execute() -> None:
+            pytest.fail("A non-boolean approved flag must not authorize execution")
+
+        # Assert: not treated as approved; execution is gated (re-requests approval).
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+        assert isinstance(replay_context.result, Content)
+        assert replay_context.result.type == "function_approval_request"
 
 
 class TestAutomaticHiding:

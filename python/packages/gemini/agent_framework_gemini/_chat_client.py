@@ -669,6 +669,21 @@ class RawGeminiChatClient(
                     parts.append(types.Part(text=content.text or ""))
                 case "function_call":
                     call_id = content.call_id or self._generate_tool_call_id()
+                    raw_part = content.raw_representation
+                    if (
+                        content.informational_only
+                        and isinstance(raw_part, types.Part)
+                        and raw_part.tool_call is not None
+                    ):
+                        tool_call = raw_part.tool_call.model_copy(
+                            update={
+                                "id": call_id,
+                                "args": content.parse_arguments() or {},
+                            },
+                            deep=True,
+                        )
+                        parts.append(raw_part.model_copy(update={"tool_call": tool_call}, deep=True))
+                        continue
                     if content.name:
                         call_id_to_name[call_id] = content.name
                     function_call = types.FunctionCall(
@@ -676,11 +691,23 @@ class RawGeminiChatClient(
                         name=content.name or "",
                         args=content.parse_arguments() or {},
                     )
-                    raw_part = content.raw_representation
                     if isinstance(raw_part, types.Part) and raw_part.function_call is not None:
                         parts.append(raw_part.model_copy(update={"function_call": function_call}, deep=True))
                     else:
                         parts.append(types.Part(function_call=function_call))
+                case "function_result":
+                    raw_part = content.raw_representation
+                    if isinstance(raw_part, types.Part) and raw_part.tool_response is not None:
+                        tool_response = raw_part.tool_response.model_copy(
+                            update={
+                                "id": content.call_id or self._generate_tool_call_id(),
+                                "response": content.result,
+                            },
+                            deep=True,
+                        )
+                        parts.append(raw_part.model_copy(update={"tool_response": tool_response}, deep=True))
+                    else:
+                        logger.debug("Skipping unsupported content type for Gemini: %s", content.type)
                 case "data" | "uri":
                     part = self._convert_data_or_uri_content(content)
                     if part is not None:
@@ -748,6 +775,17 @@ class RawGeminiChatClient(
         """
         if content.type != "function_result":
             return None
+
+        raw_part = content.raw_representation
+        if isinstance(raw_part, types.Part) and raw_part.tool_response is not None:
+            tool_response = raw_part.tool_response.model_copy(
+                update={
+                    "id": content.call_id or self._generate_tool_call_id(),
+                    "response": content.result,
+                },
+                deep=True,
+            )
+            return raw_part.model_copy(update={"tool_response": tool_response}, deep=True)
 
         name = call_id_to_name.get(content.call_id or "")
         if not name:
@@ -1048,6 +1086,35 @@ class RawGeminiChatClient(
                 continue
             if part.text is not None:
                 contents.append(Content.from_text(text=part.text, raw_representation=part))
+            elif part.tool_call is not None:
+                tool_call = part.tool_call
+                if tool_call.id:
+                    call_id = tool_call.id
+                else:
+                    call_id = self._generate_tool_call_id()
+                    logger.debug("tool_call missing id; generated fallback call_id=%r", call_id)
+                if isinstance(tool_call.tool_type, types.ToolType):
+                    tool_name = tool_call.tool_type.value
+                else:
+                    tool_name = str(tool_call.tool_type or "tool_call")
+                contents.append(
+                    Content.from_function_call(
+                        call_id=call_id,
+                        name=tool_name,
+                        arguments=tool_call.args or {},
+                        informational_only=True,
+                        raw_representation=part,
+                    )
+                )
+            elif part.tool_response is not None:
+                tool_response = part.tool_response
+                contents.append(
+                    Content.from_function_result(
+                        call_id=tool_response.id or self._generate_tool_call_id(),
+                        result=tool_response.response,
+                        raw_representation=part,
+                    )
+                )
             elif part.function_call is not None:
                 function_call = part.function_call
                 if function_call.id:

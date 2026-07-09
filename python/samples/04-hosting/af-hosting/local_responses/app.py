@@ -1,28 +1,35 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Minimal Responses-only hosting sample.
+"""Minimal Responses-only hosting sample with native FastAPI routes.
 
-Single agent with one ``@tool`` (``lookup_weather``), single channel
-(``ResponsesChannel``), one ``run_hook`` that demonstrates the
-settings-mutation seam over caller-supplied options.
+This sample demonstrates the helper-first hosting shape:
 
-What the hook does
-------------------
-On every Responses request the hook receives the ``ChannelRequest`` that
-the channel built from the inbound HTTP body. It:
+1. ``agent-framework-hosting-responses`` converts Responses request/response
+   payloads to and from Agent Framework run values.
+2. ``agent-framework-hosting`` owns shared execution state via
+   ``AgentState`` and ``SessionStore``.
+3. FastAPI owns the route, request parsing, policy decisions, and response
+   object.
 
-- strips ``model`` (the host owns the backing deployment), ``store``
-  (this agent owns persistence), and ``temperature`` (the configured
-  model may not honor it),
-- forces a ``reasoning`` effort + summary preset so the deployed surface
-  is consistent regardless of what the caller sent.
+Production readiness
+---
+This sample is not a full-fledged production deployment. Before exposing this
+route to callers, add authentication and authorization at the infrastructure
+layer, the FastAPI app layer, or inside the route body.
 
-The hook is the documented escape hatch over the uniform
-``ChannelRequest`` envelope.
+Session continuation deserves particular care: treat ``previous_response_id``
+and ``conversation_id`` as untrusted request values, authorize the caller
+before loading or storing a session for those ids, and partition durable session
+storage by tenant/user as appropriate for your application. See
+``README.md#production-readiness``.
+
+Unknown ``conversation_id`` values create a new local session in this sample.
+Your app can choose a different policy, such as requiring a separate API to
+create new conversations before callers can continue them.
 
 Run
 ---
-``app`` is a module-level Starlette ASGI app. Recommended local launch::
+``app`` is a module-level FastAPI ASGI app. Recommended local launch::
 
     uv sync
     az login
@@ -42,16 +49,27 @@ Then call it::
 
 from __future__ import annotations
 
+import asyncio
 import os
-from dataclasses import replace
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, cast
 
-from agent_framework import Agent, FileHistoryProvider, tool
+from agent_framework import Agent, FileHistoryProvider, ResponseStream, tool
 from agent_framework_foundry import FoundryChatClient
-from agent_framework_hosting import AgentFrameworkHost, ChannelRequest
-from agent_framework_hosting_responses import ResponsesChannel
+from agent_framework_hosting import AgentState
+from agent_framework_hosting_responses import (
+    create_response_id,
+    responses_from_run,
+    responses_from_streaming_run,
+    responses_session_id,
+    responses_to_run,
+)
 from azure.identity.aio import DefaultAzureCredential
+from fastapi import Body, FastAPI, HTTPException
+from fastapi.responses import JSONResponse, StreamingResponse
+from hypercorn.asyncio import serve
+from hypercorn.config import Config
 
 SESSIONS_DIR = Path(__file__).resolve().parent / "storage" / "sessions"
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -71,37 +89,9 @@ def lookup_weather(
     return reports.get(location, f"{location} is sunny with a high of {high_temp}°C.")
 
 
-# the run hook defines what you want to allow the user to passthrough when they call your host
-# since the responses clients can call with all of the responses options,
-# you can decide with this run_hook which of those: are rejected
-# which are passed through, which are altered, which are added.
-# In this sample below, we are removing, model, temperature and store if set
-# and we add reasoning, but note that this could also be set on the Agent itself
-# the difference is that this option is specific to the Responses channel
-# so if you want to differentiate between options over channels
-# you would set the option in the run_hook, if it needs to be the same (like store)
-# you would set it in the agent.
-def run_hook(request: ChannelRequest, **_: object) -> ChannelRequest:
-    """Strip caller-supplied options the host should own and force a
-    reasoning preset."""
-    options = dict(request.options or {})
-
-    # The host owns the backing deployment; the agent's default_options
-    # own ``store``; the model may not honor ``temperature``. Strip them
-    # so the caller can't override.
-    options.pop("model", None)
-    options.pop("temperature", None)
-    options.pop("store", None)
-
-    # Force a consistent reasoning preset on every turn.
-    options["reasoning"] = {"effort": "medium", "summary": "auto"}
-
-    return replace(request, options=options or None)
-
-
-def build_host() -> AgentFrameworkHost:
-    # Here we define how our agent should run, with tools, options, etc:
-    agent = Agent(
+def create_agent() -> Agent:
+    """Create the sample weather agent."""
+    return Agent(
         client=FoundryChatClient(credential=DefaultAzureCredential()),
         name="WeatherAgent",
         instructions=(
@@ -112,15 +102,94 @@ def build_host() -> AgentFrameworkHost:
         context_providers=[FileHistoryProvider(SESSIONS_DIR)],
         default_options={"store": False},
     )
-    return AgentFrameworkHost(
-        target=agent,
-        channels=[ResponsesChannel(run_hook=run_hook)],
-        debug=True,
+
+
+app = FastAPI()
+state = AgentState(create_agent)
+
+ALLOWED_REQUEST_OPTIONS = frozenset({"max_tokens", "reasoning"})
+
+
+@app.post("/responses", response_model=None)
+async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | StreamingResponse:  # noqa: B008
+    """Handle one OpenAI Responses-shaped request."""
+    try:
+        run = responses_to_run(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    session_id = responses_session_id(body)
+    response_id = create_response_id()
+
+    # App-specific policy: allow only the request options this route is willing
+    # to honor. This denies tools, tool_choice, deployment/persistence fields,
+    # and all other caller-supplied options by default. Your app decides which
+    # options are allowed, altered, or denied.
+    options = {key: value for key, value in run["options"].items() if key in ALLOWED_REQUEST_OPTIONS}
+    options["reasoning"] = {"effort": "medium", "summary": "auto"}
+    options_for_run = cast(Any, options)
+
+    target = await state.get_target()
+    lookup_id = session_id or response_id
+    # An unknown `conversation_id` becomes a new session here. Production apps
+    # can choose to require a separate "create conversation" API instead.
+    session = await state.get_or_create_session(lookup_id)
+    if run["stream"]:
+        stream = target.run(
+            run["messages"],
+            stream=True,
+            session=session,
+            options=options_for_run,
+        )
+        if not isinstance(stream, ResponseStream):
+            raise HTTPException(status_code=500, detail="agent did not return a response stream")
+
+        async def stream_events() -> AsyncIterator[str]:
+            async for event in responses_from_streaming_run(
+                stream,
+                response_id=response_id,
+                session_id=session_id,
+            ):
+                yield event
+            # `agent.run(..., stream=True)` updates the session while the stream
+            # is consumed/finalized. Store it under the newly minted response id
+            # after finalization so a later `previous_response_id` can restore
+            # this exact continuation point.
+            await state.set_session(response_id, session)
+
+        return StreamingResponse(
+            stream_events(),
+            media_type="text/event-stream",
+        )
+
+    result = await target.run(
+        run["messages"],
+        session=session,
+        options=options_for_run,
+    )
+    # `agent.run(...)` updates the session. Store it under the newly minted
+    # response id after the run so `previous_response_id=response_id` continues
+    # from this exact point.
+    await state.set_session(response_id, session)
+    return JSONResponse(
+        responses_from_run(
+            result,
+            response_id=response_id,
+            session_id=session_id,
+        )
     )
 
 
-app = build_host().app
+async def main() -> None:
+    """Run the sample with Hypercorn for local development."""
+    config = Config()
+    config.bind = [f"0.0.0.0:{int(os.environ.get('PORT', '8000'))}"]
+    await serve(cast(Any, app), config)
 
 
 if __name__ == "__main__":
-    build_host().serve(host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))
+    asyncio.run(main())
+
+# Sample output:
+# User: What is the weather in Tokyo?
+# Agent: Tokyo is clear with a high of 18°C.
+# Response ID: resp_...

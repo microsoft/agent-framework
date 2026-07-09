@@ -71,6 +71,7 @@ with an Azure AI Foundry project endpoint:
 
 ```python
 import os
+from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 
@@ -80,7 +81,7 @@ client = FoundryChatClient(
     model=os.environ["FOUNDRY_MODEL"],
     credential=credential,
 )
-agent = client.as_agent(name="...", instructions="...")
+agent = Agent(client=client, name="...", instructions="...")
 ```
 
 Environment variables:
@@ -107,10 +108,43 @@ pip install agent-framework
 
 `agent-framework` is released, so `--pre` is not required here. `openai` is a core dependency.
 
+## File structure
+
+Every sample file follows this order:
+
+1. PEP 723 inline script metadata (if external dependencies are needed)
+2. Copyright header: `# Copyright (c) Microsoft. All rights reserved.`
+3. Required imports
+4. Module docstring explaining the purpose and key components
+5. Helper functions
+6. Main function(s) demonstrating functionality
+7. Entry point: `if __name__ == "__main__": asyncio.run(main())`
+
+Use PEP 723 inline script metadata for external sample-only dependencies; do not add sample-only dependencies to
+the root `pyproject.toml` dev group.
+
+## Syntax checking
+
+Run sample checks from the `python/` directory:
+
+```bash
+uv run poe syntax -S
+uv run poe pyright -S
+```
+
+## Documentation
+
+Samples should be over-documented:
+
+1. Include a README.md in each set of samples.
+2. Mark code sections with numbered comments.
+3. Include expected output at the end of the file.
+
 ## Current API notes
 
 - `Agent` class renamed from `ChatAgent` (use `from agent_framework import Agent`)
 - `Message` class renamed from `ChatMessage` (use `from agent_framework import Message`)
 - `call_next` in middleware takes NO arguments: `await call_next()` (not `await call_next(context)`)
-- Prefer `client.as_agent(...)` over `Agent(client=client, ...)`
+- Do not use `client.as_agent(...)` in samples; construct agents explicitly with `Agent(client=client, ...)`.
 - Tool methods on hosted tools are now functions, not classes (e.g. `hosted_mcp_tool(...)` not `HostedMCPTool(...)`)
+- When only using a description for the field of a `@tool` parameter, do not use `Field`; use the string directly.

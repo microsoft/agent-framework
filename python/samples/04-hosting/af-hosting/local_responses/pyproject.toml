@@ -1,7 +1,7 @@
 [project]
 name = "agent-framework-hosting-sample-local-responses"
 version = "0.0.1"
-description = "Minimal Responses-only local hosting sample with a settings-altering run hook."
+description = "Minimal Responses-only local hosting sample with native FastAPI routes."
 requires-python = ">=3.10"
 dependencies = [
     "agent-framework-foundry",
@@ -9,6 +9,7 @@ dependencies = [
     "agent-framework-hosting-responses",
     "azure-identity",
     "aiohttp>=3.13.5",
+    "fastapi>=0.115.0,<0.138.1",
     "hypercorn>=0.17",
 ]
 
