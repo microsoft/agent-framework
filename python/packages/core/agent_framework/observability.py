@@ -1493,6 +1493,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             function_invocation_kwargs: Keyword arguments forwarded only to tool invocation layers.
             client_kwargs: Additional client-specific keyword arguments for downstream chat clients.
         """
+        from ._types import ChatResponse, ChatResponseUpdate, ResponseStream  # type: ignore[reportUnusedImport]
+
         global OBSERVABILITY_SETTINGS
         super_get_response = super().get_response  # type: ignore[misc]
         merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
