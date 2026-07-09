@@ -4,12 +4,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from agent_framework import (
     ChatResponseUpdate,
     Content,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AGUIEventConverter:
@@ -185,6 +188,18 @@ class AGUIEventConverter:
         }
         if "interrupt" in event:
             additional_properties["interrupt"] = event.get("interrupt")
+        if "outcome" in event:
+            outcome = event.get("outcome")
+            additional_properties["outcome"] = outcome
+            if not isinstance(outcome, dict):
+                logger.warning(
+                    "RUN_FINISHED outcome should be an object; got %s. Preserving raw outcome.",
+                    type(outcome).__name__,
+                )
+            elif outcome.get("type") == "interrupt":
+                interrupts = outcome.get("interrupts")
+                if isinstance(interrupts, list):
+                    additional_properties["interrupts"] = interrupts
         if "result" in event:
             additional_properties["result"] = event.get("result")
 

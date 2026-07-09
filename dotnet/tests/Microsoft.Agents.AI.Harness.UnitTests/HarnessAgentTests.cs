@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -698,15 +700,15 @@ public class HarnessAgentTests
 
     #endregion
 
-    #region Feature: NonApprovalRequiredFunctionBypassing
+    #region Feature: ApprovalNotRequiredFunctionBypassing
 
     /// <summary>
     /// Verify that by default, when a response contains a mix of tools that require approval and tools that do not,
     /// only the approval-required tool is surfaced to the caller. The non-approval-required tool is bypassed
-    /// (stored as auto-approved) by the <c>NonApprovalRequiredFunctionBypassingChatClient</c> decorator.
+    /// (stored as auto-approved) by the <c>ApprovalNotRequiredFunctionBypassingChatClient</c> decorator.
     /// </summary>
     [Fact]
-    public async Task NonApprovalRequiredFunctionBypassing_BypassesNonApprovalToolsByDefaultAsync()
+    public async Task ApprovalNotRequiredFunctionBypassing_BypassesNonApprovalToolsByDefaultAsync()
     {
         // Arrange — the model requests both a normal tool and an approval-required tool in the same turn.
         var normalTool = AIFunctionFactory.Create(() => "result", "NormalTool");
@@ -748,7 +750,7 @@ public class HarnessAgentTests
     /// as approval requests, reflecting the all-or-nothing behavior of <see cref="FunctionInvokingChatClient"/>.
     /// </summary>
     [Fact]
-    public async Task NonApprovalRequiredFunctionBypassing_SurfacesAllApprovalsWhenDisabledAsync()
+    public async Task ApprovalNotRequiredFunctionBypassing_SurfacesAllApprovalsWhenDisabledAsync()
     {
         // Arrange — the model requests both a normal tool and an approval-required tool in the same turn.
         var normalTool = AIFunctionFactory.Create(() => "result", "NormalTool");
@@ -767,7 +769,7 @@ public class HarnessAgentTests
             ])));
 
         var options = CreateAllDisabledOptions();
-        options.DisableNonApprovalRequiredFunctionBypassing = true;
+        options.DisableApprovalNotRequiredFunctionBypassing = true;
         options.ChatOptions = new ChatOptions { Tools = [normalTool, approvalTool] };
 
         var agent = new HarnessAgent(mockClient.Object, options);
@@ -842,6 +844,90 @@ public class HarnessAgentTests
 
         // Assert
         Assert.NotNull(agent.GetService<OpenTelemetryAgent>());
+    }
+
+    /// <summary>
+    /// Verify that the inner agent's ChatClient pipeline includes OpenTelemetryChatClient when
+    /// OpenTelemetry is enabled, so model calls are traced in addition to the agent-level
+    /// <see cref="OpenTelemetryAgent"/> wrapper.
+    /// </summary>
+    [Fact]
+    public void Pipeline_IncludesOpenTelemetryChatClientWhenEnabled()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var options = CreateAllDisabledOptions();
+        options.DisableOpenTelemetry = false;
+
+        // Act
+        var agent = new HarnessAgent(chatClient, options);
+        var innerAgent = agent.GetService<ChatClientAgent>();
+
+        // Assert
+        Assert.NotNull(innerAgent);
+        Assert.NotNull(innerAgent!.ChatClient.GetService<OpenTelemetryChatClient>());
+    }
+
+    /// <summary>
+    /// Verify that the inner agent's ChatClient pipeline excludes OpenTelemetryChatClient when
+    /// OpenTelemetry is disabled.
+    /// </summary>
+    [Fact]
+    public void Pipeline_ExcludesOpenTelemetryChatClientWhenDisabled()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+
+        // Act
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
+        var innerAgent = agent.GetService<ChatClientAgent>();
+
+        // Assert
+        Assert.NotNull(innerAgent);
+        Assert.Null(innerAgent!.ChatClient.GetService<OpenTelemetryChatClient>());
+    }
+
+    /// <summary>
+    /// Verify that the chat-client-level OpenTelemetry instrumentation emits a chat span under the
+    /// configured <see cref="HarnessAgentOptions.OpenTelemetrySourceName"/>, proving both that the
+    /// ChatClient pipeline is instrumented and that the source name is propagated.
+    /// </summary>
+    [Fact]
+    public async Task OpenTelemetry_ChatClientEmitsChatSpanUnderConfiguredSourceNameAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == sourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activities.Enqueue,
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var mockClient = new Mock<IChatClient>();
+        mockClient
+            .Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Hello!")));
+
+        var options = CreateAllDisabledOptions();
+        options.DisableOpenTelemetry = false;
+        options.OpenTelemetrySourceName = sourceName;
+
+        var agent = new HarnessAgent(mockClient.Object, options);
+        var session = await agent.CreateSessionAsync();
+
+        // Act
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert
+        Assert.Contains(
+            activities,
+            a => string.Equals(a.GetTagItem("gen_ai.operation.name") as string, "chat", StringComparison.Ordinal));
     }
 
     #endregion
@@ -1572,6 +1658,125 @@ public class HarnessAgentTests
         // Assert — the shell tool should be present
         Assert.NotNull(capturedOptions?.Tools);
         Assert.Contains(capturedOptions!.Tools!, t => t is AIFunction f && f.Name == "run_shell");
+    }
+
+    /// <summary>
+    /// Verify that a custom shell tool name, description, and approval flag are forwarded to the executor.
+    /// </summary>
+    [Fact]
+    public async Task ShellExecutor_CustomToolNameDescriptionAndApprovalForwardedAsync()
+    {
+        // Arrange
+        ChatOptions? capturedOptions = null;
+        var chatClientMock = new Mock<IChatClient>();
+        chatClientMock
+            .Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((_, opts, _) => capturedOptions = opts)
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "done")));
+
+        string? capturedName = null;
+        string? capturedDescription = null;
+        bool? capturedRequireApproval = null;
+        var executorMock = new Mock<ShellExecutor>();
+        executorMock.Setup(e => e.AsAIFunction(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>()))
+            .Callback<string, string?, bool>((name, description, requireApproval) =>
+            {
+                capturedName = name;
+                capturedDescription = description;
+                capturedRequireApproval = requireApproval;
+            })
+            .Returns(AIFunctionFactory.Create(() => "shell output", "custom_shell"));
+
+        var options = CreateAllDisabledOptions();
+        options.DisableWebSearch = true;
+        options.ShellExecutor = executorMock.Object;
+        options.ShellToolName = "custom_shell";
+        options.ShellToolDescription = "Run a custom command.";
+        options.DisableShellToolApproval = true;
+
+        // Act
+        var agent = new HarnessAgent(chatClientMock.Object, options);
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert — the configured values are passed through to the executor and the tool is registered.
+        Assert.Equal("custom_shell", capturedName);
+        Assert.Equal("Run a custom command.", capturedDescription);
+        Assert.False(capturedRequireApproval);
+        Assert.NotNull(capturedOptions?.Tools);
+        Assert.Contains(capturedOptions!.Tools!, t => t is AIFunction f && f.Name == "custom_shell");
+    }
+
+    /// <summary>
+    /// Verify that the shell tool defaults to requiring approval and the executor's default name when not configured.
+    /// </summary>
+    [Fact]
+    public async Task ShellExecutor_DefaultsToApprovalAndDefaultNameAsync()
+    {
+        // Arrange
+        var chatClientMock = new Mock<IChatClient>();
+        chatClientMock
+            .Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "done")));
+
+        bool? capturedRequireApproval = null;
+        string? capturedName = null;
+        var executorMock = new Mock<ShellExecutor>();
+        executorMock.Setup(e => e.AsAIFunction(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<bool>()))
+            .Callback<string, string?, bool>((name, _, requireApproval) =>
+            {
+                capturedName = name;
+                capturedRequireApproval = requireApproval;
+            })
+            .Returns(AIFunctionFactory.Create(() => "shell output", "run_shell"));
+
+        var options = CreateAllDisabledOptions();
+        options.DisableWebSearch = true;
+        options.ShellExecutor = executorMock.Object;
+
+        // Act
+        var agent = new HarnessAgent(chatClientMock.Object, options);
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert — approval is required by default and the executor's default name is used.
+        Assert.True(capturedRequireApproval);
+        Assert.Equal("run_shell", capturedName);
+    }
+
+    /// <summary>
+    /// Verify that disabling shell approval is honored end-to-end when the underlying executor permits unapproved use:
+    /// a real <see cref="LocalShellExecutor"/> constructed with <see cref="LocalShellExecutorOptions.AcknowledgeUnsafe"/>
+    /// set to <see langword="true"/> plus <see cref="HarnessAgentOptions.DisableShellToolApproval"/> set to
+    /// <see langword="true"/> yields a shell tool that is not wrapped in an <see cref="ApprovalRequiredAIFunction"/>.
+    /// </summary>
+    [Fact]
+    public async Task ShellExecutor_ApprovalDisabledWithAcknowledgedExecutorProducesNonApprovalToolAsync()
+    {
+        // Arrange
+        ChatOptions? capturedOptions = null;
+        var chatClientMock = new Mock<IChatClient>();
+        chatClientMock
+            .Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((_, opts, _) => capturedOptions = opts)
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "done")));
+
+        await using var executor = new LocalShellExecutor(new LocalShellExecutorOptions { AcknowledgeUnsafe = true });
+
+        var options = CreateAllDisabledOptions();
+        options.DisableWebSearch = true;
+        options.ShellExecutor = executor;
+        options.DisableShellToolApproval = true;
+
+        // Act
+        var agent = new HarnessAgent(chatClientMock.Object, options);
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert — the shell tool is registered but not gated by approval.
+        Assert.NotNull(capturedOptions?.Tools);
+        var shellTool = Assert.Single(capturedOptions!.Tools!, t => t is AIFunction f && f.Name == "run_shell");
+        Assert.IsNotType<ApprovalRequiredAIFunction>(shellTool);
     }
 
     /// <summary>

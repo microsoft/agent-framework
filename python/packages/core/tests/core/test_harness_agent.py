@@ -25,6 +25,7 @@ from agent_framework import (
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
+    ServiceSessionId,
     SkillsProvider,
     TodoProvider,
     create_harness_agent,
@@ -169,6 +170,21 @@ def test_create_harness_agent_uses_custom_file_stores() -> None:
     access_provider = next(p for p in agent.context_providers if isinstance(p, FileAccessProvider))
     assert memory_provider.store is memory_store
     assert access_provider.store is access_store
+
+
+def test_create_harness_agent_file_access_approval_opt_outs() -> None:
+    """The file_access_ approval flags should reach the FileAccessProvider."""
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        file_access_disable_readonly_tool_approval=True,
+        file_access_disable_write_tool_approval=True,
+    )
+
+    access_provider = next(p for p in agent.context_providers if isinstance(p, FileAccessProvider))
+    assert access_provider.disable_readonly_tool_approval is True
+    assert access_provider.disable_write_tool_approval is True
 
 
 def test_create_harness_agent_default_file_stores_are_filesystem(
@@ -545,7 +561,12 @@ class _FakeBackgroundAgent:
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+    def get_session(
+        self,
+        service_session_id: str | ServiceSessionId,
+        *,
+        session_id: str | None = None,
+    ) -> AgentSession:
         return AgentSession(service_session_id=service_session_id, session_id=session_id)
 
     async def run(self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any) -> Any:

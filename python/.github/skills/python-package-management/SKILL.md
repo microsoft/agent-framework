@@ -73,6 +73,21 @@ uv run poe add-dependency-and-validate-bounds --package core --dependency "<depe
 
 ## Lazy Loading Pattern
 
+### Root core API
+
+The root `agent_framework` package is a lazy public API surface:
+
+- Runtime exports live in `packages/core/agent_framework/__init__.py`.
+- Typing/editor exports live in `packages/core/agent_framework/__init__.pyi`.
+- Add or move root exports in `_LAZY_MODULE_EXPORTS`, keep the explicit runtime `__all__` in sync, and add the same
+  symbol to the `.pyi` file.
+- Keep deprecation behavior in the owning module (for example, a module-level `__getattr__` that warns and returns
+  the deprecated alias). Do not add one-off deprecated-symbol branches to root `__getattr__`.
+- Validate root API changes with `uv run poe syntax -P core`, `uv run poe pyright -P core`, and import smoke tests
+  for both `from agent_framework import <symbol>` and `from agent_framework import *`.
+
+### Provider namespaces
+
 Provider folders in core use `__getattr__` to lazy load from connector packages:
 
 ```python
@@ -189,10 +204,13 @@ Move a package to `released` when it no longer carries a prerelease qualifier.
 - If promoting a package changes a dependent package's published dependency metadata, bump the
   dependent package's own version in the correct lifecycle pattern for its current stage
 - Lifecycle version patterns:
-  - `alpha`: `1.0.0a<date>`
-  - `beta`: `1.0.0b<date>`
-  - `rc`: `1.0.0rc<number>`
-  - `released`: `1.0.0`
+  - `alpha`: `1.0.0a<date>` where `<date>` is the current Pacific (US west coast) `YYMMDD`
+  - `beta`: `1.0.0b<date>` where `<date>` is the current Pacific (US west coast) `YYMMDD`
+  - `rc`: `1.0.0rc<number>` where `<number>` increments only when the package has changes
+  - `released`: `X.Y.Z` using semver per package
+- For alpha/beta date stamps, use the current Pacific date as the cutoff, not UTC and not the user's local
+  timezone. Same-Pacific-day re-cuts use a `.postN` suffix. Honor an explicit user-provided date over this
+  default.
 - Keep the `Development Status` classifier in `pyproject.toml` aligned with the lifecycle stage:
   - `alpha` -> `Development Status :: 3 - Alpha`
   - `beta` -> `Development Status :: 4 - Beta`

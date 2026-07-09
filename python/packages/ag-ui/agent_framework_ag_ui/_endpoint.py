@@ -8,16 +8,17 @@ import copy
 import logging
 from collections.abc import AsyncGenerator, Sequence
 from inspect import isawaitable
-from typing import Any
+from typing import Any, cast
 
 from ag_ui.core import RunErrorEvent
 from ag_ui.encoder import EventEncoder
 from agent_framework import SupportsAgentRun, Workflow
 from fastapi import FastAPI, HTTPException
 from fastapi.params import Depends
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from ._agent import AgentFrameworkAgent
+from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY
 from ._snapshots import (
     _DEFAULT_STATE_INPUT_KEY,
     _SNAPSHOT_SCOPE_INPUT_KEY,
@@ -28,6 +29,8 @@ from ._types import AGUIRequest
 from ._workflow import AgentFrameworkWorkflow
 
 logger = logging.getLogger(__name__)
+
+_KEEPALIVE_COMMENT = "keepalive"
 
 
 def _get_snapshot_store(
@@ -70,6 +73,11 @@ def _configure_snapshot_persistence(
         )
 
 
+def _validate_keepalive_seconds(keepalive_seconds: float | None) -> None:
+    if keepalive_seconds is not None and not keepalive_seconds > 0:
+        raise ValueError("keepalive_seconds must be positive or None.")
+
+
 def add_agent_framework_fastapi_endpoint(
     app: FastAPI,
     agent: SupportsAgentRun | AgentFrameworkAgent | Workflow | AgentFrameworkWorkflow,
@@ -82,6 +90,7 @@ def add_agent_framework_fastapi_endpoint(
     dependencies: Sequence[Depends] | None = None,
     snapshot_store: AGUIThreadSnapshotStore | None = None,
     snapshot_scope_resolver: SnapshotScopeResolver | None = None,
+    keepalive_seconds: float | None = 15,
 ) -> None:
     """Add an AG-UI endpoint to a FastAPI app.
 
@@ -103,7 +112,12 @@ def add_agent_framework_fastapi_endpoint(
             explicit Snapshot Scope resolver.
         snapshot_scope_resolver: Optional resolver for the application-defined Snapshot Scope. Required whenever
             a snapshot store is configured because an AG-UI Thread id is not an authorization boundary.
+        keepalive_seconds: Endpoint SSE keepalive interval in seconds. Defaults to 15. Positive values emit fixed
+            SSE comments while the stream is open. None disables keepalive and preserves the non-keepalive response
+            path. Keepalive comments are transport traffic and do not change AG-UI events.
     """
+    _validate_keepalive_seconds(keepalive_seconds)
+
     protocol_runner: AgentFrameworkAgent | AgentFrameworkWorkflow
     if isinstance(agent, AgentFrameworkWorkflow):
         protocol_runner = agent
@@ -128,7 +142,7 @@ def add_agent_framework_fastapi_endpoint(
     )
 
     @app.post(path, tags=tags or ["AG-UI"], dependencies=dependencies, response_model=None)  # type: ignore[arg-type]
-    async def agent_endpoint(request_body: AGUIRequest) -> StreamingResponse:
+    async def agent_endpoint(request_body: AGUIRequest) -> Response:
         """Handle AG-UI agent requests.
 
         Note: Function is accessed via FastAPI's decorator registration,
@@ -137,12 +151,14 @@ def add_agent_framework_fastapi_endpoint(
         try:
             input_data = request_body.model_dump(exclude_none=True)
             snapshot_persistence_active = False
-            if snapshot_scope_resolver is not None and _get_snapshot_store(protocol_runner) is not None:
+            if snapshot_scope_resolver is not None:
                 snapshot_scope = snapshot_scope_resolver(request_body)
                 if isawaitable(snapshot_scope):
                     snapshot_scope = await snapshot_scope
-                input_data[_SNAPSHOT_SCOPE_INPUT_KEY] = snapshot_scope
-                snapshot_persistence_active = True
+                input_data[_APPROVAL_SCOPE_INPUT_KEY] = snapshot_scope
+                if _get_snapshot_store(protocol_runner) is not None:
+                    input_data[_SNAPSHOT_SCOPE_INPUT_KEY] = snapshot_scope
+                    snapshot_persistence_active = True
             if default_state:
                 if snapshot_persistence_active:
                     # Defer default application to the runner so defaults only fill keys
@@ -160,7 +176,14 @@ def add_agent_framework_fastapi_endpoint(
             )
             logger.info(f"Received request at {path}: {input_data.get('run_id', 'no-run-id')}")
 
-            async def event_generator() -> AsyncGenerator[str]:
+            keepalive_enabled = keepalive_seconds is not None
+
+            def prepare_frame(encoded: str) -> str | bytes:
+                if keepalive_enabled:
+                    return encoded.encode("utf-8")
+                return encoded
+
+            async def event_generator() -> AsyncGenerator[str | bytes]:
                 encoder = EventEncoder()
                 event_count = 0
                 try:
@@ -184,7 +207,7 @@ def add_agent_framework_fastapi_endpoint(
                                 code=type(encode_error).__name__,
                             )
                             try:
-                                yield encoder.encode(run_error)
+                                yield prepare_frame(encoder.encode(run_error))
                             except Exception:
                                 logger.exception("[%s] Failed to encode RUN_ERROR event", path)
                             return
@@ -194,7 +217,7 @@ def add_agent_framework_fastapi_endpoint(
                             if len(encoded) > 200
                             else f"[{path}] Encoded as: {encoded}"
                         )
-                        yield encoded
+                        yield prepare_frame(encoded)
 
                     logger.info(f"[{path}] Completed streaming {event_count} events")
                 except Exception as stream_error:
@@ -204,18 +227,30 @@ def add_agent_framework_fastapi_endpoint(
                         code=type(stream_error).__name__,
                     )
                     try:
-                        yield encoder.encode(run_error)
+                        yield prepare_frame(encoder.encode(run_error))
                     except Exception:
                         logger.exception("[%s] Failed to encode RUN_ERROR event", path)
 
+            headers = {
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            }
+            if keepalive_seconds is not None:
+                from sse_starlette.event import ServerSentEvent
+                from sse_starlette.sse import EventSourceResponse
+
+                return EventSourceResponse(
+                    event_generator(),
+                    ping=cast(int, keepalive_seconds),
+                    ping_message_factory=lambda: ServerSentEvent(comment=_KEEPALIVE_COMMENT),
+                    headers=headers,
+                    media_type="text/event-stream",
+                )
             return StreamingResponse(
                 event_generator(),
                 media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",
-                },
+                headers=headers,
             )
         except Exception as e:
             logger.error(f"Error in agent endpoint: {e}", exc_info=True)

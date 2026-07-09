@@ -6,7 +6,7 @@ import logging
 import warnings
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..exceptions import (
     WorkflowCheckpointException,
@@ -42,7 +42,7 @@ def warn_runner_deprecated() -> None:
     )
 
 
-class Runner:
+class RunnerImpl:
     """A class to run a workflow in Pregel supersteps."""
 
     def __init__(
@@ -419,3 +419,15 @@ class Runner:
 
         existing_states[executor_id] = state
         self._state.set(EXECUTOR_STATE_KEY, existing_states)
+
+
+if TYPE_CHECKING:
+    Runner = RunnerImpl
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily expose deprecated module-level public names."""
+    if name == "Runner":
+        warn_runner_deprecated()
+        return RunnerImpl
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
