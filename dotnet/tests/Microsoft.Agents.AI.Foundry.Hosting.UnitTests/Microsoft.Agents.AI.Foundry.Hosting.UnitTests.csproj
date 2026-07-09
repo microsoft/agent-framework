@@ -9,7 +9,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging" />
     <PackageReference Include="Azure.AI.AgentServer.Responses" />
-    <PackageReference Include="Azure.AI.Projects" VersionOverride="2.1.0-beta.1" />
+    <PackageReference Include="Azure.AI.Projects" />
     <PackageReference Include="Microsoft.AspNetCore.TestHost" />
     <PackageReference Include="OpenTelemetry" />
     <PackageReference Include="OpenTelemetry.Exporter.InMemory" />
@@ -18,18 +18,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="TestData\ToolboxRecordResponse.json">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="TestData\ToolboxVersionResponse.json">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="TestData\ToolboxVersionWithDecorationFields.json">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
   </ItemGroup>
 
 </Project>

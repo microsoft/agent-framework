@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -320,6 +321,275 @@ public sealed class DefaultMcpToolHandlerTests
 
     #endregion
 
+    #region ComputeHeadersHash Tests
+
+    [Fact]
+    public void ComputeHeadersHash_WithNullHeaders_ReturnsEmptyString()
+    {
+        // Act
+        string result = DefaultMcpToolHandler.ComputeHeadersHash(null);
+
+        // Assert
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ComputeHeadersHash_WithEmptyHeaders_ReturnsEmptyString()
+    {
+        // Act
+        string result = DefaultMcpToolHandler.ComputeHeadersHash(new Dictionary<string, string>());
+
+        // Assert
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ComputeHeadersHash_SameHeadersDifferentOrder_ReturnsSameHash()
+    {
+        // Arrange
+        Dictionary<string, string> headers1 = new()
+        {
+            ["Authorization"] = "Bearer token123",
+            ["X-Custom"] = "value1"
+        };
+        Dictionary<string, string> headers2 = new()
+        {
+            ["X-Custom"] = "value1",
+            ["Authorization"] = "Bearer token123"
+        };
+
+        // Act
+        string hash1 = DefaultMcpToolHandler.ComputeHeadersHash(headers1);
+        string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
+
+        // Assert
+        hash1.Should().Be(hash2);
+    }
+
+    [Fact]
+    public void ComputeHeadersHash_SameKeysDifferentCaseKeys_ReturnsSameHash()
+    {
+        // Arrange — RFC 7230: header names are case-insensitive
+        Dictionary<string, string> headers1 = new() { ["Authorization"] = "Bearer token" };
+        Dictionary<string, string> headers2 = new() { ["authorization"] = "Bearer token" };
+
+        // Act
+        string hash1 = DefaultMcpToolHandler.ComputeHeadersHash(headers1);
+        string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
+
+        // Assert
+        hash1.Should().Be(hash2);
+    }
+
+    [Fact]
+    public void ComputeHeadersHash_SameKeysDifferentCaseValues_ReturnsDifferentHash()
+    {
+        // Arrange — RFC 7235: credentials are case-sensitive
+        Dictionary<string, string> headers1 = new() { ["Authorization"] = "Bearer ABC" };
+        Dictionary<string, string> headers2 = new() { ["Authorization"] = "Bearer abc" };
+
+        // Act
+        string hash1 = DefaultMcpToolHandler.ComputeHeadersHash(headers1);
+        string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
+
+        // Assert
+        hash1.Should().NotBe(hash2);
+    }
+
+    [Fact]
+    public void ComputeHeadersHash_DifferentHeaders_ReturnsDifferentHash()
+    {
+        // Arrange
+        Dictionary<string, string> headers1 = new() { ["Authorization"] = "Bearer token1" };
+        Dictionary<string, string> headers2 = new() { ["Authorization"] = "Bearer token2" };
+
+        // Act
+        string hash1 = DefaultMcpToolHandler.ComputeHeadersHash(headers1);
+        string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
+
+        // Assert
+        hash1.Should().NotBe(hash2);
+    }
+
+    #endregion
+
+    #region Cache Key Discrimination Tests
+
+    // These tests exercise BuildCacheKey directly because the integration path
+    // (InvokeToolAsync against a fake server) doesn't surface cache-hit behavior
+    // without standing up a real MCP server — McpClient.CreateAsync fails before
+    // _clients[key] = newClient runs, so nothing ever gets cached.
+    // Tuple equality on the returned 4-tuple verifies that the dimensions
+    // collectively discriminate cache entries.
+
+    [Fact]
+    public void BuildCacheKey_SameInputs_ReturnsEqualKeys()
+    {
+        // Arrange
+        Dictionary<string, string> headers = new() { ["Authorization"] = "Bearer token" };
+
+        // Act
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "conn", headers);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "conn", headers);
+
+        // Assert
+        key1.Should().Be(key2);
+    }
+
+    [Fact]
+    public void BuildCacheKey_DifferentConnectionName_ReturnsDifferentKeys()
+    {
+        // Act
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "connection-a", null);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "connection-b", null);
+
+        // Assert
+        key1.Should().NotBe(key2);
+        key1.Connection.Should().Be("connection-a");
+        key2.Connection.Should().Be("connection-b");
+    }
+
+    [Fact]
+    public void BuildCacheKey_DifferentServerLabel_ReturnsDifferentKeys()
+    {
+        // Act
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label-a", null, null);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label-b", null, null);
+
+        // Assert
+        key1.Should().NotBe(key2);
+        key1.Label.Should().Be("label-a");
+        key2.Label.Should().Be("label-b");
+    }
+
+    [Fact]
+    public void BuildCacheKey_CaseSensitiveUrlPath_ReturnsDifferentKeys()
+    {
+        // Arrange — RFC 3986: URL path is case-sensitive
+        // Act
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/Tools", null, null, null);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/tools", null, null, null);
+
+        // Assert
+        key1.Should().NotBe(key2);
+    }
+
+    [Fact]
+    public void BuildCacheKey_HeaderValuesCaseSensitive_ReturnsDifferentKeys()
+    {
+        // Arrange — RFC 7235: credentials are case-sensitive
+        Dictionary<string, string> headers1 = new() { ["Authorization"] = "Bearer ABC" };
+        Dictionary<string, string> headers2 = new() { ["Authorization"] = "Bearer abc" };
+
+        // Act
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, headers1);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, headers2);
+
+        // Assert — header value case must propagate into the cache key
+        key1.Should().NotBe(key2);
+        key1.HeadersHash.Should().NotBe(key2.HeadersHash);
+    }
+
+    [Fact]
+    public void BuildCacheKey_NullLabelAndConnection_NormalizesToEmptyString()
+    {
+        // Act
+        var key = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, null);
+
+        // Assert — verifies null-safety contract callers rely on
+        key.Label.Should().BeEmpty();
+        key.Connection.Should().BeEmpty();
+        key.HeadersHash.Should().BeEmpty();
+    }
+
+    #endregion
+
+    #region Reserved Tools/List Tests
+
+    [Fact]
+    public void IsListToolsToolName_WithReservedName_ShouldReturnTrue()
+    {
+        // Act
+        bool result = DefaultMcpToolHandler.IsListToolsToolName(DefaultMcpToolHandler.ListToolsToolName);
+
+        // Assert
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsListToolsToolName_WithRegularToolName_ShouldReturnFalse()
+    {
+        // Act
+        bool result = DefaultMcpToolHandler.IsListToolsToolName("search");
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task InvokeToolAsync_WithListToolsArguments_ShouldThrowArgumentExceptionAsync()
+    {
+        // Arrange
+        DefaultMcpToolHandler handler = new();
+
+        try
+        {
+            // Act
+            Func<Task> act = async () => await handler.InvokeToolAsync(
+                serverUrl: "http://localhost:12345/mcp",
+                serverLabel: "test",
+                toolName: DefaultMcpToolHandler.ListToolsToolName,
+                arguments: new Dictionary<string, object?> { ["ignored"] = true },
+                headers: null,
+                connectionName: null);
+
+            // Assert
+            await act.Should().ThrowAsync<ArgumentException>()
+                .WithMessage("*does not accept tool arguments*");
+        }
+        finally
+        {
+            await handler.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task CreateListToolsResultContent_WithTools_ShouldSerializeToolMetadataAsync()
+    {
+        // Arrange
+        JsonElement inputSchema = JsonSerializer.Deserialize<JsonElement>(
+            """
+            {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                }
+              },
+              "required": [ "query" ]
+            }
+            """);
+        Tool tool = new()
+        {
+            Name = "search",
+            Description = "Searches documentation.",
+            InputSchema = inputSchema
+        };
+
+        // Act
+        McpServerToolResultContent result = DefaultMcpToolHandler.CreateListToolsResultContent([tool]);
+
+        // Assert
+        TextContent text = result.Outputs.Should().ContainSingle().Subject.Should().BeOfType<TextContent>().Subject;
+        using JsonDocument document = JsonDocument.Parse(text.Text);
+        JsonElement listedTool = document.RootElement.GetProperty("tools")[0];
+        listedTool.GetProperty("name").GetString().Should().Be("search");
+        listedTool.GetProperty("description").GetString().Should().Be("Searches documentation.");
+        listedTool.GetProperty("inputSchema").GetProperty("properties").GetProperty("query").GetProperty("type").GetString().Should().Be("string");
+    }
+
+    #endregion
+
     #region Interface Implementation Tests
 
     [Fact]
@@ -358,8 +628,9 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        result.Should().BeOfType<TextContent>()
-            .Which.Text.Should().Be("hello world");
+        TextContent textContent = result.Should().BeOfType<TextContent>().Subject;
+        textContent.Text.Should().Be("hello world");
+        textContent.RawRepresentation.Should().BeSameAs(block);
     }
 
     [Fact]
@@ -375,13 +646,17 @@ public sealed class DefaultMcpToolHandlerTests
         DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
         dataContent.MediaType.Should().Be("image/png");
         dataContent.Uri.Should().Be("data:image/png;base64,");
+        dataContent.Data.IsEmpty.Should().BeTrue();
+        dataContent.RawRepresentation.Should().BeSameAs(block);
     }
 
     [Fact]
     public void ConvertContentBlock_ImageContentBlock_WithBase64Payload_ShouldReturnDataContent()
     {
         // Arrange
-        byte[] base64Bytes = Encoding.UTF8.GetBytes("iVBORw0KGgo=");
+        const string Base64Payload = "iVBORw0KGgo=";
+        byte[] base64Bytes = Encoding.UTF8.GetBytes(Base64Payload);
+        byte[] expectedDecoded = Convert.FromBase64String(Base64Payload);
         ImageContentBlock block = new() { Data = new ReadOnlyMemory<byte>(base64Bytes), MimeType = "image/png" };
 
         // Act
@@ -390,39 +665,9 @@ public sealed class DefaultMcpToolHandlerTests
         // Assert
         DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
         dataContent.MediaType.Should().Be("image/png");
-        dataContent.Uri.Should().Be("data:image/png;base64,iVBORw0KGgo=");
-    }
-
-    [Fact]
-    public void ConvertContentBlock_ImageContentBlock_WithDataUri_ShouldReturnDataContentDirectly()
-    {
-        // Arrange
-        const string DataUri = "data:image/jpeg;base64,/9j/4AAQ";
-        byte[] dataUriBytes = Encoding.UTF8.GetBytes(DataUri);
-        ImageContentBlock block = new() { Data = new ReadOnlyMemory<byte>(dataUriBytes), MimeType = "image/jpeg" };
-
-        // Act
-        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
-
-        // Assert
-        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
-        dataContent.MediaType.Should().Be("image/jpeg");
-        dataContent.Uri.Should().Be(DataUri);
-    }
-
-    [Fact]
-    public void ConvertContentBlock_ImageContentBlock_WithNullMimeType_ShouldDefaultToImageWildcard()
-    {
-        // Arrange
-        byte[] base64Bytes = Encoding.UTF8.GetBytes("iVBORw0KGgo=");
-        ImageContentBlock block = new() { Data = new ReadOnlyMemory<byte>(base64Bytes), MimeType = null! };
-
-        // Act
-        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
-
-        // Assert
-        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
-        dataContent.MediaType.Should().Be("image/*");
+        dataContent.Data.ToArray().Should().BeEquivalentTo(expectedDecoded);
+        dataContent.Uri.Should().Be($"data:image/png;base64,{Base64Payload}");
+        dataContent.RawRepresentation.Should().BeSameAs(block);
     }
 
     [Fact]
@@ -438,13 +683,17 @@ public sealed class DefaultMcpToolHandlerTests
         DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
         dataContent.MediaType.Should().Be("audio/wav");
         dataContent.Uri.Should().Be("data:audio/wav;base64,");
+        dataContent.Data.IsEmpty.Should().BeTrue();
+        dataContent.RawRepresentation.Should().BeSameAs(block);
     }
 
     [Fact]
     public void ConvertContentBlock_AudioContentBlock_WithBase64Payload_ShouldReturnDataContent()
     {
         // Arrange
-        byte[] base64Bytes = Encoding.UTF8.GetBytes("UklGRiQA");
+        const string Base64Payload = "UklGRiQA";
+        byte[] base64Bytes = Encoding.UTF8.GetBytes(Base64Payload);
+        byte[] expectedDecoded = Convert.FromBase64String(Base64Payload);
         AudioContentBlock block = new() { Data = new ReadOnlyMemory<byte>(base64Bytes), MimeType = "audio/wav" };
 
         // Act
@@ -453,39 +702,411 @@ public sealed class DefaultMcpToolHandlerTests
         // Assert
         DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
         dataContent.MediaType.Should().Be("audio/wav");
-        dataContent.Uri.Should().Be("data:audio/wav;base64,UklGRiQA");
+        dataContent.Data.ToArray().Should().BeEquivalentTo(expectedDecoded);
+        dataContent.Uri.Should().Be($"data:audio/wav;base64,{Base64Payload}");
+        dataContent.RawRepresentation.Should().BeSameAs(block);
     }
 
     [Fact]
-    public void ConvertContentBlock_AudioContentBlock_WithDataUri_ShouldReturnDataContentDirectly()
+    public void ConvertContentBlock_EmbeddedResourceBlock_WithTextResource_ShouldReturnTextContent()
     {
         // Arrange
-        const string DataUri = "data:audio/mp3;base64,//uQxAAA";
-        byte[] dataUriBytes = Encoding.UTF8.GetBytes(DataUri);
-        AudioContentBlock block = new() { Data = new ReadOnlyMemory<byte>(dataUriBytes), MimeType = "audio/mp3" };
+        EmbeddedResourceBlock block = new()
+        {
+            Resource = new TextResourceContents
+            {
+                Text = "embedded text payload",
+                Uri = "resource://example",
+                MimeType = "text/plain",
+            },
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        TextContent textContent = result.Should().BeOfType<TextContent>().Subject;
+        textContent.Text.Should().Be("embedded text payload");
+        textContent.RawRepresentation.Should().BeSameAs(block);
+    }
+
+    [Fact]
+    public void ConvertContentBlock_EmbeddedResourceBlock_WithBlobResource_ShouldReturnDataContent()
+    {
+        // Arrange
+        const string Base64Payload = "UklGRiQA";
+        byte[] base64Bytes = Encoding.UTF8.GetBytes(Base64Payload);
+        byte[] expectedDecoded = Convert.FromBase64String(Base64Payload);
+        EmbeddedResourceBlock block = new()
+        {
+            Resource = new BlobResourceContents
+            {
+                Blob = new ReadOnlyMemory<byte>(base64Bytes),
+                Uri = "resource://example.bin",
+                MimeType = "application/zip",
+            },
+        };
 
         // Act
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
         DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
-        dataContent.MediaType.Should().Be("audio/mp3");
-        dataContent.Uri.Should().Be(DataUri);
+        dataContent.MediaType.Should().Be("application/zip");
+        dataContent.Data.ToArray().Should().BeEquivalentTo(expectedDecoded);
+        dataContent.Uri.Should().Be($"data:application/zip;base64,{Base64Payload}");
+        dataContent.RawRepresentation.Should().BeSameAs(block);
     }
 
     [Fact]
-    public void ConvertContentBlock_AudioContentBlock_WithNullMimeType_ShouldDefaultToAudioWildcard()
+    public void ConvertContentBlock_ResourceLinkBlock_WithUri_ShouldReturnUriContent()
     {
         // Arrange
-        byte[] base64Bytes = Encoding.UTF8.GetBytes("UklGRiQA");
-        AudioContentBlock block = new() { Data = new ReadOnlyMemory<byte>(base64Bytes), MimeType = null! };
+        ResourceLinkBlock block = new()
+        {
+            Uri = "https://example.com/resource.bin",
+            Name = "resource.bin",
+            MimeType = "application/zip",
+        };
 
         // Act
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
-        dataContent.MediaType.Should().Be("audio/*");
+        UriContent uriContent = result.Should().BeOfType<UriContent>().Subject;
+        uriContent.Uri.ToString().Should().Be("https://example.com/resource.bin");
+        uriContent.MediaType.Should().Be("application/zip");
+        uriContent.RawRepresentation.Should().BeSameAs(block);
+    }
+
+    [Fact]
+    public void ConvertContentBlock_ResourceLinkBlock_WithNullMimeType_ShouldDefaultToOctetStream()
+    {
+        // Arrange
+        ResourceLinkBlock block = new()
+        {
+            Uri = "https://example.com/resource",
+            Name = "resource",
+            MimeType = null,
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        UriContent uriContent = result.Should().BeOfType<UriContent>().Subject;
+        uriContent.Uri.ToString().Should().Be("https://example.com/resource");
+        uriContent.MediaType.Should().Be("application/octet-stream");
+    }
+
+    [Fact]
+    public void ConvertContentBlock_ResourceLinkBlock_WithMeta_ShouldPropagateToAdditionalProperties()
+    {
+        // Arrange
+        ResourceLinkBlock block = new()
+        {
+            Uri = "https://example.com/resource.bin",
+            Name = string.Empty,
+            MimeType = "application/zip",
+            Meta = new System.Text.Json.Nodes.JsonObject
+            {
+                ["traceId"] = "abc-123",
+                ["priority"] = 7,
+            },
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        UriContent uriContent = result.Should().BeOfType<UriContent>().Subject;
+        uriContent.AdditionalProperties.Should().NotBeNull();
+        uriContent.AdditionalProperties!.Should().HaveCount(2);
+        uriContent.AdditionalProperties["traceId"].Should().BeSameAs(block.Meta!["traceId"]);
+        uriContent.AdditionalProperties["priority"].Should().BeSameAs(block.Meta["priority"]);
+    }
+
+    [Fact]
+    public void ConvertContentBlock_ResourceLinkBlock_WithName_ShouldMapNameToFilenameAdditionalProperty()
+    {
+        // Arrange
+        ResourceLinkBlock block = new()
+        {
+            Uri = "https://example.com/resource.bin",
+            Name = "resource.bin",
+            MimeType = "application/zip",
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        UriContent uriContent = result.Should().BeOfType<UriContent>().Subject;
+        uriContent.AdditionalProperties.Should().NotBeNull();
+        uriContent.AdditionalProperties!["filename"].Should().Be("resource.bin");
+    }
+
+    [Fact]
+    public void ConvertContentBlock_ToolUseContentBlock_ShouldReturnFunctionCallContent()
+    {
+        // Arrange
+        using JsonDocument input = JsonDocument.Parse("{\"city\":\"Seattle\",\"unit\":\"celsius\"}");
+        ToolUseContentBlock block = new()
+        {
+            Id = "call-1",
+            Name = "get_weather",
+            Input = input.RootElement.Clone(),
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        FunctionCallContent call = result.Should().BeOfType<FunctionCallContent>().Subject;
+        call.CallId.Should().Be("call-1");
+        call.Name.Should().Be("get_weather");
+        call.Arguments.Should().NotBeNull();
+        call.Arguments!.Should().ContainKey("city");
+        call.RawRepresentation.Should().BeSameAs(block);
+    }
+
+    [Fact]
+    public void ConvertContentBlock_ToolResultContentBlock_NotError_ShouldReturnFunctionResultContent()
+    {
+        // Arrange
+        ToolResultContentBlock block = new()
+        {
+            ToolUseId = "call-1",
+            Content = [new TextContentBlock { Text = "ok" }],
+            IsError = false,
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        FunctionResultContent functionResult = result.Should().BeOfType<FunctionResultContent>().Subject;
+        functionResult.CallId.Should().Be("call-1");
+        functionResult.Exception.Should().BeNull();
+        functionResult.RawRepresentation.Should().BeSameAs(block);
+    }
+
+    [Fact]
+    public void ConvertContentBlock_ToolResultContentBlock_WithIsError_ShouldSetException()
+    {
+        // Arrange
+        ToolResultContentBlock block = new()
+        {
+            ToolUseId = "call-2",
+            Content = [new TextContentBlock { Text = "boom" }],
+            IsError = true,
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        FunctionResultContent functionResult = result.Should().BeOfType<FunctionResultContent>().Subject;
+        functionResult.CallId.Should().Be("call-2");
+        functionResult.Exception.Should().NotBeNull();
+        functionResult.RawRepresentation.Should().BeSameAs(block);
+    }
+
+    [Fact]
+    public void ConvertContentBlock_BlockWithMeta_ShouldPropagateToAdditionalProperties()
+    {
+        // Arrange
+        TextContentBlock block = new()
+        {
+            Text = "hello",
+            Meta = new System.Text.Json.Nodes.JsonObject
+            {
+                ["traceId"] = "abc-123",
+                ["priority"] = 7,
+            },
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        result.AdditionalProperties.Should().NotBeNull();
+        result.AdditionalProperties!.Should().ContainKey("traceId");
+        result.AdditionalProperties.Should().ContainKey("priority");
+    }
+
+    #endregion
+
+    #region Origin Pinning Tests
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_SameOrigin_RetainsAuthorization()
+    {
+        // Arrange
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com/mcp/message");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert — same origin, credential is preserved
+        request.Headers.Contains("Authorization").Should().BeTrue();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_DifferentHost_RemovesAuthorization()
+    {
+        // Arrange — server-advertised endpoint on an attacker origin
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://attacker.example/collect");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert — credential must not cross the origin boundary
+        request.Headers.Contains("Authorization").Should().BeFalse();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_DifferentPort_RemovesAuthorization()
+    {
+        // Arrange — same host but a different port is a different origin
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com:8443/mcp");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert
+        request.Headers.Contains("Authorization").Should().BeFalse();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_ExplicitDefaultPort_RetainsAuthorization()
+    {
+        // Arrange — pinned endpoint carries an explicit :443 while the request omits it; these are
+        // the same origin and Uri.Compare must normalize the default port rather than strip.
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com/mcp/message");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com:443/mcp"));
+
+        // Assert — explicit vs implicit default port is the same origin
+        request.Headers.Contains("Authorization").Should().BeTrue();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_RelativeRequestUri_RetainsAuthorization()
+    {
+        // Arrange — a relative URI resolves against the client's base address (the pinned origin) and
+        // therefore can never target a foreign origin. It must not throw and must retain credentials.
+        using HttpRequestMessage request = new(HttpMethod.Post, new Uri("/mcp/message", UriKind.Relative));
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        Action act = () => OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert — does not throw and leaves the credential in place
+        act.Should().NotThrow();
+        request.Headers.Contains("Authorization").Should().BeTrue();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_DifferentScheme_RemovesAuthorization()
+    {
+        // Arrange — downgrade to http is a different origin (and would leak over plaintext)
+        using HttpRequestMessage request = new(HttpMethod.Post, "http://trusted.example.com/mcp");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert
+        request.Headers.Contains("Authorization").Should().BeFalse();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_CrossOrigin_RemovesCookieAndProxyAuthorization()
+    {
+        // Arrange
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://attacker.example/collect");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+        request.Headers.TryAddWithoutValidation("Cookie", "session=abc");
+        request.Headers.TryAddWithoutValidation("Proxy-Authorization", "Bearer proxy-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert — all credential-bearing headers are stripped
+        request.Headers.Contains("Authorization").Should().BeFalse();
+        request.Headers.Contains("Cookie").Should().BeFalse();
+        request.Headers.Contains("Proxy-Authorization").Should().BeFalse();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_CrossOrigin_PreservesNonCredentialHeaders()
+    {
+        // Arrange
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://attacker.example/collect");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+        request.Headers.TryAddWithoutValidation("X-Trace-Id", "trace-123");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert — only credential headers are removed; other headers are untouched
+        request.Headers.Contains("Authorization").Should().BeFalse();
+        request.Headers.Contains("X-Trace-Id").Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task OriginPinningHandler_CrossOriginRequest_DoesNotForwardAuthorizationAsync()
+    {
+        // Arrange — capture what the inner handler actually receives on the wire
+        CapturingHandler inner = new();
+        using OriginPinningHandler pinning = new(new Uri("https://trusted.example.com/mcp")) { InnerHandler = inner };
+        using HttpMessageInvoker invoker = new(pinning);
+
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://attacker.example/collect");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        using HttpResponseMessage response = await invoker.SendAsync(request, CancellationToken.None);
+
+        // Assert — the credential never reached the inner handler for the foreign origin
+        response.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
+        inner.LastRequestHadAuthorization.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task OriginPinningHandler_SameOriginRequest_ForwardsAuthorizationAsync()
+    {
+        // Arrange
+        CapturingHandler inner = new();
+        using OriginPinningHandler pinning = new(new Uri("https://trusted.example.com/mcp")) { InnerHandler = inner };
+        using HttpMessageInvoker invoker = new(pinning);
+
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com/mcp/message");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        using HttpResponseMessage response = await invoker.SendAsync(request, CancellationToken.None);
+
+        // Assert — same-origin credential flows through normally
+        response.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
+        inner.LastRequestHadAuthorization.Should().BeTrue();
+    }
+
+    private sealed class CapturingHandler : HttpMessageHandler
+    {
+        public bool LastRequestHadAuthorization { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            this.LastRequestHadAuthorization = request.Headers.Contains("Authorization");
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK));
+        }
     }
 
     #endregion

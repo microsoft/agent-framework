@@ -72,11 +72,11 @@ async def main() -> None:
 
     print("\nBuilding Magentic Workflow...")
 
-    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
-    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
+    # Mark participant responses as intermediate so workflow.as_agent() maps
+    # them to text_reasoning content while the final answer remains normal text.
     workflow = MagenticBuilder(
         participants=[researcher_agent, coder_agent],
-        intermediate_outputs=True,
+        intermediate_output_from=[researcher_agent, coder_agent],
         manager_agent=manager_agent,
         max_round_count=10,
         max_stall_count=3,

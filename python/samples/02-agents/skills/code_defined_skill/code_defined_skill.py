@@ -3,15 +3,17 @@
 import asyncio
 import json
 import os
-
-# Uncomment this filter to suppress the experimental Skills warning before
-# using the sample's Skills APIs.
-# import warnings  # isort: skip
-# warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from textwrap import dedent
 from typing import Any
 
-from agent_framework import Agent, Skill, SkillResource, SkillsProvider
+from agent_framework import (
+    Agent,
+    InlineSkill,
+    InlineSkillResource,
+    SkillFrontmatter,
+    SkillsProvider,
+    ToolApprovalMiddleware,
+)
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -46,10 +48,11 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 # 1. Static Resources — inline content passed at construction time
 # ---------------------------------------------------------------------------
-unit_converter_skill = Skill(
-    name="unit-converter",
-    description="Convert between common units using a conversion factor",
-    content=dedent("""\
+unit_converter_skill = InlineSkill(
+    frontmatter=SkillFrontmatter(
+        name="unit-converter", description="Convert between common units using a conversion factor"
+    ),
+    instructions=dedent("""\
         Use this skill when the user asks to convert between units.
 
         1. Review the conversion-tables resource to find the factor for the
@@ -58,7 +61,7 @@ unit_converter_skill = Skill(
         3. Use the convert script, passing the value and factor from the table.
     """),
     resources=[
-        SkillResource(
+        InlineSkillResource(
             name="conversion-tables",
             content=dedent("""\
                 # Conversion Tables
@@ -143,16 +146,22 @@ async def main() -> None:
     )
 
     # Create the skills provider with the code-defined skill and pass it to the agent
+    # All skill tools require approval by default; auto-approve them so the
+    # sample runs unattended. See the script_approval / skills_auto_approval
+    # samples for interactive and selective approval handling.
     async with Agent(
         client=client,
         instructions="You are a helpful assistant that can convert units.",
-        context_providers=[SkillsProvider(skills=[unit_converter_skill])],
+        context_providers=[SkillsProvider(unit_converter_skill)],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[SkillsProvider.all_tools_auto_approval_rule])],
     ) as agent:
         print("Converting units")
         print("-" * 60)
+        session = agent.create_session()
         response = await agent.run(
             "How many kilometers is a marathon (26.2 miles)? And how many pounds is 75 kilograms?",
             function_invocation_kwargs={"precision": 2},
+            session=session,
         )
         print(f"Agent: {response}\n")
 

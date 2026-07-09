@@ -84,7 +84,7 @@ public class OutputConverterTests
     }
 
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionCall_EmitsFunctionCallEventsAsync()
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallWithoutResult_EmitsFunctionCallWireItemAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate
@@ -99,10 +99,12 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        // Should have: FuncAdded, ArgsDelta, ArgsDone, FuncDone, Completed
-        Assert.IsType<ResponseOutputItemAddedEvent>(events[0]);
+        // A lone FunctionCallContent (no paired FunctionResultContent) is the
+        // OpenAI Responses encoding of a HITL request: the caller is expected to
+        // resume with a function_call_output for this call_id.
+        Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
-        Assert.True(events.Count >= 4, $"Expected at least 4 events for function call, got {events.Count}");
     }
 
     [Fact]
@@ -204,7 +206,7 @@ public class OutputConverterTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
         {
-            await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(updates, stream, cts.Token))
+            await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(updates, stream, cancellationToken: cts.Token))
             {
                 // Should throw before yielding
             }
@@ -302,6 +304,8 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
+        // FCC closes any in-flight assistant message, then emits its own function_call
+        // wire item. Result: 2 output items (text message + function_call).
         Assert.Equal(2, events.OfType<ResponseOutputItemAddedEvent>().Count());
         Assert.Equal(2, events.OfType<ResponseOutputItemDoneEvent>().Count());
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
@@ -328,7 +332,7 @@ public class OutputConverterTests
 
     // G-04
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionCallWithEmptyCallId_GeneratesCallIdAsync()
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallWithEmptyCallId_DoesNotEmitWireItemAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate
@@ -342,12 +346,14 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        Assert.Contains(events, e => e is ResponseOutputItemAddedEvent);
+        // Empty CallId is invalid for the wire format; emission is skipped.
+        Assert.DoesNotContain(events, e => e is ResponseOutputItemAddedEvent);
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
     // G-05
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_MultipleFunctionCalls_EmitsSeparateBuildersAsync()
+    public async Task ConvertUpdatesToEventsAsync_MultipleFunctionCallsWithoutResults_EachEmitsWireItemAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -362,7 +368,10 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
+        // Each lone FCC surfaces as its own function_call wire item (HITL request shape).
         Assert.Equal(2, events.OfType<ResponseOutputItemAddedEvent>().Count());
+        Assert.Equal(2, events.OfType<ResponseFunctionCallArgumentsDoneEvent>().Count());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
     // H-02
@@ -537,7 +546,7 @@ public class OutputConverterTests
 
     // K-03
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionResultContent_IsSkippedWithNoEventsAsync()
+    public async Task ConvertUpdatesToEventsAsync_FunctionResultWithoutMatchingCall_EmitsFunctionCallOutputAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", "result data")] };
@@ -548,8 +557,180 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        Assert.Single(events);
-        Assert.IsType<ResponseCompletedEvent>(events[0]);
+        // A FunctionResultContent always emits a function_call_output wire item; pairing
+        // with a function_call (if any) is established by call_id at the wire layer.
+        Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        Assert.Single(events.OfType<ResponseOutputItemDoneEvent>());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    // K-04
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallThenResult_EmitsPairedItemsAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var updates = new[]
+        {
+            new AgentResponseUpdate { Contents = [new FunctionCallContent("call_1", "search", new Dictionary<string, object?> { ["q"] = "weather" })] },
+            new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", "sunny")] },
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Issue #5662: function_call and function_call_output must both surface as
+        // wire items so Azure's stored conversation has a paired call+output and
+        // resume via previous_response_id works.
+        Assert.Equal(2, events.OfType<ResponseOutputItemAddedEvent>().Count());
+        Assert.Equal(2, events.OfType<ResponseOutputItemDoneEvent>().Count());
+        Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    // K-05: An FCC with an empty CallId is dropped without disturbing in-flight text.
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallEmptyCallIdMidText_PreservesTextBoundaryAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var updates = new[]
+        {
+            new AgentResponseUpdate { MessageId = "msg_1", Contents = [new MeaiTextContent("Hello, ")] },
+            new AgentResponseUpdate { Contents = [new FunctionCallContent(string.Empty, "skipped", new Dictionary<string, object?>())] },
+            new AgentResponseUpdate { MessageId = "msg_1", Contents = [new MeaiTextContent("world!")] },
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // The FCC is skipped (no CallId), and because we now validate CallId before
+        // closing the in-flight assistant message, both text deltas land in the same
+        // output item — only one message-added event is emitted.
+        Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        Assert.Equal(2, events.OfType<ResponseTextDeltaEvent>().Count());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    // K-06: FRC payloads are wrapped as JSON string literals on the wire so the field is
+    // always a spec-compliant OpenAI Responses `function_call_output.output` string value.
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionResultStringPayload_EmittedAsJsonStringAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", "sunny")] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var output = Assert.IsType<OutputItemFunctionToolCallOutput>(added.Item);
+        // The wire payload is a JSON string literal — `"sunny"`, not the bare bytes `sunny`.
+        Assert.Equal("\"sunny\"", output.Output.ToString());
+    }
+
+    // K-06b: List/object FRC payloads must be JSON-stringified into a JSON string value
+    // so the OpenAI .NET client (FunctionCallOutputResponseItem.Output: string) can parse them.
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionResultObjectPayload_EmittedAsJsonStringAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var todoList = new[] { new { id = 1, text = "Buy milk" } };
+        var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", todoList)] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var output = Assert.IsType<OutputItemFunctionToolCallOutput>(added.Item);
+        // The wire payload must be a quoted JSON string containing the JSON-serialized object.
+        var raw = output.Output.ToString();
+        Assert.StartsWith("\"", raw);
+        Assert.EndsWith("\"", raw);
+        // The unwrapped value must round-trip back to the original JSON.
+        var inner = System.Text.Json.JsonSerializer.Deserialize<string>(raw);
+        Assert.Equal("[{\"id\":1,\"text\":\"Buy milk\"}]", inner);
+    }
+
+    // K-06c: A JsonElement of kind String must not be double-encoded.
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionResultJsonElementStringPayload_NotDoubleEncodedAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        using var doc = System.Text.Json.JsonDocument.Parse("\"sunny\"");
+        var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", doc.RootElement.Clone())] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var output = Assert.IsType<OutputItemFunctionToolCallOutput>(added.Item);
+        // Must be `"sunny"`, not `"\"sunny\""`.
+        Assert.Equal("\"sunny\"", output.Output.ToString());
+    }
+
+    // K-06d: A JsonElement of non-string kind (e.g. array) must be JSON-stringified, not
+    // emitted as a raw JSON array on the wire.
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionResultJsonElementArrayPayload_EmittedAsJsonStringAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        using var doc = System.Text.Json.JsonDocument.Parse("[{\"id\":1}]");
+        var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", doc.RootElement.Clone())] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var output = Assert.IsType<OutputItemFunctionToolCallOutput>(added.Item);
+        var raw = output.Output.ToString();
+        var inner = System.Text.Json.JsonSerializer.Deserialize<string>(raw);
+        Assert.Equal("[{\"id\":1}]", inner);
+    }
+
+    // K-06e: Regression — the OutputItemFunctionToolCallOutput must have a populated Id
+    // and a matching wire id on the added/done events. The Foundry storage layer extracts
+    // a partition id from this field and throws "ID cannot be null or empty (Parameter 'id')"
+    // when it is missing.
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionResult_OutputItemHasIdAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", "sunny")] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var done = Assert.Single(events.OfType<ResponseOutputItemDoneEvent>());
+
+        var addedOutput = Assert.IsType<OutputItemFunctionToolCallOutput>(added.Item);
+        var doneOutput = Assert.IsType<OutputItemFunctionToolCallOutput>(done.Item);
+
+        Assert.False(string.IsNullOrEmpty(addedOutput.Id));
+        Assert.False(string.IsNullOrEmpty(doneOutput.Id));
+        Assert.Equal(addedOutput.Id, doneOutput.Id);
+        Assert.Equal("call_1", addedOutput.CallId);
+        Assert.Equal("call_1", doneOutput.CallId);
     }
 
     // L-01
@@ -666,6 +847,7 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
+        // text(msg_1) → function_call(call_1) → text(msg_2): three output items.
         Assert.Equal(3, events.OfType<ResponseOutputItemAddedEvent>().Count());
     }
 
@@ -729,6 +911,7 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
+        // Three output items: function_call(call_1), text(msg_1), function_call(call_2).
         Assert.Equal(3, events.OfType<ResponseOutputItemAddedEvent>().Count());
     }
 
@@ -821,9 +1004,10 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        // Should have: 4 workflow actions + 1 function call + 1 text message = 6 output items
+        // Workflow actions: 4. Lone FCC: 1 (function_call wire item).
+        // Text message: 1. Total output items: 6.
         Assert.Equal(6, events.OfType<ResponseOutputItemAddedEvent>().Count());
-        Assert.Contains(events, e => e is ResponseFunctionCallArgumentsDoneEvent);
+        Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
         Assert.Contains(events, e => e is ResponseTextDeltaEvent);
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
@@ -960,11 +1144,10 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        // Workflow actions: invoked triage, completed triage, invoked expert, completed expert = 4
-        // Content items: 1 function call, 1 text message = 2
-        // Total output items: 6
+        // Workflow actions: 4. Lone FCC: 1 (function_call wire item).
+        // Text message: 1. Total output items: 6.
         Assert.Equal(6, events.OfType<ResponseOutputItemAddedEvent>().Count());
-        Assert.Contains(events, e => e is ResponseFunctionCallArgumentsDoneEvent);
+        Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
         // Two text deltas for the two streaming chunks
         Assert.Equal(2, events.OfType<ResponseTextDeltaEvent>().Count());
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
@@ -1066,6 +1249,386 @@ public class OutputConverterTests
         // Only the terminal completed event
         Assert.Single(events);
         Assert.IsType<ResponseCompletedEvent>(events[0]);
+    }
+
+    // === Tool-approval (HITL) wire-format coverage ===
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ToolApprovalRequest_EmitsMcpApprovalRequestAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var stateBag = new AgentSessionStateBag();
+        const string AfRequestId = "af_request_abc";
+        var functionCall = new FunctionCallContent("call_1", "delete_resource",
+            new Dictionary<string, object?> { ["target"] = "db" });
+        var approval = new ToolApprovalRequestContent(AfRequestId, functionCall);
+
+        var update = new AgentResponseUpdate { Contents = [approval] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream, stateBag))
+        {
+            events.Add(evt);
+        }
+
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var item = Assert.IsType<OutputItemMcpApprovalRequest>(added.Item);
+        Assert.Equal("agent_framework", item.ServerLabel);
+        Assert.Equal("delete_resource", item.Name);
+        Assert.Contains("\"target\":\"db\"", item.Arguments);
+        Assert.StartsWith("mcpr_", item.Id);
+
+        // Mapping persisted to state bag.
+        Assert.Equal(AfRequestId, ToolApprovalIdMap.Resolve(stateBag, item.Id));
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ToolApprovalRequest_NonFunctionToolCall_SkippedAsync()
+    {
+        // ToolCall implementations that aren't FunctionCallContent (e.g. raw MCP calls)
+        // are intentionally NOT emitted — mirrors the OpenAI Hosting layer's behavior.
+        var (stream, _) = CreateTestStream();
+        var unknownTool = new RawToolCallContent("call_x");
+        var approval = new ToolApprovalRequestContent("af_x", unknownTool);
+
+        var update = new AgentResponseUpdate { Contents = [approval] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        Assert.DoesNotContain(events.OfType<ResponseOutputItemAddedEvent>(),
+            e => e.Item is OutputItemMcpApprovalRequest);
+
+        // Defense in depth: only the terminal ResponseCompletedEvent should be emitted.
+        // No spurious output-item-added/output-item-done events should leak for the
+        // unsupported tool-call shape.
+        Assert.Single(events);
+        Assert.IsType<ResponseCompletedEvent>(events[0]);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ToolApprovalResponse_NotReEmittedAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var fc = new FunctionCallContent("call_1", "noop");
+        var response = new ToolApprovalResponseContent("af_x", true, fc);
+
+        var update = new AgentResponseUpdate { Contents = [response] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Approval responses are inbound-only; output side should silently drop them
+        // and emit only the terminal completed event.
+        Assert.Single(events);
+        Assert.IsType<ResponseCompletedEvent>(events[0]);
+    }
+
+    // D1: WorkflowEvent in RawRepresentation but Contents is non-empty → fall through to content path.
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_WorkflowEventWithTextContent_FlowsThroughContentPathAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_workflow_text",
+            RawRepresentation = new ExecutorInvokedEvent("exec_x", "invoked"),
+            Contents = [new MeaiTextContent("payload from workflow event")],
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Content path must have been taken: a text-delta event must be emitted from the payload.
+        Assert.Contains(events, e => e is ResponseTextDeltaEvent);
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_WorkflowEventWithErrorContent_EmitsFailedAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate
+        {
+            RawRepresentation = new ExecutorFailedEvent("exec_y", new InvalidOperationException("boom")),
+            Contents = [new ErrorContent("boom")],
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // ErrorContent should drive a failed event rather than being swallowed by the workflow branch.
+        Assert.Contains(events, e => e is ResponseFailedEvent);
+    }
+
+    #region url_citation annotation coverage
+
+    /// <summary>A <see cref="MeaiTextContent"/> with a url_citation annotation emits a <see cref="ResponseOutputTextAnnotationAddedEvent"/>.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_TextWithUrlCitationAnnotation_EmitsAnnotationEventAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            Title = "Example Document",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var textContent = new MeaiTextContent("Hello") { Annotations = [annotation] };
+        var update = new AgentResponseUpdate { MessageId = "msg_1", Contents = [textContent] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var annotationEvent = Assert.Single(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+        var urlCitation = Assert.IsType<UrlCitationBody>(annotationEvent.Annotation);
+        Assert.Equal(new Uri("https://example.com/doc"), urlCitation.Url);
+        Assert.Equal("Example Document", urlCitation.Title);
+        Assert.Equal(0L, urlCitation.StartIndex);
+        Assert.Equal(5L, urlCitation.EndIndex);
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    /// <summary>The content_part.done and output_item.done payloads carry the url_citation metadata, guarding against the empty-annotations regression where only the annotation.added event fires.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_TextWithUrlCitationAnnotation_DoneEventsCarryAnnotationMetadataAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            Title = "Example Document",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_1",
+            Contents = [new MeaiTextContent("Hello") { Annotations = [annotation] }]
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // content_part.done must serialize the annotation, not an empty array.
+        var contentPartDone = Assert.Single(events.OfType<ResponseContentPartDoneEvent>());
+        var donePart = Assert.IsType<OutputContentOutputTextContent>(contentPartDone.Part);
+        var donePartCitation = Assert.IsType<UrlCitationBody>(Assert.Single(donePart.Annotations));
+        Assert.Equal(new Uri("https://example.com/doc"), donePartCitation.Url);
+        Assert.Equal("Example Document", donePartCitation.Title);
+
+        // output_item.done message content must also carry the annotation.
+        var outputItemDone = Assert.Single(events.OfType<ResponseOutputItemDoneEvent>());
+        var doneMessage = Assert.IsType<OutputItemMessage>(outputItemDone.Item);
+        var doneText = Assert.IsType<MessageContentOutputTextContent>(Assert.Single(doneMessage.Content));
+        var doneTextCitation = Assert.IsType<UrlCitationBody>(Assert.Single(doneText.Annotations));
+        Assert.Equal(new Uri("https://example.com/doc"), doneTextCitation.Url);
+        Assert.Equal("Example Document", doneTextCitation.Title);
+    }
+
+    /// <summary>The annotation event must appear after the last text delta and before output_item.done.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_TextWithAnnotation_AnnotationOrderedAfterDeltaBeforeMessageDoneAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/src"),
+            Title = "Source",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 10, EndIndex = 20 }]
+        };
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_1",
+            Contents = [new MeaiTextContent("text with citation") { Annotations = [annotation] }]
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var lastDeltaIdx = events.FindLastIndex(e => e is ResponseTextDeltaEvent);
+        var annotationIdx = events.FindIndex(e => e is ResponseOutputTextAnnotationAddedEvent);
+        var messageDoneIdx = events.FindIndex(e => e is ResponseOutputItemDoneEvent);
+
+        Assert.True(annotationIdx >= 0, "Expected ResponseOutputTextAnnotationAddedEvent");
+        Assert.True(messageDoneIdx >= 0, "Expected ResponseOutputItemDoneEvent");
+        Assert.True(lastDeltaIdx < annotationIdx, "Annotation must come after last text delta");
+        Assert.True(annotationIdx < messageDoneIdx, "Annotation must come before output_item.done");
+    }
+
+    /// <summary>Multiple annotations on one <see cref="MeaiTextContent"/> all emit events, in order.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_TextWithMultipleAnnotations_EmitsAllAnnotationsAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var ann1 = new CitationAnnotation
+        {
+            Url = new Uri("https://a.example.com"),
+            Title = "A",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 10 }]
+        };
+        var ann2 = new CitationAnnotation
+        {
+            Url = new Uri("https://b.example.com"),
+            Title = "B",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 20, EndIndex = 30 }]
+        };
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_1",
+            Contents = [new MeaiTextContent("text") { Annotations = [ann1, ann2] }]
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var annotationEvents = events.OfType<ResponseOutputTextAnnotationAddedEvent>().ToList();
+        Assert.Equal(2, annotationEvents.Count);
+        var first = Assert.IsType<UrlCitationBody>(annotationEvents[0].Annotation);
+        Assert.Equal("A", first.Title);
+        var second = Assert.IsType<UrlCitationBody>(annotationEvents[1].Annotation);
+        Assert.Equal("B", second.Title);
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    /// <summary>Annotations on a <see cref="MeaiTextContent"/> across multiple streaming updates are all accumulated.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_AnnotationsAcrossMultipleUpdates_AccumulatesAllAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var ann1 = new CitationAnnotation
+        {
+            Url = new Uri("https://first.example.com"),
+            Title = "First",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var ann2 = new CitationAnnotation
+        {
+            Url = new Uri("https://second.example.com"),
+            Title = "Second",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 6, EndIndex = 11 }]
+        };
+        var updates = new[]
+        {
+            new AgentResponseUpdate { MessageId = "msg_1", Contents = [new MeaiTextContent("Hello") { Annotations = [ann1] }] },
+            new AgentResponseUpdate { MessageId = "msg_1", Contents = [new MeaiTextContent(" world") { Annotations = [ann2] }] },
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        var annotationEvents = events.OfType<ResponseOutputTextAnnotationAddedEvent>().ToList();
+        Assert.Equal(2, annotationEvents.Count);
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    /// <summary>A <see cref="CitationAnnotation"/> without a URL is skipped (no annotation event emitted).</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_CitationAnnotationWithoutUrl_IsSkippedAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = null,
+            Title = "No URL",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_1",
+            Contents = [new MeaiTextContent("text") { Annotations = [annotation] }]
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        Assert.Empty(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    /// <summary>A <see cref="CitationAnnotation"/> without a <see cref="TextSpanAnnotatedRegion"/> is skipped.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_CitationAnnotationWithoutRegions_IsSkippedAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com"),
+            Title = "No Regions",
+            AnnotatedRegions = null
+        };
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_1",
+            Contents = [new MeaiTextContent("text") { Annotations = [annotation] }]
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        Assert.Empty(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    /// <summary>A non-<see cref="CitationAnnotation"/> in Annotations is silently skipped.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_NonCitationAnnotation_IsSkippedAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var rawAnnotation = new AIAnnotation(); // base type, not a CitationAnnotation
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_1",
+            Contents = [new MeaiTextContent("text") { Annotations = [rawAnnotation] }]
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        Assert.Empty(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    #endregion
+
+    private sealed class RawToolCallContent : ToolCallContent
+    {
+        public RawToolCallContent(string callId) : base(callId) { }
     }
 
     private static async IAsyncEnumerable<T> ToAsync<T>(IEnumerable<T> source)

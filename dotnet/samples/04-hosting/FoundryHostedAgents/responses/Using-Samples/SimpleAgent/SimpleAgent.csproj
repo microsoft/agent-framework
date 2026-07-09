@@ -13,8 +13,10 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.AI.Projects" />
+    <PackageReference Include="Azure.Core" />
     <PackageReference Include="Azure.Identity" />
     <PackageReference Include="DotNetEnv" />
+    <PackageReference Include="System.ClientModel" />
   </ItemGroup>
 
   <ItemGroup>

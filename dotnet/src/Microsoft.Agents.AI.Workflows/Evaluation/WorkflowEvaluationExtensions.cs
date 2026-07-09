@@ -28,6 +28,17 @@ public static class WorkflowEvaluationExtensions
     /// Use <see cref="ConversationSplitters.LastTurn"/>, <see cref="ConversationSplitters.Full"/>,
     /// or a custom <see cref="IConversationSplitter"/> implementation.
     /// </param>
+    /// <param name="expectedOutput">
+    /// Optional ground-truth/expected output for the workflow's overall final answer.
+    /// When provided, it is stamped onto the overall <see cref="EvalItem.ExpectedOutput"/>
+    /// so reference-based evaluators (for example, similarity) can compare the
+    /// workflow's response against a golden answer. Ground truth is only applied
+    /// to the overall item; per-agent items are intentionally left without an
+    /// expected output, since ground truth is defined against the final response.
+    /// When using a reference-based evaluator that requires ground truth, set
+    /// <paramref name="includePerAgent"/> to <see langword="false"/> to avoid
+    /// invoking the evaluator on per-agent items that have no expected output.
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Evaluation results with optional per-agent sub-results.</returns>
     public static async Task<AgentEvaluationResults> EvaluateAsync(
@@ -37,6 +48,7 @@ public static class WorkflowEvaluationExtensions
         bool includePerAgent = true,
         string evalName = "Workflow Eval",
         IConversationSplitter? splitter = null,
+        string? expectedOutput = null,
         CancellationToken cancellationToken = default)
     {
         var events = run.OutgoingEvents.ToList();
@@ -48,28 +60,26 @@ public static class WorkflowEvaluationExtensions
         var overallItems = new List<EvalItem>();
         if (includeOverall)
         {
-            var finalResponse = events.OfType<AgentResponseEvent>().LastOrDefault();
-            if (finalResponse is not null)
+            var overallItem = BuildOverallItem(events, splitter, expectedOutput);
+            if (overallItem is not null)
             {
-                var firstInvoked = events.OfType<ExecutorInvokedEvent>().FirstOrDefault();
-                var query = firstInvoked?.Data switch
-                {
-                    ChatMessage cm => cm.Text ?? string.Empty,
-                    IReadOnlyList<ChatMessage> msgs => msgs.LastOrDefault(m => m.Role == ChatRole.User)?.Text ?? string.Empty,
-                    string s => s,
-                    _ => firstInvoked?.Data?.ToString() ?? string.Empty,
-                };
-                var conversation = new List<ChatMessage>
-                {
-                    new(ChatRole.User, query),
-                };
-
-                conversation.AddRange(finalResponse.Response.Messages);
-
-                overallItems.Add(new EvalItem(query, finalResponse.Response.Text, conversation)
-                {
-                    Splitter = splitter,
-                });
+                overallItems.Add(overallItem);
+            }
+            else
+            {
+                // The caller asked for an overall evaluation but we couldn't find a final
+                // response to score — almost always because the workflow's agents weren't
+                // built with EmitAgentResponseEvents enabled (so no AgentResponseEvent was
+                // emitted) and no terminal ExecutorCompletedEvent carried an AgentResponse
+                // / ChatMessage / string payload. Fail loudly instead of silently returning
+                // 0/0 (or skipping evaluation against a supplied expectedOutput).
+                throw new InvalidOperationException(
+                    "Cannot evaluate the overall workflow output: no AgentResponseEvent or " +
+                    "ExecutorCompletedEvent with an AgentResponse/ChatMessage/string payload " +
+                    "was found in the run. Bind agents with " +
+                    "AIAgentHostOptions { EmitAgentResponseEvents = true } " +
+                    "(for example via agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentResponseEvents = true })) " +
+                    "so the workflow surfaces the final agent response, or set 'includeOverall: false'.");
             }
         }
 
@@ -95,6 +105,86 @@ public static class WorkflowEvaluationExtensions
         }
 
         return overallResult;
+    }
+
+    internal static EvalItem? BuildOverallItem(
+        IReadOnlyList<WorkflowEvent> events,
+        IConversationSplitter? splitter,
+        string? expectedOutput)
+    {
+        var firstInvoked = events.OfType<ExecutorInvokedEvent>().FirstOrDefault();
+        var query = firstInvoked?.Data switch
+        {
+            ChatMessage cm => cm.Text ?? string.Empty,
+            IReadOnlyList<ChatMessage> msgs => msgs.LastOrDefault(m => m.Role == ChatRole.User)?.Text ?? string.Empty,
+            string s => s,
+            _ => firstInvoked?.Data?.ToString() ?? string.Empty,
+        };
+
+        var conversation = new List<ChatMessage>
+        {
+            new(ChatRole.User, query),
+        };
+
+        // Prefer AgentResponseEvent (only emitted when AIAgentHostOptions.EmitAgentResponseEvents
+        // is enabled). Otherwise fall back to the last ExecutorCompletedEvent that carries an
+        // AgentResponse / ChatMessage / string payload — these are always emitted by the runtime.
+        var finalResponse = events.OfType<AgentResponseEvent>().LastOrDefault();
+        string responseText;
+        if (finalResponse is not null)
+        {
+            responseText = finalResponse.Response.Text;
+            conversation.AddRange(finalResponse.Response.Messages);
+        }
+        else
+        {
+            ExecutorCompletedEvent? finalCompleted = null;
+            for (int i = events.Count - 1; i >= 0; i--)
+            {
+                if (events[i] is ExecutorCompletedEvent completed
+                    && !IsInternalExecutor(completed.ExecutorId)
+                    && completed.Data is AgentResponse or ChatMessage or string)
+                {
+                    finalCompleted = completed;
+                    break;
+                }
+            }
+
+            if (finalCompleted is null)
+            {
+                return null;
+            }
+
+            switch (finalCompleted.Data)
+            {
+                case AgentResponse ar:
+                    responseText = ar.Text;
+                    conversation.AddRange(ar.Messages);
+                    break;
+                case ChatMessage cm:
+                    responseText = cm.Text ?? string.Empty;
+                    conversation.Add(cm);
+                    break;
+                case string s:
+                    responseText = s;
+                    conversation.Add(new ChatMessage(ChatRole.Assistant, s));
+                    break;
+                default:
+                    // Unreachable — the for-loop above already constrains Data to one of the
+                    // three handled types. Throw if the contract drifts so the bug is visible
+                    // instead of silently dropping the overall item.
+                    throw new InvalidOperationException(
+                        "BuildOverallItem: unexpected ExecutorCompletedEvent.Data type " +
+                        $"'{finalCompleted.Data?.GetType().FullName ?? "null"}'. Expected " +
+                        $"{nameof(AgentResponse)}, {nameof(ChatMessage)}, or string.");
+            }
+        }
+
+        return new EvalItem(query, responseText, conversation)
+        {
+            Splitter = splitter,
+            ExpectedOutput = expectedOutput,
+        };
     }
 
     internal static Dictionary<string, List<EvalItem>> ExtractAgentData(

@@ -311,7 +311,7 @@ class TestSerializationWorkflowClasses:
             SwitchCaseEdgeGroupCase(condition=lambda x: x > 0, target_id="positive"),
             SwitchCaseEdgeGroupDefault(target_id="default"),
         ]
-        edge_group = SwitchCaseEdgeGroup(source_id="source", cases=cases)
+        edge_group = SwitchCaseEdgeGroup(source_id="source", cases=cases)  # type: ignore[arg-type]
 
         # Test to_dict
         data = edge_group.to_dict()
@@ -515,7 +515,7 @@ class TestSerializationWorkflowClasses:
             SwitchCaseEdgeGroupCase(condition=is_positive, target_id="positive"),
             SwitchCaseEdgeGroupDefault(target_id="default"),
         ]
-        edge_group = SwitchCaseEdgeGroup(source_id="source", cases=cases)
+        edge_group = SwitchCaseEdgeGroup(source_id="source", cases=cases)  # type: ignore[arg-type]
 
         # Test to_dict
         data = edge_group.to_dict()
@@ -799,3 +799,48 @@ def test_comprehensive_edge_groups_workflow_serialization() -> None:
     assert len(fan_in_groups[0]["edges"]) == 2, "FanInEdgeGroup should have 2 edges (from parallel_1 and parallel_2)"
     for single_group in single_groups:
         assert len(single_group["edges"]) == 1, "Each SingleEdgeGroup should have exactly 1 edge"
+
+
+def test_to_dict_preserves_compatibility_wire_keys_for_output_designation() -> None:
+    """to_dict() must emit the compatibility wire keys regardless of the Python kwarg names.
+
+    The Python API renamed ``output_executors`` -> ``output_from`` and
+    uses ``intermediate_output_from`` for intermediate selection, but the serialized
+    dict must keep the old keys so existing checkpoints stay readable. This is a
+    regression guard against accidental renames of the wire format.
+    """
+
+    class _Yielder(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            await ctx.yield_output(message)
+            await ctx.send_message(message)
+
+    class _Terminal(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            await ctx.yield_output(f"final: {message}")
+
+    start = _Yielder(id="start")
+    progress = _Yielder(id="progress")
+    final = _Terminal(id="final")
+
+    workflow = (
+        WorkflowBuilder(
+            start_executor=start,
+            output_from=[final],
+            intermediate_output_from=[progress],
+        )
+        .add_edge(start, progress)
+        .add_edge(progress, final)
+        .build()
+    )
+
+    d = workflow.to_dict()
+
+    assert "output_executors" in d, "wire key 'output_executors' must be preserved"
+    assert "intermediate_executors" in d, "wire key 'intermediate_executors' must be preserved"
+    assert "output_from" not in d, "new Python kwarg name must NOT leak into the wire format"
+    assert "intermediate_output_from" not in d, "new Python kwarg name must NOT leak into the wire format"
+    assert d["output_executors"] == ["final"]
+    assert d["intermediate_executors"] == ["progress"]

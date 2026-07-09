@@ -1,17 +1,21 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel.Primitives;
 using System.Diagnostics.CodeAnalysis;
-using System.Reflection;
+using System.Linq;
+using System.Runtime.CompilerServices;
 using Azure.AI.AgentServer.Responses;
 using Azure.Core;
-using Azure.Identity;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.Shared.DiagnosticIds;
-using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -19,7 +23,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// Extension methods for registering agent-framework agents as Foundry Hosted Agents
 /// using the Azure AI Responses Server SDK.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class FoundryHostingExtensions
 {
     /// <summary>
@@ -49,7 +53,8 @@ public static class FoundryHostingExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         services.AddResponsesServer();
-        services.TryAddSingleton<AgentSessionStore, InMemoryAgentSessionStore>();
+        services.AddHealthChecks();
+        services.TryAddSingleton<AgentSessionStore>(_ => FileSystemAgentSessionStore.CreateDefault());
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
         return services;
     }
@@ -76,7 +81,7 @@ public static class FoundryHostingExtensions
     /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="agent">The agent instance to register.</param>
-    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, an in-memory session store will be used.</param>
+    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, a file-system session store is used, rooted at <c>/.checkpoints</c> when running in a Foundry hosted environment and <c>{cwd}/.checkpoints</c> locally.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryResponses(this IServiceCollection services, AIAgent agent, AgentSessionStore? agentSessionStore = null)
     {
@@ -84,7 +89,8 @@ public static class FoundryHostingExtensions
         ArgumentNullException.ThrowIfNull(agent);
 
         services.AddResponsesServer();
-        agentSessionStore ??= new InMemoryAgentSessionStore();
+        services.AddHealthChecks();
+        agentSessionStore ??= FileSystemAgentSessionStore.CreateDefault();
 
         if (!string.IsNullOrWhiteSpace(agent.Name))
         {
@@ -109,40 +115,52 @@ public static class FoundryHostingExtensions
     /// <para>
     /// Each string in <paramref name="toolboxNames"/> is a toolbox name registered in the Foundry
     /// project. The proxy URL per toolbox is constructed as:
-    /// <c>{FOUNDRY_AGENT_TOOLSET_ENDPOINT}/{toolboxName}/mcp?api-version=2025-05-01-preview</c>
+    /// <c>{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/{toolboxName}/mcp?api-version=v1</c>
     /// </para>
     /// <para>
-    /// When <c>FOUNDRY_AGENT_TOOLSET_ENDPOINT</c> is absent, startup succeeds without error and
+    /// When <c>FOUNDRY_PROJECT_ENDPOINT</c> is absent, startup succeeds without error and
     /// no tools are loaded (the container remains healthy per spec §2).
     /// </para>
     /// <para>
     /// Example:
     /// <code>
-    /// builder.Services.AddFoundryToolboxes("my-toolbox", "another-toolbox");
+    /// builder.Services.AddFoundryToolboxes(credential, "my-toolbox", "another-toolbox");
     /// </code>
     /// </para>
     /// </remarks>
     /// <param name="services">The service collection.</param>
+    /// <param name="credential">The <see cref="TokenCredential"/> used to authenticate with the Foundry Toolboxes MCP proxy.</param>
     /// <param name="toolboxNames">Names of the Foundry toolboxes to connect to.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryToolboxes(
         this IServiceCollection services,
+        TokenCredential credential,
         params string[] toolboxNames)
-        => services.AddFoundryToolboxes(configureOptions: null, toolboxNames);
+        => services.AddFoundryToolboxes(credential, configureOptions: null, toolboxNames);
 
     /// <summary>
     /// Registers the Foundry Toolbox service with additional options configuration.
     /// </summary>
     /// <param name="services">The service collection.</param>
+    /// <param name="credential">The <see cref="TokenCredential"/> used to authenticate with the Foundry Toolboxes MCP proxy.</param>
     /// <param name="configureOptions">Callback to further configure <see cref="FoundryToolboxOptions"/> (e.g. set <see cref="FoundryToolboxOptions.StrictMode"/>).</param>
     /// <param name="toolboxNames">Names of the Foundry toolboxes to pre-register at startup.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryToolboxes(
         this IServiceCollection services,
+        TokenCredential credential,
         Action<FoundryToolboxOptions>? configureOptions,
         params string[] toolboxNames)
     {
         ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(credential);
+
+        if (services.Any(d => d.ServiceType == typeof(FoundryToolboxService)))
+        {
+            throw new InvalidOperationException(
+                $"{nameof(FoundryToolboxService)} is already registered. " +
+                $"Call {nameof(AddFoundryToolboxes)} only once per service collection.");
+        }
 
         services.Configure<FoundryToolboxOptions>(opt =>
         {
@@ -157,15 +175,38 @@ public static class FoundryHostingExtensions
             configureOptions?.Invoke(opt);
         });
 
-        // Register DefaultAzureCredential as the default TokenCredential if not already registered
-        services.TryAddSingleton<TokenCredential>(_ => new DefaultAzureCredential());
-
-        // Register FoundryToolboxService as a singleton so it can be injected into the handler
-        services.TryAddSingleton<FoundryToolboxService>();
-
-        // AddHostedService uses TryAddEnumerable internally, so calling AddFoundryToolboxes
-        // multiple times will not invoke StartAsync twice on the same singleton.
+        // Register FoundryToolboxService as a singleton, injecting the caller-provided credential
+        // directly rather than resolving TokenCredential from DI.
+        services.AddSingleton(sp => new FoundryToolboxService(
+            sp.GetRequiredService<IOptions<FoundryToolboxOptions>>(),
+            credential: credential,
+            sp.GetService<ILogger<FoundryToolboxService>>()));
         services.AddHostedService(sp => sp.GetRequiredService<FoundryToolboxService>());
+
+        // Register the toolbox health check on the same /readiness pipeline that
+        // MapFoundryResponses maps. This gates the Foundry hosted runtime's readiness
+        // probe (per container-image-spec.md §3.1) on the outcome of the pre-registered
+        // toolbox connections opened in FoundryToolboxService.StartAsync.
+        // AddCheck<T>(name, ...) does NOT dedupe by name, so guard against a host that
+        // already registered a health check with this name.
+        const string HealthCheckName = "foundry-toolbox";
+        services.AddHealthChecks();
+        services.Configure<HealthCheckServiceOptions>(opts =>
+        {
+            foreach (var existing in opts.Registrations)
+            {
+                if (string.Equals(existing.Name, HealthCheckName, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+
+            opts.Registrations.Add(new HealthCheckRegistration(
+                name: HealthCheckName,
+                factory: sp => ActivatorUtilities.CreateInstance<FoundryToolboxHealthCheck>(sp),
+                failureStatus: HealthStatus.Unhealthy,
+                tags: ["foundry", "toolbox", "readiness"]));
+        });
 
         return services;
     }
@@ -173,6 +214,30 @@ public static class FoundryHostingExtensions
     /// <summary>
     /// Maps the Responses API routes for the agent-framework handler to the endpoint routing pipeline.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Also maps the Foundry-required <c>GET /readiness</c> health probe to
+    /// <see cref="HealthCheckEndpointRouteBuilderExtensions.MapHealthChecks(IEndpointRouteBuilder, string)"/>
+    /// when no <c>/readiness</c> route is already registered. This makes the package
+    /// spec-compliant in the Foundry hosted runtime (which probes <c>/readiness</c>
+    /// before accepting any invocation per <c>container-image-spec.md</c> §2; without
+    /// it every request fails with HTTP 424 <c>session_not_ready</c>) regardless of the
+    /// host spine the developer chose:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description><b>Tier 1/2</b> (<c>AgentHost.CreateBuilder</c>) — the Core SDK
+    ///         already maps <c>/readiness</c>. The duplicate-route guard below skips
+    ///         re-mapping it.</description></item>
+    ///   <item><description><b>Tier 3</b> (<c>WebApplication.CreateBuilder</c> +
+    ///         <c>AddFoundryResponses</c> + <c>MapFoundryResponses</c>) — the Core SDK
+    ///         does NOT map it. This call covers the gap automatically.</description></item>
+    /// </list>
+    /// <para>
+    /// Developers can still opt out by registering their own <c>/readiness</c> route
+    /// before calling <c>MapFoundryResponses</c>; the existing route is detected and
+    /// preserved.
+    /// </para>
+    /// </remarks>
     /// <param name="endpoints">The endpoint route builder.</param>
     /// <param name="prefix">Optional route prefix (e.g., "/openai/v1"). Default: empty (routes at /responses).</param>
     /// <returns>The endpoint route builder for chaining.</returns>
@@ -180,13 +245,39 @@ public static class FoundryHostingExtensions
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         endpoints.MapResponsesServer(prefix);
+        MapReadinessIfMissing(endpoints);
         return endpoints;
     }
 
     /// <summary>
+    /// Maps <c>GET /readiness</c> to the AspNetCore HealthChecks pipeline only when no
+    /// route already serves that path. The duplicate guard scans
+    /// <see cref="EndpointDataSource"/> entries by route pattern, which catches both the
+    /// SDK-mapped <c>MapHealthChecks("/readiness")</c> path used by
+    /// <c>AgentHostBuilder</c> and any user-registered <c>app.MapGet("/readiness", ...)</c>
+    /// route. Idempotent across multiple <c>MapFoundryResponses</c> invocations.
+    /// </summary>
+    private static void MapReadinessIfMissing(IEndpointRouteBuilder endpoints)
+    {
+        const string ReadinessPath = "/readiness";
+
+        foreach (var dataSource in endpoints.DataSources)
+        {
+            foreach (var endpoint in dataSource.Endpoints)
+            {
+                if (endpoint is RouteEndpoint route &&
+                    string.Equals(route.RoutePattern.RawText, ReadinessPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+        }
+
+        endpoints.MapHealthChecks(ReadinessPath);
+    }
+
+    /// <summary>
     /// The ActivitySource name for the Responses hosting pipeline.
-    /// Matches the value previously exposed by <c>AgentHostTelemetry.ResponsesSourceName</c>
-    /// in <c>Azure.AI.AgentServer.Core</c>.
     /// </summary>
     private const string ResponsesSourceName = "Azure.AI.AgentServer.Responses";
 
@@ -209,84 +300,45 @@ public static class FoundryHostingExtensions
     }
 
     /// <summary>
-    /// Attempts to wrap the agent's underlying <see cref="ResponsesClient"/>
-    /// with a <see cref="UserAgentResponsesClient"/> so every outgoing Responses-API request
-    /// carries the hosted-agent <c>User-Agent</c> segment.
+    /// Registers the hosted-agent <c>User-Agent</c> supplement policy
+    /// (<see cref="HostedAgentUserAgentPolicy"/>) on the agent's underlying chat client via the
+    /// MEAI 10.5.1 <see cref="OpenAIRequestPolicies"/> hook so every outgoing OpenAI Responses
+    /// request carries the segment <c>foundry-hosting/agent-framework-dotnet/{version}</c>.
     /// </summary>
     /// <remarks>
     /// <para>
     /// Best-effort and idempotent. The method is a no-op when:
     /// <list type="bullet">
     /// <item><description><paramref name="agent"/> exposes no <see cref="IChatClient"/>;</description></item>
-    /// <item><description>the chat client is not backed by MEAI's internal <c>OpenAIResponsesChatClient</c> (e.g., a non-OpenAI provider or a custom impl);</description></item>
-    /// <item><description>the inner <see cref="ResponsesClient"/> is already a <see cref="UserAgentResponsesClient"/>.</description></item>
+    /// <item><description>the chat client is not OpenAI-backed (the <see cref="OpenAIRequestPolicies"/> service lookup returns <see langword="null"/>);</description></item>
+    /// <item><description>the policy was already registered on this client by a prior invocation (deduped via reflection on <c>OpenAIRequestPolicies._entries</c>).</description></item>
     /// </list>
     /// </para>
     /// <para>
-    /// Works for any <see cref="ResponsesClient"/>-derived inner client — both the Foundry-specific
-    /// <see cref="Azure.AI.Extensions.OpenAI.ProjectResponsesClient"/> and the native OpenAI
-    /// <see cref="ResponsesClient"/> obtained from <see cref="OpenAI.OpenAIClient"/>. The wrapper preserves
-    /// the inner client's pipeline (Transport, RetryPolicy, NetworkTimeout, OrganizationId / ProjectId /
-    /// UserAgentApplicationId, custom policies) because every override delegates to the inner instance.
-    /// </para>
-    /// <para>
-    /// Returns the same <paramref name="agent"/> instance unchanged. Mutation happens via
-    /// reflection on MEAI's private <c>_responseClient</c> field; the agent itself is not wrapped.
+    /// Returns the same <paramref name="agent"/> instance unchanged. The policy is installed
+    /// on the chat client; the agent itself is not wrapped.
     /// </para>
     /// </remarks>
     internal static AIAgent TryApplyUserAgent(AIAgent agent)
     {
         var chatClient = agent.GetService<IChatClient>();
-        if (chatClient is null)
+        if (chatClient?.GetService<OpenAIRequestPolicies>() is { } policies)
         {
-            return agent;
+            // Hosted agents are typically singletons resolved per request, so AddPolicy must be
+            // called at most once per OpenAIRequestPolicies instance to avoid unbounded growth of
+            // the policy list (each entry adds per-request CPU work even though the User-Agent
+            // value stays stable). Track which instances we have already wired with a
+            // ConditionalWeakTable keyed on the OpenAIRequestPolicies reference; the table holds
+            // weak references so it does not extend the lifetime of the chat client.
+            if (s_userAgentRegistrations.TryAdd(policies, s_boxedTrue))
+            {
+                policies.AddPolicy(HostedAgentUserAgentPolicy.Instance, PipelinePosition.PerCall);
+            }
         }
 
-        var meaiType = s_meaiResponsesChatClientType;
-        if (meaiType is null)
-        {
-            return agent;
-        }
-
-        var meaiInstance = chatClient.GetService(meaiType);
-        if (meaiInstance is null)
-        {
-            return agent;
-        }
-
-        var field = s_meaiResponseClientField;
-        if (field is null)
-        {
-            return agent;
-        }
-
-        var current = field.GetValue(meaiInstance) as ResponsesClient;
-        if (current is null or UserAgentResponsesClient)
-        {
-            return agent;
-        }
-
-        field.SetValue(meaiInstance, new UserAgentResponsesClient(current));
         return agent;
     }
 
-    /// <summary>
-    /// MEAI's internal <c>OpenAIResponsesChatClient</c> type, resolved once via reflection.
-    /// <see langword="null"/> if the type cannot be found (e.g., MEAI version drift).
-    /// </summary>
-    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
-        Justification = "MEAI's OpenAIResponsesChatClient is referenced through MicrosoftExtensionsAIResponsesExtensions and survives trimming.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2073:RequiresUnreferencedCode",
-        Justification = "MEAI's OpenAIResponsesChatClient is referenced through MicrosoftExtensionsAIResponsesExtensions and survives trimming.")]
-    private static readonly Type? s_meaiResponsesChatClientType =
-        typeof(MicrosoftExtensionsAIResponsesExtensions).Assembly.GetType("Microsoft.Extensions.AI.OpenAIResponsesChatClient");
-
-    /// <summary>
-    /// MEAI's internal <c>_responseClient</c> field on <c>OpenAIResponsesChatClient</c>,
-    /// resolved once via reflection. <see langword="null"/> if the field cannot be found.
-    /// </summary>
-    [UnconditionalSuppressMessage("Trimming", "IL2080:RequiresDynamicallyAccessedMembers",
-        Justification = "OpenAIResponsesChatClient and its private fields are preserved by the polyfill design; MEAI does the same reflection internally.")]
-    private static readonly FieldInfo? s_meaiResponseClientField =
-        s_meaiResponsesChatClientType?.GetField("_responseClient", BindingFlags.NonPublic | BindingFlags.Instance);
+    private static readonly object s_boxedTrue = new();
+    private static readonly ConditionalWeakTable<OpenAIRequestPolicies, object> s_userAgentRegistrations = new();
 }

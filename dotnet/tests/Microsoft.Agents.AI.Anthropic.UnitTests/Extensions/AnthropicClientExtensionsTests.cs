@@ -72,6 +72,8 @@ public sealed class AnthropicClientExtensionsTests
         public TimeSpan? Timeout { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
         public string? ApiKey { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
         public string? AuthToken { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
+        public string? WebhookKey { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
+        public IReadOnlyList<DelegatingHandler> Handlers { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
 
         public IAnthropicClientWithRawResponse WithRawResponse => throw new NotImplementedException();
 

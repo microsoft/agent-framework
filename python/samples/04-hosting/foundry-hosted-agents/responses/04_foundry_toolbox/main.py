@@ -5,7 +5,7 @@ import os
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
-from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework_foundry_hosting import FoundryToolbox, ResponsesHostServer
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
@@ -14,15 +14,21 @@ load_dotenv()
 
 
 async def main():
+    credential = DefaultAzureCredential()
+
+    # FoundryToolbox resolves the toolbox endpoint from the environment
+    # (TOOLBOX_ENDPOINT, or FOUNDRY_PROJECT_ENDPOINT + TOOLBOX_NAME), authenticates
+    # every request with the credential, and transparently forwards the platform
+    # per-request call-id to the toolbox. The hosting server enters the agent, which
+    # connects the toolbox on first use and closes it at shutdown.
+    toolbox = FoundryToolbox(credential)
+
+    # Create the chat client
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=DefaultAzureCredential(),
+        credential=credential,
     )
-
-    # Load the named toolbox from the Foundry project. Omitting `version`
-    # resolves the toolbox's current default version at runtime.
-    toolbox = await client.get_toolbox(os.environ["TOOLBOX_NAME"])
 
     agent = Agent(
         client=client,

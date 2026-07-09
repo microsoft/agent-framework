@@ -179,6 +179,35 @@ public sealed class FoundryEvalConverterTests
         Assert.Null(payload.Context);
     }
 
+    [Fact]
+    public void ConvertEvalItem_WithExpectedOutput_PopulatesGroundTruth()
+    {
+        // Arrange
+        var item = new EvalItem(query: "q", response: "r")
+        {
+            ExpectedOutput = "the golden answer",
+        };
+
+        // Act
+        var payload = FoundryEvalConverter.ConvertEvalItem(item);
+
+        // Assert
+        Assert.Equal("the golden answer", payload.GroundTruth);
+    }
+
+    [Fact]
+    public void ConvertEvalItem_WithoutExpectedOutput_OmitsGroundTruth()
+    {
+        // Arrange
+        var item = new EvalItem(query: "q", response: "r");
+
+        // Act
+        var payload = FoundryEvalConverter.ConvertEvalItem(item);
+
+        // Assert
+        Assert.Null(payload.GroundTruth);
+    }
+
     // ---------------------------------------------------------------
     // FoundryEvalConverter.BuildTestingCriteria tests
     // ---------------------------------------------------------------
@@ -240,6 +269,33 @@ public sealed class FoundryEvalConverterTests
     }
 
     [Fact]
+    public void BuildTestingCriteria_SimilarityEvaluator_IncludesGroundTruth()
+    {
+        // Act
+        var criteria = FoundryEvalConverter.BuildTestingCriteria(
+            ["similarity"], "gpt-4o-mini", includeDataMapping: true);
+
+        // Assert
+        Assert.Single(criteria);
+        Assert.Equal("builtin.similarity", criteria[0].EvaluatorName);
+        var mapping = criteria[0].DataMapping;
+        Assert.NotNull(mapping);
+        Assert.True(mapping.ContainsKey("ground_truth"));
+        Assert.Equal("{{item.ground_truth}}", mapping["ground_truth"]);
+    }
+
+    [Fact]
+    public void BuildTestingCriteria_NonGroundTruthEvaluator_OmitsGroundTruth()
+    {
+        var criteria = FoundryEvalConverter.BuildTestingCriteria(
+            ["relevance"], "gpt-4o-mini", includeDataMapping: true);
+
+        var mapping = criteria[0].DataMapping;
+        Assert.NotNull(mapping);
+        Assert.False(mapping.ContainsKey("ground_truth"));
+    }
+
+    [Fact]
     public void BuildTestingCriteria_WithoutDataMapping_OmitsMappingField()
     {
         var criteria = FoundryEvalConverter.BuildTestingCriteria(
@@ -247,6 +303,71 @@ public sealed class FoundryEvalConverterTests
 
         Assert.Single(criteria);
         Assert.Null(criteria[0].DataMapping);
+    }
+
+    [Fact]
+    public void BuildTestingCriteria_WithRubricRef_EmitsAzureAiEvaluatorWithVersion()
+    {
+        var rubric = new GeneratedEvaluatorRef("policy-rubric", Version: "3", DisplayName: "Policy");
+        var criteria = FoundryEvalConverter.BuildTestingCriteria(
+            [rubric], "gpt-4o-mini", includeDataMapping: true);
+
+        Assert.Single(criteria);
+        var entry = criteria[0];
+        Assert.Equal("azure_ai_evaluator", entry.Type);
+        Assert.Equal("Policy", entry.Name);
+        Assert.Equal("policy-rubric", entry.EvaluatorName);
+        Assert.Equal("3", entry.EvaluatorVersion);
+        Assert.Equal("gpt-4o-mini", entry.InitializationParameters.DeploymentName);
+
+        var mapping = entry.DataMapping;
+        Assert.NotNull(mapping);
+        Assert.Equal("{{item.query_messages}}", mapping["query"]);
+        Assert.Equal("{{item.response_messages}}", mapping["response"]);
+        Assert.False(mapping.ContainsKey("tool_definitions"));
+    }
+
+    [Fact]
+    public void BuildTestingCriteria_WithVersionlessRubricRef_OmitsVersionField()
+    {
+        var rubric = GeneratedEvaluatorRef.Latest("policy-rubric");
+        var criteria = FoundryEvalConverter.BuildTestingCriteria(
+            [rubric], "gpt-4o-mini", includeDataMapping: false);
+
+        Assert.Single(criteria);
+        var entry = criteria[0];
+        Assert.Equal("policy-rubric", entry.Name); // falls back to Name when DisplayName is null
+        Assert.Equal("policy-rubric", entry.EvaluatorName);
+        Assert.Null(entry.EvaluatorVersion);
+        Assert.Null(entry.DataMapping);
+    }
+
+    [Fact]
+    public void BuildTestingCriteria_RubricRefWithTools_IncludesToolDefinitions()
+    {
+        var rubric = new GeneratedEvaluatorRef("tool-aware-rubric", Version: "1");
+        var criteria = FoundryEvalConverter.BuildTestingCriteria(
+            [rubric], "gpt-4o-mini", includeDataMapping: true, includeToolDefinitions: true);
+
+        Assert.Single(criteria);
+        var mapping = criteria[0].DataMapping;
+        Assert.NotNull(mapping);
+        Assert.True(mapping.ContainsKey("tool_definitions"));
+        Assert.Equal("{{item.tool_definitions}}", mapping["tool_definitions"]);
+    }
+
+    [Fact]
+    public void BuildTestingCriteria_MixedSpecs_PreservesOrder()
+    {
+        var rubric = new GeneratedEvaluatorRef("policy-rubric", Version: "2");
+        var criteria = FoundryEvalConverter.BuildTestingCriteria(
+            ["relevance", rubric, "coherence"], "gpt-4o-mini", includeDataMapping: false);
+
+        Assert.Equal(3, criteria.Count);
+        Assert.Equal("builtin.relevance", criteria[0].EvaluatorName);
+        Assert.Equal("policy-rubric", criteria[1].EvaluatorName);
+        Assert.Equal("2", criteria[1].EvaluatorVersion);
+        Assert.Equal("builtin.coherence", criteria[2].EvaluatorName);
     }
 
     // ---------------------------------------------------------------
@@ -280,6 +401,71 @@ public sealed class FoundryEvalConverterTests
         var schema = FoundryEvalConverter.BuildItemSchema(hasTools: true);
 
         Assert.True(schema.Properties.ContainsKey("tool_definitions"));
+    }
+
+    [Fact]
+    public void BuildItemSchema_WithGroundTruth_IncludesGroundTruthProperty()
+    {
+        // Act
+        var schema = FoundryEvalConverter.BuildItemSchema(hasGroundTruth: true);
+
+        // Assert
+        Assert.True(schema.Properties.ContainsKey("ground_truth"));
+        Assert.Equal("string", schema.Properties["ground_truth"].Type);
+    }
+
+    [Fact]
+    public void BuildItemSchema_WithoutGroundTruth_OmitsGroundTruthProperty()
+    {
+        var schema = FoundryEvalConverter.BuildItemSchema();
+
+        Assert.False(schema.Properties.ContainsKey("ground_truth"));
+    }
+
+    // ---------------------------------------------------------------
+    // FoundryEvalConverter.FindMissingGroundTruthEvaluators tests
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void FindMissingGroundTruthEvaluators_NoGroundTruth_ReturnsSimilarity()
+    {
+        // Act
+        var missing = FoundryEvalConverter.FindMissingGroundTruthEvaluators(
+            ["similarity", "relevance"], hasGroundTruth: false);
+
+        // Assert
+        Assert.Single(missing);
+        Assert.Equal("similarity", missing[0]);
+    }
+
+    [Fact]
+    public void FindMissingGroundTruthEvaluators_HasGroundTruth_ReturnsEmpty()
+    {
+        var missing = FoundryEvalConverter.FindMissingGroundTruthEvaluators(
+            ["similarity"], hasGroundTruth: true);
+
+        Assert.Empty(missing);
+    }
+
+    [Fact]
+    public void FindMissingGroundTruthEvaluators_NoGroundTruthEvaluators_ReturnsEmpty()
+    {
+        var missing = FoundryEvalConverter.FindMissingGroundTruthEvaluators(
+            ["relevance", "coherence"], hasGroundTruth: false);
+
+        Assert.Empty(missing);
+    }
+
+    [Fact]
+    public void FindMissingGroundTruthEvaluators_IgnoresRubricRefs()
+    {
+        // Rubric refs are not ground-truth–dependent and must be skipped even when
+        // no items carry ExpectedOutput.
+        var rubric = new GeneratedEvaluatorRef("policy-rubric", Version: "1");
+        var missing = FoundryEvalConverter.FindMissingGroundTruthEvaluators(
+            [rubric, "relevance"], hasGroundTruth: false);
+
+        Assert.Empty(missing);
     }
 
     // ---------------------------------------------------------------

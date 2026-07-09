@@ -13,6 +13,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
+using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
@@ -89,18 +90,29 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
         await this.AssignAsync(this.AgentOutput?.Messages?.Path, agentResponse.Messages.ToTable(), context).ConfigureAwait(false);
 
         // Attempt to parse the last message as JSON and assign to the response object variable.
+        PropertyPath? responseObjectPath = this.AgentOutput?.ResponseObject?.Path;
         string? lastMessageText = agentResponse.Messages.LastOrDefault()?.Text;
-        if (!string.IsNullOrEmpty(lastMessageText))
+        if (responseObjectPath is not null && !string.IsNullOrEmpty(lastMessageText))
         {
+            FormulaValue? responseObjectValue = null;
             try
             {
                 using JsonDocument jsonDocument = JsonDocument.Parse(lastMessageText);
-                Dictionary<string, object?> objectProperties = jsonDocument.ParseRecord(VariableType.RecordType);
-                await this.AssignAsync(this.AgentOutput?.ResponseObject?.Path, objectProperties.ToFormula(), context).ConfigureAwait(false);
+                responseObjectValue = jsonDocument.ParseJsonValue(lastMessageText).ToFormula();
             }
             catch (JsonException)
             {
-                // Not valid json, skip assignment.
+                // Not valid JSON — skip assignment.
+            }
+            catch (DeclarativeWorkflowException)
+            {
+                // Valid JSON, but not convertible to a workflow value (e.g. a mixed-type or nested array).
+                // Output parsing is best-effort — skip assignment rather than fail the action.
+            }
+
+            if (responseObjectValue is not null)
+            {
+                await this.AssignAsync(responseObjectPath, responseObjectValue, context).ConfigureAwait(false);
             }
         }
 
@@ -192,13 +204,16 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
 
     private bool GetAutoSendValue()
     {
-        if (this.AgentOutput?.AutoSend is null)
+        // AzureAgentOutput.AutoSend is never null — it returns a literal-false default
+        // when the YAML omits the field. Use AutoSendIsDefaultValue to distinguish an
+        // explicit autoSend value from the implicit default, and treat the implicit
+        // default as autoSend = true (the historical behavior for actions that omit
+        // autoSend or have no output block at all).
+        if (this.AgentOutput is { AutoSendIsDefaultValue: false } output)
         {
-            return true;
+            return this.Evaluator.GetValue(output.AutoSend).Value;
         }
 
-        EvaluationResult<bool> autoSendResult = this.Evaluator.GetValue(this.AgentOutput.AutoSend);
-
-        return autoSendResult.Value;
+        return true;
     }
 }

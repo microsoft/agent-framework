@@ -18,7 +18,8 @@ from agent_framework import (  # Core chat primitives used to form LLM requests
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to turn a function into a workflow executor
 )
-from agent_framework.foundry import FoundryChatClient  # Thin client for Azure OpenAI chat models
+from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions  # Thin client for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from dotenv import load_dotenv
 from pydantic import BaseModel  # Structured outputs with validation
@@ -172,7 +173,7 @@ def create_spam_detection_agent() -> Agent:
             "and 'reason' (string)."
         ),
         name="spam_detection_agent",
-        default_options={"response_format": DetectionResultAgent},
+        default_options=OpenAIChatOptions[Any](response_format=DetectionResultAgent),
     )
 
 
@@ -186,7 +187,7 @@ def create_email_assistant_agent() -> Agent:
         ),
         instructions=("You are an email assistant that helps users draft responses to emails with professionalism."),
         name="email_assistant_agent",
-        default_options={"response_format": EmailResponse},
+        default_options=OpenAIChatOptions[Any](response_format=EmailResponse),
     )
 
 

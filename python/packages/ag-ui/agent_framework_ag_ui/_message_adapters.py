@@ -26,21 +26,85 @@ from ._utils import (
 logger = logging.getLogger(__name__)
 
 
-def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
+def _append_synthetic_tool_results(
+    sanitized: list[Message],
+    pending_tool_call_ids: list[str],
+    result: str,
+    *,
+    excluded_tool_call_ids: set[str] | None = None,
+) -> None:
+    excluded_tool_call_ids = excluded_tool_call_ids or set()
+    for pending_call_id in pending_tool_call_ids:
+        if pending_call_id in excluded_tool_call_ids:
+            logger.info("Not injecting synthetic tool result for non-abandoned call_id=%s", pending_call_id)
+            continue
+        logger.info("Injecting synthetic tool result for pending call_id=%s", pending_call_id)
+        sanitized.append(
+            Message(
+                role="tool",
+                contents=[
+                    Content.from_function_result(
+                        call_id=pending_call_id,
+                        result=result,
+                    )
+                ],
+            )
+        )
+
+
+def _ordered_unique_tool_call_ids(contents: list[Content]) -> list[str]:
+    tool_ids: list[str] = []
+    seen: set[str] = set()
+    for content in contents:
+        if content.type != "function_call" or not content.call_id:
+            continue
+        tool_id = str(content.call_id)
+        if tool_id in seen:
+            continue
+        tool_ids.append(tool_id)
+        seen.add(tool_id)
+    return tool_ids
+
+
+def _function_result_call_ids(messages: list[Message]) -> set[str]:
+    result_ids: set[str] = set()
+    for msg in messages:
+        for content in msg.contents or []:
+            if content.type == "function_result" and content.call_id:
+                result_ids.add(str(content.call_id))
+    return result_ids
+
+
+def _sanitize_tool_history(
+    messages: list[Message],
+    *,
+    protected_tool_call_ids: set[str] | None = None,
+) -> list[Message]:
     """Normalize tool ordering and inject synthetic results for AG-UI edge cases."""
     sanitized: list[Message] = []
-    pending_tool_call_ids: set[str] | None = None
+    pending_tool_call_ids: list[str] | None = None
     pending_confirm_changes_id: str | None = None
+    non_abandoned_tool_call_ids = set(protected_tool_call_ids or set()) | _function_result_call_ids(messages)
 
     for msg in messages:
         role_value = get_role_value(msg)
 
         if role_value == "assistant":
-            tool_ids = {
-                str(content.call_id)
-                for content in msg.contents or []
-                if content.type == "function_call" and content.call_id
-            }
+            if pending_tool_call_ids:
+                logger.info(
+                    "Assistant message arrived with %d pending tool calls - injecting synthetic results",
+                    len(pending_tool_call_ids),
+                )
+                _append_synthetic_tool_results(
+                    sanitized,
+                    pending_tool_call_ids,
+                    "Tool execution skipped - assistant continued before the tool result was available.",
+                    excluded_tool_call_ids=non_abandoned_tool_call_ids,
+                )
+                pending_tool_call_ids = None
+                pending_confirm_changes_id = None
+
+            tool_ids = _ordered_unique_tool_call_ids(msg.contents or [])
             confirm_changes_call = None
             for content in msg.contents or []:
                 if content.type == "function_call" and content.name == "confirm_changes":
@@ -67,7 +131,8 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
 
                 # Remove confirm_changes from tool_ids since we filtered it from the message
                 if confirm_changes_call.call_id:
-                    tool_ids.discard(str(confirm_changes_call.call_id))
+                    confirm_call_id = str(confirm_changes_call.call_id)
+                    tool_ids = [tool_id for tool_id in tool_ids if tool_id != confirm_call_id]
                 # Don't set pending_confirm_changes_id - we don't want a synthetic result
                 confirm_changes_call = None
             else:
@@ -92,7 +157,9 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                         approval_accepted = approval_accepted and bool(content.approved)
 
             if approval_call_ids and pending_tool_call_ids:
-                pending_tool_call_ids -= approval_call_ids
+                pending_tool_call_ids = [
+                    call_id for call_id in pending_tool_call_ids if call_id not in approval_call_ids
+                ]
                 logger.info(
                     f"function_approval_response content found for call_ids={sorted(approval_call_ids)} - "
                     "framework will handle execution"
@@ -111,20 +178,22 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                 )
                 sanitized.append(synthetic_result)
                 if pending_tool_call_ids:
-                    pending_tool_call_ids.discard(pending_confirm_changes_id)
+                    pending_tool_call_ids = [
+                        call_id for call_id in pending_tool_call_ids if call_id != pending_confirm_changes_id
+                    ]
                 pending_confirm_changes_id = None
 
             if pending_confirm_changes_id:
                 user_text = ""
                 for content in msg.contents or []:
                     if content.type == "text":
-                        user_text = content.text  # type: ignore[assignment]
+                        user_text = content.text
                         break
 
                 if not user_text:
                     continue
                 try:
-                    parsed = json.loads(user_text)  # type: ignore[arg-type]
+                    parsed = json.loads(user_text)
                     if "accepted" in parsed:
                         logger.info(
                             f"Injecting synthetic tool result for confirm_changes call_id={pending_confirm_changes_id}"
@@ -140,7 +209,9 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                         )
                         sanitized.append(synthetic_result)
                         if pending_tool_call_ids:
-                            pending_tool_call_ids.discard(pending_confirm_changes_id)
+                            pending_tool_call_ids = [
+                                call_id for call_id in pending_tool_call_ids if call_id != pending_confirm_changes_id
+                            ]
                         pending_confirm_changes_id = None
                         continue
                 except (json.JSONDecodeError, KeyError) as exc:
@@ -151,18 +222,12 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                     f"User message arrived with {len(pending_tool_call_ids)} pending tool calls - "
                     "injecting synthetic results"
                 )
-                for pending_call_id in pending_tool_call_ids:
-                    logger.info(f"Injecting synthetic tool result for pending call_id={pending_call_id}")
-                    synthetic_result = Message(
-                        role="tool",
-                        contents=[
-                            Content.from_function_result(
-                                call_id=pending_call_id,
-                                result="Tool execution skipped - user provided follow-up message",
-                            )
-                        ],
-                    )
-                    sanitized.append(synthetic_result)
+                _append_synthetic_tool_results(
+                    sanitized,
+                    pending_tool_call_ids,
+                    "Tool execution skipped - user provided follow-up message",
+                    excluded_tool_call_ids=non_abandoned_tool_call_ids,
+                )
                 pending_tool_call_ids = None
                 pending_confirm_changes_id = None
 
@@ -182,7 +247,9 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                         # Remove the call_id from pending since we now have its result.
                         # This prevents duplicate synthetic "skipped" results from being
                         # injected when a user message arrives later.
-                        pending_tool_call_ids.discard(call_id)
+                        pending_tool_call_ids = [
+                            pending_id for pending_id in pending_tool_call_ids if pending_id != call_id
+                        ]
                         if call_id == pending_confirm_changes_id:
                             pending_confirm_changes_id = None
                         break
@@ -190,9 +257,34 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                 sanitized.append(msg)
             continue
 
+        if pending_tool_call_ids:
+            logger.info(
+                "%s message arrived with %d pending tool calls - injecting synthetic results",
+                role_value,
+                len(pending_tool_call_ids),
+            )
+            _append_synthetic_tool_results(
+                sanitized,
+                pending_tool_call_ids,
+                "Tool execution skipped - conversation continued before the tool result was available.",
+                excluded_tool_call_ids=non_abandoned_tool_call_ids,
+            )
+
         sanitized.append(msg)
         pending_tool_call_ids = None
         pending_confirm_changes_id = None
+
+    if pending_tool_call_ids:
+        logger.info(
+            "History ended with %d pending tool calls - injecting synthetic results",
+            len(pending_tool_call_ids),
+        )
+        _append_synthetic_tool_results(
+            sanitized,
+            pending_tool_call_ids,
+            "Tool execution skipped - conversation ended before the tool result was available.",
+            excluded_tool_call_ids=non_abandoned_tool_call_ids,
+        )
 
     return sanitized
 
@@ -468,6 +560,7 @@ def normalize_agui_input_messages(
     messages: list[dict[str, Any]],
     *,
     sanitize_tool_history: bool = True,
+    protected_tool_call_ids: set[str] | None = None,
 ) -> tuple[list[Message], list[dict[str, Any]]]:
     """Normalize raw AG-UI messages into provider and snapshot formats.
 
@@ -476,10 +569,12 @@ def normalize_agui_input_messages(
         sanitize_tool_history: Apply agent-run specific tool history repair logic.
             Keep enabled for standard agent runs; disable for native workflow runs
             where pending-request responses must come explicitly from interrupt resume.
+        protected_tool_call_ids: Server-owned tool calls that are still eligible
+            to complete and must not receive synthetic skipped results.
     """
     provider_messages = agui_messages_to_agent_framework(messages)
     if sanitize_tool_history:
-        provider_messages = _sanitize_tool_history(provider_messages)
+        provider_messages = _sanitize_tool_history(provider_messages, protected_tool_call_ids=protected_tool_call_ids)
     provider_messages = _deduplicate_messages(provider_messages)
     snapshot_messages = agui_messages_to_snapshot_format(messages)
     return provider_messages, snapshot_messages
@@ -843,14 +938,14 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                 )
                 approval_contents.append(approval_response)
 
-            chat_msg = Message(role=role, contents=approval_contents)  # type: ignore[call-overload]
+            chat_msg = Message(role=role, contents=approval_contents)
         else:
             # Regular message content (text or multimodal)
             content = msg.get("content", "")
             converted_contents = _convert_agui_content_to_framework(content)
             if not converted_contents:
                 converted_contents = [Content.from_text(text="")]
-            chat_msg = Message(role=role, contents=converted_contents)  # type: ignore[call-overload]
+            chat_msg = Message(role=role, contents=converted_contents)
 
         if "id" in msg:
             chat_msg.message_id = msg["id"]
@@ -894,7 +989,7 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
             continue
 
         # Convert Message to AG-UI format
-        role_value: str = msg.role if hasattr(msg.role, "value") else msg.role  # type: ignore[assignment]
+        role_value: str = msg.role if hasattr(msg.role, "value") else msg.role
         role = FRAMEWORK_TO_AGUI_ROLE.get(role_value, "user")
 
         content_text = ""

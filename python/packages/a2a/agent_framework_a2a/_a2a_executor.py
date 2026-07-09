@@ -1,16 +1,18 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import base64
 import logging
+import uuid
 from asyncio import CancelledError
 from collections.abc import Mapping
 from functools import partial
 from typing import Any
 
+from a2a.helpers import new_task_from_user_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.types import FilePart, FileWithBytes, FileWithUri, Part, TaskState, TextPart
-from a2a.utils import new_task
+from a2a.types import Part, TaskState
 from agent_framework import (
     AgentResponseUpdate,
     AgentSession,
@@ -19,7 +21,7 @@ from agent_framework import (
 )
 from typing_extensions import override
 
-from agent_framework_a2a._utils import get_uri_data
+from ._utils import get_uri_data
 
 logger = logging.getLogger("agent_framework.a2a")
 
@@ -39,21 +41,24 @@ class A2AExecutor(AgentExecutor):
     Example:
         .. code-block:: python
 
-            from a2a.server.apps import A2AStarletteApplication
             from a2a.server.request_handlers import DefaultRequestHandler
+            from a2a.server.routes import create_jsonrpc_routes, create_agent_card_routes
             from a2a.server.tasks import InMemoryTaskStore
-            from a2a.types import AgentCapabilities, AgentCard
+            from a2a.types import AgentCapabilities, AgentCard, AgentInterface
             from agent_framework.a2a import A2AExecutor
             from agent_framework.openai import OpenAIResponsesClient
+            from starlette.applications import Starlette
 
             public_agent_card = AgentCard(
                 name="Food Agent",
                 description="A simple agent that provides food-related information.",
-                url="http://localhost:9999/",
                 version="1.0.0",
-                defaultInputModes=["text"],
-                defaultOutputModes=["text"],
+                default_input_modes=["text"],
+                default_output_modes=["text"],
                 capabilities=AgentCapabilities(streaming=True),
+                supported_interfaces=[
+                    AgentInterface(url="http://localhost:9999/", protocol_binding="JSONRPC"),
+                ],
                 skills=[],
             )
 
@@ -68,12 +73,15 @@ class A2AExecutor(AgentExecutor):
             request_handler = DefaultRequestHandler(
                 agent_executor=A2AExecutor(agent, stream=True, run_kwargs={"client_kwargs": {"max_tokens": 500}}),
                 task_store=InMemoryTaskStore(),
+                agent_card=public_agent_card,
             )
 
-            server = A2AStarletteApplication(
-                agent_card=public_agent_card,
-                http_handler=request_handler,
-            ).build()
+            app = Starlette(
+                routes=[
+                    *create_agent_card_routes(public_agent_card),
+                    *create_jsonrpc_routes(request_handler, "/"),
+                ],
+            )
 
     Args:
         agent: The AI agent to execute.
@@ -143,7 +151,7 @@ class A2AExecutor(AgentExecutor):
         task = context.current_task
 
         if not task:
-            task = new_task(context.message)
+            task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
 
         updater = TaskUpdater(event_queue, task.id, context.context_id)
@@ -162,22 +170,30 @@ class A2AExecutor(AgentExecutor):
             # Mark as complete
             await updater.complete()
         except CancelledError:
-            await updater.update_status(state=TaskState.canceled, final=True)
+            await updater.update_status(state=TaskState.TASK_STATE_CANCELED)
         except Exception as e:
             logger.exception("A2AExecutor encountered an error during execution.", exc_info=e)
             await updater.update_status(
-                state=TaskState.failed,
-                final=True,
-                message=updater.new_agent_message([Part(root=TextPart(text=str(e)))]),
+                state=TaskState.TASK_STATE_FAILED,
+                message=updater.new_agent_message([Part(text=str(e))]),
             )
 
     async def _run_stream(self, query: Any, session: AgentSession, updater: TaskUpdater) -> None:
         """Run the agent in streaming mode and publish updates to the task updater."""
         response_stream = self._agent.run(query, session=session, stream=True, **self._run_kwargs)
         streamed_artifact_ids: set[str] = set()
+        # Generate a stable artifact ID for the entire stream so all chunks share the same ID.
+        # This ensures clients can coalesce streaming tokens into a single artifact/message
+        # per the A2A spec (TaskArtifactUpdateEvent with append=True on same artifactId).
+        default_artifact_id = str(uuid.uuid4())
         await (
             response_stream.with_transform_hook(
-                partial(self.handle_events, updater=updater, streamed_artifact_ids=streamed_artifact_ids)
+                partial(
+                    self.handle_events,
+                    updater=updater,
+                    streamed_artifact_ids=streamed_artifact_ids,
+                    default_artifact_id=default_artifact_id,
+                )
             )
         ).get_final_response()
 
@@ -193,7 +209,11 @@ class A2AExecutor(AgentExecutor):
             await self.handle_events(message, updater)
 
     async def handle_events(
-        self, item: Message | AgentResponseUpdate, updater: TaskUpdater, streamed_artifact_ids: set[str] | None = None
+        self,
+        item: Message | AgentResponseUpdate,
+        updater: TaskUpdater,
+        streamed_artifact_ids: set[str] | None = None,
+        default_artifact_id: str | None = None,
     ) -> None:
         """Convert agent response items (Messages or Updates) to A2A protocol events.
 
@@ -207,7 +227,10 @@ class A2AExecutor(AgentExecutor):
             item: The agent response item (Message or AgentResponseUpdate) to process.
             updater: The task updater to publish events to.
             streamed_artifact_ids: A set of artifact IDs that have already been streamed.
-                Used to prevent duplicate updates for the same artifact.
+                Used to track which artifacts need append=True on subsequent chunks.
+            default_artifact_id: A stable artifact ID to use when the item does not provide one.
+                This ensures all streaming chunks for a single response share the same artifact ID,
+                allowing clients to coalesce them into a single message.
 
         Example:
             .. code-block:: python
@@ -218,12 +241,13 @@ class A2AExecutor(AgentExecutor):
                         item: Message | AgentResponseUpdate,
                         updater: TaskUpdater,
                         streamed_artifact_ids: set[str] | None = None,
+                        default_artifact_id: str | None = None,
                     ) -> None:
                         # Custom logic to transform item contents
                         if item.role == "assistant" and item.contents:
-                            parts = [Part(root=TextPart(text=f"Custom: {item.contents[0].text}"))]
+                            parts = [Part(text=f"Custom: {item.contents[0].text}")]
                             await updater.update_status(
-                                state=TaskState.working,
+                                state=TaskState.TASK_STATE_WORKING,
                                 message=updater.new_agent_message(parts=parts),
                             )
                         else:
@@ -242,34 +266,35 @@ class A2AExecutor(AgentExecutor):
 
         for content in contents:
             if content.type == "text" and content.text:
-                parts.append(Part(root=TextPart(text=content.text)))
+                parts.append(Part(text=content.text))
             elif content.type == "data" and content.uri:
                 base64_str = get_uri_data(content.uri)
-                parts.append(Part(root=FilePart(file=FileWithBytes(bytes=base64_str, mime_type=content.media_type))))
+                parts.append(Part(raw=base64.b64decode(base64_str), media_type=content.media_type or ""))
             elif content.type == "uri" and content.uri:
-                parts.append(Part(root=FilePart(file=FileWithUri(uri=content.uri, mime_type=content.media_type))))
+                parts.append(Part(url=content.uri, media_type=content.media_type or ""))
             else:
                 # Silently skip unsupported content types
                 logger.warning("A2AExecutor does not yet support content type: %s. Omitted.", content.type)
 
         if parts:
             if isinstance(item, AgentResponseUpdate):
+                # Resolve artifact ID: use item's message_id if available, otherwise fall back
+                # to the stable default_artifact_id so all streaming chunks share the same ID.
+                artifact_id = item.message_id or default_artifact_id
                 # For streaming updates, we send TaskArtifactUpdateEvent via add_artifact
                 await updater.add_artifact(
                     parts=parts,
-                    artifact_id=item.message_id,
+                    artifact_id=artifact_id,
                     metadata=metadata,
                     append=(
-                        True
-                        if streamed_artifact_ids is not None and item.message_id in (streamed_artifact_ids or set())
-                        else None
+                        True if streamed_artifact_ids is not None and artifact_id in streamed_artifact_ids else None
                     ),
                 )
-                if item.message_id and streamed_artifact_ids is not None:
-                    streamed_artifact_ids.add(item.message_id)
+                if artifact_id and streamed_artifact_ids is not None:
+                    streamed_artifact_ids.add(artifact_id)
             else:
                 # For final messages, we send TaskStatusUpdateEvent with 'working' state
                 await updater.update_status(
-                    state=TaskState.working,
+                    state=TaskState.TASK_STATE_WORKING,
                     message=updater.new_agent_message(parts=parts, metadata=metadata),
                 )

@@ -21,25 +21,37 @@ This agent uses four tools:
 1. **Get Current Working Directory Tool (`get_cwd`)** – Returns the current working directory of the agent host process.
 2. **List Files Tool (`list_files`)** – Lists the files in a specified directory.
 3. **Read File Tool (`read_file`)** – Reads the contents of a specified file.
-4. **Code Interpreter Tool (`code_interpreter`)** – Allows the agent to execute Python code in a safe.
+4. **Code Interpreter Tool (`code_interpreter`)** – Allows the agent to execute Python code in a safe sandboxed environment.
+5. **Web Search Tool (`web_search`)** – Allows the agent to perform web searches using the Bing Search API.
 
-> In this sample, the filesystem tools are function tools defined in Python using the `@tool` decorator from the Agent Framework. The code interpreter tool is a managed tool provided by [Foundry Toolbox](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox). Learn more about foundry toolbox integration with hosted agents with this [sample](../04_foundry_toolbox/).
+> In this sample, the filesystem tools are function tools defined in Python using the `@tool` decorator from the Agent Framework. The code interpreter tool and web search tool are managed tools provided by [Foundry Toolbox](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox). Learn more about foundry toolbox integration with hosted agents with this [sample](../04_foundry_toolbox/).
 
 ## Running the Agent Host
 
 Follow the instructions in the [Running the Agent Host Locally](../../README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.
 
-An extra environment variable `TOOLBOX_NAME` must be set to the name of the Foundry Toolbox that the agent should load at runtime. This allows the agent host to dynamically retrieve the correct toolbox from Foundry when it starts. Run the following:
+An extra environment variable must be set to point to the toolbox MCP endpoint. You can provide it in one of two ways:
+
+**Option A – Set `FOUNDRY_TOOLBOX_ENDPOINT` directly** (recommended for local development):
 
 ```bash
-export TOOLBOX_NAME="<your-toolbox-name>"
+export FOUNDRY_TOOLBOX_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/<name>/mcp?api-version=v1"
 ```
 
 Or in PowerShell:
 
 ```powershell
-$env:TOOLBOX_NAME="<your-toolbox-name>"
+$env:FOUNDRY_TOOLBOX_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/<name>/mcp?api-version=v1"
 ```
+
+**Option B – Set `TOOLBOX_NAME`** (used automatically by the Foundry hosting scaffolding after `azd provision`):
+
+The agent derives the endpoint at runtime as:
+```
+{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/{TOOLBOX_NAME}/mcp?api-version=v1
+```
+
+When deployed via `azd provision`, the scaffolding injects `TOOLBOX_NAME=agent-tools` and `FOUNDRY_PROJECT_ENDPOINT` automatically from the provisioned resources declared in [`agent.manifest.yaml`](agent.manifest.yaml).
 
 ## Interacting with the agent
 

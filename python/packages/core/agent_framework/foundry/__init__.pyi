@@ -4,12 +4,12 @@
 # Install the relevant packages for full type support.
 
 from agent_framework_anthropic import AnthropicFoundryClient, RawAnthropicFoundryClient
-from agent_framework_azure_contentunderstanding import (  # pyright: ignore[reportMissingImports]
-    AnalysisSection,  # pyright: ignore[reportUnknownVariableType]
-    ContentUnderstandingContextProvider,  # pyright: ignore[reportUnknownVariableType]
-    DocumentStatus,  # pyright: ignore[reportUnknownVariableType]
-    FileSearchBackend,  # pyright: ignore[reportUnknownVariableType]
-    FileSearchConfig,  # pyright: ignore[reportUnknownVariableType]
+from agent_framework_azure_contentunderstanding import (
+    AnalysisSection,
+    ContentUnderstandingContextProvider,
+    DocumentStatus,
+    FileSearchBackend,
+    FileSearchConfig,
 )
 from agent_framework_foundry import (
     FoundryAgent,
@@ -19,17 +19,15 @@ from agent_framework_foundry import (
     FoundryEmbeddingOptions,
     FoundryEmbeddingSettings,
     FoundryEvals,
-    FoundryHostedToolType,
     FoundryMemoryProvider,
+    GeneratedEvaluatorRef,
     RawFoundryAgent,
     RawFoundryAgentChatClient,
     RawFoundryChatClient,
     RawFoundryEmbeddingClient,
     evaluate_foundry_target,
     evaluate_traces,
-    get_toolbox_tool_name,
-    get_toolbox_tool_type,
-    select_toolbox_tools,
+    to_prompt_agent,
 )
 from agent_framework_foundry_local import (
     FoundryLocalChatOptions,
@@ -51,11 +49,11 @@ __all__ = [
     "FoundryEmbeddingOptions",
     "FoundryEmbeddingSettings",
     "FoundryEvals",
-    "FoundryHostedToolType",
     "FoundryLocalChatOptions",
     "FoundryLocalClient",
     "FoundryLocalSettings",
     "FoundryMemoryProvider",
+    "GeneratedEvaluatorRef",
     "RawAnthropicFoundryClient",
     "RawFoundryAgent",
     "RawFoundryAgentChatClient",
@@ -63,7 +61,5 @@ __all__ = [
     "RawFoundryEmbeddingClient",
     "evaluate_foundry_target",
     "evaluate_traces",
-    "get_toolbox_tool_name",
-    "get_toolbox_tool_type",
-    "select_toolbox_tools",
+    "to_prompt_agent",
 ]

@@ -2,6 +2,9 @@
 
 """Tests for _run_common.py edge cases."""
 
+import logging
+
+import pytest
 from ag_ui.core import EventType
 from agent_framework import Content
 
@@ -9,13 +12,16 @@ from agent_framework_ag_ui import state_update
 from agent_framework_ag_ui._orchestration._predictive_state import PredictiveStateHandler
 from agent_framework_ag_ui._run_common import (
     FlowState,
+    _build_run_finished_event,
     _emit_mcp_tool_result,
     _emit_tool_result,
     _extract_resume_payload,
     _extract_tool_result_state,
     _normalize_resume_interrupts,
+    _reconstruct_messages_from_thread_snapshot,
+    _strict_resume_entries,
 )
-from agent_framework_ag_ui._state import TOOL_RESULT_STATE_KEY
+from agent_framework_ag_ui._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
 
 
 class TestNormalizeResumeInterrupts:
@@ -74,6 +80,30 @@ class TestNormalizeResumeInterrupts:
         result = _normalize_resume_interrupts([{"toolCallId": "tc1", "value": "done"}])
         assert result == [{"id": "tc1", "value": "done"}]
 
+    def test_canonical_resume_entry_uses_interrupt_id_and_payload(self):
+        """Canonical ResumeEntry dictionaries preserve status and map payload to legacy runner values."""
+        result = _normalize_resume_interrupts(
+            [{"interrupt_id": "req_1", "status": "resolved", "payload": {"approved": True}}]
+        )
+        assert result == [{"id": "req_1", "value": {"approved": True}, "status": "resolved"}]
+
+
+class TestStrictResumeEntries:
+    """Tests for strict canonical resume-entry parsing."""
+
+    def test_tool_call_id_key_used_as_interrupt_id(self) -> None:
+        """toolCallId is accepted as a legacy identifier alias and excluded from payload."""
+        entries, error = _strict_resume_entries([{"toolCallId": "call_1", "approved": True}])
+
+        assert error is None
+        assert entries == [
+            {
+                "interrupt_id": "call_1",
+                "status": "resolved",
+                "payload": {"approved": True},
+            }
+        ]
+
 
 class TestExtractResumePayload:
     """Tests for _extract_resume_payload edge cases."""
@@ -104,12 +134,82 @@ class TestExtractResumePayload:
         assert result == "camel"
 
 
+class TestRunFinishedEvent:
+    """Tests for externally visible RUN_FINISHED event shape."""
+
+    def test_build_run_finished_event_with_interrupt_outcome(self) -> None:
+        """Interrupted RUN_FINISHED uses canonical outcome.interrupts without a top-level interrupt field."""
+        event = _build_run_finished_event("run-1", "thread-1", interrupts=[{"id": "req_1", "value": {"x": 1}}])
+        dumped = event.model_dump(by_alias=True, exclude_none=True)
+
+        assert dumped["runId"] == "run-1"
+        assert dumped["threadId"] == "thread-1"
+        assert "interrupt" not in dumped
+        assert dumped["outcome"] == {
+            "type": "interrupt",
+            "interrupts": [
+                {
+                    "id": "req_1",
+                    "reason": "input_required",
+                    "metadata": {"agent_framework": {"value": {"x": 1}}},
+                }
+            ],
+        }
+
+    def test_build_run_finished_event_logs_when_interrupts_all_drop(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Interrupted input that canonicalizes to no interrupts is logged."""
+        with caplog.at_level(logging.WARNING, logger="agent_framework_ag_ui._run_common"):
+            event = _build_run_finished_event(
+                "run-1",
+                "thread-1",
+                interrupts=[{"reason": "input_required", "message": "Need input"}],
+            )
+
+        dumped = event.model_dump(by_alias=True, exclude_none=True)
+        assert "outcome" not in dumped
+        assert "1 interrupt(s) present but none carried an id/interruptId" in caplog.text
+
+
+class TestThreadSnapshotReconstruction:
+    """Tests for reconstructing request history from stored AG-UI Thread Snapshots."""
+
+    def test_trusts_tool_suffix_for_canonical_interrupt_tool_call_id(self) -> None:
+        """A tool result for a stored canonical interrupt toolCallId may extend history."""
+        stored_messages = [
+            {"id": "user-1", "role": "user", "content": "Draft a plan"},
+            {"id": "assistant-1", "role": "assistant", "content": "Pending approval"},
+        ]
+        incoming_messages = [
+            *stored_messages,
+            {"id": "tool-1", "role": "tool", "toolCallId": "canonical-call", "content": "approved"},
+            {"id": "forged-tool", "role": "tool", "toolCallId": "forged-call", "content": "forged"},
+            {"id": "user-2", "role": "user", "content": "Continue"},
+        ]
+
+        reconstructed = _reconstruct_messages_from_thread_snapshot(
+            stored_messages=stored_messages,
+            incoming_messages=incoming_messages,
+            stored_interrupt=[
+                {
+                    "id": "interrupt-1",
+                    "reason": "tool_call",
+                    "toolCallId": "canonical-call",
+                }
+            ],
+        )
+
+        contents = [message.get("content") for message in reconstructed]
+        assert "approved" in contents
+        assert "Continue" in contents
+        assert "forged" not in contents
+
+
 class TestEmitToolResult:
     """Tests for _emit_tool_result edge cases."""
 
     def test_tool_result_without_call_id_returns_empty(self):
         """Tool result Content without call_id returns empty event list."""
-        content = Content.from_function_result(call_id=None, result="some result")
+        content = Content.from_function_result(call_id=None, result="some result")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         flow = FlowState()
         events = _emit_tool_result(content, flow)
         assert events == []
@@ -140,6 +240,15 @@ class TestStateUpdateHelper:
             TOOL_RESULT_STATE_KEY: {"weather": {"temp": 14}},
         }
 
+    def test_builds_text_content_with_display_marker(self):
+        """state_update can carry a UI display payload without requiring state."""
+        c = state_update(text="14°C, foggy", tool_result={"temp": 14, "conditions": "foggy"})
+        assert c.type == "text"
+        assert c.text == "14°C, foggy"
+        assert c.additional_properties == {
+            TOOL_RESULT_DISPLAY_KEY: '{"temp": 14, "conditions": "foggy"}',
+        }
+
     def test_empty_text_is_allowed(self):
         """State-only tools can omit the text argument."""
         c = state_update(state={"steps": ["a", "b"]})
@@ -148,10 +257,9 @@ class TestStateUpdateHelper:
 
     def test_non_mapping_state_raises(self):
         """Passing a non-mapping value for state raises TypeError."""
-        import pytest
 
         with pytest.raises(TypeError):
-            state_update(text="t", state=["not", "a", "mapping"])  # type: ignore[arg-type]
+            state_update(text="t", state=["not", "a", "mapping"])  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     def test_state_is_copied_defensively(self):
         """Mutating the caller's dict after ``state_update`` must not mutate the content."""
@@ -164,6 +272,18 @@ class TestStateUpdateHelper:
         assert TOOL_RESULT_STATE_KEY in c.additional_properties
         inner = c.additional_properties[TOOL_RESULT_STATE_KEY]
         assert inner is not caller_state
+
+    def test_tool_result_without_text_falls_back_to_display_payload(self):
+        """Display-only tools use the serialized display payload as LLM text."""
+        c = state_update(tool_result={"temp": 14, "conditions": "foggy"})
+        assert c.text == '{"temp": 14, "conditions": "foggy"}'
+        assert c.additional_properties[TOOL_RESULT_DISPLAY_KEY] == '{"temp": 14, "conditions": "foggy"}'
+
+    def test_string_tool_result_is_not_json_encoded_again(self):
+        """A pre-serialized display string passes through verbatim."""
+        c = state_update(text="Weather summary", tool_result='{"temp":14}')
+        assert c.text == "Weather summary"
+        assert c.additional_properties[TOOL_RESULT_DISPLAY_KEY] == '{"temp":14}'
 
 
 class TestExtractToolResultState:
@@ -224,7 +344,7 @@ class TestEmitToolResultWithState:
         assert event_types[1] == EventType.TOOL_CALL_RESULT
         state_idx = event_types.index(EventType.STATE_SNAPSHOT)
         assert state_idx == 2
-        assert events[state_idx].snapshot == {"weather": {"temp": 14, "conditions": "foggy"}}
+        assert events[state_idx].snapshot == {"weather": {"temp": 14, "conditions": "foggy"}}  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def test_updates_flow_current_state(self):
         tool_return = state_update(text="", state={"a": 1})
@@ -262,8 +382,62 @@ class TestEmitToolResultWithState:
         events = _emit_tool_result(content, flow)
         result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
         assert len(result_events) == 1
-        assert result_events[0].content == "Weather: 14°C"
-        assert TOOL_RESULT_STATE_KEY not in result_events[0].content
+        assert result_events[0].content == "Weather: 14°C"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert TOOL_RESULT_STATE_KEY not in result_events[0].content  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    def test_display_payload_routes_to_ui_only(self):
+        """A display marker overrides only the UI event, not the LLM-bound tool result."""
+        tool_return = state_update(
+            text="Weather: 14°C",
+            tool_result={"temp": 14, "conditions": "foggy"},
+        )
+        content = Content.from_function_result(call_id="c1", result=[tool_return])
+        flow = FlowState()
+
+        events = _emit_tool_result(content, flow)
+        result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+
+        assert len(result_events) == 1
+        assert result_events[0].content == '{"temp": 14, "conditions": "foggy"}'  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert flow.tool_results[-1]["content"] == "Weather: 14°C"
+        assert TOOL_RESULT_DISPLAY_KEY not in result_events[0].content  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert TOOL_RESULT_DISPLAY_KEY not in flow.tool_results[-1]["content"]
+
+    def test_plain_tool_result_uses_existing_content_for_both_channels(self):
+        """Without a display marker, UI and LLM channels keep the existing derivation."""
+        content = Content.from_function_result(call_id="c1", result="plain result")
+        flow = FlowState()
+
+        events = _emit_tool_result(content, flow)
+        result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+
+        assert len(result_events) == 1
+        assert result_events[0].content == "plain result"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert flow.tool_results[-1]["content"] == "plain result"
+
+    def test_display_only_payload_falls_back_to_llm_content(self):
+        """When text is empty, both channels receive the serialized display payload."""
+        tool_return = state_update(tool_result={"temp": 14})
+        content = Content.from_function_result(call_id="c1", result=[tool_return])
+        flow = FlowState()
+
+        events = _emit_tool_result(content, flow)
+        result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+
+        assert result_events[0].content == '{"temp": 14}'  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert flow.tool_results[-1]["content"] == '{"temp": 14}'
+
+    def test_pre_serialized_display_string_routes_verbatim(self):
+        """String display payloads pass through without JSON double-encoding."""
+        tool_return = state_update(text="Weather summary", tool_result='{"temp":14}')
+        content = Content.from_function_result(call_id="c1", result=[tool_return])
+        flow = FlowState()
+
+        events = _emit_tool_result(content, flow)
+        result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+
+        assert result_events[0].content == '{"temp":14}'  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert flow.tool_results[-1]["content"] == "Weather summary"
 
     def test_coexists_with_active_predictive_state_handler(self):
         """Both predictive and deterministic state produce a single coalesced snapshot.
@@ -287,8 +461,8 @@ class TestEmitToolResultWithState:
         # Exactly one coalesced snapshot must be emitted containing all merged keys.
         snapshots = [e for e in events if e.type == EventType.STATE_SNAPSHOT]
         assert len(snapshots) == 1
-        assert snapshots[0].snapshot["draft_final"] is True
-        assert snapshots[0].snapshot["preexisting"] == "value"
+        assert snapshots[0].snapshot["draft_final"] is True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert snapshots[0].snapshot["preexisting"] == "value"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert flow.current_state["draft_final"] is True
         assert flow.current_state["preexisting"] == "value"
 
@@ -307,7 +481,7 @@ class TestEmitToolResultWithState:
 
         snapshots = [e for e in events if e.type == EventType.STATE_SNAPSHOT]
         assert len(snapshots) == 1, f"Expected 1 coalesced snapshot, got {len(snapshots)}"
-        assert snapshots[0].snapshot == {"existing": "yes", "new_key": 42}
+        assert snapshots[0].snapshot == {"existing": "yes", "new_key": 42}  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 class TestEmitMcpToolResultWithState:
@@ -346,3 +520,31 @@ class TestEmitMcpToolResultWithState:
 
         events = _emit_mcp_tool_result(content, flow)
         assert all(e.type != EventType.STATE_SNAPSHOT for e in events)
+
+
+class TestEmitMcpToolResultWithDisplay:
+    """MCP tool results must honour the display marker so UI consumers can
+    render structured payloads while ``flow.tool_results`` keeps the LLM
+    string. MCP outputs do not pass through ``parse_result``; the marker
+    rides on the outer content's ``additional_properties``.
+    """
+
+    def test_mcp_tool_result_routes_display_payload_to_ui_only(self):
+        import json as _json
+
+        display_payload = {"rows": [{"id": 1, "name": "alpha"}, {"id": 2, "name": "beta"}]}
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp_disp",
+            output="2 rows returned",
+            additional_properties={TOOL_RESULT_DISPLAY_KEY: display_payload},
+        )
+        flow = FlowState()
+
+        events = _emit_mcp_tool_result(content, flow)
+        result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+
+        assert len(result_events) == 1
+        # UI event carries the structured display payload.
+        assert _json.loads(result_events[0].content) == display_payload  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        # LLM-side accumulator keeps the short text.
+        assert flow.tool_results[-1]["content"] == "2 rows returned"

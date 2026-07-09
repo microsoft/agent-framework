@@ -4,7 +4,7 @@ description = "Declarative specification support for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260429"
+version = "1.0.0rc2"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -22,14 +22,14 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.2.2,<2",
+    "agent-framework-core>=1.9.0,<2",
     "httpx>=0.27,<1",
     "powerfx>=0.0.32,<0.0.35; python_version < '3.14'",
     "pyyaml>=6.0,<7.0",
 ]
 [dependency-groups]
 dev = [
-    "types-PyYaml==6.0.12.20250915"
+    "types-PyYaml==6.0.12.20260518"
 ]
 
 [tool.uv]
@@ -49,7 +49,8 @@ addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
-    "ignore:Support for class-based `config` is deprecated:DeprecationWarning:pydantic.*"
+    "ignore:Support for class-based `config` is deprecated:DeprecationWarning:pydantic.*",
+    "ignore::agent_framework._feature_stage.ExperimentalWarning",
 ]
 timeout = 120
 markers = [

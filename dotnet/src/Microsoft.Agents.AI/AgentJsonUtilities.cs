@@ -74,9 +74,11 @@ internal static partial class AgentJsonUtilities
     [JsonSerializable(typeof(TodoState))]
     [JsonSerializable(typeof(TodoItem))]
     [JsonSerializable(typeof(TodoItemInput))]
+    [JsonSerializable(typeof(TodoCompleteInput))]
     [JsonSerializable(typeof(List<int>), TypeInfoPropertyName = "IntList")]
     [JsonSerializable(typeof(List<TodoItem>), TypeInfoPropertyName = "TodoItemList")]
     [JsonSerializable(typeof(List<TodoItemInput>), TypeInfoPropertyName = "TodoItemInputList")]
+    [JsonSerializable(typeof(List<TodoCompleteInput>), TypeInfoPropertyName = "TodoCompleteInputList")]
 
     // AgentModeProvider types
     [JsonSerializable(typeof(AgentModeState))]
@@ -94,13 +96,17 @@ internal static partial class AgentJsonUtilities
     [JsonSerializable(typeof(List<FileSearchMatch>), TypeInfoPropertyName = "FileSearchMatchList")]
     [JsonSerializable(typeof(FileListEntry))]
     [JsonSerializable(typeof(List<FileListEntry>), TypeInfoPropertyName = "FileListEntryList")]
+    [JsonSerializable(typeof(FileStoreEntry))]
+    [JsonSerializable(typeof(List<FileStoreEntry>), TypeInfoPropertyName = "FileStoreEntryList")]
+    [JsonSerializable(typeof(FileLineEdit))]
+    [JsonSerializable(typeof(List<FileLineEdit>), TypeInfoPropertyName = "FileLineEditList")]
 
-    // SubAgentsProvider types
-    [JsonSerializable(typeof(SubAgentState))]
-    [JsonSerializable(typeof(SubAgentRuntimeState))]
-    [JsonSerializable(typeof(SubTaskInfo))]
-    [JsonSerializable(typeof(SubTaskStatus))]
-    [JsonSerializable(typeof(List<SubTaskInfo>), TypeInfoPropertyName = "SubTaskInfoList")]
+    // BackgroundAgentsProvider types
+    [JsonSerializable(typeof(BackgroundAgentState))]
+    [JsonSerializable(typeof(BackgroundAgentRuntimeState))]
+    [JsonSerializable(typeof(BackgroundTaskInfo))]
+    [JsonSerializable(typeof(BackgroundTaskStatus))]
+    [JsonSerializable(typeof(List<BackgroundTaskInfo>), TypeInfoPropertyName = "BackgroundTaskInfoList")]
 
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;

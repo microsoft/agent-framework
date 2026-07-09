@@ -13,7 +13,7 @@ jobs:
     permissions:
       issues: write
     steps:
-      - uses: actions/github-script@v8
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           github-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
           script: |
@@ -90,9 +90,7 @@ jobs:
             // Check for issue type from issue form dropdown
             const issueTypeField = getFormFieldValue(body, 'Type of Issue')
             if (issueTypeField) {
-              if (issueTypeField === 'Bug') {
-                labels.push("bug")
-              } else if (issueTypeField === 'Feature Request') {
+              if (issueTypeField === 'Feature Request') {
                 labels.push("enhancement")
               } else if (issueTypeField === 'Question') {
                 labels.push("question")

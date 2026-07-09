@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
+using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -186,8 +187,12 @@ public class JsonSerializationTests
         actual.InputType.Should().Match(prototype.InputType.CreateValidator());
         actual.StartExecutorId.Should().Be(prototype.StartExecutorId);
 
-        actual.OutputExecutorIds.Should().HaveCount(prototype.OutputExecutorIds.Count)
-                            .And.AllSatisfy(id => prototype.OutputExecutorIds.Contains(id));
+        actual.OutputExecutorIds.Should().HaveCount(prototype.OutputExecutorIds.Count);
+        foreach (KeyValuePair<string, HashSet<OutputTag>> kvp in prototype.OutputExecutorIds)
+        {
+            actual.OutputExecutorIds.Should().ContainKey(kvp.Key);
+            actual.OutputExecutorIds[kvp.Key].Should().BeEquivalentTo(kvp.Value);
+        }
 
         void ValidateExecutorDictionary(Dictionary<string, ExecutorInfo> expected,
                                         Dictionary<string, List<EdgeInfo>> expectedEdges,
@@ -720,6 +725,99 @@ public class JsonSerializationTests
         result.SessionId.Should().Be(prototype.SessionId);
         result.LastCheckpoint.Should().BeNull();
         result.PendingRequests.Should().BeNull();
+    }
+
+    [Fact]
+    public void Test_HandoffSharedState_JsonRoundtrip_Empty()
+    {
+        // Arrange
+        HandoffSharedState prototype = new();
+
+        // Act
+        HandoffSharedState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.PreviousAgentId.Should().Be(prototype.PreviousAgentId);
+        result.Conversation.CloneHistory().Should().BeEquivalentTo(prototype.Conversation.CloneHistory());
+    }
+
+    [Fact]
+    public void Test_HandoffSharedState_JsonRoundtrip_WithConversation()
+    {
+        // Arrange
+        HandoffSharedState prototype = new();
+        prototype.Conversation.AddMessage(TestUserMessage);
+        prototype.Conversation.AddMessage(new(ChatRole.Assistant, "Hi"));
+        prototype.PreviousAgentId = "agent-123";
+
+        // Act
+        HandoffSharedState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.PreviousAgentId.Should().Be(prototype.PreviousAgentId);
+        result.Conversation.CloneHistory().Should().BeEquivalentTo(prototype.Conversation.CloneHistory());
+    }
+
+    [Fact]
+    public void Test_HandoffAgentHostState_JsonRoundtrip_TakingTurn()
+    {
+        // Arrange
+        HandoffState handoffState = new(new TurnToken(emitEvents: true),
+                                        nameof(HandoffState.RequestedHandoffTargetAgentId),
+                                        nameof(handoffState.PreviousAgentId));
+
+        HandoffAgentHostState prototype = new(handoffState, 42);
+
+        // Act
+        HandoffAgentHostState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.IncomingState.Should().BeEquivalentTo(prototype.IncomingState);
+        result.ConversationBookmark.Should().Be(prototype.ConversationBookmark);
+        result.IsTakingTurn.Should().Be(prototype.IsTakingTurn);
+    }
+
+    [Fact]
+    public void Test_HandoffAgentHostState_JsonRoundtrip_NotTakingTurn()
+    {
+        // Arrange
+        HandoffAgentHostState prototype = new(null, 42);
+
+        // Act
+        HandoffAgentHostState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.IncomingState.Should().BeEquivalentTo(prototype.IncomingState);
+        result.ConversationBookmark.Should().Be(prototype.ConversationBookmark);
+        result.IsTakingTurn.Should().Be(prototype.IsTakingTurn);
+    }
+
+    [Fact]
+    public void Test_GroupChatManagerState_JsonRoundtrip()
+    {
+        // Arrange
+        GroupChatManagerState prototype = new(IterationCount: 7);
+
+        // Act
+        GroupChatManagerState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.Should().Be(prototype);
+        result.IterationCount.Should().Be(prototype.IterationCount);
+    }
+
+    [Fact]
+    public void Test_RoundRobinGroupChatManagerState_JsonRoundtrip()
+    {
+        // Arrange
+        RoundRobinGroupChatManagerState prototype = new(NextIndex: 3);
+
+        // Act
+        RoundRobinGroupChatManagerState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.Should().Be(prototype);
+        result.NextIndex.Should().Be(prototype.NextIndex);
     }
 
     /// <summary>

@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
+import pytest
 from typing_extensions import Never
 
 from agent_framework import (
@@ -72,6 +73,31 @@ async def test_executor_cannot_emit_framework_lifecycle_event(caplog: "LogCaptur
         assert any("attempted to emit" in message and "'status'" in message for message in list(caplog.messages))
 
 
+@pytest.mark.parametrize(
+    "event",
+    [
+        WorkflowEvent("output", executor_id="exec", data="output-payload"),
+        WorkflowEvent("intermediate", executor_id="exec", data="intermediate-payload"),
+    ],
+)
+async def test_executor_cannot_emit_output_selection_events(
+    event: WorkflowEvent[Any],
+    caplog: "LogCaptureFixture",
+) -> None:
+    async with make_context() as (ctx, runner_ctx):
+        caplog.clear()
+        with caplog.at_level("WARNING"):
+            await ctx.add_event(event)
+
+        events: list[WorkflowEvent] = await runner_ctx.drain_events()
+        assert len(events) == 1
+        assert events[0].type == "warning"
+        data = events[0].data
+        assert isinstance(data, str)
+        assert "reserved for ctx.yield_output()" in data
+        assert event.data not in [emitted.data for emitted in events]
+
+
 async def test_executor_emits_normal_event() -> None:
     async with make_context() as (ctx, runner_ctx):
         # Create a normal event to test event emission
@@ -84,7 +110,7 @@ async def test_executor_emits_normal_event() -> None:
 
 class _TestEvent(WorkflowEvent):
     def __init__(self, data: Any = None) -> None:
-        super().__init__("test_event", data=data)  # type: ignore[arg-type]
+        super().__init__("test_event", data=data)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
 async def test_workflow_context_type_annotations_no_parameter() -> None:
@@ -167,7 +193,7 @@ async def test_workflow_context_type_annotations_message_and_output_type_paramet
         await ctx.send_message("world")
 
     @executor(id="func2")
-    async def func2(text: str, ctx: WorkflowContext[Never, str]) -> None:
+    async def func2(text: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
         await ctx.add_event(_TestEvent(data=text))
         await ctx.yield_output(text)
 
@@ -185,7 +211,7 @@ async def test_workflow_context_type_annotations_message_and_output_type_paramet
 
     class _exec2(Executor):
         @handler
-        async def func2(self, text: str, ctx: WorkflowContext[Never, str]) -> None:
+        async def func2(self, text: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
             await ctx.add_event(_TestEvent(data=text))
             await ctx.yield_output(text)
 
@@ -258,7 +284,7 @@ async def test_workflow_context_invalid_type_parameter_error() -> None:
     with pytest.raises(ValueError, match="invalid type entry"):
 
         @executor(id="bad_func")
-        async def bad_func(text: str, ctx: WorkflowContext[123]) -> None:  # type: ignore[valid-type]
+        async def bad_func(text: str, ctx: WorkflowContext[123]) -> None:  # type: ignore[valid-type]  # ty: ignore[invalid-type-form]
             pass
 
     # Test class-based executor with invalid type parameter
@@ -266,12 +292,12 @@ async def test_workflow_context_invalid_type_parameter_error() -> None:
 
         class _BadExecutor(Executor):  # pyright: ignore[reportUnusedClass]
             @handler  # pyright: ignore[reportUnknownArgumentType]
-            async def bad_handler(self, text: str, ctx: WorkflowContext[456]) -> None:  # type: ignore[valid-type]
+            async def bad_handler(self, text: str, ctx: WorkflowContext[456]) -> None:  # type: ignore[valid-type]  # ty: ignore[invalid-type-form]
                 pass
 
     # Test two-parameter WorkflowContext with invalid workflow output type
     with pytest.raises(ValueError, match="invalid type entry"):
 
         @executor(id="bad_func2")
-        async def bad_func2(text: str, ctx: WorkflowContext[str, 789]) -> None:  # type: ignore[valid-type]
+        async def bad_func2(text: str, ctx: WorkflowContext[str, 789]) -> None:  # type: ignore[valid-type]  # ty: ignore[invalid-type-form]
             pass

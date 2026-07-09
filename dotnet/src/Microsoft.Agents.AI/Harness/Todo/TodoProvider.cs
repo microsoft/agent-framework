@@ -1,8 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -23,38 +26,51 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// This provider exposes the following tools to the agent:
 /// <list type="bullet">
-/// <item><description><c>TodoList_Add</c> — Add one or more todo items, each with a title and optional description.</description></item>
-/// <item><description><c>TodoList_Complete</c> — Mark one or more todo items as complete by their IDs.</description></item>
-/// <item><description><c>TodoList_Remove</c> — Remove one or more todo items by their IDs.</description></item>
-/// <item><description><c>TodoList_GetRemaining</c> — Retrieve only incomplete todo items.</description></item>
-/// <item><description><c>TodoList_GetAll</c> — Retrieve all todo items (complete and incomplete).</description></item>
+/// <item><description><c>todos_add</c> — Add one or more todo items, each with a title and optional description.</description></item>
+/// <item><description><c>todos_complete</c> — Mark one or more todo items as complete by their IDs and reasons.</description></item>
+/// <item><description><c>todos_remove</c> — Remove one or more todo items by their IDs.</description></item>
+/// <item><description><c>todos_get_remaining</c> — Retrieve only incomplete todo items.</description></item>
+/// <item><description><c>todos_get_all</c> — Retrieve all todo items (complete and incomplete).</description></item>
 /// </list>
+/// </para>
+/// <para>
+/// All operations are thread-safe; concurrent reads and mutations on the same session are serialized
+/// using a per-session lock to prevent duplicate IDs, lost updates, or inconsistent reads.
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class TodoProvider : AIContextProvider
+public sealed class TodoProvider : AIContextProvider, IDisposable
 {
     private const string DefaultInstructions =
         """
         ## Todo Items
 
         You have access to a todo list for tracking work items.
-        While planning, make sure that you break down complex tasks into manageable todo items and add them to the list.
+        When a user asks you to perform a task, follow these steps to manage your work:
+        1. Determine whether the ask requires multiple steps to complete (complex) or can be completed using a single step (simple).
+        2. If complex, turn the task into manageable todo items and add them to the list.
+        3. If simple, don't add a todo item, but rather just complete the task directly.
+
+        ### General TODO Guidelines
         Ask questions from the user where clarification is needed to create effective todos.
-        If the user provides feedback on your plan, adjust your todos accordingly by adding new items or removing irrelevant ones.
+        If the user provides feedback on your plan, adjust your todos accordingly by adding new items or removing irrelevant/old ones.
         During execution, use the todo list to keep track of what needs to be done, mark items as complete when finished, and remove any items that are no longer needed.
-        When a user changes the topic or changes their mind, ensure that you update the todo list accordingly by removing irrelevant items or adding new ones as needed.
+        When a user changes the topic, changes their mind or switches to a new request, ensure that you update the todo list accordingly by removing irrelevant/old items, clearing the list, or adding new ones as needed.
         
         Use these tools to manage your tasks:
-        - Use TodoList_Add to break down complex work into trackable items (supports adding one or many at once).
-        - Use TodoList_Complete to mark items as done when finished (supports one or many at once).
-        - Use TodoList_GetRemaining to check what work is still pending.
-        - Use TodoList_GetAll to review the full list including completed items.
-        - Use TodoList_Remove to remove items that are no longer needed (supports one or many at once).
+        - Use todos_add to break down complex work into trackable items (supports adding one or many at once).
+        - Use todos_complete to mark items as done when finished (supports one or many at once). Include a reason describing how the items were completed.
+        - Use todos_get_remaining to check what work is still pending.
+        - Use todos_get_all to review the full list including completed items.
+        - Use todos_remove to remove items that are no longer needed (supports one or many at once).
         """;
 
     private readonly ProviderSessionState<TodoState> _sessionState;
     private readonly string _instructions;
+    private readonly bool _suppressTodoListMessage;
+    private readonly Func<IReadOnlyList<TodoItem>, string>? _todoListMessageBuilder;
+    private readonly ConditionalWeakTable<AgentSession, SemaphoreSlim> _sessionLocks = new();
+    private readonly SemaphoreSlim _nullSessionLock = new(1, 1);
     private IReadOnlyList<string>? _stateKeys;
 
     /// <summary>
@@ -64,6 +80,8 @@ public sealed class TodoProvider : AIContextProvider
     public TodoProvider(TodoProviderOptions? options = null)
     {
         this._instructions = options?.Instructions ?? DefaultInstructions;
+        this._suppressTodoListMessage = options?.SuppressTodoListMessage ?? false;
+        this._todoListMessageBuilder = options?.TodoListMessageBuilder;
         this._sessionState = new ProviderSessionState<TodoState>(
             _ => new TodoState(),
             this.GetType().Name,
@@ -73,137 +91,290 @@ public sealed class TodoProvider : AIContextProvider
     /// <inheritdoc />
     public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        this._nullSessionLock.Dispose();
+    }
+
     /// <summary>
     /// Gets all todo items from the session state.
     /// </summary>
+    /// <remarks>
+    /// The returned <see cref="TodoItem"/> instances are the live objects from internal state.
+    /// Modifying their properties will mutate the provider's state directly.
+    /// </remarks>
     /// <param name="session">The agent session to read todos from.</param>
-    /// <returns>A read-only list of all todo items.</returns>
-    public IReadOnlyList<TodoItem> GetAllTodos(AgentSession? session)
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
+    /// <returns>A list of all todo items. The items are live references to internal state.</returns>
+    public async Task<IReadOnlyList<TodoItem>> GetAllTodosAsync(AgentSession? session, CancellationToken cancellationToken = default)
     {
-        return this._sessionState.GetOrInitializeState(session).Items;
+        SemaphoreSlim sessionLock = this.GetSessionLock(session);
+        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            TodoState state = this._sessionState.GetOrInitializeState(session);
+            return state.Items.ToList();
+        }
+        finally
+        {
+            sessionLock.Release();
+        }
     }
 
     /// <summary>
     /// Gets the remaining (incomplete) todo items from the session state.
     /// </summary>
+    /// <remarks>
+    /// The returned <see cref="TodoItem"/> instances are the live objects from internal state.
+    /// Modifying their properties will mutate the provider's state directly.
+    /// </remarks>
     /// <param name="session">The agent session to read todos from.</param>
-    /// <returns>A list of incomplete todo items.</returns>
-    public List<TodoItem> GetRemainingTodos(AgentSession? session)
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
+    /// <returns>A list of incomplete todo items. The items are live references to internal state.</returns>
+    public async Task<List<TodoItem>> GetRemainingTodosAsync(AgentSession? session, CancellationToken cancellationToken = default)
     {
-        return this._sessionState.GetOrInitializeState(session).Items.Where(t => !t.IsComplete).ToList();
+        SemaphoreSlim sessionLock = this.GetSessionLock(session);
+        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            TodoState state = this._sessionState.GetOrInitializeState(session);
+            return state.Items.Where(t => !t.IsComplete).ToList();
+        }
+        finally
+        {
+            sessionLock.Release();
+        }
     }
 
     /// <inheritdoc />
-    protected override ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
-        TodoState state = this._sessionState.GetOrInitializeState(context.Session);
-
-        return new ValueTask<AIContext>(new AIContext
+        var aiContext = new AIContext
         {
             Instructions = this._instructions,
-            Tools = this.CreateTools(state, context.Session),
-        });
+            Tools = this.CreateTools(context.Session),
+        };
+
+        if (!this._suppressTodoListMessage)
+        {
+            // Inject a synthetic user message summarizing the current todo list so the agent
+            // is aware of outstanding work at the start of each invocation.
+            SemaphoreSlim sessionLock = this.GetSessionLock(context.Session);
+            await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            List<TodoItem> currentItems;
+            try
+            {
+                TodoState state = this._sessionState.GetOrInitializeState(context.Session);
+                currentItems = state.Items.ToList();
+            }
+            finally
+            {
+                sessionLock.Release();
+            }
+
+            string message = this._todoListMessageBuilder is not null
+                ? this._todoListMessageBuilder(currentItems)
+                : FormatTodoListMessage(currentItems);
+
+            aiContext.Messages =
+            [
+                new ChatMessage(ChatRole.User, message),
+            ];
+        }
+
+        return aiContext;
     }
 
-    // Note: These tool delegates mutate shared session state without synchronization.
-    // This is safe because FunctionInvokingChatClient serializes tool calls within a single run.
-    private AITool[] CreateTools(TodoState state, AgentSession? session)
+    /// <summary>
+    /// Returns the per-session semaphore used to serialize all todo operations.
+    /// </summary>
+    private SemaphoreSlim GetSessionLock(AgentSession? session)
+    {
+        if (session is null)
+        {
+            return this._nullSessionLock;
+        }
+
+        return this._sessionLocks.GetValue(session, _ => new SemaphoreSlim(1, 1));
+    }
+
+    private AITool[] CreateTools(AgentSession? session)
     {
         var serializerOptions = AgentJsonUtilities.DefaultOptions;
 
         return
         [
             AIFunctionFactory.Create(
-                (List<TodoItemInput> todos) =>
+                async (List<TodoItemInput> todos) =>
                 {
-                    var created = new List<TodoItem>();
-                    foreach (var input in todos)
+                    SemaphoreSlim sessionLock = this.GetSessionLock(session);
+                    await sessionLock.WaitAsync().ConfigureAwait(false);
+                    try
                     {
-                        var item = new TodoItem
+                        TodoState state = this._sessionState.GetOrInitializeState(session);
+                        var created = new List<TodoItem>();
+                        foreach (var input in todos)
                         {
-                            Id = state.NextId++,
-                            Title = input.Title,
-                            Description = input.Description,
-                        };
-                        state.Items.Add(item);
-                        created.Add(item);
-                    }
+                            var item = new TodoItem
+                            {
+                                Id = state.NextId++,
+                                Title = input.Title.Trim(),
+                                Description = input.Description?.Trim(),
+                            };
+                            state.Items.Add(item);
+                            created.Add(item);
+                        }
 
-                    this._sessionState.SaveState(session, state);
-                    return created;
+                        this._sessionState.SaveState(session, state);
+                        return created;
+                    }
+                    finally
+                    {
+                        sessionLock.Release();
+                    }
                 },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "TodoList_Add",
+                    Name = "todos_add",
                     Description = "Add one or more todo items. Each item has a title and an optional description. Returns the list of created todo items.",
                     SerializerOptions = serializerOptions,
                 }),
 
             AIFunctionFactory.Create(
-                (List<int> ids) =>
+                async (List<TodoCompleteInput> items) =>
                 {
-                    var idSet = new HashSet<int>(ids);
-                    int completed = 0;
-                    foreach (TodoItem item in state.Items)
+                    SemaphoreSlim sessionLock = this.GetSessionLock(session);
+                    await sessionLock.WaitAsync().ConfigureAwait(false);
+                    try
                     {
-                        if (!item.IsComplete && idSet.Contains(item.Id))
+                        TodoState state = this._sessionState.GetOrInitializeState(session);
+                        var idSet = new HashSet<int>(items.Select(i => i.Id));
+                        int completed = 0;
+                        foreach (TodoItem item in state.Items)
                         {
-                            item.IsComplete = true;
-                            completed++;
+                            if (!item.IsComplete && idSet.Contains(item.Id))
+                            {
+                                item.IsComplete = true;
+                                completed++;
+                            }
                         }
-                    }
 
-                    if (completed > 0)
+                        if (completed > 0)
+                        {
+                            this._sessionState.SaveState(session, state);
+                        }
+
+                        return completed;
+                    }
+                    finally
                     {
-                        this._sessionState.SaveState(session, state);
+                        sessionLock.Release();
                     }
-
-                    return completed;
                 },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "TodoList_Complete",
-                    Description = "Mark one or more todo items as complete by their IDs. Returns the number of items that were found and marked complete.",
+                    Name = "todos_complete",
+                    Description = "Mark one or more todo items as complete. Each entry has an ID and a reason describing how/why the item was completed. Returns the number of items that were found and marked complete.",
                     SerializerOptions = serializerOptions,
                 }),
 
             AIFunctionFactory.Create(
-                (List<int> ids) =>
+                async (List<int> ids) =>
                 {
-                    var idSet = new HashSet<int>(ids);
-                    int removed = state.Items.RemoveAll(t => idSet.Contains(t.Id));
-
-                    if (removed > 0)
+                    SemaphoreSlim sessionLock = this.GetSessionLock(session);
+                    await sessionLock.WaitAsync().ConfigureAwait(false);
+                    try
                     {
-                        this._sessionState.SaveState(session, state);
-                    }
+                        TodoState state = this._sessionState.GetOrInitializeState(session);
+                        var idSet = new HashSet<int>(ids);
+                        int removed = state.Items.RemoveAll(t => idSet.Contains(t.Id));
 
-                    return removed;
+                        if (removed > 0)
+                        {
+                            this._sessionState.SaveState(session, state);
+                        }
+
+                        return removed;
+                    }
+                    finally
+                    {
+                        sessionLock.Release();
+                    }
                 },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "TodoList_Remove",
+                    Name = "todos_remove",
                     Description = "Remove one or more todo items by their IDs. Returns the number of items that were found and removed.",
                     SerializerOptions = serializerOptions,
                 }),
 
             AIFunctionFactory.Create(
-                () => state.Items.Where(t => !t.IsComplete).ToList(),
+                async () =>
+                {
+                    SemaphoreSlim sessionLock = this.GetSessionLock(session);
+                    await sessionLock.WaitAsync().ConfigureAwait(false);
+                    try
+                    {
+                        TodoState state = this._sessionState.GetOrInitializeState(session);
+                        return state.Items.Where(t => !t.IsComplete).ToList();
+                    }
+                    finally
+                    {
+                        sessionLock.Release();
+                    }
+                },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "TodoList_GetRemaining",
+                    Name = "todos_get_remaining",
                     Description = "Retrieve the list of incomplete todo items.",
                     SerializerOptions = serializerOptions,
                 }),
 
             AIFunctionFactory.Create(
-                () => state.Items,
+                async () =>
+                {
+                    SemaphoreSlim sessionLock = this.GetSessionLock(session);
+                    await sessionLock.WaitAsync().ConfigureAwait(false);
+                    try
+                    {
+                        TodoState state = this._sessionState.GetOrInitializeState(session);
+                        return state.Items.ToList();
+                    }
+                    finally
+                    {
+                        sessionLock.Release();
+                    }
+                },
                 new AIFunctionFactoryOptions
                 {
-                    Name = "TodoList_GetAll",
+                    Name = "todos_get_all",
                     Description = "Retrieve the full list of todo items, both complete and incomplete.",
                     SerializerOptions = serializerOptions,
                 }),
         ];
+    }
+
+    internal static string FormatTodoListMessage(List<TodoItem> items)
+    {
+        if (items.Count == 0)
+        {
+            return "### Current todo list\n- none yet";
+        }
+
+        var sb = new StringBuilder("### Current todo list\n");
+        foreach (var item in items)
+        {
+            string status = item.IsComplete ? "done" : "open";
+            sb.Append($"- {item.Id} [{status}] {item.Title}");
+            if (!string.IsNullOrWhiteSpace(item.Description))
+            {
+                sb.Append($": {item.Description}");
+            }
+
+            sb.AppendLine();
+        }
+
+        return sb.ToString().TrimEnd();
     }
 }

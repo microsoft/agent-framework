@@ -148,7 +148,7 @@ class EmailDomainValidator(Executor):
         self,
         original_request: DomainCheckRequest,
         is_approved: bool,
-        ctx: WorkflowContext[Never, ValidationResult],
+        ctx: WorkflowContext[Never, ValidationResult],  # type: ignore[valid-type]
     ) -> None:
         """Handle domain check response with correlation."""
         # Use the original email from the correlated response
@@ -495,7 +495,7 @@ class TwoStepSubWorkflowExecutor(Executor):
         self,
         original_request: CheckpointRequest,
         response: str,
-        ctx: WorkflowContext[Never, bool],
+        ctx: WorkflowContext[Never, bool],  # type: ignore[valid-type]
     ) -> None:
         self._responses.append(response)
         if len(self._responses) == 1:
@@ -617,3 +617,75 @@ async def test_sub_workflow_checkpoint_restore_no_duplicate_requests() -> None:
     # Key assertion: Only the second request should be received, not a duplicate of the first
     assert len(request_events) == 1
     assert request_events[0].data.prompt == "Second request"
+
+
+async def test_sub_workflow_intermediate_outputs_propagate_to_parent() -> None:
+    """A child workflow's intermediate emissions must bubble up through the parent.
+
+    Regression guard for the bug where WorkflowExecutor._process_workflow_result only
+    forwarded result.get_outputs() and silently dropped result.get_intermediate_outputs().
+    The forwarded event must carry the WorkflowExecutor's own id as the source so outer
+    callers don't have to know the child's internal executor layout, and it must keep
+    type='intermediate' regardless of how the parent designates the WorkflowExecutor.
+    """
+
+    class _ProgressEmitter(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="progress_emitter")
+
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            await ctx.yield_output(f"progress: {message}")
+            await ctx.send_message(message)
+
+    class _Finalizer(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="finalizer")
+
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
+            await ctx.yield_output(f"final: {message}")
+
+    progress = _ProgressEmitter()
+    finalizer = _Finalizer()
+    child = (
+        WorkflowBuilder(
+            start_executor=progress,
+            output_from=[finalizer],
+            intermediate_output_from=[progress],
+        )
+        .add_edge(progress, finalizer)
+        .build()
+    )
+
+    sub = WorkflowExecutor(child, id="sub")
+
+    class _ParentSink(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="parent_sink")
+            self.received: list[str] = []
+
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
+            self.received.append(message)
+            await ctx.yield_output(message)
+
+    sink = _ParentSink()
+    parent = WorkflowBuilder(start_executor=sub, output_from=[sink]).add_edge(sub, sink).build()
+
+    intermediate_events: list[WorkflowEvent[Any]] = []
+    output_events: list[WorkflowEvent[Any]] = []
+    async for event in parent.run("hello", stream=True):
+        if event.type == "intermediate":
+            intermediate_events.append(event)
+        elif event.type == "output":
+            output_events.append(event)
+
+    # The child's intermediate emission bubbled up labeled with the WorkflowExecutor id,
+    # not the child's internal executor id.
+    assert len(intermediate_events) == 1, [(e.executor_id, e.data) for e in intermediate_events]
+    assert intermediate_events[0].executor_id == "sub"
+    assert intermediate_events[0].data == "progress: hello"
+
+    # The parent's own terminal output is unaffected.
+    assert any(e.executor_id == "parent_sink" and e.data == "final: hello" for e in output_events)

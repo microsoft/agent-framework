@@ -103,6 +103,9 @@ internal sealed class WireEvalItemPayload
     [JsonPropertyName("context")]
     public string? Context { get; init; }
 
+    [JsonPropertyName("ground_truth")]
+    public string? GroundTruth { get; init; }
+
     [JsonPropertyName("tool_definitions")]
     public List<WireToolDefinition>? ToolDefinitions { get; init; }
 }
@@ -133,6 +136,9 @@ internal sealed class WireTestingCriterion
 
     [JsonPropertyName("evaluator_name")]
     public required string EvaluatorName { get; init; }
+
+    [JsonPropertyName("evaluator_version")]
+    public string? EvaluatorVersion { get; init; }
 
     [JsonPropertyName("initialization_parameters")]
     public required WireInitParams InitializationParameters { get; init; }

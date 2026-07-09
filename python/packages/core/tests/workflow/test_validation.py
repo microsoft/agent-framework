@@ -50,7 +50,7 @@ class AnyExecutor(Executor):
 class NoOutputTypesExecutor(Executor):
     @handler
     async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
-        await ctx.send_message("processed")  # type: ignore[arg-type]
+        await ctx.send_message("processed")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
 class MultiTypeExecutor(Executor):
@@ -187,7 +187,7 @@ def test_disconnected_start_executor_not_in_graph():
 
 def test_missing_start_executor():
     with pytest.raises(TypeError):
-        WorkflowBuilder()  # type: ignore[call-arg]
+        WorkflowBuilder()  # type: ignore[call-arg]  # ty: ignore[missing-argument]
 
 
 def test_workflow_validation_error_base_class():
@@ -498,7 +498,7 @@ def test_handler_ctx_invalid_t_out_entries_raises() -> None:
 
         class BadExecutor(Executor):  # pyright: ignore[reportUnusedClass]
             @handler  # pyright: ignore[reportUnknownArgumentType]
-            async def handle(self, message: str, ctx: WorkflowContext[123]) -> None:  # type: ignore[valid-type]
+            async def handle(self, message: str, ctx: WorkflowContext[123]) -> None:  # type: ignore[valid-type]  # ty: ignore[invalid-type-form]
                 pass
 
     assert "invalid type entry" in str(exc.value)
@@ -550,12 +550,10 @@ def test_output_validation_with_valid_output_executors():
     executor2 = OutputExecutor(id="executor2")
 
     # Build workflow with valid output executors
-    workflow = (
-        WorkflowBuilder(start_executor=executor1, output_executors=[executor2]).add_edge(executor1, executor2).build()
-    )
+    workflow = WorkflowBuilder(start_executor=executor1, output_from=[executor2]).add_edge(executor1, executor2).build()
 
     assert workflow is not None
-    assert workflow._output_executors == ["executor2"]  # pyright: ignore[reportPrivateUsage]
+    assert {ex.id for ex in workflow.get_output_executors()} == {"executor2"}
 
 
 def test_output_validation_with_multiple_valid_output_executors():
@@ -565,14 +563,14 @@ def test_output_validation_with_multiple_valid_output_executors():
     executor3 = OutputExecutor(id="executor3")
 
     workflow = (
-        WorkflowBuilder(start_executor=executor1, output_executors=[executor1, executor3])
+        WorkflowBuilder(start_executor=executor1, output_from=[executor1, executor3])
         .add_edge(executor1, executor2)
         .add_edge(executor2, executor3)
         .build()
     )
 
     assert workflow is not None
-    assert set(workflow._output_executors) == {"executor1", "executor3"}  # pyright: ignore[reportPrivateUsage]
+    assert {ex.id for ex in workflow.get_output_executors()} == {"executor1", "executor3"}
 
 
 def test_output_validation_fails_for_nonexistent_executor():
@@ -598,7 +596,7 @@ def test_output_validation_fails_for_executor_without_output_types():
 
     with pytest.raises(WorkflowValidationError) as exc_info:
         (
-            WorkflowBuilder(start_executor=executor1, output_executors=[no_output_executor])
+            WorkflowBuilder(start_executor=executor1, output_from=[no_output_executor])
             .add_edge(executor1, no_output_executor)
             .build()
         )
@@ -608,16 +606,77 @@ def test_output_validation_fails_for_executor_without_output_types():
     assert exc_info.value.validation_type == ValidationTypeEnum.OUTPUT_VALIDATION
 
 
-def test_output_validation_empty_list_passes():
-    """Test that output validation passes with an empty output executors list."""
+def test_output_validation_empty_explicit_designation_fails():
+    """Test that explicit mode rejects an empty output/intermediate designation."""
     executor1 = OutputExecutor(id="executor1")
     executor2 = OutputExecutor(id="executor2")
 
-    workflow = WorkflowBuilder(start_executor=executor1, output_executors=[]).add_edge(executor1, executor2).build()
+    with pytest.raises(WorkflowValidationError) as exc_info:
+        WorkflowBuilder(start_executor=executor1, output_from=[]).add_edge(executor1, executor2).build()
+
+    assert "at least one output or intermediate executor" in str(exc_info.value)
+    assert exc_info.value.validation_type == ValidationTypeEnum.OUTPUT_VALIDATION
+
+
+def test_output_validation_with_valid_intermediate_executors():
+    """Test that output validation passes when intermediate executors exist and have output types."""
+    executor1 = OutputExecutor(id="executor1")
+    executor2 = OutputExecutor(id="executor2")
+
+    workflow = (
+        WorkflowBuilder(start_executor=executor1, intermediate_output_from=[executor1])
+        .add_edge(executor1, executor2)
+        .build()
+    )
 
     assert workflow is not None
-    # All executors are outputs
-    assert workflow._output_executors == ["executor1", "executor2"]  # type: ignore
+    assert {ex.id for ex in workflow.get_intermediate_executors()} == {"executor1"}
+    assert workflow.is_intermediate_executor("executor1")
+    assert not workflow.is_terminal_executor("executor2")
+
+
+def test_output_validation_fails_for_designation_overlap():
+    """Test that an executor cannot be both terminal and intermediate."""
+    executor1 = OutputExecutor(id="executor1")
+
+    with pytest.raises(WorkflowValidationError) as exc_info:
+        WorkflowBuilder(
+            start_executor=executor1,
+            output_from=[executor1],
+            intermediate_output_from=[executor1],
+        ).build()
+
+    assert "both output and intermediate" in str(exc_info.value)
+    assert exc_info.value.validation_type == ValidationTypeEnum.OUTPUT_VALIDATION
+
+
+def test_output_validation_fails_for_duplicate_designation():
+    """Test that duplicate output or intermediate designation entries are rejected."""
+    executor1 = OutputExecutor(id="executor1")
+
+    with pytest.raises(WorkflowValidationError) as exc_info:
+        WorkflowBuilder(start_executor=executor1, output_from=[executor1, executor1]).build()
+
+    assert "Duplicate output executor designation" in str(exc_info.value)
+    assert exc_info.value.validation_type == ValidationTypeEnum.OUTPUT_VALIDATION
+
+
+def test_output_validation_fails_for_unknown_intermediate_executor():
+    """Test that intermediate designation rejects executors outside the workflow graph."""
+    executor1 = OutputExecutor(id="executor1")
+    executor2 = OutputExecutor(id="executor2")
+    missing = OutputExecutor(id="missing")
+
+    with pytest.raises(WorkflowValidationError) as exc_info:
+        (
+            WorkflowBuilder(start_executor=executor1, intermediate_output_from=[missing])
+            .add_edge(executor1, executor2)
+            .build()
+        )
+
+    assert "not present in the workflow graph" in str(exc_info.value)
+    assert "missing" in str(exc_info.value)
+    assert exc_info.value.validation_type == ValidationTypeEnum.OUTPUT_VALIDATION
 
 
 def test_output_validation_with_direct_validate_workflow_graph():

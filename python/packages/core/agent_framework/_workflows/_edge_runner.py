@@ -38,7 +38,12 @@ class EdgeRunner(ABC):
         self._executors = executors
 
     @abstractmethod
-    async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+    async def send_message(
+        self,
+        message: WorkflowMessage,
+        state: State,
+        ctx: RunnerContext,
+    ) -> bool:
         """Send a message through the edge group.
 
         Args:
@@ -90,7 +95,12 @@ class SingleEdgeRunner(EdgeRunner):
         super().__init__(edge_group, executors)
         self._edge = edge_group.edges[0]
 
-    async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+    async def send_message(
+        self,
+        message: WorkflowMessage,
+        state: State,
+        ctx: RunnerContext,
+    ) -> bool:
         """Send a message through the single edge."""
         should_execute = False
         target_id: str | None = None
@@ -162,7 +172,12 @@ class FanOutEdgeRunner(EdgeRunner):
             Callable[[Any, list[str]], list[str]] | None, getattr(edge_group, "selection_func", None)
         )
 
-    async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+    async def send_message(
+        self,
+        message: WorkflowMessage,
+        state: State,
+        ctx: RunnerContext,
+    ) -> bool:
         """Send a message through all edges in the fan-out edge group."""
         deliverable_edges: list[Edge] = []
         single_target_edge: Edge | None = None
@@ -253,7 +268,11 @@ class FanOutEdgeRunner(EdgeRunner):
         # Execute outside the span
         if single_target_edge:
             await self._execute_on_target(
-                single_target_edge.target_id, [single_target_edge.source_id], message, state, ctx
+                single_target_edge.target_id,
+                [single_target_edge.source_id],
+                message,
+                state,
+                ctx,
             )
             return True
 
@@ -285,7 +304,12 @@ class FanInEdgeRunner(EdgeRunner):
         # Key is the source executor ID, value is a list of messages
         self._buffer: dict[str, list[WorkflowMessage]] = defaultdict(list)
 
-    async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+    async def send_message(
+        self,
+        message: WorkflowMessage,
+        state: State,
+        ctx: RunnerContext,
+    ) -> bool:
         """Send a message through all edges in the fan-in edge group."""
         execution_data: dict[str, Any] | None = None
         with create_edge_group_processing_span(
@@ -362,7 +386,11 @@ class FanInEdgeRunner(EdgeRunner):
         # Execute outside the span if needed
         if execution_data:
             await self._execute_on_target(
-                execution_data["target_id"], execution_data["source_ids"], execution_data["message"], state, ctx
+                execution_data["target_id"],
+                execution_data["source_ids"],
+                execution_data["message"],
+                state,
+                ctx,
             )
             return True
 

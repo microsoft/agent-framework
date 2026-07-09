@@ -3,14 +3,9 @@
 import asyncio
 import os
 import sys
-
-# Uncomment this filter to suppress the experimental Skills warning before
-# using the sample's Skills APIs.
-# import warnings
-# warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from pathlib import Path
 
-from agent_framework import Agent, SkillsProvider
+from agent_framework import Agent, SkillsProvider, ToolApprovalMiddleware
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -20,7 +15,7 @@ _SKILLS_ROOT = str(Path(__file__).resolve().parent.parent)
 if _SKILLS_ROOT not in sys.path:
     sys.path.insert(0, _SKILLS_ROOT)
 
-from subprocess_script_runner import subprocess_script_runner  # noqa: E402
+from subprocess_script_runner import subprocess_script_runner  # pyrefly: ignore[missing-import]  # noqa: E402
 
 """
 File-Based Agent Skills
@@ -59,23 +54,28 @@ async def main() -> None:
     # Discovers skills from the 'skills' directory and configures the
     # subprocess_script_runner to run file-based scripts.
     skills_dir = Path(__file__).parent / "skills"
-    skills_provider = SkillsProvider(
+    skills_provider = SkillsProvider.from_paths(
         skill_paths=str(skills_dir),
         script_runner=subprocess_script_runner,
     )
 
-    # Create the agent with skills
+    # Create the agent with skills. All skill tools require approval by
+    # default; auto-approve them so the sample runs unattended. See the
+    # script_approval / skills_auto_approval samples for approval handling.
     async with Agent(
         client=client,
         instructions="You are a helpful assistant.",
         context_providers=[skills_provider],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[SkillsProvider.all_tools_auto_approval_rule])],
     ) as agent:
         # The agent will: load the unit-converter skill, read the conversion
         # tables resource, then execute the convert.py script.
         print("Converting units")
         print("-" * 60)
+        session = agent.create_session()
         response = await agent.run(
-            "How many kilometers is a marathon (26.2 miles)? And how many pounds is 75 kilograms?"
+            "How many kilometers is a marathon (26.2 miles)? And how many pounds is 75 kilograms?",
+            session=session,
         )
         print(f"Agent: {response}\n")
 

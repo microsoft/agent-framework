@@ -8,6 +8,7 @@ using Azure.AI.Projects;
 using Azure.Core;
 using Azure.Identity;
 using DotNetEnv;
+using Hosted_Shared_Contributor_Setup;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
@@ -16,10 +17,13 @@ using OpenAI.Chat;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-4o";
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Use a chained credential: try a temporary dev token first (for local Docker debugging),
 // then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in production).
 TokenCredential credential = new ChainedTokenCredential(
@@ -51,10 +55,10 @@ builder.Services.AddFoundryResponses(agent);
 var app = builder.Build();
 app.MapFoundryResponses();
 
-if (app.Environment.IsDevelopment())
-{
-    app.MapFoundryResponses("openai/v1");
-}
+// Contributor-only: in Development, also map the per-agent OpenAI route shape that live Foundry uses
+// so a local REPL client can target this server via AIProjectClient.AsAIAgent(Uri agentEndpoint).
+// Do not use this in production. Hosted Foundry agents only support the agent-endpoint path.
+app.MapDevTemporaryLocalAgentEndpoint();
 
 app.Run();
 
@@ -96,35 +100,4 @@ static Task<IEnumerable<TextSearchProvider.TextSearchResult>> MockSearchAsync(st
     }
 
     return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>(results);
-}
-
-/// <summary>
-/// A <see cref="TokenCredential"/> for local Docker debugging only.
-/// Reads a pre-fetched bearer token from the <c>AZURE_BEARER_TOKEN</c> environment variable.
-/// This should NOT be used in production — tokens expire (~1 hour) and cannot be refreshed.
-///
-/// Generate a token on your host and pass it to the container:
-///   export AZURE_BEARER_TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
-///   docker run -e AZURE_BEARER_TOKEN=$AZURE_BEARER_TOKEN ...
-/// </summary>
-internal sealed class DevTemporaryTokenCredential : TokenCredential
-{
-    private const string EnvironmentVariable = "AZURE_BEARER_TOKEN";
-
-    public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
-        => GetAccessToken();
-
-    public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
-        => new(GetAccessToken());
-
-    private static AccessToken GetAccessToken()
-    {
-        var token = Environment.GetEnvironmentVariable(EnvironmentVariable);
-        if (string.IsNullOrEmpty(token) || token == "DefaultAzureCredential")
-        {
-            throw new CredentialUnavailableException($"{EnvironmentVariable} environment variable is not set.");
-        }
-
-        return new AccessToken(token, DateTimeOffset.UtcNow.AddHours(1));
-    }
 }

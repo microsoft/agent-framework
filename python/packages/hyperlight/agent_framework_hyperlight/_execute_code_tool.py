@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import mimetypes
+import os
 import shutil
+import stat
 import threading
 import time
-from collections.abc import Callable, Sequence
-from concurrent.futures import Future, ThreadPoolExecutor
+from collections.abc import Callable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from copy import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 from typing import Any, Protocol, TypeGuard, TypeVar, cast
@@ -88,43 +91,217 @@ class SandboxRuntime(Protocol):
     def execute(self, *, config: _RunConfig, code: str) -> list[Content]: ...
 
 
+class _NamedDirectory(Protocol):
+    name: str
+
+
 _T = TypeVar("_T")
 
 
 class _SandboxWorker:
-    """Single-threaded executor that confines all sandbox operations to one OS thread.
+    """Thread-confined actor that owns a sandbox + snapshot.
 
-    The Hyperlight ``WasmSandbox`` is declared ``unsendable`` in PyO3, meaning it can only be
-    accessed from the OS thread that created it; touching it from any other thread triggers a
-    Rust panic that cannot be caught from Python. Every cached :class:`_SandboxEntry` therefore
-    owns its own ``_SandboxWorker``, and *all* lifecycle and execution calls against the
-    underlying sandbox object must be routed through :meth:`submit`/:meth:`run`.
+    The Hyperlight ``WasmSandbox`` is declared ``unsendable`` in PyO3: it can only be
+    accessed *and dropped* from the OS thread that created it. Touching or
+    releasing it on any other thread triggers a Rust panic
+    (``"_native_wasm::WasmSandbox is unsendable, but is being dropped on another thread"``)
+    that cannot be caught from Python.
+
+    To make this guarantee airtight, this class is an actor: the underlying
+    sandbox and snapshot are stored ONLY as worker-local state and are never
+    exposed to or returned to other threads. Public methods submit closures to
+    the dedicated single-thread executor and return only sendable results.
+    Because no caller can ever obtain a strong reference to the unsendable
+    objects, no caller can ever cause them to be dropped on the wrong thread.
+
+    Exception isolation: exceptions raised inside worker closures carry a
+    ``__traceback__`` whose frames retain references to local variables --
+    including PyO3 unsendable sandbox/native_result objects. Letting such an
+    exception propagate to the calling thread would defeat the actor model:
+    when the calling thread GCs the exception, the traceback's frame locals
+    are dropped on the wrong thread and PyO3 panics. To prevent this, every
+    exception raised inside a worker closure is caught on the worker, the
+    traceback is dropped while still on the worker thread, and a sanitized
+    copy (preserving message and exception type) is re-raised on the caller.
     """
 
-    __slots__ = ("_executor",)
+    __slots__ = ("_executor", "_initialized", "_sandbox", "_snapshot")
 
     def __init__(self, *, name: str = "hl-sandbox") -> None:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=name)
+        # _sandbox/_snapshot are accessed/mutated ONLY from worker-side closures.
+        self._sandbox: Any = None
+        self._snapshot: Any = None
+        self._initialized = False
 
-    def submit(self, fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> Future[_T]:
-        return self._executor.submit(fn, *args, **kwargs)
+    def _run_on_worker(self, fn: Callable[[], _T]) -> _T:
+        """Run ``fn`` on the worker thread; sanitize any exception's traceback there.
 
-    def run(self, fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
-        return self._executor.submit(fn, *args, **kwargs).result()
+        If ``fn`` raises, the exception's ``__traceback__`` is dropped on the worker
+        thread (so any PyO3 unsendable locals captured in frame locals are released
+        on the owner thread) and a fresh exception of the same type is raised on
+        the caller's thread carrying only the original message.
+        """
 
-    def shutdown(self) -> None:
-        # Do not block on shutdown; stop accepting new tasks, but allow the currently running
-        # task and any already-queued tasks to finish before the worker thread exits.
+        def _wrapped() -> tuple[bool, Any]:
+            try:
+                return True, fn()
+            except BaseException as exc:
+                exc_type = type(exc)
+                # Capture args (usually (message,)) so the re-raised exception keeps the
+                # original shape for types whose constructor doesn't accept a single str.
+                # Coerce each arg to ``str`` on the worker thread: if a caller-supplied
+                # callback (or an underlying SDK) constructed the exception with a PyO3
+                # unsendable object in args, forwarding it as-is would re-introduce the
+                # same cross-thread Drop hazard the traceback nulling avoids. Strings
+                # are always sendable. Fall back to the str() form if args is empty.
+                exc_args: tuple[str, ...] = tuple(str(a) for a in exc.args) if exc.args else (str(exc),)
+                # Drop the traceback on the worker thread so frame locals (which
+                # may include PyO3 unsendable objects) are released here, not on
+                # the caller thread that will receive the wrapped exception.
+                exc.__traceback__ = None
+                del exc
+                return False, (exc_type, exc_args)
+
+        current_context = contextvars.copy_context()
+        ok, payload = self._executor.submit(lambda: current_context.run(_wrapped)).result()
+        if ok:
+            return cast(_T, payload)
+        exc_type, exc_args = cast(tuple[type[BaseException], tuple[str, ...]], payload)
+        # Re-raise a fresh instance with no chained traceback frames from the worker.
+        # If the exception type's constructor rejects the captured args (rare), fall
+        # back to a RuntimeError carrying the string form so we never lose the signal.
+        try:
+            raise exc_type(*exc_args)
+        except TypeError:
+            raise RuntimeError(f"{exc_type.__name__}: {exc_args}") from None
+
+    def initialize(self, build_fn: Callable[[], tuple[Any, Any]]) -> None:
+        """Build and install the sandbox+snapshot on the worker thread.
+
+        ``build_fn`` is invoked with no arguments on the worker thread. It must
+        return ``(sandbox, snapshot)``. Both references are retained as worker-
+        local attributes; they do not escape this thread.
+        """
+
+        def _init_on_worker() -> None:
+            sandbox, snapshot = build_fn()
+            self._sandbox = sandbox
+            self._snapshot = snapshot
+            self._initialized = True
+            # Locals fall out of scope on the worker thread; the worker-local
+            # attributes hold the only strong refs from now on.
+
+        self._run_on_worker(_init_on_worker)
+
+    def execute(
+        self,
+        *,
+        code: str,
+        output_dir: TemporaryDirectory[str] | None,
+        build_contents: Callable[..., list[Content]],
+    ) -> list[Content]:
+        """Restore + run + build sendable contents — all on the worker thread.
+
+        Returns a plain ``list[Content]`` whose elements never carry strong
+        references to the underlying sandbox or snapshot.
+        """
+
+        def _on_worker() -> list[Content]:
+            sandbox = self._sandbox
+            snapshot = self._snapshot
+            sandbox.restore(snapshot)
+            _clear_directory(output_dir)
+            result = sandbox.run(code=code)
+            try:
+                return build_contents(
+                    result=result,
+                    sandbox=sandbox,
+                    output_dir=output_dir,
+                    code=code,
+                )
+            finally:
+                # ``result`` may carry a back-reference to the sandbox. Force its
+                # final dec_ref on this thread so Drop runs here, not on whatever
+                # thread later GCs the ``Content`` list.
+                del result
+
+        return self._run_on_worker(_on_worker)
+
+    def is_alive(self) -> bool:
+        """Return ``True`` while the worker thread can still accept new submissions.
+
+        Useful for tests/observability; returns ``False`` after ``dispose()``.
+        """
+        try:
+            self._executor.submit(lambda: None).result(timeout=1.0)
+        except RuntimeError:
+            return False
+        return True
+
+    def dispose(self) -> None:
+        """Release the sandbox+snapshot on the owner worker thread, then shut down.
+
+        Safe to call multiple times. After ``dispose`` returns, the sandbox/
+        snapshot are guaranteed to have been released on the worker thread; any
+        remaining references held elsewhere have already been impossible (they
+        never leaked out of this object).
+        """
+
+        def _dispose_on_worker() -> None:
+            sandbox = self._sandbox
+            snapshot = self._snapshot
+            self._sandbox = None
+            self._snapshot = None
+            close_hook = (
+                (getattr(sandbox, "close", None) or getattr(sandbox, "shutdown", None)) if sandbox is not None else None
+            )
+            if callable(close_hook):
+                with suppress(Exception):
+                    close_hook()
+            # ``sandbox`` and ``snapshot`` are local on the worker thread and
+            # will be dec_ref'd here when this frame returns -> Drop on worker.
+            del sandbox, snapshot
+
+        if self._initialized:
+            try:
+                # Use the bare executor here -- _dispose_on_worker swallows its
+                # own errors and never raises, so traceback sanitization is not
+                # needed and we want dispose to remain robust during teardown.
+                self._executor.submit(_dispose_on_worker).result()
+            except RuntimeError:
+                # Worker already shut down; sandbox/snapshot will leak rather
+                # than panic on the wrong thread. This is the safest fallback.
+                pass
+            finally:
+                self._initialized = False
+        # Do not block on shutdown; stop accepting new tasks, but allow any
+        # already-queued task (including the dispose closure above) to finish.
         self._executor.shutdown(wait=False, cancel_futures=False)
 
 
 @dataclass
 class _SandboxEntry:
-    sandbox: Any
-    snapshot: Any
+    """Per-config cached sandbox handle.
+
+    The unsendable sandbox/snapshot live inside ``worker`` and never appear as
+    Python attributes on this object. Anything stored here is sendable and
+    safe to GC on any thread.
+    """
+
+    worker: _SandboxWorker
     input_dir: TemporaryDirectory[str] | None
     output_dir: TemporaryDirectory[str] | None
-    worker: _SandboxWorker = field(default_factory=_SandboxWorker)
+
+    def dispose(self) -> None:
+        """Release the sandbox+snapshot on the worker thread and clean up temp dirs."""
+        self.worker.dispose()
+        for tmp_dir in (self.input_dir, self.output_dir):
+            if tmp_dir is not None:
+                with suppress(Exception):
+                    tmp_dir.cleanup()
+        self.input_dir = None
+        self.output_dir = None
 
 
 def _load_sandbox_class() -> type[Any]:
@@ -181,6 +358,72 @@ def _resolve_workspace_root(value: str | Path | None) -> Path | None:
     if not resolved_path.is_dir():
         raise ValueError("workspace_root must point to an existing directory.")
     return resolved_path
+
+
+def _is_link_or_reparse_point(path: Path, path_stat: os.stat_result | None = None) -> bool:
+    """Return True for links or Windows reparse points without following targets."""
+    if path_stat is None:
+        try:
+            path_stat = path.lstat()
+        except OSError:
+            return True
+
+    if stat.S_ISLNK(path_stat.st_mode):
+        return True
+
+    is_junction = getattr(path, "is_junction", None)
+    if callable(is_junction):
+        try:
+            if bool(is_junction()):
+                return True
+        except OSError:
+            return True
+
+    reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    file_attributes = getattr(path_stat, "st_file_attributes", 0)
+    return bool(reparse_attribute and file_attributes & reparse_attribute)
+
+
+def _is_relative_to_or_same(*, path: Path, root: Path) -> bool:
+    return path == root or path.is_relative_to(root)
+
+
+def _resolve_contained_path(*, path: Path, root: Path) -> Path:
+    try:
+        resolved_path = path.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(
+            "Could not resolve Hyperlight sandbox input path while validating it stays under the configured "
+            f"source root: {path}. Source root: {root}. Ensure the path exists, is accessible, and does not "
+            f"contain symlink loops. Original error: {exc}"
+        ) from exc
+
+    if not _is_relative_to_or_same(path=resolved_path, root=root):
+        raise ValueError(f"Refusing to stage Hyperlight sandbox input path outside the configured source root: {path}")
+
+    return resolved_path
+
+
+def _inspect_stageable_input_path(*, path: Path, root: Path) -> os.stat_result:
+    try:
+        path_stat = path.lstat()
+    except OSError as exc:
+        raise ValueError(f"Could not inspect Hyperlight sandbox input path: {path}") from exc
+
+    if _is_link_or_reparse_point(path, path_stat):
+        raise ValueError(f"Refusing to stage linked or reparse-point path for Hyperlight sandbox input: {path}")
+
+    _resolve_contained_path(path=path, root=root)
+    return path_stat
+
+
+def _is_resolved_under_root(*, path: Path, root: Path) -> bool:
+    try:
+        resolved_path = path.resolve(strict=True)
+        resolved_root = root.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    return _is_relative_to_or_same(path=resolved_path, root=resolved_root)
 
 
 def _is_file_mount_pair(value: Any) -> TypeGuard[FileMount | tuple[FileMountHostPath, str]]:
@@ -314,47 +557,168 @@ def _display_mount_path(mount_path: str) -> str:
     return f"/input/{mount_path}"
 
 
+def _iter_real_entries(root: Path, *, reject_links: bool = False) -> Iterator[Path]:
+    """Walk ``root`` recursively, yielding directories and regular files only.
+
+    ``Path.rglob`` follows directory links by default, which combined with
+    ``Path.is_file()`` / ``shutil.copy2`` (all follow symlinks) would expose
+    paths outside the configured input tree if the source tree is
+    attacker-controlled. This walker mirrors the safe behaviour by rejecting or
+    skipping symlinks, Windows junctions, and other reparse points at every
+    directory level and never descending through one.
+
+    Non-regular files (sockets, FIFOs, devices) are also filtered out so the
+    signature mirrors exactly what ``_copy_path`` actually stages.
+    """
+    stack: list[Path] = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            children = list(current.iterdir())
+        except OSError as exc:
+            if reject_links:
+                raise ValueError(f"Could not inspect Hyperlight sandbox input directory: {current}") from exc
+            continue
+        for child in children:
+            try:
+                child_stat = child.lstat()
+                if _is_link_or_reparse_point(child, child_stat):
+                    if reject_links:
+                        raise ValueError(
+                            f"Refusing to stage linked or reparse-point path for Hyperlight sandbox input: {child}"
+                        )
+                    continue
+                if stat.S_ISDIR(child_stat.st_mode):
+                    stack.append(child)
+                    yield child
+                elif stat.S_ISREG(child_stat.st_mode):
+                    yield child
+                # Non-regular files (sockets/FIFOs/devices) are skipped to
+                # match ``_copy_path``'s staging behaviour.
+            except OSError as exc:
+                if reject_links:
+                    raise ValueError(f"Could not inspect Hyperlight sandbox input path: {child}") from exc
+                continue
+
+
 def _path_tree_signature(path: Path) -> tuple[tuple[str, int, int], ...]:
+    """Return a stable signature of the real (non-symlink) file tree under ``path``.
+
+    If ``path`` itself is a symlink, it is resolved first so the signature
+    reflects the real target's contents. This matches the public construction
+    flow (``_resolve_workspace_root`` / ``_normalize_file_mount_input`` already
+    resolve roots up front) and acts as defense in depth for any direct caller
+    that builds a ``_RunConfig`` without going through the constructor.
+
+    Links encountered inside the walked tree are rejected, and ``lstat()`` is
+    used so size/mtime are read from the entry itself, never through a target.
+    The result mirrors what ``_copy_path`` actually stages.
+    """
+    if path.is_symlink():
+        try:
+            path = path.resolve(strict=True)
+        except (OSError, RuntimeError):
+            return ()
     if path.is_file():
-        stat = path.stat()
-        return ((path.name, int(stat.st_size), int(stat.st_mtime_ns)),)
+        path_stat = path.lstat()
+        return ((path.name, int(path_stat.st_size), int(path_stat.st_mtime_ns)),)
 
     entries: list[tuple[str, int, int]] = []
-    for candidate in sorted(path.rglob("*"), key=lambda value: value.as_posix()):
+    resolved_path = _resolve_existing_path(path)
+    for candidate in sorted(_iter_real_entries(resolved_path, reject_links=True), key=lambda value: value.as_posix()):
         try:
-            stat = candidate.stat()
+            candidate_stat = candidate.lstat()
         except FileNotFoundError:
             continue
-        relative_path = candidate.relative_to(path).as_posix()
-        size = int(stat.st_size) if candidate.is_file() else 0
-        entries.append((relative_path, size, int(stat.st_mtime_ns)))
+        relative_path = candidate.relative_to(resolved_path).as_posix()
+        size = int(candidate_stat.st_size) if stat.S_ISREG(candidate_stat.st_mode) else 0
+        entries.append((relative_path, size, int(candidate_stat.st_mtime_ns)))
     return tuple(entries)
 
 
-def _copy_path(source: Path, destination: Path) -> None:
-    if source.is_dir():
+def _copy_path(source: Path, destination: Path, *, source_root: Path) -> None:
+    """Stage ``source`` into ``destination`` without following links.
+
+    Symlinks, Windows junctions, and other reparse-point entries found in the
+    source tree are rejected so a sandbox input tree can only contain real
+    entries that physically live under the configured ``workspace_root`` or a
+    ``file_mounts`` host path. ``Path.is_dir()``, ``Path.is_file()`` and
+    ``shutil.copy2`` all follow links by default, which is unsafe for links
+    planted in the source tree at rest.
+
+    This helper does not attempt to make the copy atomic with respect to
+    concurrent mutation of the source tree. Callers that need protection from
+    an adversary modifying the workspace mid-stage should pass in an
+    immutable / snapshotted directory.
+    """
+    source_stat = _inspect_stageable_input_path(path=source, root=source_root)
+
+    if stat.S_ISDIR(source_stat.st_mode):
         destination.mkdir(parents=True, exist_ok=True)
-        for child in sorted(source.iterdir(), key=lambda value: value.name):
-            _copy_path(child, destination / child.name)
+        try:
+            children = sorted(source.iterdir(), key=lambda value: value.name)
+        except OSError as exc:
+            raise ValueError(f"Could not inspect Hyperlight sandbox input directory: {source}") from exc
+        for child in children:
+            _copy_path(child, destination / child.name, source_root=source_root)
+        return
+
+    if not stat.S_ISREG(source_stat.st_mode):
+        # Non-regular files (sockets, FIFOs, devices) are intentionally skipped.
         return
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, destination)
+    shutil.copy2(source, destination, follow_symlinks=False)
 
 
 def _populate_input_dir(*, config: _RunConfig, input_root: Path) -> None:
     if config.workspace_root is not None:
-        for child in sorted(config.workspace_root.iterdir(), key=lambda value: value.name):
-            _copy_path(child, input_root / child.name)
+        workspace_root = _resolve_existing_path(config.workspace_root)
+        for child in sorted(workspace_root.iterdir(), key=lambda value: value.name):
+            _copy_path(child, input_root / child.name, source_root=workspace_root)
 
     for mount in config.file_mounts:
-        _copy_path(mount.host_path, input_root / mount.mount_path)
+        mount_root = _resolve_existing_path(mount.host_path)
+        _copy_path(mount.host_path, input_root / mount.mount_path, source_root=mount_root)
+
+
+def _read_output_file_bytes(file_path: Path) -> bytes:
+    """Read ``file_path`` without following a link, even under a TOCTOU swap.
+
+    ``Path.read_bytes`` follows links, so a sandbox payload that replaces an
+    output file with ``/output/leak.txt -> /host/secret`` or a Windows reparse
+    point between validation and read could still exfiltrate a host file. Two
+    layers defend against this:
+
+    * ``os.O_NOFOLLOW`` makes the kernel reject a final-component symlink with
+      ``ELOOP``. The flag is absent on some platforms (notably Windows), where
+      it degrades to ``0``, so it cannot be the only defense.
+    * The file is ``lstat``-ed before opening and ``fstat``-ed after; if the
+      ``(st_dev, st_ino)`` identity changed, or the pre-open entry is a link or
+      reparse point, the read is refused. This closes the swap window on every
+      platform.
+    """
+    pre_stat = file_path.lstat()
+    if _is_link_or_reparse_point(file_path, pre_stat):
+        raise OSError(f"refusing to read linked or reparse-point output file: {file_path}")
+
+    fd = os.open(file_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        opened_stat = os.fstat(fd)
+        if (opened_stat.st_dev, opened_stat.st_ino) != (pre_stat.st_dev, pre_stat.st_ino):
+            raise OSError(f"output file changed between validation and read: {file_path}")
+    except BaseException:
+        os.close(fd)
+        raise
+
+    with os.fdopen(fd, "rb") as handle:
+        return handle.read()
 
 
 def _create_file_content(file_path: Path, *, relative_path: str) -> Content:
     media_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
     return Content.from_data(
-        data=file_path.read_bytes(),
+        data=_read_output_file_bytes(file_path),
         media_type=media_type,
         additional_properties={"path": f"/output/{relative_path}"},
     )
@@ -378,6 +742,54 @@ def _normalize_output_relative_path(*, output_file: object, root: Path) -> str |
     return "/".join(parts)
 
 
+def _is_safe_output_file(*, root: Path, host_path: Path) -> bool:
+    """Return True only if ``host_path`` is a real regular file safely under ``root``.
+
+    The ``/output`` directory is sandbox-controlled, so a payload can plant a
+    final-component symlink (``/output/leak.txt -> /host/secret``), a Windows
+    junction/reparse point, or an intermediate directory link to escape ``root``
+    and read host files.
+    ``Path.is_file`` follows symlinks, so this validator instead walks each path
+    component from ``root`` to ``host_path`` with ``lstat`` and rejects the path
+    if any component is a symlink, requiring the final entry to be a regular
+    file. ``..``/``.`` components are rejected up front because
+    ``Path.relative_to`` is purely lexical and would otherwise allow a listing
+    such as ``root / ".." / "secret.txt"`` to escape ``root`` without any
+    symlink. This mirrors the symlink-hardening already applied to the input
+    staging path (``_copy_path`` / ``_iter_real_entries``).
+    """
+    try:
+        relative = host_path.relative_to(root)
+    except ValueError:
+        return False
+
+    if not relative.parts or any(part in {"..", "."} for part in relative.parts):
+        return False
+
+    if not _is_resolved_under_root(path=host_path, root=root):
+        return False
+
+    *parent_parts, final_part = relative.parts
+    current = root
+    for part in parent_parts:
+        current = current / part
+        try:
+            parent_stat = current.lstat()
+        except OSError:
+            return False
+        if _is_link_or_reparse_point(current, parent_stat):
+            return False
+
+    current = current / final_part
+    try:
+        final_stat = current.lstat()
+    except OSError:
+        return False
+    if _is_link_or_reparse_point(current, final_stat):
+        return False
+    return stat.S_ISREG(final_stat.st_mode)
+
+
 def _collect_output_relative_paths(*, sandbox: Any, root: Path) -> set[str]:
     relative_paths: set[str] = set()
 
@@ -391,7 +803,11 @@ def _collect_output_relative_paths(*, sandbox: Any, root: Path) -> set[str]:
             if (relative_path := _normalize_output_relative_path(output_file=output_file, root=root)) is not None:
                 relative_paths.add(relative_path)
 
-    for host_path in root.rglob("*"):
+    # ``Path.rglob`` follows directory symlinks and ``Path.is_file`` follows
+    # symlinks, both of which would surface paths outside the sandbox-controlled
+    # output tree. ``_iter_real_entries`` skips symlinks and never descends
+    # through a symlinked directory, yielding only real entries under ``root``.
+    for host_path in _iter_real_entries(root):
         if host_path.is_file():
             relative_paths.add(host_path.relative_to(root).as_posix())
 
@@ -401,7 +817,7 @@ def _collect_output_relative_paths(*, sandbox: Any, root: Path) -> set[str]:
 def _parse_output_files(
     *,
     sandbox: Any,
-    output_dir: TemporaryDirectory[str] | None,
+    output_dir: _NamedDirectory | None,
     expect_output_files: bool,
 ) -> list[Content]:
     if output_dir is None:
@@ -416,12 +832,12 @@ def _parse_output_files(
 
         for relative_path in sorted(relative_paths):
             host_path = root.joinpath(*PurePosixPath(relative_path).parts)
-            if not host_path.is_file():
+            if not _is_safe_output_file(root=root, host_path=host_path):
                 missing_files = True
                 continue
             try:
                 contents.append(_create_file_content(host_path, relative_path=relative_path))
-            except PermissionError:
+            except (PermissionError, OSError):
                 missing_files = True
 
         if not missing_files or attempt == OUTPUT_FILE_RETRY_ATTEMPTS - 1:
@@ -430,6 +846,23 @@ def _parse_output_files(
         time.sleep(OUTPUT_FILE_RETRY_DELAY_SECONDS)
 
     return []
+
+
+def _result_snapshot(result: Any) -> dict[str, Any]:
+    """Return a sendable plain-dict snapshot of a sandbox.run() result.
+
+    The Hyperlight ``WasmSandbox.run()`` return value is a PyO3 ``unsendable`` object that
+    can carry a back-reference to the sandbox itself. Storing it on
+    ``Content.raw_representation`` lets it ride out of the owner thread and be garbage
+    collected elsewhere, which trips the PyO3 ``Drop`` panic. Build a thread-safe summary
+    of the fields we actually surface and forward that instead, so the original result can
+    be released on the worker thread that produced it.
+    """
+    return {
+        "success": bool(getattr(result, "success", False)),
+        "stdout": str(getattr(result, "stdout", "") or ""),
+        "stderr": str(getattr(result, "stderr", "") or ""),
+    }
 
 
 def _build_execution_contents(
@@ -442,10 +875,11 @@ def _build_execution_contents(
     success = bool(getattr(result, "success", False))
     stdout = str(getattr(result, "stdout", "") or "").replace("\r\n", "\n") or None
     stderr = str(getattr(result, "stderr", "") or "").replace("\r\n", "\n") or None
+    snapshot = _result_snapshot(result)
     outputs: list[Content] = []
 
     if stdout is not None:
-        outputs.append(Content.from_text(stdout, raw_representation=result))
+        outputs.append(Content.from_text(stdout, raw_representation=snapshot))
 
     outputs.extend(
         _parse_output_files(
@@ -457,7 +891,7 @@ def _build_execution_contents(
 
     if success:
         if stderr is not None:
-            outputs.append(Content.from_text(stderr, raw_representation=result))
+            outputs.append(Content.from_text(stderr, raw_representation=snapshot))
         if not outputs:
             outputs.append(Content.from_text("Code executed successfully without output."))
         return outputs
@@ -467,7 +901,7 @@ def _build_execution_contents(
         Content.from_error(
             message="Execution error",
             error_details=error_details,
-            raw_representation=result,
+            raw_representation=snapshot,
         )
     )
     return outputs
@@ -484,12 +918,13 @@ def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
         # registered callbacks synchronously via FFI, so this must be a sync function.
         # We run the async call on a dedicated thread to avoid conflicts with any
         # event loop that may be running on the current thread.
+        current_context = contextvars.copy_context()
         result_box: list[Any] = [None]
         error_box: list[BaseException] = []
 
         def _run() -> None:
             try:
-                result_box[0] = asyncio.run(_invoke())
+                result_box[0] = current_context.run(lambda: asyncio.run(_invoke()))
             except BaseException as exc:
                 error_box.append(exc)
 
@@ -514,11 +949,20 @@ def _clear_directory(output_dir: TemporaryDirectory[str] | None) -> None:
     root = Path(output_dir.name)
     for child in root.iterdir():
         try:
-            if child.is_symlink() or child.is_file():
+            child_stat = child.lstat()
+            if _is_link_or_reparse_point(child, child_stat):
+                if stat.S_ISDIR(child_stat.st_mode):
+                    child.rmdir()
+                    continue
+                try:
+                    child.unlink()
+                except OSError:
+                    child.rmdir()
+            elif stat.S_ISREG(child_stat.st_mode):
                 child.unlink()
-            elif child.is_dir():
+            elif stat.S_ISDIR(child_stat.st_mode):
                 shutil.rmtree(child, ignore_errors=True)
-        except (FileNotFoundError, PermissionError):
+        except OSError:
             pass
 
 
@@ -533,21 +977,14 @@ class _SandboxRegistry(SandboxRuntime):
         Entries are keyed by ``config.cache_key()``. All operations against the underlying
         sandbox object are routed through the entry's dedicated single-threaded worker, which
         both serializes concurrent callers and satisfies the PyO3 ``unsendable`` invariant
-        that the sandbox can only be touched from the thread that created it.
+        that the sandbox can only be touched from the thread that created it. The unsendable
+        objects never escape the worker; this method returns only sendable plain Python data.
         """
         entry = self._get_or_create_entry(config)
-        return entry.worker.run(self._run_on_worker, entry, code)
-
-    @staticmethod
-    def _run_on_worker(entry: _SandboxEntry, code: str) -> list[Content]:
-        entry.sandbox.restore(entry.snapshot)
-        _clear_directory(entry.output_dir)
-        result = entry.sandbox.run(code=code)
-        return _build_execution_contents(
-            result=result,
-            sandbox=entry.sandbox,
-            output_dir=entry.output_dir,
+        return entry.worker.execute(
             code=code,
+            output_dir=entry.output_dir,
+            build_contents=_build_execution_contents,
         )
 
     def _get_or_create_entry(self, config: _RunConfig) -> _SandboxEntry:
@@ -562,22 +999,19 @@ class _SandboxRegistry(SandboxRuntime):
     def close(self) -> None:
         """Shut down all per-entry worker threads and release per-entry resources.
 
-        Safe to call multiple times. Runs any sandbox close hook on the entry's
-        own worker thread to honor the PyO3 ``unsendable`` invariant.
+        Safe to call multiple times. Each entry's sandbox/snapshot is disposed on the
+        worker thread that created it to honor the PyO3 ``unsendable`` invariant.
         """
         with self._entries_lock:
             entries = list(self._entries.values())
             self._entries.clear()
-        for entry in entries:
-            close_hook = getattr(entry.sandbox, "close", None) or getattr(entry.sandbox, "shutdown", None)
-            if callable(close_hook):
-                with suppress(Exception):
-                    entry.worker.run(close_hook)
-            entry.worker.shutdown()
-            for tmp_dir in (entry.input_dir, entry.output_dir):
-                if tmp_dir is not None:
-                    with suppress(Exception):
-                        tmp_dir.cleanup()
+        try:
+            for entry in entries:
+                entry.dispose()
+        finally:
+            # Drop our local strong references; entries' own refs to sandbox/snapshot
+            # were already moved into the per-worker disposal closure inside dispose().
+            del entries
 
     def _create_entry(self, config: _RunConfig) -> _SandboxEntry:
         input_dir_handle = TemporaryDirectory() if config.filesystem_enabled else None
@@ -617,8 +1051,6 @@ class _SandboxRegistry(SandboxRuntime):
                         methods=list(allowed_domain.methods) if allowed_domain.methods is not None else None,
                     )
 
-        worker = _SandboxWorker()
-
         def _build_sandbox() -> tuple[Any, Any]:
             sandbox = _create_sandbox()
             _configure_sandbox(sandbox=sandbox, expand_missing_scheme=False)
@@ -636,18 +1068,17 @@ class _SandboxRegistry(SandboxRuntime):
             snapshot = sandbox.snapshot()
             return sandbox, snapshot
 
+        worker = _SandboxWorker()
         try:
-            sandbox, snapshot = worker.run(_build_sandbox)
+            worker.initialize(_build_sandbox)
         except BaseException:
-            worker.shutdown()
+            worker.dispose()
             raise
 
         return _SandboxEntry(
-            sandbox=sandbox,
-            snapshot=snapshot,
+            worker=worker,
             input_dir=input_dir_handle,
             output_dir=output_dir_handle,
-            worker=worker,
         )
 
 

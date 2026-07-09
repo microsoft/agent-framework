@@ -2,7 +2,7 @@
 
 """Tests for cleanup hook registration and execution."""
 
-import asyncio
+import inspect
 import tempfile
 from pathlib import Path
 
@@ -123,7 +123,7 @@ async def test_register_cleanup_multiple_hooks():
 
     # Execute all hooks
     for hook in hooks:
-        if asyncio.iscoroutinefunction(hook):
+        if inspect.iscoroutinefunction(hook):
             await hook()
         else:
             hook()
@@ -320,7 +320,7 @@ register_cleanup(agent, credential.close)
 async def test_cleanup_execution_order():
     """Test that cleanup hooks execute in registration order."""
     agent = MockAgent("OrderTest")
-    execution_order = []
+    execution_order: list[int] = []
 
     def hook1():
         execution_order.append(1)
@@ -353,7 +353,7 @@ async def test_custom_cleanup_logic():
     """Test registering custom cleanup function with complex logic."""
     agent = MockAgent("CustomCleanup")
     cleanup_executed = False
-    resources_closed = []
+    resources_closed: list[str] = []
 
     async def custom_cleanup():
         nonlocal cleanup_executed

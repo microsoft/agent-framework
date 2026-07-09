@@ -13,13 +13,29 @@ Instructions for AI coding agents working in the Python codebase.
 - `python-code-quality` — linting, formatting, type checking, prek hooks, CI workflow
 - `python-feature-lifecycle` — package vs feature lifecycle stages, decorators, enums, and promotion guidance
 - `python-package-management` — monorepo structure, lazy loading, versioning, new packages
-- `python-samples` — sample file structure, PEP 723, documentation guidelines
+- `pull-requests` — writing PR descriptions (template) and handling/resolving PR review comments
+- `agent-framework-py-release` — Python release PR workflow, CHANGELOG-driven package bumps, lifecycle version rules, and dependency-floor validation
 
 ## Maintaining Documentation
 
 When making changes to a package, check if the following need updates:
 - The package's `AGENTS.md` file (adding/removing/renaming public APIs, architecture changes, import path changes)
 - The agent skills in `.github/skills/` if conventions, commands, or workflows change
+
+At the end of every run, re-read `AGENTS.md` and the relevant skill files and
+update any guidance that the conversation revealed to be out of date,
+incomplete, or misleading (renamed files, changed commands, new conventions
+the user confirmed, etc.). **Before adding a new principle or rule, ask the
+user whether they want it captured as a durable principle** — do not invent
+team norms from a single conversation without explicit confirmation.
+
+## Terminology
+
+- **Avoid "GA" for Agent Framework code.** Reserve *GA* for hosted services
+  (e.g. "the Foundry service is GA"). For Agent Framework packages, features,
+  and APIs use **"released"** or **"stable"** depending on context — these
+  match the feature-lifecycle stages documented in the
+  `python-feature-lifecycle` skill.
 
 ## Pull Request Description Guidance
 
@@ -53,6 +69,8 @@ python/
 
 - `agent-framework-core` contains core abstractions and OpenAI/Azure OpenAI built-in
 - Provider packages (`foundry`, `anthropic`, etc.) extend core with specific integrations
+- The root `agent_framework` public API is lazy-loaded from `packages/core/agent_framework/__init__.py` and
+  described for type checkers in `packages/core/agent_framework/__init__.pyi`; keep both plus `__all__` in sync.
 - Core uses lazy loading via `__getattr__` in provider folders (e.g., `agent_framework/azure/`)
 
 ## Package Documentation
@@ -93,3 +111,4 @@ python/
 
 ### Experimental
 - [lab](packages/lab/AGENTS.md) - Experimental features
+- [monty](packages/monty/AGENTS.md) - Monty-backed CodeAct integrations (alpha)

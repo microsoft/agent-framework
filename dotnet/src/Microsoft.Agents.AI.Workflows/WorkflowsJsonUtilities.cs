@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Specialized;
+using Microsoft.Agents.AI.Workflows.Specialized.Magentic;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows;
@@ -69,6 +70,8 @@ internal static partial class WorkflowsJsonUtilities
     [JsonSerializable(typeof(Checkpoint))]
     [JsonSerializable(typeof(CheckpointInfo))]
     [JsonSerializable(typeof(PortableValue))]
+    [JsonSerializable(typeof(PortableValue[]))]
+    [JsonSerializable(typeof(Dictionary<string, PortableValue>))]
     [JsonSerializable(typeof(PortableMessageEnvelope))]
     [JsonSerializable(typeof(InMemoryCheckpointManager))]
     [JsonSerializable(typeof(CheckpointFileIndexEntry))]
@@ -79,9 +82,8 @@ internal static partial class WorkflowsJsonUtilities
     [JsonSerializable(typeof(ExecutorIdentity))]
     [JsonSerializable(typeof(RunnerStateData))]
 
-    // Workflow Representation Types
-    [JsonSerializable(typeof(WorkflowInfo))]
-    [JsonSerializable(typeof(EdgeConnection))]
+    // Workflow Output Types
+    [JsonSerializable(typeof(OutputTag))]
 
     // Workflow-as-Agent
     [JsonSerializable(typeof(WorkflowChatHistoryProvider.StoreState))]
@@ -95,6 +97,14 @@ internal static partial class WorkflowsJsonUtilities
 
     // Built-in Executor State Types
     [JsonSerializable(typeof(AIAgentHostState))]
+    [JsonSerializable(typeof(HandoffSharedState))]
+    [JsonSerializable(typeof(HandoffAgentHostState))]
+    [JsonSerializable(typeof(MagenticPlanReviewRequest))]
+    [JsonSerializable(typeof(MagenticPlanReviewResponse))]
+    [JsonSerializable(typeof(MagenticTaskState))]
+    [JsonSerializable(typeof(GroupChatManagerState))]
+    [JsonSerializable(typeof(RoundRobinGroupChatManagerState))]
+    [JsonSerializable(typeof(ResetChatSignal))]
 
     // Event Types
     //[JsonSerializable(typeof(WorkflowEvent))]
