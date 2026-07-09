@@ -113,11 +113,10 @@ def _deserialize_options(options: dict[str, Any]) -> dict[str, Any]:
         response_format = _deserialize_response_format(response_format_value)
         if response_format is not None:
             result["response_format"] = response_format
-        elif (
-            isinstance(response_format_value, dict)
-            and response_format_value.get("__response_schema_type__") == "pydantic_model"
-        ):
-            result.pop("response_format")
+        elif isinstance(response_format_value, dict):
+            response_format_dict = cast(dict[str, Any], response_format_value)
+            if response_format_dict.get("__response_schema_type__") == "pydantic_model":
+                result.pop("response_format")
     return result
 
 
@@ -227,8 +226,8 @@ class RunRequest:
         if not correlation_id:
             raise ValueError("correlationId is required in RunRequest data")
 
-        options = data.get("options")
-        options = _deserialize_options(options) if isinstance(options, dict) else {}
+        raw_options = data.get("options")
+        options = _deserialize_options(cast(dict[str, Any], raw_options)) if isinstance(raw_options, dict) else {}
 
         return cls(
             message=data.get("message", ""),
