@@ -44,7 +44,7 @@ dev = [
     "zuban==0.8.2",
     "mcp[ws]==1.28.1",
     "opentelemetry-sdk==1.40.0",
-    "azure-monitor-opentelemetry==1.8.8",
+    "azure-monitor-opentelemetry==1.8.9",
     #tasks
     "poethepoet==0.46.0",
     "rich>=13.7.1,<16.0.0",
