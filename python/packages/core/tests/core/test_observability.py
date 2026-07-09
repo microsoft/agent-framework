@@ -4926,7 +4926,7 @@ async def test_parallel_function_call_spans_nested_under_agent_span(span_exporte
             return "https://test.example.com"
 
         def _inner_get_response(
-            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+            self, *, messages: Sequence[Message], stream: bool, options: Mapping[str, Any], **kwargs: Any
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
             del stream, messages, options, kwargs
             self.call_count += 1
@@ -4964,28 +4964,33 @@ async def test_parallel_function_call_spans_nested_under_agent_span(span_exporte
             return _get_final()
 
     agent = Agent(
-        client=ParallelToolChatClient(),
+        client=ParallelToolChatClient(),  # ty: ignore[invalid-argument-type]
         id="parallel_tool_agent_id",
         name="parallel_tool_agent",
-        default_options={"model": "ToolModel", "tools": [first_tool, second_tool], "tool_choice": "auto"},
+        default_options={"model": "ToolModel", "tools": [first_tool, second_tool], "tool_choice": "auto"},  # pyrefly: ignore[bad-argument-type]
     )
 
     span_exporter.clear()
     await agent.run("Call both tools.")
 
     spans = span_exporter.get_finished_spans()
-    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
-    tool_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.TOOL_EXECUTION_OPERATION]
+    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    tool_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.TOOL_EXECUTION_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
     assert len(invoke_spans) == 1
     assert len(tool_spans) == 2
-    assert {s.attributes.get(OtelAttr.TOOL_NAME.value) for s in tool_spans} == {"first_tool", "second_tool"}
+    assert {s.attributes.get(OtelAttr.TOOL_NAME.value) for s in tool_spans} == {"first_tool", "second_tool"}  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
     agent_span = invoke_spans[0]
+    agent_context = agent_span.context
+    assert agent_context is not None
     for tool_span in tool_spans:
-        assert tool_span.parent is not None, f"Span {tool_span.name} has no parent"
-        assert tool_span.parent.span_id == agent_span.context.span_id
-        assert tool_span.context.trace_id == agent_span.context.trace_id
+        tool_parent = tool_span.parent
+        tool_context = tool_span.context
+        assert tool_parent is not None, f"Span {tool_span.name} has no parent"
+        assert tool_context is not None
+        assert tool_parent.span_id == agent_context.span_id
+        assert tool_context.trace_id == agent_context.trace_id
 
 
 @pytest.mark.parametrize("stream", [False, True])
