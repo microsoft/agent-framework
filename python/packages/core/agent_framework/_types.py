@@ -2187,6 +2187,16 @@ def _parse_structured_response_value(text: str, response_format: Any | None) -> 
     return None
 
 
+def _last_non_empty_assistant_message_text(messages: Sequence[Message]) -> str:
+    for message in reversed(messages):
+        if message.role != "assistant":
+            continue
+        text = message.text
+        if text.strip():
+            return text
+    return ""
+
+
 class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
     """Represents the response to a chat request.
 
@@ -2372,7 +2382,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Keyword Args:
             output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
-                response text into structured data.
+                final non-empty assistant message text into structured data.
         """
         msg = cls(messages=[], response_format=output_format_type)
         for update in updates:
@@ -2432,7 +2442,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Keyword Args:
             output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
-                response text into structured data.
+                final non-empty assistant message text into structured data.
         """
         msg = cls(messages=[], response_format=output_format_type)
         async for update in updates:
@@ -2450,16 +2460,22 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         """Get the parsed structured output value.
 
         If a response_format was provided and parsing hasn't been attempted yet,
-        this will attempt to parse the text into the specified type.
+        this will attempt to parse the last non-empty assistant message text into the specified type.
 
         Raises:
-            ValidationError: If the response text doesn't match the expected schema.
-            ValueError: If the response text is not valid JSON for a non-Pydantic structured format.
+            ValidationError: If the assistant message text doesn't match the expected schema.
+            ValueError: If the assistant message text is not valid JSON for a non-Pydantic structured format.
         """
         if self._value_parsed:
             return self._value
         if self._response_format is not None:
-            self._value = cast(ResponseModelT, _parse_structured_response_value(self.text, self._response_format))
+            self._value = cast(
+                ResponseModelT,
+                _parse_structured_response_value(
+                    _last_non_empty_assistant_message_text(self.messages),
+                    self._response_format,
+                ),
+            )
             self._value_parsed = True
         return self._value
 
@@ -2714,16 +2730,22 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         """Get the parsed structured output value.
 
         If a response_format was provided and parsing hasn't been attempted yet,
-        this will attempt to parse the text into the specified type.
+        this will attempt to parse the last non-empty assistant message text into the specified type.
 
         Raises:
-            ValidationError: If the response text doesn't match the expected schema.
-            ValueError: If the response text is not valid JSON for a non-Pydantic structured format.
+            ValidationError: If the assistant message text doesn't match the expected schema.
+            ValueError: If the assistant message text is not valid JSON for a non-Pydantic structured format.
         """
         if self._value_parsed:
             return self._value
         if self._response_format is not None:
-            self._value = cast(ResponseModelT, _parse_structured_response_value(self.text, self._response_format))
+            self._value = cast(
+                ResponseModelT,
+                _parse_structured_response_value(
+                    _last_non_empty_assistant_message_text(self.messages),
+                    self._response_format,
+                ),
+            )
             self._value_parsed = True
         return self._value
 
@@ -2782,7 +2804,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Keyword Args:
             output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
-                response text into structured data.
+                final non-empty assistant message text into structured data.
             value: Optional pre-parsed structured output value to set directly on the response.
         """
         msg = cls(messages=[], response_format=output_format_type, value=value)
@@ -2832,7 +2854,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Keyword Args:
             output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
-                response text into structured data.
+                final non-empty assistant message text into structured data.
         """
         msg = cls(messages=[], response_format=output_format_type)
         async for update in updates:
