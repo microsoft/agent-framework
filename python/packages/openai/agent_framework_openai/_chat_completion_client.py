@@ -99,6 +99,44 @@ ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
+def _extract_reasoning_text(reasoning_details: Any) -> str | None:
+    """Extract visible plaintext from a reasoning_details payload.
+
+    OpenAI-compatible providers return reasoning_details in various forms:
+    - A list of dicts with ``"text"`` keys (e.g. OpenRouter: ``[{"type": "reasoning.text", "text": "..."}]``)
+    - A dict with a ``"content"`` list containing text entries
+    - A plain string
+
+    Returns the concatenated plaintext if any is found, otherwise None.
+    """
+    if isinstance(reasoning_details, str):
+        return reasoning_details or None
+
+    if isinstance(reasoning_details, list):
+        parts: list[str] = []
+        for entry in reasoning_details:
+            if isinstance(entry, dict):
+                if text := entry.get("text"):
+                    parts.append(text)
+            elif isinstance(entry, str):
+                parts.append(entry)
+        return "".join(parts) or None
+
+    if isinstance(reasoning_details, dict):
+        # Handle {"content": [...], "text": "..."} style
+        if text := reasoning_details.get("text"):
+            return text
+        if content_list := reasoning_details.get("content"):
+            if isinstance(content_list, list):
+                parts = []
+                for entry in content_list:
+                    if isinstance(entry, dict) and (text := entry.get("text")):
+                        parts.append(text)
+                return "".join(parts) or None
+
+    return None
+
+
 # region OpenAI Chat Options TypedDict
 
 
@@ -709,12 +747,14 @@ class RawOpenAIChatCompletionClient(
             if choice.finish_reason:
                 finish_reason = choice.finish_reason  # type: ignore[assignment]
             contents: list[Content] = []
-            if text_content := self._parse_text_from_openai(choice):
-                contents.append(text_content)
+            contents.extend(self._parse_text_from_openai(choice))
             if parsed_tool_calls := [tool for tool in self._parse_tool_calls_from_openai(choice)]:
                 contents.extend(parsed_tool_calls)
             if reasoning_details := getattr(choice.message, "reasoning_details", None):
-                contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
+                contents.append(Content.from_text_reasoning(
+                    text=_extract_reasoning_text(reasoning_details),
+                    protected_data=json.dumps(reasoning_details),
+                ))
             messages.append(Message(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
@@ -755,10 +795,12 @@ class RawOpenAIChatCompletionClient(
                 continue
 
             contents.extend(self._parse_tool_calls_from_openai(choice))
-            if text_content := self._parse_text_from_openai(choice):
-                contents.append(text_content)
+            contents.extend(self._parse_text_from_openai(choice))
             if reasoning_details := getattr(choice.delta, "reasoning_details", None):
-                contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
+                contents.append(Content.from_text_reasoning(
+                    text=_extract_reasoning_text(reasoning_details),
+                    protected_data=json.dumps(reasoning_details),
+                ))
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
@@ -795,14 +837,54 @@ class RawOpenAIChatCompletionClient(
                 details["cache_read_input_token_count"] = tokens
         return details
 
-    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
-        """Parse the choice into a Content object with type='text'."""
+    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> list[Content]:
+        """Parse the choice into Content objects with type='text' and/or 'text_reasoning'.
+
+        Handles both plain string content and structured list content (e.g. Mistral
+        reasoning models that return ``[{"type": "thinking", ...}, {"type": "text", ...}]``).
+        """
         message = choice.message if isinstance(choice, Choice) else choice.delta
         if message.content:
-            return Content.from_text(text=message.content, raw_representation=choice)
+            content = message.content
+            # Some OpenAI-compatible providers (e.g. Mistral reasoning models) return
+            # content as a list of typed chunks rather than a plain string.
+            if isinstance(content, list):
+                return self._parse_chunked_content(content, choice)
+            return [Content.from_text(text=content, raw_representation=choice)]
         if hasattr(message, "refusal") and message.refusal:
-            return Content.from_text(text=message.refusal, raw_representation=choice)
-        return None
+            return [Content.from_text(text=message.refusal, raw_representation=choice)]
+        return []
+
+    @staticmethod
+    def _parse_chunked_content(chunks: list[Any], choice: Choice | ChunkChoice) -> list[Content]:
+        """Parse structured content chunks (e.g. Mistral thinking/text format).
+
+        Handles chunk types:
+        - ``{"type": "thinking", "thinking": "..." | [{"type": "text", "text": "..."}]}``
+        - ``{"type": "text", "text": "..."}``
+        """
+        results: list[Content] = []
+        for chunk in chunks:
+            if not isinstance(chunk, dict):
+                continue
+            chunk_type = chunk.get("type")
+            if chunk_type == "thinking":
+                thinking = chunk.get("thinking")
+                if isinstance(thinking, str):
+                    text = thinking
+                elif isinstance(thinking, list):
+                    text = "".join(
+                        part.get("text", "") for part in thinking if isinstance(part, dict)
+                    )
+                else:
+                    text = ""
+                if text:
+                    results.append(Content.from_text_reasoning(text=text, raw_representation=choice))
+            elif chunk_type == "text":
+                text = chunk.get("text")
+                if text:
+                    results.append(Content.from_text(text=text, raw_representation=choice))
+        return results
 
     def _get_metadata_from_chat_response(self, response: ChatCompletion) -> dict[str, Any]:
         """Get metadata from a chat response."""

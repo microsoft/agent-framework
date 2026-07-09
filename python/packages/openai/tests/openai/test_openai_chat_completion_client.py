@@ -2087,4 +2087,222 @@ def test_streaming_chunk_with_null_delta_no_tool_calls_parsed(
     assert not any(c.type == "function_call" for c in update.contents)
 
 
+def test_parse_reasoning_details_extracts_plaintext(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that reasoning_details with plaintext entries surface text in Content.text (issue #6979)."""
+    from openai.types.chat.chat_completion import ChatCompletion, Choice
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    client = OpenAIChatCompletionClient()
+
+    # OpenRouter-style reasoning_details with plaintext
+    mock_reasoning_details = [
+        {"type": "reasoning.text", "text": "Let me think about this..."},
+        {"type": "reasoning.text", "text": " The answer is 42."},
+    ]
+
+    mock_response = ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model="z-ai/glm-5.2",
+        choices=[
+            Choice(
+                index=0,
+                message=cast(Any, ChatCompletionMessage)(
+                    role="assistant",
+                    content="The answer is 42.",
+                    reasoning_details=mock_reasoning_details,
+                ),
+                finish_reason="stop",
+            )
+        ],
+    )
+
+    response = client._parse_response_from_openai(mock_response, {})
+
+    message = response.messages[0]
+    reasoning_contents = [c for c in message.contents if c.type == "text_reasoning"]
+    assert len(reasoning_contents) == 1
+
+    # Text should be extracted from the plaintext entries
+    assert reasoning_contents[0].text == "Let me think about this... The answer is 42."
+    # protected_data should still be preserved for round-trip
+    assert reasoning_contents[0].protected_data is not None
+    parsed = json.loads(reasoning_contents[0].protected_data)
+    assert parsed == mock_reasoning_details
+
+
+def test_parse_reasoning_details_extracts_plaintext_streaming(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test streaming path extracts plaintext from reasoning_details (issue #6979)."""
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+    from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
+    from openai.types.chat.chat_completion_chunk import ChoiceDelta as ChunkChoiceDelta
+
+    client = OpenAIChatCompletionClient()
+
+    mock_reasoning_details = [
+        {"type": "reasoning.text", "text": "Thinking step 1"},
+    ]
+
+    mock_chunk = ChatCompletionChunk(
+        id="test-chunk",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="z-ai/glm-5.2",
+        choices=[
+            ChunkChoice(
+                index=0,
+                delta=cast(Any, ChunkChoiceDelta)(
+                    role="assistant",
+                    content=None,
+                    reasoning_details=mock_reasoning_details,
+                ),
+                finish_reason=None,
+            )
+        ],
+    )
+
+    update = client._parse_response_update_from_openai(mock_chunk)
+
+    reasoning_contents = [c for c in update.contents if c.type == "text_reasoning"]
+    assert len(reasoning_contents) == 1
+    assert reasoning_contents[0].text == "Thinking step 1"
+    assert reasoning_contents[0].protected_data is not None
+
+
+def test_parse_mistral_chunked_content_from_response(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that Mistral-style list content (thinking + text chunks) is parsed correctly (issue #6978)."""
+    from openai.types.chat.chat_completion import ChatCompletion, Choice
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    client = OpenAIChatCompletionClient()
+
+    # Mistral returns content as a list of typed chunks.
+    # The OpenAI SDK passes this through without strict validation in streaming,
+    # so we use model_construct to bypass Pydantic validation in the test.
+    chunked_content = [
+        {"type": "thinking", "thinking": [{"type": "text", "text": "Let me reason about this..."}]},
+        {"type": "text", "text": "The answer is 42."},
+    ]
+
+    message = ChatCompletionMessage.model_construct(
+        role="assistant",
+        content=chunked_content,
+    )
+
+    mock_response = ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model="mistral-medium-latest",
+        choices=[
+            Choice(
+                index=0,
+                message=message,
+                finish_reason="stop",
+            )
+        ],
+    )
+
+    response = client._parse_response_from_openai(mock_response, {})
+
+    message_out = response.messages[0]
+    assert len(message_out.contents) == 2
+
+    # First content should be text_reasoning from the thinking chunk
+    assert message_out.contents[0].type == "text_reasoning"
+    assert message_out.contents[0].text == "Let me reason about this..."
+
+    # Second content should be text from the text chunk
+    assert message_out.contents[1].type == "text"
+    assert message_out.contents[1].text == "The answer is 42."
+
+
+def test_parse_mistral_chunked_content_streaming(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test streaming path handles Mistral-style list content (issue #6978)."""
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+    from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
+    from openai.types.chat.chat_completion_chunk import ChoiceDelta as ChunkChoiceDelta
+
+    client = OpenAIChatCompletionClient()
+
+    # Streaming chunk with list content - use model_construct to bypass validation
+    chunked_content = [
+        {"type": "thinking", "thinking": "Deep thought..."},
+        {"type": "text", "text": "Here's the answer."},
+    ]
+
+    delta = ChunkChoiceDelta.model_construct(
+        role="assistant",
+        content=chunked_content,
+    )
+
+    mock_chunk = ChatCompletionChunk(
+        id="test-chunk",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="mistral-medium-latest",
+        choices=[
+            ChunkChoice(
+                index=0,
+                delta=delta,
+                finish_reason=None,
+            )
+        ],
+    )
+
+    update = client._parse_response_update_from_openai(mock_chunk)
+
+    reasoning_contents = [c for c in update.contents if c.type == "text_reasoning"]
+    text_contents = [c for c in update.contents if c.type == "text"]
+
+    assert len(reasoning_contents) == 1
+    assert reasoning_contents[0].text == "Deep thought..."
+
+    assert len(text_contents) == 1
+    assert text_contents[0].text == "Here's the answer."
+
+
+def test_parse_plain_string_content_still_works(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Regression test: plain string content still works after list-content handling."""
+    from openai.types.chat.chat_completion import ChatCompletion, Choice
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    client = OpenAIChatCompletionClient()
+
+    mock_response = ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model="gpt-4o",
+        choices=[
+            Choice(
+                index=0,
+                message=cast(Any, ChatCompletionMessage)(
+                    role="assistant",
+                    content="Just a normal string response.",
+                ),
+                finish_reason="stop",
+            )
+        ],
+    )
+
+    response = client._parse_response_from_openai(mock_response, {})
+
+    message = response.messages[0]
+    assert len(message.contents) == 1
+    assert message.contents[0].type == "text"
+    assert message.contents[0].text == "Just a normal string response."
+
+
 # endregion
