@@ -112,6 +112,7 @@ from azure.ai.agentserver.responses.streaming._builders import (
     ReasoningSummaryPartBuilder,
     TextContentBuilder,
 )
+from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
 from typing_extensions import Any
 
@@ -352,12 +353,18 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
             consent_errors: list[ConsentError] = []
             error_message_start = inner_exception.error.message.find("{")
             if error_message_start == -1:
-                logger.warning("Consent error message does not contain JSON: %s", inner_exception.error.message)
+                logger.warning(
+                    "Consent error message does not contain JSON: %s",
+                    inner_exception.error.message,
+                )
                 return None
             consent_details_json = inner_exception.error.message[error_message_start:]
             consent_details = json.loads(consent_details_json)
             if "errors" not in consent_details or not isinstance(consent_details["errors"], list):
-                logger.warning("Consent error message JSON does not contain 'errors' list: %s", consent_details_json)
+                logger.warning(
+                    "Consent error message JSON does not contain 'errors' list: %s",
+                    consent_details_json,
+                )
                 return None
             for error in consent_details["errors"]:
                 if (
@@ -370,13 +377,24 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
                 ):
                     consent_url = error["error"]["message"]  # type: ignore
                     if isinstance(consent_url, str):
-                        consent_errors.append(ConsentError(name=error.get("name", "Unknown"), consent_url=consent_url))  # type: ignore
+                        consent_errors.append(
+                            ConsentError(
+                                name=error.get("name", "Unknown"),  # type: ignore
+                                consent_url=consent_url,
+                            )
+                        )
                     else:
-                        logger.warning("Consent URL in error message is not a valid URL: %s", consent_url)  # type: ignore
+                        logger.warning(
+                            "Consent URL in error message is not a valid URL: %s",
+                            consent_url,  # type: ignore
+                        )
             if consent_errors:
                 return consent_errors
         except json.JSONDecodeError:
-            logger.warning("Failed to parse consent details JSON: %s", inner_exception.error.message)
+            logger.warning(
+                "Failed to parse consent details JSON: %s",
+                inner_exception.error.message,
+            )
     return None
 
 
@@ -398,7 +416,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         prefix: str = "",
         options: ResponsesServerOptions | None = None,
         store: ResponseProviderProtocol | None = None,
-        steerable_conversations: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
@@ -406,17 +423,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         Args:
             agent: The agent to handle responses for.
             prefix: The URL prefix for the server.
-            options: Optional server options. When provided, ``steerable_conversations``
-                is ignored in favour of whatever is set in the supplied options object.
+            options: Optional server options.
             store: Optional response store.
-            steerable_conversations: When ``True``, concurrent turns on the same
-                conversation chain are queued rather than rejected with HTTP 409
-                ``conversation_locked``. The running handler is signalled via
-                ``cancellation_signal`` (``context.client_cancelled`` will be ``False``
-                to distinguish steering from a real client cancel), and the queued turn
-                is delivered once the current turn reaches a terminal event.
-                Requires ``store=True`` requests; composable with
-                ``resilient_background``. Defaults to ``False``.
             **kwargs: Additional keyword arguments.
 
         Note:
@@ -426,12 +434,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                in memory, because the hosting environment may get deactivated between
                requests, and any in-memory context would be lost.
         """
-        # When steerable_conversations is requested but no explicit options were
-        # provided, create a minimal options object to carry the flag.
-        if options is None and steerable_conversations:
-            options = ResponsesServerOptions(steerable_conversations=True)
-
         super().__init__(prefix=prefix, options=options, store=store, **kwargs)
+        self._server_options = options
 
         for provider in getattr(agent, "context_providers", []):
             if isinstance(provider, HistoryProvider) and provider.load_messages:
@@ -541,14 +545,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         context: ResponseContext,
         cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
-        """Handle the creation of a response.
-
-        This must be an async generator (using ``yield``) rather than an
-        ``async def`` that returns an ``AsyncIterable``.  The b8 agentserver SDK
-        passes the raw result of calling this function directly to
-        ``_intercept_checkpoints``, which does ``async for raw in handler_iterator``
-        without first normalising coroutines.
-        """
+        """Handle the creation of a response."""
         # Fail fast if the service is on protocol v1.0.0
         if self.config.is_hosted and context.platform_context.call_id is None:
             raise RuntimeError(
@@ -565,6 +562,27 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             async for event in self._handle_inner_agent(request, context, cancellation_signal):
                 yield event
 
+    def _checkpoint_if_supported(
+        self, request: CreateResponse, stream: ResponseEventStream
+    ) -> ResponseCheckpointEvent | None:
+        """Return a checkpoint event when supported by the current responses SDK."""
+        if (
+            self._server_options is not None
+            and self._server_options.resilient_background
+            and request.background is True
+        ):
+            return stream.checkpoint()
+        return None
+
+    @staticmethod
+    def _create_response_event_stream(request: CreateResponse, context: ResponseContext) -> ResponseEventStream:
+        """Create a response stream seeded from recovery state when available."""
+        if context.is_recovery:
+            persisted_response = context.persisted_response
+            if persisted_response is not None:
+                return ResponseEventStream(response=persisted_response, response_id=context.response_id)
+        return ResponseEventStream(response_id=context.response_id, model=request.model)
+
     async def _handle_inner_agent(
         self,
         request: CreateResponse,
@@ -572,18 +590,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event | None = None,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response for a regular (non-workflow) agent."""
-        # Seed the response event stream from the persisted snapshot when recovering
-        # from a crash, so the client can resume from where the previous attempt left off.
-        if bool(getattr(context, "is_recovery", False)):
-            persisted_response = getattr(context, "persisted_response", None)
-            if persisted_response is not None:
-                response_event_stream = ResponseEventStream(
-                    response=persisted_response, response_id=context.response_id
-                )
-            else:
-                response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
-        else:
-            response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
+        response_event_stream = self._create_response_event_stream(request, context)
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
@@ -625,7 +632,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if consent_errors is None:
                     raise
                 for consent_error in consent_errors:
-                    logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_error.consent_url)
+                    logger.warning(
+                        "Consent URL for tool '%s': %s",
+                        consent_error.name,
+                        consent_error.consent_url,
+                    )
                     oauth_item = OAuthConsentRequestOutputItem(
                         id=IdGenerator.new_id("oacr"),
                         consent_link=consent_error.consent_url,
@@ -649,18 +660,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     approval_storage=approval_storage,
                 ):
                     yield item
+
+                if checkpoint_event := self._checkpoint_if_supported(request, response_event_stream):
+                    yield cast(ResponseStreamEvent, checkpoint_event)
+                yield response_event_stream.emit_completed()
             else:
                 if tracker is None:  # pragma: no cover - defensive, set above
                     raise RuntimeError("Streaming tracker was not initialized.")
                 # Run the agent in streaming mode
                 async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
                     # Cooperative exit on shutdown: defer to crash recovery when durable.
-                    shutdown: asyncio.Event | None = getattr(context, "shutdown", None)
-                    if shutdown is not None and shutdown.is_set():
+                    if context.shutdown.is_set():
                         for event in tracker.close():
                             yield event
-                        await context.exit_for_recovery()  # raises; re-invoked on next start
-                    # Cooperative exit on cancellation (steering pressure or client cancel).
+                        await context.exit_for_recovery()
                     if cancellation_signal is not None and cancellation_signal.is_set():
                         for event in tracker.close():
                             yield event
@@ -668,10 +681,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         # The framework overrides completed → cancelled when
                         # context.client_cancelled is True; for steering pressure
                         # (client_cancelled=False) completed is the right terminal.
-                        client_cancelled = bool(getattr(context, "client_cancelled", False))
                         logger.debug(
                             "Response handler exiting early: %s",
-                            "client cancelled" if client_cancelled else "steering pressure",
+                            "client cancelled" if context.client_cancelled else "steering pressure",
                         )
                         yield response_event_stream.emit_completed()
                         return
@@ -690,7 +702,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # Close any remaining active builder
                 for event in tracker.close():
                     yield event
-            yield response_event_stream.emit_completed()
+
+                if checkpoint_event := self._checkpoint_if_supported(request, response_event_stream):
+                    yield cast(ResponseStreamEvent, checkpoint_event)
+                yield response_event_stream.emit_completed()
         except Exception as ex:
             logger.exception("Failed to produce response for agent")
             for event in self._emit_failure(response_event_stream, tracker, ex):
@@ -703,7 +718,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event | None = None,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response for a workflow agent."""
-        response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
+        response_event_stream = self._create_response_event_stream(request, context)
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
@@ -839,19 +854,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 checkpoint_storage=write_storage,
             ):
                 # Cooperative exit on shutdown: defer to crash recovery when durable.
-                shutdown: asyncio.Event | None = getattr(context, "shutdown", None)
-                if shutdown is not None and shutdown.is_set():
+                if context.shutdown.is_set():
                     for event in tracker.close():
                         yield event
-                    await context.exit_for_recovery()  # raises; re-invoked on next start
+                    await context.exit_for_recovery()
                 # Cooperative exit on cancellation (steering pressure or client cancel).
                 if cancellation_signal is not None and cancellation_signal.is_set():
                     for event in tracker.close():
                         yield event
-                    client_cancelled = bool(getattr(context, "client_cancelled", False))
                     logger.debug(
                         "Workflow response handler exiting early: %s",
-                        "client cancelled" if client_cancelled else "steering pressure",
+                        "client cancelled" if context.client_cancelled else "steering pressure",
                     )
                     yield response_event_stream.emit_completed()
                     return
@@ -860,7 +873,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         yield event
                     if tracker.needs_async:
                         async for item in _to_outputs(
-                            response_event_stream, content, approval_storage=approval_storage
+                            response_event_stream,
+                            content,
+                            approval_storage=self._approval_storage,
                         ):
                             yield item
                         tracker.needs_async = False
@@ -870,6 +885,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 yield event
 
             await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
+            if checkpoint_event := self._checkpoint_if_supported(request, response_event_stream):
+                yield cast(ResponseStreamEvent, checkpoint_event)
             yield response_event_stream.emit_completed()
         except Exception as ex:
             logger.exception("Failed to produce response for workflow agent")
@@ -940,6 +957,7 @@ class _OutputItemTracker:
         self._summary_part: ReasoningSummaryPartBuilder | None = None
         self._fc_builder: OutputItemFunctionCallBuilder | None = None
         self._mcp_builder: OutputItemMcpCallBuilder | None = None
+        self._mcp_call_id: str | None = None  # call_id of the in-progress MCP call for result matching
         self.needs_async = False
 
     def handle(self, content: Content) -> Generator[ResponseStreamEvent]:
@@ -956,13 +974,13 @@ class _OutputItemTracker:
             if self._text_content is not None:
                 yield self._text_content.emit_delta(content.text)
 
-        elif content.type == "text_reasoning":
+        elif content.type == "text_reasoning" and content.text is not None:
             if self._active_type != "text_reasoning":
                 yield from self._close()
                 yield from self._open_reasoning()
-            self._accumulated.append(content.text or "")
+            self._accumulated.append(content.text)
             if self._summary_part is not None:
-                yield self._summary_part.emit_text_delta(content.text or "")
+                yield self._summary_part.emit_text_delta(content.text)
 
         elif content.type == "function_call" and content.call_id is not None:
             if self._active_type != "function_call" or self._active_id != content.call_id:
@@ -988,17 +1006,20 @@ class _OutputItemTracker:
             and self._active_type == "mcp_server_tool_call"
             and self._mcp_builder is not None
             and content.call_id is not None
-            and content.call_id == self._mcp_builder.item_id
+            and content.call_id == self._mcp_call_id
         ):
             accumulated = "".join(self._accumulated)
             yield self._mcp_builder.emit_arguments_done(accumulated)
             yield self._mcp_builder.emit_completed()
-            yield self._mcp_builder.emit_done(output=_stringify_mcp_output(content.output))
+            yield self._mcp_builder.emit_done()
             self._mcp_builder = None
+            self._mcp_call_id = None
             self._active_type = None
             self._active_id = None
             self._accumulated.clear()
-            self.needs_async = False
+            # In b8 the mcp_call done event no longer carries output inline.
+            # Signal the async path to emit a separate custom_tool_call_output item.
+            self.needs_async = True
             return
 
         else:
@@ -1040,8 +1061,8 @@ class _OutputItemTracker:
         self._mcp_builder = self._stream.add_output_item_mcp_call(
             server_label=content.server_name or "default",
             name=content.tool_name or "",
-            item_id=content.call_id,
         )
+        self._mcp_call_id = content.call_id
         self._active_type = "mcp_server_tool_call"
         self._active_id = content.call_id or f"{content.server_name or 'default'}::{content.tool_name}"
         yield self._mcp_builder.emit_added()
@@ -1073,6 +1094,7 @@ class _OutputItemTracker:
             yield self._mcp_builder.emit_completed()
             yield self._mcp_builder.emit_done()
             self._mcp_builder = None
+            self._mcp_call_id = None
 
         self._active_type = None
         self._active_id = None
@@ -1158,25 +1180,23 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         msg = cast(ItemMessage, item)
         if isinstance(msg.content, str):
             return Message(role=msg.role, contents=[Content.from_text(msg.content)])
-        return Message(role=msg.role, contents=[_convert_message_content(part) for part in msg.content])
+        return Message(
+            role=msg.role,
+            contents=[_convert_message_content(part) for part in msg.content],
+        )
 
     if item.type == "output_message":
         output_msg = cast(ItemOutputMessage, item)
         return Message(
-            role=output_msg.role, contents=[_convert_output_message_content(part) for part in output_msg.content]
+            role=output_msg.role,
+            contents=[_convert_output_message_content(part) for part in output_msg.content],
         )
 
     if item.type == "function_call":
         fc = cast(ItemFunctionToolCall, item)
         return Message(
             role="assistant",
-            contents=[
-                Content.from_function_call(
-                    fc.call_id,
-                    fc.name,
-                    arguments=fc.arguments,
-                )
-            ],
+            contents=[Content.from_function_call(fc.call_id, fc.name, arguments=fc.arguments)],
         )
 
     if item.type == "function_call_output":
@@ -1192,9 +1212,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         reason_contents: list[Content] = []
         if reasoning.summary:
             for summary in reasoning.summary:
-                reason_contents.append(Content.from_text_reasoning(id=reasoning.id, text=summary.text))
-        else:
-            reason_contents.append(Content.from_text_reasoning(id=reasoning.id))
+                reason_contents.append(Content.from_text(summary.text))
         return Message(role="assistant", contents=reason_contents)
 
     if item.type == "mcp_call":
@@ -1321,7 +1339,6 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
                     fs.id,
                     "file_search",
                     arguments=json.dumps({"queries": fs.queries}),
-                    informational_only=True,
                 )
             ],
         )
@@ -1330,7 +1347,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         ws = cast(ItemWebSearchToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(ws.id, "web_search", informational_only=True)],
+            contents=[Content.from_function_call(ws.id, "web_search")],
         )
 
     if item.type == "computer_call":
@@ -1342,7 +1359,6 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
                     cc.call_id,
                     "computer_use",
                     arguments=str(cc.action),
-                    informational_only=True,
                 )
             ],
         )
@@ -1358,14 +1374,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         ct = cast(ItemCustomToolCall, item)
         return Message(
             role="assistant",
-            contents=[
-                Content.from_function_call(
-                    ct.call_id,
-                    ct.name,
-                    arguments=ct.input,
-                    informational_only=True,
-                )
-            ],
+            contents=[Content.from_function_call(ct.call_id, ct.name, arguments=ct.input)],
         )
 
     if item.type == "custom_tool_call_output":
@@ -1397,7 +1406,6 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
                     ap.call_id,
                     "apply_patch",
                     arguments=str(ap.operation),
-                    informational_only=True,
                 )
             ],
         )
@@ -1450,24 +1458,22 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
     if item.type == "output_message":
         output_msg = cast(OutputItemOutputMessage, item)
         return Message(
-            role=output_msg.role, contents=[_convert_output_message_content(part) for part in output_msg.content]
+            role=output_msg.role,
+            contents=[_convert_output_message_content(part) for part in output_msg.content],
         )
 
     if item.type == "message":
         msg = cast(OutputItemMessage, item)
-        return Message(role=msg.role, contents=[_convert_message_content(part) for part in msg.content])
+        return Message(
+            role=msg.role,
+            contents=[_convert_message_content(part) for part in msg.content],
+        )
 
     if item.type == "function_call":
         fc = cast(OutputItemFunctionToolCall, item)
         return Message(
             role="assistant",
-            contents=[
-                Content.from_function_call(
-                    fc.call_id,
-                    fc.name,
-                    arguments=fc.arguments,
-                )
-            ],
+            contents=[Content.from_function_call(fc.call_id, fc.name, arguments=fc.arguments)],
         )
 
     if item.type == "function_call_output":
@@ -1483,9 +1489,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         contents: list[Content] = []
         if reasoning.summary:
             for summary in reasoning.summary:
-                contents.append(Content.from_text_reasoning(id=reasoning.id, text=summary.text))
-        else:
-            contents.append(Content.from_text_reasoning(id=reasoning.id))
+                contents.append(Content.from_text(summary.text))
         return Message(role="assistant", contents=contents)
 
     if item.type == "mcp_call":
@@ -1613,7 +1617,6 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
                     fs.id,
                     "file_search",
                     arguments=json.dumps({"queries": fs.queries}),
-                    informational_only=True,
                 )
             ],
         )
@@ -1622,7 +1625,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         ws = cast(OutputItemWebSearchToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(ws.id, "web_search", informational_only=True)],
+            contents=[Content.from_function_call(ws.id, "web_search")],
         )
 
     if item.type == "computer_call":
@@ -1634,7 +1637,6 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
                     cc.call_id,
                     "computer_use",
                     arguments=str(cc.action),
-                    informational_only=True,
                 )
             ],
         )
@@ -1650,14 +1652,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         ct = cast(OutputItemCustomToolCall, item)
         return Message(
             role="assistant",
-            contents=[
-                Content.from_function_call(
-                    ct.call_id,
-                    ct.name,
-                    arguments=ct.input,
-                    informational_only=True,
-                )
-            ],
+            contents=[Content.from_function_call(ct.call_id, ct.name, arguments=ct.input)],
         )
 
     if item.type == "custom_tool_call_output":
@@ -1687,7 +1682,6 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
                     ap.call_id,
                     "apply_patch",
                     arguments=str(ap.operation),
-                    informational_only=True,
                 )
             ],
         )
@@ -1866,8 +1860,8 @@ async def _to_outputs(
     if content.type == "text" and content.text is not None:
         async for event in stream.aoutput_item_message(content.text):
             yield event
-    elif content.type == "text_reasoning":
-        async for event in stream.aoutput_item_reasoning_item(content.text or ""):
+    elif content.type == "text_reasoning" and content.text is not None:
+        async for event in stream.aoutput_item_reasoning_item(content.text):
             yield event
     elif content.type == "function_call":
         async for event in stream.aoutput_item_function_call(
@@ -1889,7 +1883,6 @@ async def _to_outputs(
         mcp_call = stream.add_output_item_mcp_call(
             server_label=content.server_name or "default",
             name=content.tool_name or "",
-            item_id=content.call_id,
         )
         yield mcp_call.emit_added()
         async for event in mcp_call.aarguments(_arguments_to_str(content.arguments)):
@@ -1897,13 +1890,7 @@ async def _to_outputs(
         yield mcp_call.emit_completed()
         yield mcp_call.emit_done()
     elif content.type == "mcp_server_tool_result":
-        output = (
-            content.output
-            if isinstance(content.output, str)
-            else str(content.output)
-            if content.output is not None
-            else ""
-        )
+        output = _stringify_mcp_output(content.output)
         async for event in stream.aoutput_item_custom_tool_call_output(content.call_id or "", output):
             yield event
     elif content.type == "shell_tool_call":
@@ -1987,23 +1974,29 @@ def _stringify_mcp_output(output: Any) -> str:
     return str(output)
 
 
-def _emit_completed_mcp_call(
+async def _emit_completed_mcp_call(
     stream: ResponseEventStream,
     call_content: Content,
     *,
     arguments: str,
     output: str,
-) -> Generator[ResponseStreamEvent]:
-    """Emit a single completed MCP call item carrying both arguments and output."""
+) -> AsyncIterator[ResponseStreamEvent]:
+    """Emit a completed MCP call item followed by a separate output item.
+
+    In b8 the mcp_call done event no longer carries an inline ``output`` field.
+    The output is emitted as a ``custom_tool_call_output`` item so that history
+    reconstruction on subsequent turns can recover the result.
+    """
     mcp_call = stream.add_output_item_mcp_call(
         server_label=call_content.server_name or "default",
         name=call_content.tool_name or "",
-        item_id=call_content.call_id,
     )
     yield mcp_call.emit_added()
     yield mcp_call.emit_arguments_done(arguments)
     yield mcp_call.emit_completed()
-    yield mcp_call.emit_done(output=output)
+    yield mcp_call.emit_done()
+    async for event in stream.aoutput_item_custom_tool_call_output(call_content.call_id or "", output):
+        yield event
 
 
 async def _to_outputs_for_messages(
@@ -2025,7 +2018,7 @@ async def _to_outputs_for_messages(
         for content in message.contents:
             if pending_mcp_call is not None:
                 if content.type == "mcp_server_tool_result" and content.call_id == pending_mcp_call.call_id:
-                    for event in _emit_completed_mcp_call(
+                    async for event in _emit_completed_mcp_call(
                         stream,
                         pending_mcp_call,
                         arguments=_arguments_to_str(pending_mcp_call.arguments),
