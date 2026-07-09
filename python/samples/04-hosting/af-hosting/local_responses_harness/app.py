@@ -66,7 +66,7 @@ iteration::
 
 Then call it::
 
-    uv run python call_server.py "What is the weather in Tokyo?"
+    uv run python call_server.py
 """
 
 from __future__ import annotations
@@ -140,6 +140,11 @@ def create_agent() -> Agent:
         # management and compaction stay enabled.
         disable_mode=True,
         disable_web_search=True,
+        # Disable the file-memory and file-access providers. In a headless HTTP
+        # sample their read/write file tools would expose unintended tools, create
+        # on-disk side effects outside storage/, and could block on tool approval.
+        disable_file_memory=True,
+        disable_file_access=True,
         # The app owns session state locally, so do not also persist server-side
         # Responses conversations.
         default_options={"store": False},
