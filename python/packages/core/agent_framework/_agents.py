@@ -1410,6 +1410,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         if active_session is not None:
             effective_client_kwargs["session"] = active_session
+        per_service_call_history_middleware: PerServiceCallHistoryPersistingMiddleware | None = None
         if per_service_call_history_providers and active_session is not None:
             per_service_call_history_middleware = PerServiceCallHistoryPersistingMiddleware(
                 agent=self,
@@ -1417,16 +1418,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 providers=per_service_call_history_providers,
                 service_stores_history=service_stores_history,
             )
-            existing_middleware = effective_client_kwargs.get("middleware")
-            if isinstance(existing_middleware, Sequence) and not isinstance(existing_middleware, (str, bytes)):
-                effective_client_kwargs["middleware"] = [per_service_call_history_middleware, *existing_middleware]
-            elif existing_middleware is not None:
-                effective_client_kwargs["middleware"] = [
-                    per_service_call_history_middleware,
-                    cast(MiddlewareTypes, existing_middleware),
-                ]
-            else:
-                effective_client_kwargs["middleware"] = [per_service_call_history_middleware]
         provider_middleware = session_context.get_middleware()
         if provider_middleware:
             middleware_list = categorize_middleware(provider_middleware)
@@ -1448,6 +1439,18 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                     ]
                 else:
                     effective_client_kwargs["middleware"] = provider_function_chat_middleware
+
+        if per_service_call_history_middleware is not None:
+            existing_middleware = effective_client_kwargs.get("middleware")
+            if isinstance(existing_middleware, Sequence) and not isinstance(existing_middleware, (str, bytes)):
+                effective_client_kwargs["middleware"] = [*existing_middleware, per_service_call_history_middleware]
+            elif existing_middleware is not None:
+                effective_client_kwargs["middleware"] = [
+                    cast(MiddlewareTypes, existing_middleware),
+                    per_service_call_history_middleware,
+                ]
+            else:
+                effective_client_kwargs["middleware"] = [per_service_call_history_middleware]
 
         return {
             "session": active_session,

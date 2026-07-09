@@ -29,6 +29,7 @@ from agent_framework import (
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
+    MessageInjectionMiddleware,
     ResponseStream,
     ServiceSessionId,
     SessionContext,
@@ -37,6 +38,7 @@ from agent_framework import (
     SupportsChatGetResponse,
     TruncationStrategy,
     chat_middleware,
+    enqueue_messages,
     tool,
 )
 from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_agent_name
@@ -509,6 +511,46 @@ async def test_chat_agent_persists_history_per_service_call(
     assert provider_state["save_call_count"] == 2
     assert stored_messages[-1].text == "It is sunny in Seattle."
     assert session.service_session_id is None
+
+
+async def test_message_injection_persists_each_injected_service_call(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    provider = _RecordingHistoryProvider()
+    session = AgentSession()
+    session.state[provider.source_id] = {"messages": []}
+    captured_messages: list[list[str | None]] = []
+
+    async def fake_get_response(
+        *,
+        messages: Sequence[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        captured_messages.append([message.text for message in messages])
+        if len(captured_messages) == 1:
+            enqueue_messages(session, "queued during first service call")
+            return ChatResponse(messages=Message(role="assistant", contents=["first"]))
+        return ChatResponse(messages=Message(role="assistant", contents=["second"]))
+
+    agent = Agent(
+        client=chat_client_base,
+        context_providers=[provider],
+        middleware=[MessageInjectionMiddleware()],
+        require_per_service_call_history_persistence=True,
+    )
+
+    with patch.object(chat_client_base, "_get_non_streaming_response", side_effect=fake_get_response):
+        result = await agent.run("initial message", session=session)
+
+    provider_state = session.state[provider.source_id]
+    stored_messages = cast(list[Message], provider_state["messages"])
+
+    assert result.text == "second"
+    assert captured_messages == [["initial message"], ["initial message", "first", "queued during first service call"]]
+    assert provider_state["get_call_count"] == 2
+    assert provider_state["save_call_count"] == 2
+    assert stored_messages[-1].text == "second"
 
 
 async def test_per_service_call_history_provider_receives_full_agent_response_metadata(
