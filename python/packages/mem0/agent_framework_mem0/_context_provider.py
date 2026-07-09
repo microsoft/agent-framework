@@ -67,8 +67,8 @@ class Mem0ContextProvider(ContextProvider):
             api_key: The API key for authenticating with the Mem0 API.
             application_id: The application ID for scoping memories. Platform-only:
                 the OSS ``AsyncMemory`` client does not recognize an application
-                scope (it scopes only by user_id/agent_id/run_id), so an OSS client
-                requires user_id or agent_id and application_id alone is rejected.
+                scope (it scopes only by user_id/agent_id in this provider), so
+                application_id cannot be used with an OSS client.
             agent_id: The agent ID for scoping memories.
             user_id: The user ID for scoping memories.
             context_prompt: The prompt to prepend to retrieved memories.
@@ -233,15 +233,21 @@ class Mem0ContextProvider(ContextProvider):
         """Validates that at least one usable filter is provided for the configured client."""
         if not self.agent_id and not self.user_id and not self.application_id:
             raise ValueError("At least one of the filters: agent_id, user_id, or application_id is required.")
-        if isinstance(self.mem0_client, AsyncMemory) and not self.user_id and not self.agent_id:
+        if isinstance(self.mem0_client, AsyncMemory) and self.application_id:
             raise ValueError(
                 "application_id is not supported by the OSS AsyncMemory client, which scopes "
-                "memories only by user_id/agent_id. Provide user_id or agent_id."
+                "memories only by user_id/agent_id. Remove application_id or use AsyncMemoryClient."
             )
 
     def _build_search_kwargs(self, input_text: str, entity_key: str, entity_value: str) -> dict[str, Any]:
         """Build search keyword arguments formatted for OSS vs Platform clients."""
         filters: dict[str, Any] = {"query": input_text}
+
+        if self.application_id and isinstance(self.mem0_client, AsyncMemory):
+            raise ValueError(
+                "application_id is not supported by the OSS AsyncMemory client, which scopes "
+                "memories only by user_id/agent_id. Remove application_id or use AsyncMemoryClient."
+            )
 
         filters["filters"] = {entity_key: entity_value}
         if self.application_id and not isinstance(self.mem0_client, AsyncMemory):

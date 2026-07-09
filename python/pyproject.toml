@@ -55,10 +55,8 @@ dev = [
 [tool.uv]
 package = false
 prerelease = "if-necessary-or-explicit"
-# Workspace resolver constraints.
 # Security floors for transitive deps; overrides bypass litellm[proxy]'s strict pins.
-# NumPy 2.5 stubs use Python 3.12 `type` statements, but mypy checks tests with python_version=3.10.
-constraint-dependencies = ["litellm>=1.83.7", "fastapi-sso>=0.19.0", "numpy<2.5"]
+constraint-dependencies = ["litellm>=1.83.7", "fastapi-sso>=0.19.0"]
 # Allow opentelemetry-semantic-conventions 0.61b0 for mistralai compatibility
 # (mistralai pins <0.61 but 0.61b0 is compatible at runtime).
 # python-multipart>=0.0.31 overrides litellm[proxy]'s exact pin of <=0.0.27 for security.

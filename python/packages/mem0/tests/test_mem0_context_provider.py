@@ -217,8 +217,8 @@ class TestBeforeRun:
         assert call_kwargs["filters"] == {"user_id": "u1"}
         assert "user_id" not in call_kwargs
 
-    async def test_oss_client_all_scoping_params_excludes_app_id(self, mock_oss_mem0_client: AsyncMock) -> None:
-        """OSS client uses filter dicts for user/agent partitions and drops Platform-only app_id."""
+    async def test_oss_client_rejects_application_id_with_user_or_agent(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS client rejects application_id even when user_id/agent_id are provided."""
         mock_oss_mem0_client.search.return_value = []
 
         provider = Mem0ContextProvider(
@@ -235,13 +235,12 @@ class TestBeforeRun:
         mock_context.input_messages = [mock_msg]
         mock_context.response = None
 
-        await provider.before_run(
-            agent=MagicMock(), session=MagicMock(spec=AgentSession), context=mock_context, state={}
-        )
+        with pytest.raises(ValueError, match="application_id is not supported"):
+            await provider.before_run(
+                agent=MagicMock(), session=MagicMock(spec=AgentSession), context=mock_context, state={}
+            )
 
-        assert mock_oss_mem0_client.search.call_count == 2
-        mock_oss_mem0_client.search.assert_any_call(query="hello", filters={"user_id": "u1"})
-        mock_oss_mem0_client.search.assert_any_call(query="hello", filters={"agent_id": "a1"})
+        mock_oss_mem0_client.search.assert_not_awaited()
 
     async def test_oss_client_rejects_application_id_only(self, mock_oss_mem0_client: AsyncMock) -> None:
         """OSS client with only application_id set raises and never searches."""
@@ -430,8 +429,8 @@ class TestAfterRun:
 
         assert mock_mem0_client.add.call_args.kwargs["filters"] == {"app_id": "app1"}
 
-    async def test_oss_stores_without_application_id(self, mock_oss_mem0_client: AsyncMock) -> None:
-        """OSS storage omits Platform-only application_id because AsyncMemory.add has no app_id parameter."""
+    async def test_oss_storage_rejects_application_id(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS storage rejects Platform-only application_id because AsyncMemory.add has no app_id parameter."""
         provider = Mem0ContextProvider(
             source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1", application_id="app1"
         )
@@ -439,17 +438,15 @@ class TestAfterRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["hi"])], session_id="s1")
         ctx._response = AgentResponse(messages=[])
 
-        await provider.after_run(
-            agent=cast(Any, None),
-            session=session,
-            context=ctx,
-            state=session.state.setdefault(provider.source_id, {}),
-        )  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="application_id is not supported"):
+            await provider.after_run(
+                agent=cast(Any, None),
+                session=session,
+                context=ctx,
+                state=session.state.setdefault(provider.source_id, {}),
+            )  # type: ignore[arg-type]
 
-        call_kwargs = mock_oss_mem0_client.add.call_args.kwargs
-        assert call_kwargs["user_id"] == "u1"
-        assert "app_id" not in call_kwargs
-        assert "filters" not in call_kwargs
+        mock_oss_mem0_client.add.assert_not_awaited()
 
 
 # -- _validate_filters tests --------------------------------------------------
@@ -478,6 +475,14 @@ class TestValidateFilters:
     def test_oss_application_id_only_raises(self, mock_oss_mem0_client: AsyncMock) -> None:
         """OSS client with only application_id is rejected because application scope is Platform-only."""
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, application_id="app1")
+        with pytest.raises(ValueError, match="application_id is not supported"):
+            provider._validate_filters()
+
+    def test_oss_application_id_with_user_id_raises(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS client rejects application_id even with a supported user scope."""
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1", application_id="app1"
+        )
         with pytest.raises(ValueError, match="application_id is not supported"):
             provider._validate_filters()
 
@@ -539,15 +544,14 @@ class TestBuildSearchKwargs:
         assert "run_id" not in result.get("filters", {})
         assert "run_id" not in result
 
-    def test_oss_search_filters_exclude_app_id(self, mock_oss_mem0_client: AsyncMock) -> None:
-        """OSS search filters omit application_id because app_id is only supported by Platform."""
+    def test_oss_search_filters_reject_app_id(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS search filters reject application_id because app_id is only supported by Platform."""
         provider = Mem0ContextProvider(
             source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1", application_id="app1"
         )
 
-        result = provider._build_search_kwargs("test query", "user_id", "u1")
-
-        assert result == {"query": "test query", "filters": {"user_id": "u1"}}
+        with pytest.raises(ValueError, match="application_id is not supported"):
+            provider._build_search_kwargs("test query", "user_id", "u1")
 
     def test_empty_when_no_params(self, mock_mem0_client: AsyncMock) -> None:
         # Validates base query payload generation
