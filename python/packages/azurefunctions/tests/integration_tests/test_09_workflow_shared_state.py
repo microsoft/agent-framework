@@ -21,6 +21,9 @@ Usage:
 
 import pytest
 
+# Must match the workflow name in samples/04-hosting/azure_functions/09_workflow_shared_state/function_app.py
+WORKFLOW_NAME = "email_triage_shared_state"
+
 # Module-level markers - applied to all tests in this file
 pytestmark = [
     pytest.mark.flaky,
@@ -45,7 +48,7 @@ class TestWorkflowSharedState:
         spam_content = "URGENT! You have won $1,000,000! Click here to claim your prize now before it expires!"
 
         # Start orchestration with spam email
-        response = self.helper.post_text(f"{self.base_url}/api/workflow/run", spam_content)
+        response = self.helper.post_text(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", spam_content)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data
@@ -64,7 +67,7 @@ class TestWorkflowSharedState:
         )
 
         # Start orchestration with legitimate email
-        response = self.helper.post_text(f"{self.base_url}/api/workflow/run", legitimate_content)
+        response = self.helper.post_text(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", legitimate_content)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data
@@ -83,7 +86,7 @@ class TestWorkflowSharedState:
         )
 
         # Start orchestration with phishing email
-        response = self.helper.post_text(f"{self.base_url}/api/workflow/run", phishing_content)
+        response = self.helper.post_text(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", phishing_content)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data

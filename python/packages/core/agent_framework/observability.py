@@ -28,7 +28,6 @@ from time import perf_counter, time_ns
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedDict, cast, overload
 
 from dotenv import load_dotenv
-from opentelemetry import context as otel_context
 from opentelemetry import metrics, trace
 
 from . import __version__ as version_info
@@ -2201,6 +2200,8 @@ def _activate_span(span: trace.Span) -> Generator[None]:
     (and therefore the same async task / contextvars context), there is no risk
     of "Failed to detach context" warnings from cross-context cleanup.
     """
+    from opentelemetry import context as otel_context
+
     token = otel_context.attach(trace.set_span_in_context(span))
     try:
         yield

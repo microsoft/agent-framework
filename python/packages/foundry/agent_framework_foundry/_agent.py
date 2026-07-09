@@ -375,13 +375,24 @@ class RawFoundryAgentChatClient(
 
         run_options.pop("isolation_key", None)
 
-        # Strip tools from request body - Foundry API rejects requests with both
-        # agent endpoint and tools present. FunctionTools are invoked client-side
-        # by the function invocation layer, not sent to the service.
-        if not self.allow_preview:
-            run_options.pop("tools", None)
-            run_options.pop("tool_choice", None)
-            run_options.pop("parallel_tool_calls", None)
+        # Strip tool fields from the request body. This client always targets a pre-provisioned
+        # Foundry agent (agent_name is required), and the service rejects requests that carry both
+        # an agent reference and tool declarations with HTTP 400 "Not allowed when agent is
+        # specified." (issue #5130). The agent already owns its tool schema server-side; any
+        # FunctionTools passed here are used only for client-side dispatch by the function
+        # invocation layer. This must run on both the non-preview path (agent injected via
+        # ``agent_reference`` in extra_body) and the preview path (agent injected via the OpenAI
+        # client kwarg ``agent_name``) — both specify an agent, so neither may send tools.
+        stripped_tools = run_options.pop("tools", None)
+        run_options.pop("tool_choice", None)
+        run_options.pop("parallel_tool_calls", None)
+        if stripped_tools:
+            logger.warning(
+                "Foundry agent '%s' was provided tools, but tool declarations cannot be sent when an "
+                "agent is specified; they are omitted from the request and used only for client-side "
+                "function dispatch. Define tool schemas on the Foundry agent definition in the service.",
+                self.agent_name,
+            )
 
         return run_options
 

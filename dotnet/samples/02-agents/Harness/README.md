@@ -19,3 +19,22 @@ Samples accompanying the [*Build your own agent harness or claw with Microsoft A
 | --- | --- |
 | [Claw_Step01_MeetYourClaw](./BuildYourOwnClaw/Claw_Step01_MeetYourClaw/README.md) | Post 1 — a minimal HarnessAgent with a custom `get_stock_price` tool, web search, and planning |
 | [Claw_Step02_WorkingWithData](./BuildYourOwnClaw/Claw_Step02_WorkingWithData/README.md) | Post 2 — file access, approvals, and durable memory (file memory plus optional Foundry memory) |
+
+## Security Considerations
+
+Several harness providers extend the agent's trust boundary to external systems the developer
+configures — see the security notes in the individual sample READMEs (and the XML docs on the
+corresponding types) before enabling them in production:
+- **`BackgroundAgentsProvider`** — delegates work to developer-supplied agents (see
+  [Harness_Step02_Research_WithBackgroundAgents](./Harness_Step02_Research_WithBackgroundAgents/README.md)).
+- **`AIJudgeLoopEvaluator`** (used by `LoopAgent`) — sends conversation content to a second, external
+  judge chat client (see [Harness_Step05_Loop](./Harness_Step05_Loop/README.md)).
+- **`AgentSkillsProvider`** with external skill sources (e.g. `UseMcpSkills`) — loads skill content,
+  and potentially scripts, from a remote source (see
+  [AgentSkills samples](../AgentSkills/Agent_Step06_McpBasedSkills/README.md)).
+- **`SummarizationCompactionStrategy`** — used for in-loop context compaction via
+  `HarnessAgentOptions.CompactionStrategy`, calls out to an LLM whose output becomes permanent chat
+  history (see [Agent_Step18_CompactionPipeline](../Agents/Agent_Step18_CompactionPipeline/README.md)).
+
+In every case, the capability is opt-in and requires explicit configuration by the developer, who is
+responsible for vetting the external service, agent, skill source, or provider before enabling it.
