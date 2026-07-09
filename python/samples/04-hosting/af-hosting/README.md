@@ -10,6 +10,7 @@ clients, authentication, response construction, and deployment shape.
 | Sample | What it shows | Packaging |
 |---|---|---|
 | [`local_responses/`](./local_responses) | One agent + one `@tool` + native FastAPI route + Responses helper functions + `AgentState` / `SessionStore`. | **Local only.** Start here to learn the helper seam. |
+| [`local_responses_harness/`](./local_responses_harness) | The same helper seam as `local_responses/`, but the hosted target is a batteries-included harness agent built with `create_harness_agent` (function-invocation loop, per-service-call persistence, compaction, todo management). | **Local only.** |
 | [`local_responses_workflow/`](./local_responses_workflow) | A workflow target behind a native FastAPI route using Responses helper functions, `WorkflowState`, explicit `CheckpointStorage`, and an app-owned checkpoint cursor. | **Local only.** |
 
 Each sample is self-contained with its own `pyproject.toml`, server `app.py`,
