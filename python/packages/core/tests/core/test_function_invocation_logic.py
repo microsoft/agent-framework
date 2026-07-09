@@ -767,6 +767,122 @@ async def test_function_invocation_scenarios(
             assert exec_counter == 0  # Neither function executed yet
 
 
+async def test_informational_only_function_call_is_not_invoked(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    @tool(name="no_approval_func", approval_mode="never_require")
+    def func_no_approval(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    informational_call = Content.from_function_call(
+        call_id="1",
+        name="no_approval_func",
+        arguments='{"arg1": "value1"}',
+        informational_only=True,
+    )
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=[informational_call]))
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [func_no_approval]},
+    )
+
+    assert exec_counter == 0
+    assert len(response.messages) == 1
+    assert response.messages[0].contents == [informational_call]
+
+
+async def test_only_actionable_function_calls_are_invoked(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    @tool(name="no_approval_func", approval_mode="never_require")
+    def func_no_approval(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    informational_call = Content.from_function_call(
+        call_id="1",
+        name="no_approval_func",
+        arguments='{"arg1": "value1"}',
+        informational_only=True,
+    )
+    text_content = Content.from_text("Provider transcript text")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=[informational_call, text_content]))
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [func_no_approval]},
+    )
+
+    assert exec_counter == 0
+    assert len(response.messages) == 1
+    assert response.messages[0].contents == [informational_call, text_content]
+
+
+async def test_informational_only_function_call_does_not_request_approval(chat_client_base: SupportsChatGetResponse):
+    @tool(name="approval_func", approval_mode="always_require")
+    def func_with_approval(arg1: str) -> str:
+        return f"Approved {arg1}"
+
+    informational_call = Content.from_function_call(
+        call_id="1",
+        name="approval_func",
+        arguments='{"arg1": "value1"}',
+        informational_only=True,
+    )
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=[informational_call]))
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [func_with_approval]},
+    )
+
+    assert response.messages[0].contents == [informational_call]
+    assert not any(content.type == "function_approval_request" for content in response.messages[0].contents)
+
+
+async def test_streaming_informational_only_function_call_is_not_invoked(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    @tool(name="no_approval_func", approval_mode="never_require")
+    def func_no_approval(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    informational_call = Content.from_function_call(
+        call_id="1",
+        name="no_approval_func",
+        arguments='{"arg1": "value1"}',
+        informational_only=True,
+    )
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [ChatResponseUpdate(contents=[informational_call], role="assistant")]
+    ]
+
+    updates = [
+        update
+        async for update in chat_client_base.get_response(
+            [Message(role="user", contents=["hello"])],
+            options={"tool_choice": "auto", "tools": [func_no_approval]},
+            stream=True,
+        )
+    ]
+
+    assert exec_counter == 0
+    assert len(updates) == 1
+    assert updates[0].contents == [informational_call]
+
+
 async def test_rejected_approval(chat_client_base: SupportsChatGetResponse):
     """Test that rejecting an approval alongside an approved one is handled correctly."""
 

@@ -34,7 +34,7 @@ from ._events import (
 )
 from ._executor import Executor
 from ._model_utils import DictConvertible
-from ._runner import Runner
+from ._runner import RunnerImpl
 from ._runner_context import RunnerContext
 from ._state import State
 from ._typing_utils import is_instance_of, try_coerce_to_type
@@ -348,7 +348,7 @@ class Workflow(DictConvertible):
         # Store non-serializable runtime objects as private attributes
         self._runner_context = runner_context
         self._runner_context.set_yield_output_classifier(self._output_designation.classify)
-        self._runner: Runner = Runner(
+        self._runner: RunnerImpl = RunnerImpl(
             self.edge_groups,
             self.executors,
             State(),

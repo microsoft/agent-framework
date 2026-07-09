@@ -9,12 +9,7 @@ import logging
 import sys
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
-from typing import Any, ClassVar, Generic, Literal, TypedDict, overload
-
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
+from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
 
 from agent_framework import (
     AgentMiddlewareLayer,
@@ -29,6 +24,8 @@ from agent_framework import (
     Message,
     ResponseStream,
     SessionContext,
+    UsageDetails,
+    add_usage_details,
     normalize_messages,
 )
 from agent_framework._settings import load_settings
@@ -36,6 +33,15 @@ from agent_framework._tools import FunctionTool, ToolTypes
 from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import AgentException
 from agent_framework.observability import AgentTelemetryLayer
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # pragma: no cover
 
 try:
     from copilot import CopilotClient, CopilotSession, RuntimeConnection
@@ -49,7 +55,7 @@ try:
         SessionHooks,
         SystemMessageConfig,
     )
-    from copilot.session_events import PermissionRequest, SessionEvent, SessionEventType
+    from copilot.session_events import AssistantUsageData, PermissionRequest, SessionEvent, SessionEventType
     from copilot.tools import Tool as CopilotTool
     from copilot.tools import ToolInvocation, ToolResult
 except ImportError as _copilot_import_error:
@@ -57,12 +63,6 @@ except ImportError as _copilot_import_error:
         "GitHubCopilotAgent requires the 'github-copilot-sdk' package, which is only available on Python 3.11+. "
         "Please use Python 3.11 or later."
     ) from _copilot_import_error
-
-if sys.version_info >= (3, 13):
-    from typing import TypeVar  # pragma: no cover
-else:
-    from typing_extensions import TypeVar  # pragma: no cover
-
 
 DEFAULT_TIMEOUT_SECONDS: float = 60.0
 """Default timeout in seconds for Copilot requests."""
@@ -206,6 +206,18 @@ class GitHubCopilotOptions(TypedDict, total=False):
     files beyond the default locations.
     """
 
+    skill_directories: list[str]
+    """Directories containing SKILL.md files to load into the Copilot CLI session.
+    These are loaded natively by the Copilot CLI process, letting applications point
+    the CLI at project-specific or team-shared skills beyond the default locations.
+    """
+
+    disabled_skills: list[str]
+    """Names of skills to disable for the session.
+    Lets applications opt out of specific skills that would otherwise be discovered
+    from ``skill_directories`` or the default locations.
+    """
+
     base_directory: str
     """Directory where the CLI stores session state, configuration, and other persistent data."""
 
@@ -346,6 +358,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         mcp_servers: dict[str, MCPServerConfig] | None = opts.pop("mcp_servers", None)
         provider: ProviderConfig | None = opts.pop("provider", None)
         instruction_directories: list[str] | None = opts.pop("instruction_directories", None)
+        skill_directories: list[str] | None = opts.pop("skill_directories", None)
+        disabled_skills: list[str] | None = opts.pop("disabled_skills", None)
         on_pre_tool_use: PreToolUseHandler | None = opts.pop("on_pre_tool_use", None)
         on_function_approval: FunctionApprovalCallback | None = opts.pop("on_function_approval", None)
         base_directory = opts.pop("base_directory", None)
@@ -386,6 +400,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self._mcp_servers = mcp_servers
         self._provider = provider
         self._instruction_directories = instruction_directories
+        self._skill_directories = skill_directories
+        self._disabled_skills = disabled_skills
         self._default_options = opts
         self._started = False
 
@@ -547,6 +563,27 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             )
         return self._run_impl(messages=messages, session=session, options=options)
 
+    @staticmethod
+    def _parse_usage_details_from_copilot(data: AssistantUsageData) -> UsageDetails | None:
+        total_token_count = (
+            data.input_tokens + data.output_tokens
+            if data.input_tokens is not None and data.output_tokens is not None
+            else None
+        )
+        usage_details = UsageDetails(**{
+            key: value
+            for key, value in {
+                "input_token_count": data.input_tokens,
+                "output_token_count": data.output_tokens,
+                "total_token_count": total_token_count,
+                "cache_read_input_token_count": data.cache_read_tokens,
+                "cache_creation_input_token_count": data.cache_write_tokens,
+                "reasoning_output_token_count": data.reasoning_tokens,
+            }.items()
+            if value is not None
+        })
+        return usage_details or None
+
     async def _run_impl(
         self,
         messages: AgentRunInputs | None = None,
@@ -586,6 +623,27 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             opts["tools"] = existing + list(session_context.tools)
 
         copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
+        usage_details: UsageDetails | None = None
+        finish_reason: str | None = None
+        model: str | None = None
+
+        def usage_event_handler(event: SessionEvent) -> None:
+            nonlocal usage_details, finish_reason, model
+            if event.type != SessionEventType.ASSISTANT_USAGE:
+                return
+            if isinstance(event.data, AssistantUsageData):
+                parsed_usage_details = self._parse_usage_details_from_copilot(event.data)
+                if parsed_usage_details:
+                    usage_details = add_usage_details(usage_details, parsed_usage_details)
+                if event.data.finish_reason:
+                    finish_reason = event.data.finish_reason
+                if event.data.model:
+                    model = event.data.model
+            else:
+                logger.warning(
+                    "Ignoring GitHub Copilot assistant usage event with unexpected payload type: %s",
+                    type(event.data).__name__,
+                )
 
         # Build the prompt from the full set of messages in the session context,
         # so that any context/history provider-injected messages are included.
@@ -594,10 +652,13 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         if session_context.instructions:
             prompt = "\n".join(session_context.instructions) + "\n" + prompt
 
+        unsubscribe = copilot_session.on(usage_event_handler)
         try:
             response_event = await copilot_session.send_and_wait(prompt, timeout=timeout)
         except Exception as ex:
             raise AgentException(f"GitHub Copilot request failed: {ex}") from ex
+        finally:
+            unsubscribe()
 
         response_messages: list[Message] = []
         response_id: str | None = None
@@ -619,7 +680,13 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 )
             response_id = message_id
 
-        response = AgentResponse(messages=response_messages, response_id=response_id)
+        response = AgentResponse(
+            messages=response_messages,
+            response_id=response_id,
+            finish_reason=cast(Any, finish_reason),
+            usage_details=usage_details,
+            additional_properties={"model": model} if model else None,
+        )
         session_context._response = response  # type: ignore[assignment]
         await self._run_after_providers(session=session, context=session_context)
         return response
@@ -702,6 +769,26 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                         contents=[Content.from_text(data.delta_content)],
                         response_id=data.message_id,
                         message_id=data.message_id,
+                        raw_representation=event,
+                    )
+                    queue.put_nowait(update)
+            elif event.type == SessionEventType.ASSISTANT_USAGE:
+                if not isinstance(event.data, AssistantUsageData):
+                    logger.warning(
+                        "Ignoring GitHub Copilot assistant usage event with unexpected payload type: %s",
+                        type(event.data).__name__,
+                    )
+                    return
+                usage_details = self._parse_usage_details_from_copilot(event.data)
+                finish_reason = event.data.finish_reason or None
+                model = event.data.model or None
+                if usage_details or finish_reason or model:
+                    update = AgentResponseUpdate(
+                        contents=[Content.from_usage(usage_details, raw_representation=event.data)]
+                        if usage_details
+                        else None,
+                        finish_reason=cast(Any, finish_reason),
+                        additional_properties={"model": model} if model else None,
                         raw_representation=event,
                     )
                     queue.put_nowait(update)
@@ -1007,7 +1094,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         try:
             if agent_session.service_session_id:
-                return await self._resume_session(agent_session.service_session_id, streaming, runtime_options)
+                service_session_id = agent_session.service_session_id
+                if not isinstance(service_session_id, str):
+                    raise AgentException(
+                        "GitHubCopilotAgent expects a string service_session_id for session resumption."
+                    )
+                return await self._resume_session(service_session_id, streaming, runtime_options)
 
             session = await self._create_session(streaming, runtime_options)
             agent_session.service_session_id = session.session_id
@@ -1038,6 +1130,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
         provider = opts.get("provider") or self._provider or None
         instruction_directories = opts.get("instruction_directories", self._instruction_directories)
+        skill_directories = opts.get("skill_directories", self._skill_directories)
+        disabled_skills = opts.get("disabled_skills", self._disabled_skills)
         all_tools = list(self._tools or []) + list(opts.get("tools") or [])
         tools = self._prepare_tools(all_tools) if all_tools else None
         hooks = self._build_session_hooks(all_tools, opts)
@@ -1051,6 +1145,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             mcp_servers=mcp_servers or None,
             provider=provider or None,
             instruction_directories=instruction_directories,
+            skill_directories=skill_directories,
+            disabled_skills=disabled_skills,
             hooks=hooks,
         )
 
@@ -1079,6 +1175,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
         provider = opts.get("provider") or self._provider or None
         instruction_directories = opts.get("instruction_directories", self._instruction_directories)
+        skill_directories = opts.get("skill_directories", self._skill_directories)
+        disabled_skills = opts.get("disabled_skills", self._disabled_skills)
         all_tools = list(self._tools or []) + list(opts.get("tools") or [])
         tools = self._prepare_tools(all_tools) if all_tools else None
         hooks = self._build_session_hooks(all_tools, opts)
@@ -1093,6 +1191,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             mcp_servers=mcp_servers or None,
             provider=provider or None,
             instruction_directories=instruction_directories,
+            skill_directories=skill_directories,
+            disabled_skills=disabled_skills,
             hooks=hooks,
         )
 

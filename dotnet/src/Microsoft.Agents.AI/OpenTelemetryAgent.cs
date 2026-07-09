@@ -18,6 +18,17 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// This class provides an implementation of the Semantic Conventions for Generative AI systems v1.37, defined at <see href="https://opentelemetry.io/docs/specs/semconv/gen-ai/" />.
 /// The specification is still experimental and subject to change; as such, the telemetry output by this client is also subject to change.
+/// <para>
+/// <strong>Security considerations:</strong> This class emits telemetry via the standard .NET
+/// <c>System.Diagnostics</c> (<see cref="Activity"/>/metrics) APIs — it does not itself contact any
+/// external system. Where that telemetry is sent (a local collector, a hosted observability backend,
+/// etc.) is entirely determined by the OpenTelemetry exporters and pipeline the developer configures
+/// outside of Agent Framework. By default, emitted telemetry is limited to metadata (e.g. token counts,
+/// operation names, durations) and does not include message content. Enabling
+/// <see cref="EnableSensitiveData"/> is an explicit, separate opt-in that additionally emits raw chat
+/// message content, function-call arguments, and function-call results — treat that data as sensitive
+/// and ensure it is not sent to, or retained by, a telemetry backend you have not secured appropriately.
+/// </para>
 /// </remarks>
 public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
 {
