@@ -443,6 +443,47 @@ class TestChatMiddleware:
         assert captured_messages == [["user message"], ["queued during call"]]
         assert captured_conversation_ids == [None, "conversation-1"]
 
+    async def test_message_injection_middleware_ignores_informational_only_function_calls(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Test that hosted tool transcript calls do not block injected messages."""
+        session = AgentSession()
+        injection = MessageInjectionMiddleware()
+        captured_messages: list[list[str | None]] = []
+
+        async def fake_get_response(
+            *,
+            messages: Sequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ChatResponse:
+            captured_messages.append([message.text for message in messages])
+            if len(captured_messages) == 1:
+                enqueue_messages(session, "queued after hosted tool")
+                return ChatResponse(
+                    messages=Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="hosted-call",
+                                name="hosted_search",
+                                arguments={"query": "docs"},
+                                informational_only=True,
+                            )
+                        ],
+                    )
+                )
+            return ChatResponse(messages=Message(role="assistant", contents=["done"]))
+
+        with patch.object(chat_client_base, "_get_non_streaming_response", side_effect=fake_get_response):
+            response = await chat_client_base.get_response(
+                [Message(role="user", contents=["user message"])],
+                client_kwargs={"middleware": [injection], "session": session},
+            )
+
+        assert response.messages[0].text == "done"
+        assert captured_messages == [["user message"], ["queued after hosted tool"]]
+
     async def test_message_injection_middleware_tool_enqueued_messages_wait_for_function_results(
         self, chat_client_base: "MockBaseChatClient"
     ) -> None:
@@ -530,6 +571,58 @@ class TestChatMiddleware:
 
         assert [update.text for update in updates] == ["first", "second"]
         assert captured_messages == [["user message"], ["queued while streaming"]]
+
+    async def test_message_injection_middleware_streaming_ignores_informational_only_function_calls(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Test that streamed hosted tool transcript calls do not block injected messages."""
+        session = AgentSession()
+        injection = MessageInjectionMiddleware()
+        captured_messages: list[list[str | None]] = []
+
+        def fake_streaming_response(
+            *,
+            messages: Sequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            captured_messages.append([message.text for message in messages])
+
+            async def stream() -> AsyncIterable[ChatResponseUpdate]:
+                if len(captured_messages) == 1:
+                    yield ChatResponseUpdate(
+                        contents=[
+                            Content.from_function_call(
+                                call_id="hosted-call",
+                                name="hosted_search",
+                                arguments={"query": "docs"},
+                                informational_only=True,
+                            )
+                        ],
+                        role="assistant",
+                    )
+                    enqueue_messages(session, "queued while streaming hosted tool")
+                    return
+                yield ChatResponseUpdate(contents=[Content.from_text("done")], role="assistant")
+
+            return ResponseStream(
+                stream(),
+                finalizer=lambda updates: ChatResponse.from_updates(
+                    updates,
+                    output_format_type=options.get("response_format"),
+                ),
+            )
+
+        with patch.object(chat_client_base, "_get_streaming_response", side_effect=fake_streaming_response):
+            stream = chat_client_base.get_response(
+                [Message(role="user", contents=["user message"])],
+                stream=True,
+                client_kwargs={"middleware": [injection], "session": session},
+            )
+            updates = [update async for update in stream]
+
+        assert [update.text for update in updates] == ["", "done"]
+        assert captured_messages == [["user message"], ["queued while streaming hosted tool"]]
 
     def test_enqueue_messages_uses_session_state_queue(self) -> None:
         """Test that standalone message injection enqueueing stores messages in session state."""

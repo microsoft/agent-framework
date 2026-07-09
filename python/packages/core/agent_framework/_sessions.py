@@ -557,10 +557,8 @@ def is_local_history_conversation_id(conversation_id: str | None) -> bool:
 
 def _response_contains_follow_up_request(response: ChatResponse) -> bool:
     """Return whether a response requires another model call in the current run."""
-    # TODO(eavanvalkenburg): When informational-only function call content lands, ignore informational-only calls here
-    # so hosted/provider-executed tool transcript items do not block injected-message processing.
     return any(
-        item.type in {"function_call", "function_approval_request"}
+        item.type == "function_approval_request" or (item.type == "function_call" and not item.informational_only)
         for message in response.messages
         for item in message.contents
     )
