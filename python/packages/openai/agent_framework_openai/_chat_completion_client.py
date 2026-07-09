@@ -104,7 +104,7 @@ def _extract_reasoning_text(reasoning_details: Any) -> str | None:
 
     OpenAI-compatible providers return reasoning_details in various forms:
     - A list of dicts with ``"text"`` keys (e.g. OpenRouter: ``[{"type": "reasoning.text", "text": "..."}]``)
-    - A dict with a ``"content"`` list containing text entries
+    - A dict with a ``"content"`` key (list of text entries or a plain string)
     - A plain string
 
     Returns the concatenated plaintext if any is found, otherwise None.
@@ -114,25 +114,35 @@ def _extract_reasoning_text(reasoning_details: Any) -> str | None:
 
     if isinstance(reasoning_details, list):
         parts: list[str] = []
-        for entry in reasoning_details:
-            if isinstance(entry, dict):
-                if text := entry.get("text"):
-                    parts.append(text)
-            elif isinstance(entry, str):
-                parts.append(entry)
+        for item in cast(list[object], reasoning_details):
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                entry_text = cast(dict[str, object], item).get("text")
+                if isinstance(entry_text, str) and entry_text:
+                    parts.append(entry_text)
         return "".join(parts) or None
 
     if isinstance(reasoning_details, dict):
-        # Handle {"content": [...], "text": "..."} style
-        if text := reasoning_details.get("text"):
-            return text
-        if content_list := reasoning_details.get("content"):
-            if isinstance(content_list, list):
-                parts = []
-                for entry in content_list:
-                    if isinstance(entry, dict) and (text := entry.get("text")):
-                        parts.append(text)
-                return "".join(parts) or None
+        detail_dict = cast(dict[str, object], reasoning_details)
+        # Handle {"text": "..."} style
+        text_val = detail_dict.get("text")
+        if isinstance(text_val, str) and text_val:
+            return text_val
+        # Handle {"content": [...]} or {"content": "..."} style
+        content_val = detail_dict.get("content")
+        if isinstance(content_val, str) and content_val:
+            return content_val
+        if isinstance(content_val, list):
+            parts = []
+            for item in cast(list[object], content_val):
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    entry_text2 = cast(dict[str, object], item).get("text")
+                    if isinstance(entry_text2, str) and entry_text2:
+                        parts.append(entry_text2)
+            return "".join(parts) or None
 
     return None
 
@@ -864,26 +874,29 @@ class RawOpenAIChatCompletionClient(
         - ``{"type": "text", "text": "..."}``
         """
         results: list[Content] = []
-        for chunk in chunks:
-            if not isinstance(chunk, dict):
+        for item in cast(list[object], chunks):
+            if not isinstance(item, dict):
                 continue
-            chunk_type = chunk.get("type")
+            chunk_dict = cast(dict[str, object], item)
+            chunk_type = chunk_dict.get("type")
             if chunk_type == "thinking":
-                thinking = chunk.get("thinking")
+                thinking = chunk_dict.get("thinking")
                 if isinstance(thinking, str):
                     text = thinking
                 elif isinstance(thinking, list):
                     text = "".join(
-                        part.get("text", "") for part in thinking if isinstance(part, dict)
+                        str(cast(dict[str, object], part).get("text", ""))
+                        for part in cast(list[object], thinking)
+                        if isinstance(part, dict)
                     )
                 else:
                     text = ""
                 if text:
                     results.append(Content.from_text_reasoning(text=text, raw_representation=choice))
             elif chunk_type == "text":
-                text = chunk.get("text")
-                if text:
-                    results.append(Content.from_text(text=text, raw_representation=choice))
+                text_val = chunk_dict.get("text")
+                if isinstance(text_val, str) and text_val:
+                    results.append(Content.from_text(text=text_val, raw_representation=choice))
         return results
 
     def _get_metadata_from_chat_response(self, response: ChatCompletion) -> dict[str, Any]:
