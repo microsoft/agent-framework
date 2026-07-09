@@ -464,7 +464,7 @@ public partial class ChatClientAgentTests
     }
 
     /// <summary>
-    /// Verify that RunAsync works with existing session and can retreive messages if the session has a ChatHistoryProvider.
+    /// Verify that RunAsync works with existing session and can retrieve messages if the session has a ChatHistoryProvider.
     /// </summary>
     [Fact]
     public async Task RunAsyncRetrievesMessagesFromSessionWhenSessionHasChatHistoryProviderAsync()

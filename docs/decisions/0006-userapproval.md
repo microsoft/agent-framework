@@ -2,7 +2,7 @@
 # These are optional elements. Feel free to remove any of them.
 status: accepted
 contact: westey-m
-date: 2025-09-12 {YYYY-MM-DD when the decision was last updated}
+date: 2025-09-12
 deciders: sergeymenshykh, markwallace-microsoft, rogerbarreto, dmytrostruk, westey-m, eavanvalkenburg, stephentoub, peterychang
 consulted: 
 informed: 
