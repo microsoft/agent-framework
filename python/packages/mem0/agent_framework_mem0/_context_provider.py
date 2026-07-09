@@ -65,7 +65,10 @@ class Mem0ContextProvider(ContextProvider):
             source_id: Unique identifier for this provider instance.
             mem0_client: A pre-created Mem0 MemoryClient or None to create a default client.
             api_key: The API key for authenticating with the Mem0 API.
-            application_id: The application ID for scoping memories.
+            application_id: The application ID for scoping memories. Platform-only:
+                the OSS ``AsyncMemory`` client does not recognize an application
+                scope (it scopes only by user_id/agent_id/run_id), so an OSS client
+                requires user_id or agent_id and application_id alone is rejected.
             agent_id: The agent ID for scoping memories.
             user_id: The user ID for scoping memories.
             context_prompt: The prompt to prepend to retrieved memories.
@@ -125,13 +128,9 @@ class Mem0ContextProvider(ContextProvider):
             agent_kwargs = self._build_search_kwargs(input_text, "agent_id", self.agent_id)
             search_tasks.append(self.mem0_client.search(**agent_kwargs))  # type: ignore[reportUnknownMemberType, reportUnknownArgumentType]
 
-        # Fall back to an app-scoped search when only application_id is configured
+        # Fall back to an app-scoped search when only application_id is configured.
         if not search_tasks and self.application_id:
-            app_kwargs: dict[str, Any] = {"query": input_text}
-            if isinstance(self.mem0_client, AsyncMemory):
-                app_kwargs["app_id"] = self.application_id
-            else:
-                app_kwargs["filters"] = {"app_id": self.application_id}
+            app_kwargs: dict[str, Any] = {"query": input_text, "filters": {"app_id": self.application_id}}
             search_tasks.append(self.mem0_client.search(**app_kwargs))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
         if not search_tasks:
             return
@@ -223,37 +222,30 @@ class Mem0ContextProvider(ContextProvider):
                 "agent_id": self.agent_id,
             }
 
-            # Inject the application scope using the matching signature format for each SDK variant
-            if isinstance(self.mem0_client, AsyncMemory):
-                if self.application_id:
-                    add_kwargs["app_id"] = self.application_id
-            else:
-                if self.application_id:
-                    add_kwargs["filters"] = {"app_id": self.application_id}
+            if self.application_id and not isinstance(self.mem0_client, AsyncMemory):
+                add_kwargs["filters"] = {"app_id": self.application_id}
 
             await self.mem0_client.add(**add_kwargs)  # type: ignore[misc, call-arg]
 
     # -- Internal methods ------------------------------------------------------
 
     def _validate_filters(self) -> None:
-        """Validates that at least one filter is provided."""
+        """Validates that at least one usable filter is provided for the configured client."""
         if not self.agent_id and not self.user_id and not self.application_id:
             raise ValueError("At least one of the filters: agent_id, user_id, or application_id is required.")
+        if isinstance(self.mem0_client, AsyncMemory) and not self.user_id and not self.agent_id:
+            raise ValueError(
+                "application_id is not supported by the OSS AsyncMemory client, which scopes "
+                "memories only by user_id/agent_id. Provide user_id or agent_id."
+            )
 
     def _build_search_kwargs(self, input_text: str, entity_key: str, entity_value: str) -> dict[str, Any]:
         """Build search keyword arguments formatted for OSS vs Platform clients."""
         filters: dict[str, Any] = {"query": input_text}
 
-        if isinstance(self.mem0_client, AsyncMemory):
-            # AsyncMemory (OSS) expects direct kwargs
-            filters[entity_key] = entity_value
-            if self.application_id:
-                filters["app_id"] = self.application_id
-        else:
-            # AsyncMemoryClient (Platform) expects a filters dict
-            filters["filters"] = {entity_key: entity_value}
-            if self.application_id:
-                filters["filters"]["app_id"] = self.application_id
+        filters["filters"] = {entity_key: entity_value}
+        if self.application_id and not isinstance(self.mem0_client, AsyncMemory):
+            filters["filters"]["app_id"] = self.application_id
 
         return filters
 
