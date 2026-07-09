@@ -267,7 +267,11 @@ You can control both **how often** memories are extracted and **what** gets extr
 
 #### Control extraction cadence (`processor_config`)
 
-`processor_config` sets how many turns pass between each pipeline step (these map to the toolkit's environment thresholds):
+`processor_config` sets how many turns pass between each pipeline step. The provider forwards these
+to the toolkit client via its `cadence_thresholds` argument (no global environment mutation); keys you
+omit fall back to the toolkit's environment/defaults. This applies only when the provider builds the
+client, so pass `processor_config` together with the connection arguments rather than a pre-built
+`memory_client`:
 
 ```python
 memory_provider = CosmosMemoryContextProvider(
@@ -402,23 +406,33 @@ For fine-grained control over memory processing:
 ```python
 from azure.cosmos.agent_memory.aio import AsyncCosmosMemoryClient
 
-# Create a custom memory client
+# Create a custom memory client. To disable automatic extraction, zero the cadence thresholds
+# on the client you build - the provider cannot reconfigure a client you pass in, so supplying
+# a memory_client together with auto_extract=False or processor_config raises ValueError.
 memory_client = AsyncCosmosMemoryClient(
     cosmos_endpoint=cosmos_endpoint,
     cosmos_database="ai_memory",
     ai_foundry_endpoint=ai_foundry_endpoint,
     use_default_credential=True,
+    cadence_thresholds={
+        "FACT_EXTRACTION_EVERY_N": 0,
+        "THREAD_SUMMARY_EVERY_N": 0,
+        "USER_SUMMARY_EVERY_N": 0,
+    },
 )
 
 # Pass to the provider
 memory_provider = CosmosMemoryContextProvider(
     memory_client=memory_client,
-    auto_extract=False,  # Disable automatic extraction
 )
 
 # Manually trigger processing when needed
 await memory_client.process_now(user_id="user-123", thread_id="thread-456")
 ```
+
+> To let the provider disable extraction for you, omit `memory_client` and pass `auto_extract=False`
+> with the connection arguments instead - the provider then builds the client with the extraction
+> and summary steps zeroed.
 
 ### Environment Variables
 

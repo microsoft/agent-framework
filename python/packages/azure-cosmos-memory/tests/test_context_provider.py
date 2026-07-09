@@ -57,7 +57,7 @@ class TestInit:
             min_confidence=0.8,
             memory_types=["fact", "episodic"],
             context_prompt="Custom prompt:",
-            auto_extract=False,
+            auto_extract=True,
         )
 
         assert provider.source_id == "test_memory"
@@ -65,7 +65,7 @@ class TestInit:
         assert provider.min_confidence == 0.8
         assert provider.memory_types == ["fact", "episodic"]
         assert provider.context_prompt == "Custom prompt:"
-        assert provider.auto_extract is False
+        assert provider.auto_extract is True
         assert provider.memory_client is mock_memory_client
         assert provider._should_close_client is False
 
@@ -133,38 +133,68 @@ class TestInit:
         with pytest.raises(SettingNotFoundError, match="foundry_endpoint"):
             CosmosMemoryContextProvider(cosmos_endpoint="https://test.documents.azure.com:443/")
 
-    def test_init_processor_config_applied(self, mock_memory_client: AsyncMock) -> None:
-        """Processor config is applied to environment variables."""
-        import os
+    def test_init_processor_config_forwarded_to_built_client(self) -> None:
+        """processor_config is forwarded to the built client via cadence_thresholds."""
+        with patch(
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+        ) as mock_client_class:
+            mock_client_class.return_value = AsyncMock()
 
-        original_value = os.environ.get("FACT_EXTRACTION_EVERY_N")
-        try:
+            CosmosMemoryContextProvider(
+                cosmos_endpoint="https://test.documents.azure.com:443/",
+                foundry_endpoint="https://test.ai.azure.com",
+                processor_config={"FACT_EXTRACTION_EVERY_N": 10},
+            )
+
+            _, kwargs = mock_client_class.call_args
+            assert kwargs["cadence_thresholds"] == {"FACT_EXTRACTION_EVERY_N": 10}
+
+    def test_auto_extract_false_zeroes_extraction_cadence(self) -> None:
+        """auto_extract=False forwards zeroed extraction/summary cadence to the built client."""
+        with patch(
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+        ) as mock_client_class:
+            mock_client_class.return_value = AsyncMock()
+
+            CosmosMemoryContextProvider(
+                cosmos_endpoint="https://test.documents.azure.com:443/",
+                foundry_endpoint="https://test.ai.azure.com",
+                auto_extract=False,
+            )
+
+            _, kwargs = mock_client_class.call_args
+            assert kwargs["cadence_thresholds"] == {
+                "FACT_EXTRACTION_EVERY_N": 0,
+                "THREAD_SUMMARY_EVERY_N": 0,
+                "USER_SUMMARY_EVERY_N": 0,
+            }
+
+    def test_default_cadence_thresholds_is_none(self) -> None:
+        """With no cadence config, the built client receives cadence_thresholds=None (env/defaults)."""
+        with patch(
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+        ) as mock_client_class:
+            mock_client_class.return_value = AsyncMock()
+
+            CosmosMemoryContextProvider(
+                cosmos_endpoint="https://test.documents.azure.com:443/",
+                foundry_endpoint="https://test.ai.azure.com",
+            )
+
+            _, kwargs = mock_client_class.call_args
+            assert kwargs["cadence_thresholds"] is None
+
+    def test_processor_config_with_supplied_client_raises(self, mock_memory_client: AsyncMock) -> None:
+        """Cadence config cannot apply to a caller-supplied client, so combining them raises."""
+        with pytest.raises(ValueError, match="processor_config"):
             CosmosMemoryContextProvider(
                 memory_client=mock_memory_client, processor_config={"FACT_EXTRACTION_EVERY_N": 10}
             )
-            assert os.environ.get("FACT_EXTRACTION_EVERY_N") == "10"
-        finally:
-            if original_value is not None:
-                os.environ["FACT_EXTRACTION_EVERY_N"] = original_value
-            else:
-                os.environ.pop("FACT_EXTRACTION_EVERY_N", None)
 
-    def test_auto_extract_false_zeroes_extraction_cadence(self, mock_memory_client: AsyncMock) -> None:
-        """auto_extract=False disables background extraction by zeroing the cadence thresholds."""
-        import os
-
-        keys = ("FACT_EXTRACTION_EVERY_N", "THREAD_SUMMARY_EVERY_N", "USER_SUMMARY_EVERY_N")
-        originals = {k: os.environ.get(k) for k in keys}
-        try:
+    def test_auto_extract_false_with_supplied_client_raises(self, mock_memory_client: AsyncMock) -> None:
+        """auto_extract=False cannot apply to a caller-supplied client, so combining them raises."""
+        with pytest.raises(ValueError, match="processor_config"):
             CosmosMemoryContextProvider(memory_client=mock_memory_client, auto_extract=False)
-            for k in keys:
-                assert os.environ.get(k) == "0"
-        finally:
-            for k, v in originals.items():
-                if v is not None:
-                    os.environ[k] = v
-                else:
-                    os.environ.pop(k, None)
 
 
 # -- before_run tests ----------------------------------------------------------

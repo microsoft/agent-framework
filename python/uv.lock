@@ -306,7 +306,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "azure-cosmos-agent-memory", marker = "python_full_version >= '3.11'", specifier = ">=0.2.0b2" },
+    { name = "azure-cosmos-agent-memory", marker = "python_full_version >= '3.11'", specifier = ">=0.2.0b3" },
     { name = "prompty", marker = "python_full_version >= '3.11'", specifier = ">=2.0.0a9" },
 ]
 
@@ -1429,7 +1429,7 @@ wheels = [
 
 [[package]]
 name = "azure-cosmos-agent-memory"
-version = "0.2.0b2"
+version = "0.2.0b3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
@@ -1441,9 +1441,9 @@ dependencies = [
     { name = "pydantic", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
     { name = "typing-extensions", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c8/82/e3d34dde7b110182fa248658ce53b56497c449012663badfa04e7508a49e/azure_cosmos_agent_memory-0.2.0b2.tar.gz", hash = "sha256:dbfe5d7376be050d5f71c10c0f0a2051e140cc782238c69a743872c689da003d", size = 157140, upload-time = "2026-07-01T18:18:54.334Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3d/18/fcca91e3e9ec4d3ac9278e6a7375ae09a18305f8e90c6d67dc89dfd4e015/azure_cosmos_agent_memory-0.2.0b3.tar.gz", hash = "sha256:d9a6263140c2e49a238d7d407f146645afd692506468ef440239a2bce02c3c2b", size = 158451, upload-time = "2026-07-09T02:35:59.207Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/68/6da0b16af3053882b780ebccb2e109861c9a5ff7ca7558716e4f7bacbf00/azure_cosmos_agent_memory-0.2.0b2-py3-none-any.whl", hash = "sha256:5ef4ebc385460867eb7e46063a6ebb23782c904809f038b8715fe03658d69624", size = 175073, upload-time = "2026-07-01T18:18:53.145Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/86/146871231fed1e7175a0dceeed5bd590fef977e6c2c3dc5ab9a8d788aba7/azure_cosmos_agent_memory-0.2.0b3-py3-none-any.whl", hash = "sha256:64506ec59fdc13b87decac1a89187ef2c6d52e48775e47c682af73b4fbb265df", size = 176570, upload-time = "2026-07-09T02:35:57.895Z" },
 ]
 
 [[package]]

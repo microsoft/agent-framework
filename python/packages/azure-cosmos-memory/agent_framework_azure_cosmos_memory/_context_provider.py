@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, cast
 
 from agent_framework import AgentSession, ContextProvider, Message, SessionContext
 from agent_framework._settings import load_settings
@@ -126,7 +125,12 @@ class CosmosMemoryContextProvider(ContextProvider):
             auto_extract: Enable automatic background memory extraction/summarization after
                 turn writes. When ``False`` the cadence thresholds are zeroed so nothing runs
                 automatically and callers drive processing via ``memory_client.process_now()``.
-            processor_config: Optional processor cadence configuration.
+                Only applied when the provider builds the client; supplying ``memory_client``
+                together with ``auto_extract=False`` raises ``ValueError``.
+            processor_config: Optional processor cadence configuration, forwarded to the toolkit
+                client via ``cadence_thresholds``. Only applied when the provider builds the
+                client; supplying ``memory_client`` together with ``processor_config`` raises
+                ``ValueError`` (configure cadence on your own client instead).
             prompts_dir: Optional directory of Prompty templates for the memory pipeline. When
                 set, the extraction and summarization steps read their templates (including
                 ``extract_memories.prompty``) from this directory instead of the toolkit's
@@ -150,19 +154,29 @@ class CosmosMemoryContextProvider(ContextProvider):
         self.auto_extract = auto_extract
         self._prompts_dir = prompts_dir
 
-        # Apply the cadence configuration to the environment BEFORE creating the memory client.
-        # The Agent Memory Toolkit reads these thresholds from ``os.environ`` (see the toolkit's
-        # thresholds module), so the environment is currently the only supported way to configure
-        # the InProcessProcessor. ``auto_extract=False`` zeroes the cadence thresholds so the
-        # toolkit's background auto-trigger never runs extraction/summarization on turn writes;
-        # callers then drive processing explicitly via ``memory_client.process_now(...)``.
-        cadence: dict[str, str] = {str(k): str(v) for k, v in (processor_config or {}).items()}
+        # Build the per-instance cadence override for the toolkit client. The Agent Memory Toolkit
+        # accepts these thresholds directly via ``cadence_thresholds=`` (v0.2.0b3+), so the provider
+        # configures the processor without mutating global ``os.environ``. ``auto_extract=False``
+        # zeroes the extraction/summary steps so the toolkit's background auto-trigger never runs on
+        # turn writes; callers then drive processing explicitly via ``memory_client.process_now(...)``.
+        # Keys not present fall back to the toolkit's environment/defaults.
+        cadence_thresholds: dict[str, int] = {
+            str(k): int(v) for k, v in cast("Mapping[str, int]", processor_config or {}).items()
+        }
         if not auto_extract:
-            cadence["FACT_EXTRACTION_EVERY_N"] = "0"
-            cadence["THREAD_SUMMARY_EVERY_N"] = "0"
-            cadence["USER_SUMMARY_EVERY_N"] = "0"
-        for key, value in cadence.items():
-            os.environ[key] = value
+            cadence_thresholds["FACT_EXTRACTION_EVERY_N"] = 0
+            cadence_thresholds["THREAD_SUMMARY_EVERY_N"] = 0
+            cadence_thresholds["USER_SUMMARY_EVERY_N"] = 0
+
+        # A caller-supplied client owns its own cadence configuration; the provider cannot apply
+        # ``cadence_thresholds`` to an already-constructed client. Reject the combination instead of
+        # silently ignoring the requested configuration.
+        if memory_client is not None and cadence_thresholds:
+            raise ValueError(
+                "processor_config and auto_extract=False only take effect when the provider builds "
+                "the memory client. When supplying your own memory_client, configure cadence via "
+                "AsyncCosmosMemoryClient(cadence_thresholds=...) directly."
+            )
 
         # Initialize memory client if not provided
         if memory_client is None:
@@ -199,6 +213,7 @@ class CosmosMemoryContextProvider(ContextProvider):
                     cosmos_credential=credential,
                     ai_foundry_credential=credential,
                     use_default_credential=False,
+                    cadence_thresholds=cadence_thresholds or None,
                 )
             else:
                 memory_client = AsyncCosmosMemoryClient(
@@ -208,6 +223,7 @@ class CosmosMemoryContextProvider(ContextProvider):
                     embedding_deployment_name=embedding_model,
                     chat_deployment_name=chat_model,
                     use_default_credential=True,
+                    cadence_thresholds=cadence_thresholds or None,
                 )
             self._should_close_client = True
 
