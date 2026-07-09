@@ -150,6 +150,32 @@ async def _pending_request_events(workflow: Workflow) -> dict[str, Any]:
     return {}
 
 
+async def _restore_checkpoint_for_coercion(
+    workflow: Workflow,
+    checkpoint_id: str,
+    checkpoint_storage: CheckpointStorage | None,
+) -> None:
+    """Restore a checkpoint into the live workflow so pending requests become visible.
+
+    Resume responses are coerced against the workflow's *current* pending requests.
+    On a cold checkpoint restore those requests do not exist yet on the live instance,
+    so this best-effort restore hydrates them first. It is idempotent: the subsequent
+    ``workflow.run(checkpoint_id=...)`` restores again from the same checkpoint. Any
+    failure is swallowed here and surfaced by that core run instead.
+    """
+    runner = getattr(workflow, "_runner", None)
+    restore_from_checkpoint = getattr(runner, "restore_from_checkpoint", None)
+    if restore_from_checkpoint is None:
+        return
+    try:
+        await restore_from_checkpoint(checkpoint_id, checkpoint_storage)
+    except Exception:  # pragma: no cover - defensive; the core run re-raises the real error
+        logger.warning(
+            "Pre-restore for resume-response coercion failed; the core run will surface any error.",
+            exc_info=True,
+        )
+
+
 def _interrupt_entry_for_request_event(request_event: Any) -> dict[str, Any] | None:
     """Build AG-UI interrupt payload from a workflow request_info event."""
     request_payload = _request_payload_from_request_event(request_event)
@@ -786,6 +812,21 @@ async def run_workflow_stream(
     last_assistant_text: str | None = None
 
     resume_payload = _extract_resume_payload(input_data)
+
+    # A checkpoint resume that carries an explicit resume payload targets the requests
+    # that were pending when the checkpoint was written; those only reappear on the live
+    # instance once the checkpoint is restored. Restore up front so ``pending_before_run``
+    # (and the resume contract + coercion below) see the post-restore pending set, exactly
+    # as the non-checkpoint path sees the live pending requests. Without this a raw JSON
+    # resume payload (e.g. a ``function_approval_response`` dict) would reach core
+    # uncoerced and be rejected with a response-type mismatch. Only pre-restore when a
+    # resume payload is present so a pure checkpoint restore still surfaces its pending
+    # interrupts instead of tripping the "resume required" contract. The
+    # ``workflow.run(checkpoint_id=...)`` call below restores again from the same
+    # checkpoint, so this pre-restore is idempotent.
+    if checkpoint_id is not None and resume_payload is not None:
+        await _restore_checkpoint_for_coercion(workflow, checkpoint_id, checkpoint_storage)
+
     pending_before_run = await _pending_request_events(workflow)
     pending_interrupt_ids = _pending_workflow_interrupt_ids(pending_before_run)
     resume_entries: list[dict[str, Any]] = []

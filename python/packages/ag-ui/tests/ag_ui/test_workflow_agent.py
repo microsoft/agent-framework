@@ -16,6 +16,7 @@ from agent_framework import (
     executor,
     handler,
 )
+
 from agent_framework_ag_ui import AgentFrameworkWorkflow
 
 
@@ -261,3 +262,77 @@ async def test_workflow_run_without_checkpointing_is_unchanged() -> None:
     assert "RUN_STARTED" in event_types
     assert "RUN_FINISHED" in event_types
     assert "RUN_ERROR" not in event_types
+
+
+async def test_workflow_checkpoint_only_resume_preserves_thread_snapshot() -> None:
+    """A checkpoint-only resume must keep the prior stored thread snapshot, not truncate it.
+
+    Regression test for a checkpoint-only resume (no new messages) silently replacing
+    the stored AG-UI Thread Snapshot with just the newly produced output, dropping the
+    earlier replayable transcript.
+    """
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
+
+    storage = InMemoryCheckpointStorage()
+    workflow = _build_multi_superstep_workflow(storage)
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store)
+
+    # Prime the workflow so a checkpoint exists to resume from.
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-cp-snap",
+            "run_id": "run-1",
+            "messages": [{"id": "user-1", "role": "user", "content": "First question"}],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name=workflow.name),
+        key=lambda checkpoint: checkpoint.timestamp,
+    )
+    assert checkpoints, "expected the primed run to create at least one checkpoint"
+    # Resume from the earliest checkpoint so middle -> finish replays and re-produces output.
+    resume_checkpoint_id = checkpoints[0].checkpoint_id
+
+    # Stand in for a richer stored transcript: two prior replayable messages that a
+    # checkpoint-only resume must preserve alongside the resumed output.
+    await store.save(
+        scope="tenant-a",
+        thread_id="thread-cp-snap",
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {"id": "user-1", "role": "user", "content": "First question"},
+                {"id": "assistant-1", "role": "assistant", "content": "Earlier reply"},
+            ],
+            state=None,
+            interrupt=None,
+        ),
+    )
+
+    # Checkpoint-only resume: no new messages, resume from the checkpoint.
+    resumed_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-cp-snap",
+            "run_id": "run-2",
+            "messages": [],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+        checkpoint_id=resume_checkpoint_id,
+        checkpoint_storage=storage,
+    )
+    assert "RUN_ERROR" not in [event.type for event in resumed_events]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-cp-snap")
+    assert snapshot is not None
+    contents = [message.get("content") for message in snapshot.messages]
+    # Prior transcript preserved...
+    assert "First question" in contents
+    assert "Earlier reply" in contents
+    # ...plus the newly produced output from the resumed run.
+    assert any(isinstance(content, str) and "done" in content for content in contents)

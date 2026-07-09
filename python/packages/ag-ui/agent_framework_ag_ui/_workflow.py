@@ -396,9 +396,16 @@ class AgentFrameworkWorkflow:
 
         workflow = self._resolve_workflow(thread_id, snapshot_scope)
         builder_seed_messages = raw_messages
-        if resume_payload is not None and stored_snapshot is not None:
-            # Resume requests carry only the synthesized interrupt response, so seed
-            # the builder with stored history to avoid persisting a truncated thread.
+        # ``raw_messages`` lacks the prior transcript in two cases: a resume request
+        # carries only the synthesized interrupt response, and a checkpoint-only resume
+        # carries no new messages at all (so ``_reconstruct_messages_from_thread_snapshot``
+        # returns the empty incoming list rather than folding in stored history). In
+        # both cases seed the builder with the stored history so the snapshot saved
+        # after the run preserves the earlier replayable messages instead of dropping
+        # them for just the newly produced output.
+        if stored_snapshot is not None and (
+            resume_payload is not None or (checkpoint_id is not None and not raw_messages)
+        ):
             builder_seed_messages = [
                 copy.deepcopy(message) for message in stored_snapshot.messages
             ] + builder_seed_messages

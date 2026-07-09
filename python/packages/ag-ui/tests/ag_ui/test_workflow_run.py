@@ -13,6 +13,7 @@ from agent_framework import (
     AgentResponseUpdate,
     Content,
     Executor,
+    InMemoryCheckpointStorage,
     Message,
     WorkflowBuilder,
     WorkflowContext,
@@ -321,6 +322,96 @@ async def test_workflow_run_resume_content_response_from_json_payload() -> None:
     assert "TEXT_MESSAGE_CONTENT" in resumed_types
     resumed_finished = [event for event in resumed_events if event.type == "RUN_FINISHED"][0].model_dump()
     assert "interrupt" not in resumed_finished
+    text_deltas = [event.delta for event in resumed_events if event.type == "TEXT_MESSAGE_CONTENT"]
+    assert any("approved" in delta for delta in text_deltas)
+
+
+async def test_workflow_run_resume_content_response_after_checkpoint_restore() -> None:
+    """A JSON function_approval_response resumes correctly through a cold checkpoint restore.
+
+    Regression test: on a checkpoint restore the pending approval request only reappears
+    after the checkpoint is restored, so resume responses must be coerced against the
+    post-restore pending set. Without that, the raw JSON payload reaches core uncoerced
+    and is rejected with "Response type mismatch ... expected Content, got dict" -- the
+    same payload that already resumes cleanly on the non-checkpoint path.
+    """
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345", "amount": "$89.99"},
+            )
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+            del original_request
+            status = "approved" if bool(response.approved) else "rejected"
+            await ctx.yield_output(f"Refund tool call {status}.")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor(), checkpoint_storage=storage).build()
+
+    # First run: hit the approval interrupt and let core checkpoint the pending state.
+    first_events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "go"}]},
+            workflow,
+            checkpoint_storage=storage,
+        )
+    ]
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(first_finished)
+    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
+
+    checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name=workflow.name),
+        key=lambda checkpoint: checkpoint.timestamp,
+    )
+    assert checkpoints, "expected the interrupted run to create a checkpoint"
+    resume_checkpoint_id = checkpoints[-1].checkpoint_id
+
+    # Resume on a FRESH workflow instance so no pending requests exist in memory until
+    # the checkpoint is restored -- a cold restore, as after a process restart.
+    resumed_workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    resumed_events: list[Any] = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [],
+                "resume": {
+                    "interrupts": [
+                        {
+                            "id": "approval-1",
+                            "value": {
+                                "type": "function_approval_response",
+                                "approved": True,
+                                "id": interrupt_value.get("id", "approval-1"),
+                                "function_call": interrupt_value.get("function_call"),
+                            },
+                        }
+                    ]
+                },
+            },
+            resumed_workflow,
+            checkpoint_id=resume_checkpoint_id,
+            checkpoint_storage=storage,
+        )
+    ]
+
+    resumed_types = [event.type for event in resumed_events]
+    assert "RUN_ERROR" not in resumed_types
+    assert "TEXT_MESSAGE_CONTENT" in resumed_types
     text_deltas = [event.delta for event in resumed_events if event.type == "TEXT_MESSAGE_CONTENT"]
     assert any("approved" in delta for delta in text_deltas)
 

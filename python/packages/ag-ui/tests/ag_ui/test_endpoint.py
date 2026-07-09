@@ -2243,8 +2243,8 @@ async def test_endpoint_streaming_error_emits_run_error_event():
     """Streaming exceptions should emit RUN_ERROR instead of terminating silently."""
 
     class FailingStreamWorkflow(AgentFrameworkWorkflow):
-        async def run(self, input_data: dict[str, Any]):
-            del input_data
+        async def run(self, input_data: dict[str, Any], **kwargs: Any):
+            del input_data, kwargs
             yield RunStartedEvent(run_id="run-1", thread_id="thread-1")
             raise RuntimeError("stream exploded")
 
@@ -2997,8 +2997,8 @@ async def test_endpoint_encoding_failure_emits_run_error():
     from unittest.mock import patch
 
     class SimpleWorkflow(AgentFrameworkWorkflow):
-        async def run(self, input_data: dict[str, Any]):
-            del input_data
+        async def run(self, input_data: dict[str, Any], **kwargs: Any):
+            del input_data, kwargs
             yield RunStartedEvent(run_id="run-1", thread_id="thread-1")
 
     app = FastAPI()
@@ -3020,8 +3020,8 @@ async def test_endpoint_double_encoding_failure_terminates():
     from unittest.mock import patch
 
     class SimpleWorkflow(AgentFrameworkWorkflow):
-        async def run(self, input_data: dict[str, Any]):
-            del input_data
+        async def run(self, input_data: dict[str, Any], **kwargs: Any):
+            del input_data, kwargs
             yield RunStartedEvent(run_id="run-1", thread_id="thread-1")
 
     app = FastAPI()
