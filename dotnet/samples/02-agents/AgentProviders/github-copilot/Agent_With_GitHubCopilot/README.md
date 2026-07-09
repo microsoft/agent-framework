@@ -64,6 +64,43 @@ AgentResponse response = await agent.RunAsync("Write a small .NET 10 C# hello wo
 Console.WriteLine(response);
 ```
 
+## Approving or denying tool execution
+
+The GitHub Copilot SDK owns the tool-calling loop for this provider, so approval is enforced through the SDK's
+native pre-execution hook rather than the Agent Framework chat-client approval round-trip.
+
+When you register a tool wrapped in `ApprovalRequiredAIFunction`, `GitHubCopilotAgent` installs a default
+`SessionConfig.Hooks.OnPreToolUse` hook that returns `"ask"` for that tool and defers (`null`) for all other tools.
+The `"ask"` decision routes to your `SessionConfig.OnPermissionRequest` handler, where you approve or deny the call
+(this also fires even for tools configured with `SkipPermission = true`):
+
+```csharp
+using GitHub.Copilot;
+
+AIFunction deleteFile = AIFunctionFactory.Create(DeleteFile, "DeleteFile", "Deletes a file.");
+
+SessionConfig sessionConfig = new()
+{
+    // Wrapping the tool marks it approval-required; the agent turns this into an "ask" at OnPreToolUse.
+    Tools = [new ApprovalRequiredAIFunction(deleteFile)],
+
+    // OnPermissionRequest decides the "asked" tools (and Copilot's built-in shell/file/URL prompts).
+    OnPermissionRequest = (request, invocation) =>
+    {
+        // Surface to a human, check policy, etc.
+        bool approved = AskHuman(request);
+        return Task.FromResult(approved
+            ? PermissionDecision.ApproveOnce()
+            : PermissionDecision.Reject("Denied by user."));
+    },
+};
+```
+
+> **⚠️ If you provide your own `OnPreToolUse` hook**, it takes precedence and the agent does **not** install its
+> default approval hook. In that case **you are fully responsible** for enforcing approval — including for any
+> `ApprovalRequiredAIFunction` you register (e.g. by returning a `"deny"` or `"ask"` `PreToolUseHookOutput`). The
+> agent logs a warning when it detects an approval-required tool that your hook must handle.
+
 ## Streaming Responses
 
 To get streaming responses:

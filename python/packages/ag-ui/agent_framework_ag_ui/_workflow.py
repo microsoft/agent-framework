@@ -30,6 +30,7 @@ from ._message_adapters import agui_messages_to_snapshot_format
 from ._run_common import (
     _build_run_finished_event,
     _extract_resume_payload,
+    _normalize_resume_interrupts,
     _reconstruct_messages_from_thread_snapshot,
 )
 from ._snapshots import (
@@ -37,6 +38,7 @@ from ._snapshots import (
     _SNAPSHOT_SCOPE_INPUT_KEY,
     AGUIThreadSnapshot,
     AGUIThreadSnapshotStore,
+    _clear_thread_snapshot_interrupt,
 )
 from ._utils import generate_event_id, make_json_safe
 from ._workflow_run import run_workflow_stream
@@ -51,6 +53,15 @@ WorkflowFactory = Callable[[str], Workflow]
 # supplied.
 _CHECKPOINT_ID_INPUT_KEY = "__ag_ui_checkpoint_id"
 _CHECKPOINT_STORAGE_INPUT_KEY = "__ag_ui_checkpoint_storage"
+
+
+def _cancelled_resume_interrupt_ids(resume_payload: Any) -> set[str]:
+    """Return cancelled interrupt ids from a resume payload."""
+    return {
+        str(interrupt["id"])
+        for interrupt in _normalize_resume_interrupts(resume_payload)
+        if interrupt.get("status") == "cancelled"
+    }
 
 
 def _event_messages_to_snapshot_dicts(messages: list[Any]) -> list[dict[str, Any]]:
@@ -86,7 +97,12 @@ class _WorkflowSnapshotBuilder:
             return
 
         if isinstance(event, RunFinishedEvent):
-            interrupt = make_json_safe(getattr(event, "interrupt", None))
+            outcome = getattr(event, "outcome", None)
+            interrupt = (
+                make_json_safe(getattr(outcome, "interrupts", None))
+                if getattr(outcome, "type", None) == "interrupt"
+                else None
+            )
             if isinstance(interrupt, list):
                 self.interrupt = [cast(dict[str, Any], item) for item in interrupt if isinstance(item, dict)]
             return
@@ -412,6 +428,17 @@ class AgentFrameworkWorkflow:
                 snapshot_builder.observe(event)
             if isinstance(event, RunErrorEvent):
                 run_error_emitted = True
+                if (
+                    getattr(event, "code", None) == "WORKFLOW_RESUME_CANCELLED"
+                    and snapshot_store is not None
+                    and snapshot_scope is not None
+                ):
+                    await _clear_thread_snapshot_interrupt(
+                        snapshot_store=snapshot_store,
+                        scope=snapshot_scope,
+                        thread_id=thread_id,
+                        interrupt_ids=_cancelled_resume_interrupt_ids(resume_payload),
+                    )
             yield event
 
         if (

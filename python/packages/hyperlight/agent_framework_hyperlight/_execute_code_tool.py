@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import mimetypes
 import os
 import shutil
@@ -90,6 +91,10 @@ class SandboxRuntime(Protocol):
     def execute(self, *, config: _RunConfig, code: str) -> list[Content]: ...
 
 
+class _NamedDirectory(Protocol):
+    name: str
+
+
 _T = TypeVar("_T")
 
 
@@ -158,7 +163,8 @@ class _SandboxWorker:
                 del exc
                 return False, (exc_type, exc_args)
 
-        ok, payload = self._executor.submit(_wrapped).result()
+        current_context = contextvars.copy_context()
+        ok, payload = self._executor.submit(lambda: current_context.run(_wrapped)).result()
         if ok:
             return cast(_T, payload)
         exc_type, exc_args = cast(tuple[type[BaseException], tuple[str, ...]], payload)
@@ -354,6 +360,72 @@ def _resolve_workspace_root(value: str | Path | None) -> Path | None:
     return resolved_path
 
 
+def _is_link_or_reparse_point(path: Path, path_stat: os.stat_result | None = None) -> bool:
+    """Return True for links or Windows reparse points without following targets."""
+    if path_stat is None:
+        try:
+            path_stat = path.lstat()
+        except OSError:
+            return True
+
+    if stat.S_ISLNK(path_stat.st_mode):
+        return True
+
+    is_junction = getattr(path, "is_junction", None)
+    if callable(is_junction):
+        try:
+            if bool(is_junction()):
+                return True
+        except OSError:
+            return True
+
+    reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    file_attributes = getattr(path_stat, "st_file_attributes", 0)
+    return bool(reparse_attribute and file_attributes & reparse_attribute)
+
+
+def _is_relative_to_or_same(*, path: Path, root: Path) -> bool:
+    return path == root or path.is_relative_to(root)
+
+
+def _resolve_contained_path(*, path: Path, root: Path) -> Path:
+    try:
+        resolved_path = path.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(
+            "Could not resolve Hyperlight sandbox input path while validating it stays under the configured "
+            f"source root: {path}. Source root: {root}. Ensure the path exists, is accessible, and does not "
+            f"contain symlink loops. Original error: {exc}"
+        ) from exc
+
+    if not _is_relative_to_or_same(path=resolved_path, root=root):
+        raise ValueError(f"Refusing to stage Hyperlight sandbox input path outside the configured source root: {path}")
+
+    return resolved_path
+
+
+def _inspect_stageable_input_path(*, path: Path, root: Path) -> os.stat_result:
+    try:
+        path_stat = path.lstat()
+    except OSError as exc:
+        raise ValueError(f"Could not inspect Hyperlight sandbox input path: {path}") from exc
+
+    if _is_link_or_reparse_point(path, path_stat):
+        raise ValueError(f"Refusing to stage linked or reparse-point path for Hyperlight sandbox input: {path}")
+
+    _resolve_contained_path(path=path, root=root)
+    return path_stat
+
+
+def _is_resolved_under_root(*, path: Path, root: Path) -> bool:
+    try:
+        resolved_path = path.resolve(strict=True)
+        resolved_root = root.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    return _is_relative_to_or_same(path=resolved_path, root=resolved_root)
+
+
 def _is_file_mount_pair(value: Any) -> TypeGuard[FileMount | tuple[FileMountHostPath, str]]:
     if not isinstance(value, tuple):
         return False
@@ -485,14 +557,15 @@ def _display_mount_path(mount_path: str) -> str:
     return f"/input/{mount_path}"
 
 
-def _iter_real_entries(root: Path) -> Iterator[Path]:
+def _iter_real_entries(root: Path, *, reject_links: bool = False) -> Iterator[Path]:
     """Walk ``root`` recursively, yielding directories and regular files only.
 
-    ``Path.rglob`` follows directory symlinks by default, which combined with
+    ``Path.rglob`` follows directory links by default, which combined with
     ``Path.is_file()`` / ``shutil.copy2`` (all follow symlinks) would expose
     paths outside the configured input tree if the source tree is
-    attacker-controlled. This walker mirrors the safe behaviour by checking
-    ``is_symlink()`` at every directory level and never descending through one.
+    attacker-controlled. This walker mirrors the safe behaviour by rejecting or
+    skipping symlinks, Windows junctions, and other reparse points at every
+    directory level and never descending through one.
 
     Non-regular files (sockets, FIFOs, devices) are also filtered out so the
     signature mirrors exactly what ``_copy_path`` actually stages.
@@ -502,20 +575,29 @@ def _iter_real_entries(root: Path) -> Iterator[Path]:
         current = stack.pop()
         try:
             children = list(current.iterdir())
-        except OSError:
+        except OSError as exc:
+            if reject_links:
+                raise ValueError(f"Could not inspect Hyperlight sandbox input directory: {current}") from exc
             continue
         for child in children:
             try:
-                if child.is_symlink():
+                child_stat = child.lstat()
+                if _is_link_or_reparse_point(child, child_stat):
+                    if reject_links:
+                        raise ValueError(
+                            f"Refusing to stage linked or reparse-point path for Hyperlight sandbox input: {child}"
+                        )
                     continue
-                if child.is_dir():
+                if stat.S_ISDIR(child_stat.st_mode):
                     stack.append(child)
                     yield child
-                elif child.is_file():
+                elif stat.S_ISREG(child_stat.st_mode):
                     yield child
                 # Non-regular files (sockets/FIFOs/devices) are skipped to
                 # match ``_copy_path``'s staging behaviour.
-            except OSError:
+            except OSError as exc:
+                if reject_links:
+                    raise ValueError(f"Could not inspect Hyperlight sandbox input path: {child}") from exc
                 continue
 
 
@@ -528,58 +610,60 @@ def _path_tree_signature(path: Path) -> tuple[tuple[str, int, int], ...]:
     resolve roots up front) and acts as defense in depth for any direct caller
     that builds a ``_RunConfig`` without going through the constructor.
 
-    Symlinks encountered inside the walked tree are skipped, and ``lstat()`` is
-    used so size/mtime are read from the entry itself, never through a
-    target. The result mirrors what ``_copy_path`` actually stages.
+    Links encountered inside the walked tree are rejected, and ``lstat()`` is
+    used so size/mtime are read from the entry itself, never through a target.
+    The result mirrors what ``_copy_path`` actually stages.
     """
     if path.is_symlink():
         try:
             path = path.resolve(strict=True)
-        except OSError:
+        except (OSError, RuntimeError):
             return ()
     if path.is_file():
-        stat = path.lstat()
-        return ((path.name, int(stat.st_size), int(stat.st_mtime_ns)),)
+        path_stat = path.lstat()
+        return ((path.name, int(path_stat.st_size), int(path_stat.st_mtime_ns)),)
 
     entries: list[tuple[str, int, int]] = []
-    for candidate in sorted(_iter_real_entries(path), key=lambda value: value.as_posix()):
+    resolved_path = _resolve_existing_path(path)
+    for candidate in sorted(_iter_real_entries(resolved_path, reject_links=True), key=lambda value: value.as_posix()):
         try:
-            stat = candidate.lstat()
+            candidate_stat = candidate.lstat()
         except FileNotFoundError:
             continue
-        relative_path = candidate.relative_to(path).as_posix()
-        size = int(stat.st_size) if candidate.is_file() else 0
-        entries.append((relative_path, size, int(stat.st_mtime_ns)))
+        relative_path = candidate.relative_to(resolved_path).as_posix()
+        size = int(candidate_stat.st_size) if stat.S_ISREG(candidate_stat.st_mode) else 0
+        entries.append((relative_path, size, int(candidate_stat.st_mtime_ns)))
     return tuple(entries)
 
 
-def _copy_path(source: Path, destination: Path) -> None:
-    """Stage ``source`` into ``destination`` without following symlinks.
+def _copy_path(source: Path, destination: Path, *, source_root: Path) -> None:
+    """Stage ``source`` into ``destination`` without following links.
 
-    Symlinks (file or directory) found in the source tree are skipped entirely
-    so a sandbox input tree can only contain real entries that physically live
-    under the configured ``workspace_root`` or a ``file_mounts`` host path.
-    ``Path.is_dir()``, ``Path.is_file()`` and ``shutil.copy2`` all follow
-    symlinks by default, which is unsafe for symlinks planted in the source
-    tree at rest.
+    Symlinks, Windows junctions, and other reparse-point entries found in the
+    source tree are rejected so a sandbox input tree can only contain real
+    entries that physically live under the configured ``workspace_root`` or a
+    ``file_mounts`` host path. ``Path.is_dir()``, ``Path.is_file()`` and
+    ``shutil.copy2`` all follow links by default, which is unsafe for links
+    planted in the source tree at rest.
 
     This helper does not attempt to make the copy atomic with respect to
     concurrent mutation of the source tree. Callers that need protection from
     an adversary modifying the workspace mid-stage should pass in an
     immutable / snapshotted directory.
     """
-    # Detect symlinks before doing anything else - ``is_symlink()`` does not
-    # follow the link, unlike ``is_dir()`` / ``is_file()``.
-    if source.is_symlink():
-        return
+    source_stat = _inspect_stageable_input_path(path=source, root=source_root)
 
-    if source.is_dir():
+    if stat.S_ISDIR(source_stat.st_mode):
         destination.mkdir(parents=True, exist_ok=True)
-        for child in sorted(source.iterdir(), key=lambda value: value.name):
-            _copy_path(child, destination / child.name)
+        try:
+            children = sorted(source.iterdir(), key=lambda value: value.name)
+        except OSError as exc:
+            raise ValueError(f"Could not inspect Hyperlight sandbox input directory: {source}") from exc
+        for child in children:
+            _copy_path(child, destination / child.name, source_root=source_root)
         return
 
-    if not source.is_file():
+    if not stat.S_ISREG(source_stat.st_mode):
         # Non-regular files (sockets, FIFOs, devices) are intentionally skipped.
         return
 
@@ -589,30 +673,34 @@ def _copy_path(source: Path, destination: Path) -> None:
 
 def _populate_input_dir(*, config: _RunConfig, input_root: Path) -> None:
     if config.workspace_root is not None:
-        for child in sorted(config.workspace_root.iterdir(), key=lambda value: value.name):
-            _copy_path(child, input_root / child.name)
+        workspace_root = _resolve_existing_path(config.workspace_root)
+        for child in sorted(workspace_root.iterdir(), key=lambda value: value.name):
+            _copy_path(child, input_root / child.name, source_root=workspace_root)
 
     for mount in config.file_mounts:
-        _copy_path(mount.host_path, input_root / mount.mount_path)
+        mount_root = _resolve_existing_path(mount.host_path)
+        _copy_path(mount.host_path, input_root / mount.mount_path, source_root=mount_root)
 
 
 def _read_output_file_bytes(file_path: Path) -> bytes:
-    """Read ``file_path`` without following a symlink, even under a TOCTOU swap.
+    """Read ``file_path`` without following a link, even under a TOCTOU swap.
 
-    ``Path.read_bytes`` follows symlinks, so a sandbox payload that replaces an
-    output file with ``/output/leak.txt -> /host/secret`` between validation and
-    read could still exfiltrate a host file. Two layers defend against this:
+    ``Path.read_bytes`` follows links, so a sandbox payload that replaces an
+    output file with ``/output/leak.txt -> /host/secret`` or a Windows reparse
+    point between validation and read could still exfiltrate a host file. Two
+    layers defend against this:
 
     * ``os.O_NOFOLLOW`` makes the kernel reject a final-component symlink with
       ``ELOOP``. The flag is absent on some platforms (notably Windows), where
       it degrades to ``0``, so it cannot be the only defense.
     * The file is ``lstat``-ed before opening and ``fstat``-ed after; if the
-      ``(st_dev, st_ino)`` identity changed, or the pre-open entry is a symlink,
-      the read is refused. This closes the swap window on every platform.
+      ``(st_dev, st_ino)`` identity changed, or the pre-open entry is a link or
+      reparse point, the read is refused. This closes the swap window on every
+      platform.
     """
     pre_stat = file_path.lstat()
-    if stat.S_ISLNK(pre_stat.st_mode):
-        raise OSError(f"refusing to read symlinked output file: {file_path}")
+    if _is_link_or_reparse_point(file_path, pre_stat):
+        raise OSError(f"refusing to read linked or reparse-point output file: {file_path}")
 
     fd = os.open(file_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     try:
@@ -658,8 +746,9 @@ def _is_safe_output_file(*, root: Path, host_path: Path) -> bool:
     """Return True only if ``host_path`` is a real regular file safely under ``root``.
 
     The ``/output`` directory is sandbox-controlled, so a payload can plant a
-    final-component symlink (``/output/leak.txt -> /host/secret``) or an
-    intermediate directory symlink to escape ``root`` and read host files.
+    final-component symlink (``/output/leak.txt -> /host/secret``), a Windows
+    junction/reparse point, or an intermediate directory link to escape ``root``
+    and read host files.
     ``Path.is_file`` follows symlinks, so this validator instead walks each path
     component from ``root`` to ``host_path`` with ``lstat`` and rejects the path
     if any component is a symlink, requiring the final entry to be a regular
@@ -677,6 +766,9 @@ def _is_safe_output_file(*, root: Path, host_path: Path) -> bool:
     if not relative.parts or any(part in {"..", "."} for part in relative.parts):
         return False
 
+    if not _is_resolved_under_root(path=host_path, root=root):
+        return False
+
     *parent_parts, final_part = relative.parts
     current = root
     for part in parent_parts:
@@ -685,7 +777,7 @@ def _is_safe_output_file(*, root: Path, host_path: Path) -> bool:
             parent_stat = current.lstat()
         except OSError:
             return False
-        if stat.S_ISLNK(parent_stat.st_mode):
+        if _is_link_or_reparse_point(current, parent_stat):
             return False
 
     current = current / final_part
@@ -693,7 +785,7 @@ def _is_safe_output_file(*, root: Path, host_path: Path) -> bool:
         final_stat = current.lstat()
     except OSError:
         return False
-    if stat.S_ISLNK(final_stat.st_mode):
+    if _is_link_or_reparse_point(current, final_stat):
         return False
     return stat.S_ISREG(final_stat.st_mode)
 
@@ -725,7 +817,7 @@ def _collect_output_relative_paths(*, sandbox: Any, root: Path) -> set[str]:
 def _parse_output_files(
     *,
     sandbox: Any,
-    output_dir: TemporaryDirectory[str] | None,
+    output_dir: _NamedDirectory | None,
     expect_output_files: bool,
 ) -> list[Content]:
     if output_dir is None:
@@ -826,12 +918,13 @@ def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
         # registered callbacks synchronously via FFI, so this must be a sync function.
         # We run the async call on a dedicated thread to avoid conflicts with any
         # event loop that may be running on the current thread.
+        current_context = contextvars.copy_context()
         result_box: list[Any] = [None]
         error_box: list[BaseException] = []
 
         def _run() -> None:
             try:
-                result_box[0] = asyncio.run(_invoke())
+                result_box[0] = current_context.run(lambda: asyncio.run(_invoke()))
             except BaseException as exc:
                 error_box.append(exc)
 
@@ -856,11 +949,20 @@ def _clear_directory(output_dir: TemporaryDirectory[str] | None) -> None:
     root = Path(output_dir.name)
     for child in root.iterdir():
         try:
-            if child.is_symlink() or child.is_file():
+            child_stat = child.lstat()
+            if _is_link_or_reparse_point(child, child_stat):
+                if stat.S_ISDIR(child_stat.st_mode):
+                    child.rmdir()
+                    continue
+                try:
+                    child.unlink()
+                except OSError:
+                    child.rmdir()
+            elif stat.S_ISREG(child_stat.st_mode):
                 child.unlink()
-            elif child.is_dir():
+            elif stat.S_ISDIR(child_stat.st_mode):
                 shutil.rmtree(child, ignore_errors=True)
-        except (FileNotFoundError, PermissionError):
+        except OSError:
             pass
 
 

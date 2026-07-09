@@ -27,6 +27,17 @@ async def _run(
     return [event async for event in agent.run(payload, **run_kwargs)]
 
 
+def _interrupts_from_finished(event: Any) -> list[dict[str, Any]]:
+    dumped = event.model_dump(by_alias=True, exclude_none=True)
+    assert "interrupt" not in dumped
+    outcome = dumped.get("outcome")
+    assert isinstance(outcome, dict)
+    assert outcome.get("type") == "interrupt"
+    interrupts = outcome.get("interrupts")
+    assert isinstance(interrupts, list)
+    return cast(list[dict[str, Any]], interrupts)
+
+
 async def test_workflow_wrapper_rejects_workflow_and_factory_at_once() -> None:
     """Workflow wrapper should reject ambiguous workflow source configuration."""
 
@@ -63,9 +74,8 @@ async def test_workflow_wrapper_factory_is_thread_scoped() -> None:
             "messages": [{"role": "user", "content": "start"}],
         },
     )
-    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0].model_dump()
-    first_interrupt = first_finished.get("interrupt")
-    assert isinstance(first_interrupt, list)
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    first_interrupt = _interrupts_from_finished(first_finished)
     assert first_interrupt[0]["id"] == "choice"
     assert factory_calls["thread-a"] == 1
 
@@ -79,8 +89,10 @@ async def test_workflow_wrapper_factory_is_thread_scoped() -> None:
     )
     second_types = [event.type for event in second_events]
     assert "RUN_ERROR" not in second_types
-    second_finished = [event for event in second_events if event.type == "RUN_FINISHED"][0].model_dump()
-    assert "interrupt" not in second_finished
+    second_finished = [event for event in second_events if event.type == "RUN_FINISHED"][0].model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert "outcome" not in second_finished
     assert factory_calls["thread-a"] == 1
 
     third_events = await _run(
@@ -90,9 +102,8 @@ async def test_workflow_wrapper_factory_is_thread_scoped() -> None:
             "messages": [{"role": "user", "content": "start"}],
         },
     )
-    third_finished = [event for event in third_events if event.type == "RUN_FINISHED"][0].model_dump()
-    third_interrupt = third_finished.get("interrupt")
-    assert isinstance(third_interrupt, list)
+    third_finished = [event for event in third_events if event.type == "RUN_FINISHED"][0]
+    third_interrupt = _interrupts_from_finished(third_finished)
     assert third_interrupt[0]["id"] == "choice"
     assert factory_calls["thread-b"] == 1
 

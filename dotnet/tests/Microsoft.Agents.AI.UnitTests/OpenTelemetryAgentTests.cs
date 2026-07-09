@@ -68,7 +68,7 @@ public class OpenTelemetryAgentTests
     public async Task WithoutChatOptions_ExpectedInformationLogged_Async(bool enableSensitiveData, bool streaming)
     {
         var sourceName = Guid.NewGuid().ToString();
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
             .AddInMemoryExporter(activities)
@@ -289,7 +289,7 @@ public class OpenTelemetryAgentTests
         bool enableSensitiveData, bool streaming, string name, string description, bool hasListener)
     {
         var sourceName = Guid.NewGuid().ToString();
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         var builder = OpenTelemetry.Sdk.CreateTracerProviderBuilder();
         if (hasListener)
         {
@@ -634,7 +634,7 @@ public class OpenTelemetryAgentTests
     public async Task AutoWireChatClient_DefaultsToEnabled_EmitsChatSpan_Async()
     {
         var sourceName = Guid.NewGuid().ToString();
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
             .AddInMemoryExporter(activities)
@@ -656,7 +656,7 @@ public class OpenTelemetryAgentTests
     public async Task AutoWireChatClient_Streaming_EmitsChatSpan_Async()
     {
         var sourceName = Guid.NewGuid().ToString();
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
             .AddInMemoryExporter(activities)
@@ -679,7 +679,7 @@ public class OpenTelemetryAgentTests
     public async Task AutoWireChatClient_Disabled_DoesNotEmitChatSpan_Async()
     {
         var sourceName = Guid.NewGuid().ToString();
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
             .AddInMemoryExporter(activities)
@@ -721,7 +721,7 @@ public class OpenTelemetryAgentTests
     public async Task AutoWireChatClient_UseProvidedChatClientAsIs_DoesNotEmitChatSpan_Async()
     {
         var sourceName = Guid.NewGuid().ToString();
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
             .AddInMemoryExporter(activities)
@@ -742,7 +742,7 @@ public class OpenTelemetryAgentTests
     public async Task AutoWireChatClient_AlreadyInstrumented_DoesNotDoubleWrap_Async()
     {
         var sourceName = Guid.NewGuid().ToString();
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
             .AddInMemoryExporter(activities)
@@ -764,7 +764,7 @@ public class OpenTelemetryAgentTests
     public async Task AutoWireChatClient_PreservesUserChatClientFactory_Async()
     {
         var sourceName = Guid.NewGuid().ToString();
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
             .AddInMemoryExporter(activities)
@@ -795,9 +795,9 @@ public class OpenTelemetryAgentTests
     [Fact]
     public async Task AutoWireChatClient_PlainAgentRunOptions_PreservesBaseProperties_Async()
     {
-        // Auto-wiring converts a plain AgentRunOptions into a ChatClientAgentRunOptions. The base
-        // properties (ContinuationToken, AllowBackgroundResponses, AdditionalProperties, ResponseFormat)
-        // must be preserved so they reach the inner agent.
+        // The auto-wire no longer rewrites the caller's options (the slot below FICC is activated once at
+        // construction), so a plain AgentRunOptions reaches the inner agent unchanged with all base
+        // properties (AllowBackgroundResponses, AdditionalProperties, ResponseFormat) intact.
         AgentRunOptions? observedOptions = null;
         var fakeChatClient = new AutoWireTestChatClient();
         var innerChatClientAgent = new ChatClientAgent(fakeChatClient);
@@ -827,19 +827,29 @@ public class OpenTelemetryAgentTests
 
         _ = await agent.RunAsync("hi", options: inputOptions);
 
+        // Options flow through unchanged (same instance, no conversion to ChatClientAgentRunOptions).
         Assert.NotNull(observedOptions);
-        Assert.IsType<ChatClientAgentRunOptions>(observedOptions);
-        Assert.Equal(true, observedOptions!.AllowBackgroundResponses);
+        Assert.Same(inputOptions, observedOptions);
+        Assert.Equal(true, observedOptions.AllowBackgroundResponses);
         Assert.Same(ChatResponseFormat.Json, observedOptions.ResponseFormat);
         Assert.NotNull(observedOptions.AdditionalProperties);
         Assert.Equal("customValue", observedOptions.AdditionalProperties!["customKey"]);
     }
 
     [Fact]
-    public async Task AutoWireChatClient_UserFactoryReturnsInstrumentedClient_DoesNotDoubleWrap_Async()
+    public async Task AutoWireChatClient_UserFactoryAddsOwnOTel_CoexistsWithBelowFiccSlot_Async()
     {
+        // This is NOT a single model call counted twice. One model call is observed by two independent
+        // OpenTelemetry layers, so each layer emits its own "chat" span:
+        //   - the framework's slot, always activated below FICC by OpenTelemetryAgent. This below-FICC layer
+        //     is what lets FICC emit execute_tool spans, so it must remain even when the caller adds their own
+        //     instrumentation. Dropping it to avoid the second span would reintroduce the missing-tool-span bug.
+        //   - the caller's per-run ChatClientFactory, which wraps the pipeline above FICC with its own
+        //     OpenTelemetryChatClient.
+        // The two chat spans nest and measure different scopes (the above-FICC span covers the whole tool loop,
+        // the below-FICC span covers each individual model call), so both coexisting is the intended result.
         var sourceName = Guid.NewGuid().ToString();
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
             .AddInMemoryExporter(activities)
@@ -849,7 +859,7 @@ public class OpenTelemetryAgentTests
         var inner = new ChatClientAgent(fakeChatClient);
         using var agent = new OpenTelemetryAgent(inner, sourceName);
 
-        // User factory wraps the chat client with OpenTelemetryChatClient itself.
+        // User factory wraps the chat client with OpenTelemetryChatClient itself (above FICC).
         var runOptions = new ChatClientAgentRunOptions
         {
             ChatClientFactory = cc => cc.AsBuilder().UseOpenTelemetry(sourceName: sourceName).Build(),
@@ -857,8 +867,10 @@ public class OpenTelemetryAgentTests
 
         _ = await agent.RunAsync("hi", options: runOptions);
 
-        // Expect 2 activities (invoke_agent + a single chat span). If we double-wrapped, we would see 3.
-        Assert.Equal(2, activities.Count);
+        // invoke_agent + two chat spans: one from the caller's above-FICC OTel and one from the slot below FICC.
+        Assert.Equal(3, activities.Count);
+        Assert.Contains(activities, a => a.DisplayName.StartsWith("invoke_agent", StringComparison.Ordinal));
+        Assert.Equal(2, activities.Count(a => string.Equals(a.GetTagItem("gen_ai.operation.name") as string, "chat", StringComparison.Ordinal)));
     }
 
     [Theory]
@@ -871,7 +883,7 @@ public class OpenTelemetryAgentTests
         // Both the agent-level invoke_agent span and the auto-wired chat span must be emitted under
         // OpenTelemetryConsts.DefaultSourceName when the caller passes null, "", or whitespace, so they reach
         // the same ActivitySource and are not silently dropped by the exporter.
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource("Experimental.Microsoft.Agents.AI")
             .AddInMemoryExporter(activities)
@@ -883,18 +895,27 @@ public class OpenTelemetryAgentTests
 
         _ = await agent.RunAsync("hi");
 
-        Assert.Equal(2, activities.Count);
-        Assert.All(activities, a => Assert.Equal("Experimental.Microsoft.Agents.AI", a.Source.Name));
-        Assert.Contains(activities, a => a.DisplayName.StartsWith("invoke_agent", StringComparison.Ordinal));
-        Assert.Contains(activities, a => string.Equals(a.GetTagItem("gen_ai.operation.name") as string, "chat", StringComparison.Ordinal));
+        // The default source name is process-global and shared with CompactionTelemetry, so activities from
+        // Compaction tests running in parallel can land in this exporter. Flush this run's spans, then scope the
+        // assertions to the trace produced by this test (identified by its single invoke_agent span) so foreign
+        // spans on the same source cannot affect the count or source-name checks.
+        Assert.True(tracerProvider.ForceFlush(10000), "Failed to flush activities before taking the snapshot.");
+        var snapshot = activities.Snapshot();
+        var invokeAgent = Assert.Single(snapshot, a => a.DisplayName.StartsWith("invoke_agent", StringComparison.Ordinal));
+        var ours = snapshot.Where(a => a.TraceId == invokeAgent.TraceId).ToList();
+
+        Assert.Equal(2, ours.Count);
+        Assert.All(ours, a => Assert.Equal("Experimental.Microsoft.Agents.AI", a.Source.Name));
+        Assert.Contains(ours, a => a.DisplayName.StartsWith("invoke_agent", StringComparison.Ordinal));
+        Assert.Contains(ours, a => string.Equals(a.GetTagItem("gen_ai.operation.name") as string, "chat", StringComparison.Ordinal));
     }
 
 #pragma warning disable MEAI001 // ResponseContinuationToken is experimental.
     [Fact]
     public async Task AutoWireChatClient_PlainAgentRunOptions_PreservesContinuationToken_Async()
     {
-        // ContinuationToken is the fourth base AgentRunOptions property copied by CopyBaseAgentRunOptions
-        // and is not exercised by AutoWireChatClient_PlainAgentRunOptions_PreservesBaseProperties_Async.
+        // ContinuationToken on a plain AgentRunOptions must reach the inner agent unchanged now that the
+        // auto-wire passes the caller's options straight through (no conversion to ChatClientAgentRunOptions).
         AgentRunOptions? observedOptions = null;
         var fakeChatClient = new AutoWireTestChatClient();
         var innerChatClientAgent = new ChatClientAgent(fakeChatClient);
@@ -921,8 +942,8 @@ public class OpenTelemetryAgentTests
         _ = await agent.RunAsync("hi", options: inputOptions);
 
         Assert.NotNull(observedOptions);
-        Assert.IsType<ChatClientAgentRunOptions>(observedOptions);
-        Assert.Same(token, observedOptions!.ContinuationToken);
+        Assert.Same(inputOptions, observedOptions);
+        Assert.Same(token, observedOptions.ContinuationToken);
     }
 #pragma warning restore MEAI001
 
@@ -932,7 +953,7 @@ public class OpenTelemetryAgentTests
         // When the caller passes a ChatClientAgentRunOptions without a ChatClientFactory, the auto-wiring
         // must clone (not mutate) the caller's options, set the factory, and preserve nested ChatOptions.
         var sourceName = Guid.NewGuid().ToString();
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
             .AddInMemoryExporter(activities)
@@ -969,7 +990,7 @@ public class OpenTelemetryAgentTests
     {
         // Symmetry with AutoWireChatClient_Disabled_DoesNotEmitChatSpan_Async for the streaming path.
         var sourceName = Guid.NewGuid().ToString();
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
             .AddInMemoryExporter(activities)
@@ -994,7 +1015,7 @@ public class OpenTelemetryAgentTests
         // wiring a ChatClientAgent. Auto-wiring must still kick in: convert to ChatClientAgentRunOptions,
         // install the OTel-wrapping factory, and produce both the invoke_agent and chat spans end-to-end.
         var sourceName = Guid.NewGuid().ToString();
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
             .AddInMemoryExporter(activities)
@@ -1027,7 +1048,7 @@ public class OpenTelemetryAgentTests
         // Same as the sync test above but for the streaming path so both invocation paths
         // are covered when callers pass a base AgentRunOptions.
         var sourceName = Guid.NewGuid().ToString();
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
             .AddInMemoryExporter(activities)
@@ -1061,13 +1082,12 @@ public class OpenTelemetryAgentTests
     [InlineData(true, true)]
     public async Task AutoWireChatClient_EnableSensitiveData_PropagatedToInnerChatClient_Async(bool enableSensitiveData, bool streaming)
     {
-        // Regression test for: when EnableSensitiveData is set on OpenTelemetryAgent, the auto-wired
-        // inner OpenTelemetryChatClient must also have EnableSensitiveData propagated to it. Previously,
-        // GetRunOptionsWithChatClientWiring created the inner client without passing EnableSensitiveData,
-        // so the inner chat span would never emit gen_ai.input.messages / gen_ai.output.messages even
-        // when the caller explicitly set EnableSensitiveData = true.
+        // Regression test (issue #5873): when EnableSensitiveData is set on OpenTelemetryAgent, the auto-wired
+        // inner OpenTelemetryChatClient (the below-FICC slot) must also have EnableSensitiveData propagated to it,
+        // so the inner chat span captures gen_ai.input.messages / gen_ai.output.messages. The agent sets the value
+        // on the slot after construction, since EnableSensitiveData is typically set via the UseOpenTelemetry callback.
         var sourceName = Guid.NewGuid().ToString();
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)
             .AddInMemoryExporter(activities)
@@ -1109,6 +1129,71 @@ public class OpenTelemetryAgentTests
         }
     }
 
+    [Fact]
+    public async Task AutoWireChatClient_EmitsExecuteToolSpans_Async()
+    {
+        // The core of the OTel-below-FICC fix: with the slot active below FICC, the inner chat span closes
+        // before FICC invokes tools, so Activity.Current is the invoke_agent span and FICC emits an
+        // execute_tool span on the agent source, parented under invoke_agent.
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new ConcurrentActivityList();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var tool = AIFunctionFactory.Create(() => "sunny", "get_weather");
+        var fakeChatClient = new ToolCallingTestChatClient();
+        var inner = new ChatClientAgent(fakeChatClient, new ChatClientAgentOptions
+        {
+            ChatOptions = new ChatOptions { Tools = [tool] },
+        });
+        using var agent = new OpenTelemetryAgent(inner, sourceName);
+
+        _ = await agent.RunAsync("weather?");
+
+        var invokeAgent = Assert.Single(activities, a => a.DisplayName.StartsWith("invoke_agent", StringComparison.Ordinal));
+        var executeTool = Assert.Single(activities, a => a.DisplayName.StartsWith("execute_tool", StringComparison.Ordinal));
+        Assert.Equal(sourceName, executeTool.Source.Name);
+        Assert.Equal(invokeAgent.SpanId, executeTool.ParentSpanId);
+        Assert.Contains(activities, a => string.Equals(a.GetTagItem("gen_ai.operation.name") as string, "chat", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task DeferredOpenTelemetryChatClient_InertUntilActivated_Async()
+    {
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new ConcurrentActivityList();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var leaf = new AutoWireTestChatClient();
+        using var slot = new DeferredOpenTelemetryChatClient(leaf);
+
+        // Inert: resolves itself for its own type and forwards other lookups to the inner client. The bare
+        // leaf is not instrumented, so the OpenTelemetryChatClient lookup is null and no span is emitted.
+        Assert.False(slot.IsActive);
+        Assert.Same(slot, slot.GetService(typeof(DeferredOpenTelemetryChatClient)));
+        Assert.Null(slot.GetService(typeof(OpenTelemetryChatClient)));
+        _ = await slot.GetResponseAsync("hi");
+        Assert.Empty(activities);
+
+        // Active: routes through an OpenTelemetryChatClient that emits a chat span on the source.
+        slot.Activate(sourceName);
+        Assert.True(slot.IsActive);
+        Assert.NotNull(slot.GetService(typeof(OpenTelemetryChatClient)));
+        _ = await slot.GetResponseAsync("hi");
+        var chat = Assert.Single(activities);
+        Assert.Equal("chat", chat.GetTagItem("gen_ai.operation.name") as string);
+
+        // Idempotent: a second activation does not replace the existing wrapper.
+        var target = slot.GetService(typeof(OpenTelemetryChatClient));
+        slot.Activate(sourceName);
+        Assert.Same(target, slot.GetService(typeof(OpenTelemetryChatClient)));
+    }
+
     private sealed class AutoWireTestChatClient : IChatClient
     {
         public Action<IEnumerable<ChatMessage>, ChatOptions?>? OnGetResponseAsync { get; set; }
@@ -1130,6 +1215,72 @@ public class OpenTelemetryAgentTests
             serviceType?.IsInstanceOfType(this) == true ? this : null;
 
         public void Dispose() { }
+    }
+
+    private sealed class ToolCallingTestChatClient : IChatClient
+    {
+        private int _callCount;
+
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            // First call returns a tool call so FICC invokes the tool; the second call returns the final text.
+            if (Interlocked.Increment(ref this._callCount) == 1)
+            {
+                var call = new FunctionCallContent("call_1", "get_weather", new Dictionary<string, object?>());
+                return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, [call])));
+            }
+
+            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "done")));
+        }
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref this._callCount) == 1)
+            {
+                yield return new ChatResponseUpdate(ChatRole.Assistant, [new FunctionCallContent("call_1", "get_weather", new Dictionary<string, object?>())]);
+                await Task.Yield();
+                yield break;
+            }
+
+            await Task.Yield();
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "done");
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) =>
+            serviceType?.IsInstanceOfType(this) == true ? this : null;
+
+        public void Dispose() { }
+    }
+
+    /// <summary>
+    /// Thread-safe <see cref="ICollection{Activity}"/> used by OTel's InMemoryExporter to capture activities.
+    /// The exporter writes into the supplied collection from Activity completion callbacks while the test thread
+    /// may be enumerating it for assertions, and other tests in the same assembly can emit on the same globally
+    /// listened source concurrently (for example the default source shared with CompactionTelemetry). A plain
+    /// <see cref="List{Activity}"/> trips "Collection was modified; enumeration operation may not execute." in that
+    /// scenario. Enumeration is served from a locked snapshot so it is always stable.
+    /// </summary>
+    private sealed class ConcurrentActivityList : ICollection<Activity>
+    {
+        private readonly List<Activity> _items = new();
+        private readonly object _gate = new();
+
+        public int Count { get { lock (this._gate) { return this._items.Count; } } }
+        public bool IsReadOnly => false;
+
+        public void Add(Activity item) { lock (this._gate) { this._items.Add(item); } }
+        public void Clear() { lock (this._gate) { this._items.Clear(); } }
+        public bool Contains(Activity item) { lock (this._gate) { return this._items.Contains(item); } }
+        public void CopyTo(Activity[] array, int arrayIndex) { lock (this._gate) { this._items.CopyTo(array, arrayIndex); } }
+        public bool Remove(Activity item) { lock (this._gate) { return this._items.Remove(item); } }
+
+        public Activity[] Snapshot()
+        {
+            lock (this._gate) { return this._items.ToArray(); }
+        }
+
+        public IEnumerator<Activity> GetEnumerator() => ((IEnumerable<Activity>)this.Snapshot()).GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => this.GetEnumerator();
     }
 
     #endregion

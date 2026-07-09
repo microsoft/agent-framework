@@ -22,7 +22,7 @@
 
 using System.ComponentModel;
 using System.Text.Json;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
@@ -42,30 +42,29 @@ public static class Program
 {
     private static async Task Main()
     {
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+        var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+        var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
         // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
         // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
         // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
         // 1. Create AI client
-        IChatClient client = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-            .GetChatClient(deploymentName)
-            .AsIChatClient();
+        AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
         // 2. Create specialized agents with their tools
-        ChatClientAgent qaEngineer = new(
-            client,
-            "You are a QA engineer responsible for running tests before deployment. Run the appropriate test suites and report results clearly.",
-            "QAEngineer",
-            "QA engineer who runs tests",
-            [AIFunctionFactory.Create(RunTests)]);
+        ChatClientAgent qaEngineer = aiProjectClient.AsAIAgent(
+            model: deploymentName,
+            instructions: "You are a QA engineer responsible for running tests before deployment. Run the appropriate test suites and report the results clearly in your response, including pass/fail counts.",
+            name: "QAEngineer",
+            description: "QA engineer who runs tests",
+            tools: [AIFunctionFactory.Create(RunTests)]);
 
-        ChatClientAgent devopsEngineer = new(
-            client,
-            "You are a DevOps engineer responsible for deployments. First check staging status and create a rollback plan, then proceed with production deployment. Always ensure safety measures are in place before deploying.",
-            "DevOpsEngineer",
-            "DevOps engineer who handles deployments",
+        ChatClientAgent devopsEngineer = aiProjectClient.AsAIAgent(
+            model: deploymentName,
+            instructions: "You are a DevOps engineer responsible for deployments. Call CheckStagingStatus, then CreateRollbackPlan, then DeployToProduction — in that order. Do not ask for confirmation before deploying; deployment approval is handled automatically by the system. After all tools complete, summarize each step and its result in your text response.",
+            name: "DevOpsEngineer",
+            description: "DevOps engineer who handles deployments",
+            tools:
             [
                 AIFunctionFactory.Create(CheckStagingStatus),
                 AIFunctionFactory.Create(CreateRollbackPlan),
@@ -75,7 +74,7 @@ public static class Program
         // 3. Create custom GroupChatManager with speaker selection logic
         DeploymentGroupChatManager manager = new([qaEngineer, devopsEngineer])
         {
-            MaximumIterationCount = 4  // Limit to 4 rounds
+            MaximumIterationCount = 4
         };
 
         // 4. Build a group chat workflow with the custom manager

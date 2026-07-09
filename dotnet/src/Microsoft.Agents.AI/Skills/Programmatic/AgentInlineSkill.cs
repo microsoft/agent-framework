@@ -2,13 +2,11 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -25,7 +23,6 @@ namespace Microsoft.Agents.AI;
 /// resources and scripts before registering the skill with an
 /// <see cref="AgentSkillsProvider"/> or <see cref="AgentSkillsProviderBuilder"/>.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentInlineSkill : AgentSkill
 {
     private readonly string _instructions;
@@ -107,7 +104,7 @@ public sealed class AgentInlineSkill : AgentSkill
     /// <inheritdoc/>
     public override ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)
     {
-        return new(this._cachedContent ??= AgentInlineSkillContentBuilder.Build(this.Frontmatter.Name, this.Frontmatter.Description, this._instructions, this._scripts));
+        return new(this._cachedContent ??= AgentInlineSkillContentBuilder.Build(this.Frontmatter.Name, this.Frontmatter.Description, this._instructions, this._resources, this._scripts));
     }
 
     /// <inheritdoc/>
@@ -128,8 +125,9 @@ public sealed class AgentInlineSkill : AgentSkill
     /// Registers a static resource with this skill.
     /// </summary>
     /// <remarks>
-    /// Resources are not automatically included in the skill body.
-    /// To enable discovery, reference the resource by name in the skill's instructions or in another resource.
+    /// The resource is listed in the <c>&lt;available_resources&gt;</c> block of the skill body so the
+    /// LLM knows it can be accessed. When no resources are registered, the block is emitted as a
+    /// self-closing element to signal that none exist, preventing hallucinated resource calls.
     /// </remarks>
     /// <param name="name">The resource name.</param>
     /// <param name="value">The static resource value.</param>
@@ -146,8 +144,9 @@ public sealed class AgentInlineSkill : AgentSkill
     /// The delegate's parameters and return type are automatically marshaled via <c>AIFunctionFactory</c>.
     /// </summary>
     /// <remarks>
-    /// Resources are not automatically included in the skill body.
-    /// To enable discovery, reference the resource by name in the skill's instructions or in another resource.
+    /// The resource is listed in the <c>&lt;available_resources&gt;</c> block of the skill body so the
+    /// LLM knows it can be accessed. When no resources are registered, the block is emitted as a
+    /// self-closing element to signal that none exist, preventing hallucinated resource calls.
     /// </remarks>
     /// <param name="name">The resource name.</param>
     /// <param name="method">A method that produces the resource value when requested.</param>
@@ -168,8 +167,9 @@ public sealed class AgentInlineSkill : AgentSkill
     /// The delegate's parameters and return type are automatically marshaled via <c>AIFunctionFactory</c>.
     /// </summary>
     /// <remarks>
-    /// Only the script's parameter schema is included in the skill body (as a <c>&lt;script_schemas&gt;</c> block).
-    /// To enable discovery, reference the script by name in the skill's instructions or in a resource.
+    /// The script is listed in the <c>&lt;available_scripts&gt;</c> block of the skill body so the
+    /// LLM knows it can be called. When no scripts are registered, the block is emitted as a
+    /// self-closing element to signal that none exist, preventing hallucinated script calls.
     /// </remarks>
     /// <param name="name">The script name.</param>
     /// <param name="method">A method to execute when the script is invoked.</param>

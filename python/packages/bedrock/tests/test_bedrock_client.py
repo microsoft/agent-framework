@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from agent_framework import Content, Message
+from agent_framework import Agent, Content, Message
 
 from agent_framework_bedrock import BedrockChatClient
 
@@ -38,6 +38,12 @@ def _make_client() -> BedrockChatClient:
         region="us-west-2",
         client=_StubBedrockRuntime(),  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
+
+
+def test_agent_accepts_bedrock_chat_client() -> None:
+    client = _make_client()
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
 
 
 async def test_get_response_invokes_bedrock_runtime() -> None:
@@ -169,3 +175,30 @@ def test_prepare_options_tool_choice_required_without_tools_raises() -> None:
 
     with pytest.raises(ValueError, match="tool_choice='required' requires at least one tool"):
         client._prepare_options(messages, options)
+
+
+def test_parse_usage_surfaces_cache_tokens() -> None:
+    """Bedrock Converse reports cache token counts when prompt caching is used."""
+    client = _make_client()
+
+    details = client._parse_usage({
+        "inputTokens": 10,
+        "outputTokens": 5,
+        "totalTokens": 15,
+        "cacheReadInputTokens": 8,
+        "cacheWriteInputTokens": 3,
+    })
+
+    assert details is not None
+    assert details["input_token_count"] == 10
+    assert details["cache_read_input_token_count"] == 8
+    assert details["cache_creation_input_token_count"] == 3
+
+
+def test_parse_usage_returns_none_when_no_recognized_keys() -> None:
+    """A truthy usage payload with no recognized keys yields None, not an empty mapping."""
+    client = _make_client()
+
+    assert client._parse_usage({"unexpected": 1}) is None
+    assert client._parse_usage({}) is None
+    assert client._parse_usage(None) is None
