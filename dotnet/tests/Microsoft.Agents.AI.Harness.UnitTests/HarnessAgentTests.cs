@@ -700,15 +700,15 @@ public class HarnessAgentTests
 
     #endregion
 
-    #region Feature: NonApprovalRequiredFunctionBypassing
+    #region Feature: ApprovalNotRequiredFunctionBypassing
 
     /// <summary>
     /// Verify that by default, when a response contains a mix of tools that require approval and tools that do not,
     /// only the approval-required tool is surfaced to the caller. The non-approval-required tool is bypassed
-    /// (stored as auto-approved) by the <c>NonApprovalRequiredFunctionBypassingChatClient</c> decorator.
+    /// (stored as auto-approved) by the <c>ApprovalNotRequiredFunctionBypassingChatClient</c> decorator.
     /// </summary>
     [Fact]
-    public async Task NonApprovalRequiredFunctionBypassing_BypassesNonApprovalToolsByDefaultAsync()
+    public async Task ApprovalNotRequiredFunctionBypassing_BypassesNonApprovalToolsByDefaultAsync()
     {
         // Arrange — the model requests both a normal tool and an approval-required tool in the same turn.
         var normalTool = AIFunctionFactory.Create(() => "result", "NormalTool");
@@ -750,7 +750,7 @@ public class HarnessAgentTests
     /// as approval requests, reflecting the all-or-nothing behavior of <see cref="FunctionInvokingChatClient"/>.
     /// </summary>
     [Fact]
-    public async Task NonApprovalRequiredFunctionBypassing_SurfacesAllApprovalsWhenDisabledAsync()
+    public async Task ApprovalNotRequiredFunctionBypassing_SurfacesAllApprovalsWhenDisabledAsync()
     {
         // Arrange — the model requests both a normal tool and an approval-required tool in the same turn.
         var normalTool = AIFunctionFactory.Create(() => "result", "NormalTool");
@@ -769,7 +769,7 @@ public class HarnessAgentTests
             ])));
 
         var options = CreateAllDisabledOptions();
-        options.DisableNonApprovalRequiredFunctionBypassing = true;
+        options.DisableApprovalNotRequiredFunctionBypassing = true;
         options.ChatOptions = new ChatOptions { Tools = [normalTool, approvalTool] };
 
         var agent = new HarnessAgent(mockClient.Object, options);

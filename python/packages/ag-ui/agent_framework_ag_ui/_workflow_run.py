@@ -226,6 +226,19 @@ def _resume_to_workflow_responses(resume_payload: Any) -> dict[str, Any]:
     return responses
 
 
+def _merge_workflow_response_sources(
+    resume_responses: dict[str, Any],
+    message_responses: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge workflow response sources with explicit resume payloads taking precedence."""
+    if not resume_responses:
+        return dict(message_responses)
+
+    responses = dict(message_responses)
+    responses.update(resume_responses)
+    return responses
+
+
 def _resume_entries_to_workflow_responses(entries: list[dict[str, Any]]) -> dict[str, Any]:
     """Convert validated resume entries into workflow responses."""
     responses: dict[str, Any] = {}
@@ -773,12 +786,12 @@ async def run_workflow_stream(
             yield resume_error
             return
 
-    responses = (
+    resume_responses = (
         _resume_entries_to_workflow_responses(resume_entries)
         if pending_interrupt_ids
         else _resume_to_workflow_responses(resume_payload)
     )
-    responses.update(_extract_responses_from_messages(messages))
+    responses = _merge_workflow_response_sources(resume_responses, _extract_responses_from_messages(messages))
     responses, response_error = _coerce_responses_for_pending_requests_strict(responses, pending_before_run)
     if response_error is not None:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
