@@ -58,7 +58,7 @@ def discover_samples(
     exclude: list[str] | None = None,
 ) -> list[SampleInfo]:
     """
-    Find all Python sample files in the samples directory.
+    Find all samples in the samples directory.
 
     Args:
         samples_dir: Root samples directory
@@ -80,7 +80,7 @@ def discover_samples(
     # Resolve excluded paths to absolute for reliable comparison
     exclude_paths = {(search_dir / exc).resolve() for exc in (exclude or [])}
 
-    python_files: list[Path] = []
+    samples: list[Path] = []
 
     # Walk through all subdirectories and find .py files
     for root, dirs, files in os.walk(search_dir):
@@ -93,25 +93,30 @@ def discover_samples(
             and (Path(root) / d).resolve() not in exclude_paths
         ]
 
+        # If the whole directory is a sample, add the directory itself and skip its subdirectories
+        if any(file in ("main.py", "app.py") for file in files):
+            samples.append(Path(root))
+            continue
+
         for file in files:
             # Skip files that start with _ and include only scripts with a main entrypoint guard
             if file.endswith(".py") and not file.startswith("_"):
                 file_path = Path(root) / file
                 if _has_main_entrypoint_guard(file_path):
-                    python_files.append(file_path)
+                    samples.append(file_path)
 
     # Sort files for consistent execution order
-    python_files = sorted(python_files)
+    samples = sorted(samples)
 
     # Convert to SampleInfo objects
-    samples: list[SampleInfo] = []
-    for path in python_files:
+    samples_info: list[SampleInfo] = []
+    for path in samples:
         try:
-            samples.append(SampleInfo.from_path(path, samples_dir))
+            samples_info.append(SampleInfo.from_path(path, samples_dir))
         except Exception as e:
             print(f"Warning: Could not read {path}: {e}")
 
-    return samples
+    return samples_info
 
 
 class DiscoverSamplesExecutor(Executor):

@@ -505,8 +505,9 @@ jobs:
           os: ${{ runner.os }}
 
       - name: Run sample validation
+        # Maximum parallel workers is set to 1 because all samples use the same port
         run: |
-          cd scripts && uv run python -m sample_validation --subdir 04-hosting/foundry-hosted-agents --save-report --report-name 04-hosting-foundry-hosted-agents
+          cd scripts && uv run python -m sample_validation --subdir 04-hosting/foundry-hosted-agents --save-report --report-name 04-hosting-foundry-hosted-agents --max-parallel-workers 1
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

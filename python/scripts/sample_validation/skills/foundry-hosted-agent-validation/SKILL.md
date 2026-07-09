@@ -100,6 +100,12 @@ A responses/invocations sample folder typically contains:
 `agent.manifest.yaml` (used by `azd ai agent init`), `agent.yaml` (the deployed
 agent definition), `requirements.txt`, `Dockerfile`, `.env.example`.
 
+**The sample is the whole directory whose entry point is `main.py` — not every
+`.py` file in it.** Other Python files in (or alongside) a sample folder are
+**helper/companion scripts**, not standalone samples. Do **not** treat a helper
+script as an individual sample — validate the sample via its `main.py` host, and
+run a helper only when the sample's `README.md` calls for it as a setup.
+
 Note the **protocol** (`responses` or `invocations`) from `agent.yaml` /
 manifest — it changes the invoke command (`--protocol invocations`) and the HTTP
 path (`/responses` vs the invocations route).

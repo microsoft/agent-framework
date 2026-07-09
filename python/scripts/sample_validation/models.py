@@ -28,7 +28,6 @@ class SampleInfo:
 
     path: Path
     relative_path: str
-    code: str
 
     @classmethod
     def from_path(cls, path: Path, samples_dir: Path) -> "SampleInfo":
@@ -36,7 +35,6 @@ class SampleInfo:
         return cls(
             path=path,
             relative_path=str(path.relative_to(samples_dir)),
-            code=path.read_text(encoding="utf-8"),
         )
 
 
