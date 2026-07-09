@@ -2,11 +2,14 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Microsoft.Agents.AI;
 
@@ -31,12 +34,14 @@ namespace Microsoft.Agents.AI;
 /// <see cref="FunctionInvokingChatClient"/> can process them alongside the caller's human-approved responses.
 /// </para>
 /// <para>
-/// This decorator requires an active <see cref="AIAgent.CurrentRunContext"/> with a non-null
-/// <see cref="AgentRunContext.Session"/>. An <see cref="InvalidOperationException"/> is thrown if no
-/// run context or session is available.
+/// This decorator operates within the context of a running <see cref="AIAgent"/> with an active
+/// <see cref="AgentRunContext.Session"/>. When invoked without an ambient run context or session
+/// (for example when the chat client is used directly outside of an agent run), the decorator becomes
+/// a no-op: it passes the request through to the inner client unchanged, surfacing all approval
+/// requests to the caller, and logs a warning.
 /// </para>
 /// </remarks>
-internal sealed class NonApprovalRequiredFunctionBypassingChatClient : DelegatingChatClient
+internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : DelegatingChatClient
 {
     /// <summary>
     /// The key used in <see cref="AgentSessionStateBag"/> to store pending auto-approved function calls
@@ -44,13 +49,19 @@ internal sealed class NonApprovalRequiredFunctionBypassingChatClient : Delegatin
     /// </summary>
     internal const string StateBagKey = "_autoApprovedFunctionCalls";
 
+    private readonly ILogger _logger;
+
+    private bool _warnedNoSession;
+
     /// <summary>
-    /// Initializes a new instance of the <see cref="NonApprovalRequiredFunctionBypassingChatClient"/> class.
+    /// Initializes a new instance of the <see cref="ApprovalNotRequiredFunctionBypassingChatClient"/> class.
     /// </summary>
     /// <param name="innerClient">The underlying chat client (typically a <see cref="FunctionInvokingChatClient"/>).</param>
-    public NonApprovalRequiredFunctionBypassingChatClient(IChatClient innerClient)
+    /// <param name="loggerFactory">An optional <see cref="ILoggerFactory"/> used to create a logger for diagnostics.</param>
+    public ApprovalNotRequiredFunctionBypassingChatClient(IChatClient innerClient, ILoggerFactory? loggerFactory = null)
         : base(innerClient)
     {
+        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<ApprovalNotRequiredFunctionBypassingChatClient>();
     }
 
     /// <inheritdoc/>
@@ -59,7 +70,11 @@ internal sealed class NonApprovalRequiredFunctionBypassingChatClient : Delegatin
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var session = GetRequiredSession();
+        if (!this.TryGetSession(out var session))
+        {
+            return await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+        }
+
         var autoApprovableNames = this.GetAutoApprovableToolNames(options);
 
         messages = InjectPendingAutoApprovals(messages, session);
@@ -77,7 +92,16 @@ internal sealed class NonApprovalRequiredFunctionBypassingChatClient : Delegatin
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var session = GetRequiredSession();
+        if (!this.TryGetSession(out var session))
+        {
+            await foreach (var passthrough in base.GetStreamingResponseAsync(messages, options, cancellationToken).ConfigureAwait(false))
+            {
+                yield return passthrough;
+            }
+
+            yield break;
+        }
+
         var autoApprovableNames = this.GetAutoApprovableToolNames(options);
 
         messages = InjectPendingAutoApprovals(messages, session);
@@ -103,21 +127,30 @@ internal sealed class NonApprovalRequiredFunctionBypassingChatClient : Delegatin
     }
 
     /// <summary>
-    /// Gets the current <see cref="AgentSession"/> from the ambient run context.
+    /// Attempts to get the current <see cref="AgentSession"/> from the ambient run context. When no run
+    /// context or session is available, logs a warning (once per instance) and returns <see langword="false"/>
+    /// so the caller can pass the request through without applying bypassing.
     /// </summary>
-    /// <exception cref="InvalidOperationException">No run context or session is available.</exception>
-    private static AgentSession GetRequiredSession()
+    private bool TryGetSession([NotNullWhen(true)] out AgentSession? session)
     {
-        var runContext = AIAgent.CurrentRunContext
-            ?? throw new InvalidOperationException(
-                $"{nameof(NonApprovalRequiredFunctionBypassingChatClient)} can only be used within the context of a running AIAgent. " +
-                "Ensure that the chat client is being invoked as part of an AIAgent.RunAsync or AIAgent.RunStreamingAsync call.");
+        session = AIAgent.CurrentRunContext?.Session;
 
-        return runContext.Session
-            ?? throw new InvalidOperationException(
-                $"{nameof(NonApprovalRequiredFunctionBypassingChatClient)} requires a session. " +
-                "Ensure the agent has a resolved session before invoking the chat client.");
+        if (session is null)
+        {
+            if (!this._warnedNoSession)
+            {
+                this._warnedNoSession = true;
+                LogBypassingSkipped(this._logger);
+            }
+
+            return false;
+        }
+
+        return true;
     }
+
+    [LoggerMessage(LogLevel.Warning, "ApprovalNotRequiredFunctionBypassingChatClient was invoked without an active agent run context or session. Approval-not-required function bypassing is skipped and all approval requests are surfaced to the caller. Invoke the chat client through AIAgent.RunAsync or AIAgent.RunStreamingAsync to enable bypassing.")]
+    private static partial void LogBypassingSkipped(ILogger logger);
 
     /// <summary>
     /// Checks the session for stored auto-approvals from a previous turn and injects them as
@@ -204,23 +237,26 @@ internal sealed class NonApprovalRequiredFunctionBypassingChatClient : Delegatin
     {
         List<ToolApprovalRequestContent>? autoApproved = null;
 
-        foreach (var message in messages)
+        for (int i = messages.Count - 1; i >= 0; i--)
         {
-            for (int i = message.Contents.Count - 1; i >= 0; i--)
+            var message = messages[i];
+            bool removedFromMessage = false;
+
+            for (int j = message.Contents.Count - 1; j >= 0; j--)
             {
-                if (message.Contents[i] is ToolApprovalRequestContent approval
+                if (message.Contents[j] is ToolApprovalRequestContent approval
                     && IsAutoApprovable(approval, autoApprovableNames))
                 {
                     (autoApproved ??= []).Add(approval);
-                    message.Contents.RemoveAt(i);
+                    message.Contents.RemoveAt(j);
+                    removedFromMessage = true;
                 }
             }
-        }
 
-        // Remove messages that are now empty after filtering.
-        for (int i = messages.Count - 1; i >= 0; i--)
-        {
-            if (messages[i].Contents.Count == 0)
+            // Only remove a message that this decorator emptied by stripping auto-approved
+            // content. Messages that were already empty (for example metadata-only messages)
+            // are left untouched.
+            if (removedFromMessage && message.Contents.Count == 0)
             {
                 messages.RemoveAt(i);
             }

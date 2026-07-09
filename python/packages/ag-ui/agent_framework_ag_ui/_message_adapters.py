@@ -30,8 +30,14 @@ def _append_synthetic_tool_results(
     sanitized: list[Message],
     pending_tool_call_ids: list[str],
     result: str,
+    *,
+    excluded_tool_call_ids: set[str] | None = None,
 ) -> None:
+    excluded_tool_call_ids = excluded_tool_call_ids or set()
     for pending_call_id in pending_tool_call_ids:
+        if pending_call_id in excluded_tool_call_ids:
+            logger.info("Not injecting synthetic tool result for non-abandoned call_id=%s", pending_call_id)
+            continue
         logger.info("Injecting synthetic tool result for pending call_id=%s", pending_call_id)
         sanitized.append(
             Message(
@@ -60,11 +66,25 @@ def _ordered_unique_tool_call_ids(contents: list[Content]) -> list[str]:
     return tool_ids
 
 
-def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
+def _function_result_call_ids(messages: list[Message]) -> set[str]:
+    result_ids: set[str] = set()
+    for msg in messages:
+        for content in msg.contents or []:
+            if content.type == "function_result" and content.call_id:
+                result_ids.add(str(content.call_id))
+    return result_ids
+
+
+def _sanitize_tool_history(
+    messages: list[Message],
+    *,
+    protected_tool_call_ids: set[str] | None = None,
+) -> list[Message]:
     """Normalize tool ordering and inject synthetic results for AG-UI edge cases."""
     sanitized: list[Message] = []
     pending_tool_call_ids: list[str] | None = None
     pending_confirm_changes_id: str | None = None
+    non_abandoned_tool_call_ids = set(protected_tool_call_ids or set()) | _function_result_call_ids(messages)
 
     for msg in messages:
         role_value = get_role_value(msg)
@@ -79,6 +99,7 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                     sanitized,
                     pending_tool_call_ids,
                     "Tool execution skipped - assistant continued before the tool result was available.",
+                    excluded_tool_call_ids=non_abandoned_tool_call_ids,
                 )
                 pending_tool_call_ids = None
                 pending_confirm_changes_id = None
@@ -205,6 +226,7 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                     sanitized,
                     pending_tool_call_ids,
                     "Tool execution skipped - user provided follow-up message",
+                    excluded_tool_call_ids=non_abandoned_tool_call_ids,
                 )
                 pending_tool_call_ids = None
                 pending_confirm_changes_id = None
@@ -245,6 +267,7 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                 sanitized,
                 pending_tool_call_ids,
                 "Tool execution skipped - conversation continued before the tool result was available.",
+                excluded_tool_call_ids=non_abandoned_tool_call_ids,
             )
 
         sanitized.append(msg)
@@ -260,6 +283,7 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
             sanitized,
             pending_tool_call_ids,
             "Tool execution skipped - conversation ended before the tool result was available.",
+            excluded_tool_call_ids=non_abandoned_tool_call_ids,
         )
 
     return sanitized
@@ -536,6 +560,7 @@ def normalize_agui_input_messages(
     messages: list[dict[str, Any]],
     *,
     sanitize_tool_history: bool = True,
+    protected_tool_call_ids: set[str] | None = None,
 ) -> tuple[list[Message], list[dict[str, Any]]]:
     """Normalize raw AG-UI messages into provider and snapshot formats.
 
@@ -544,10 +569,12 @@ def normalize_agui_input_messages(
         sanitize_tool_history: Apply agent-run specific tool history repair logic.
             Keep enabled for standard agent runs; disable for native workflow runs
             where pending-request responses must come explicitly from interrupt resume.
+        protected_tool_call_ids: Server-owned tool calls that are still eligible
+            to complete and must not receive synthetic skipped results.
     """
     provider_messages = agui_messages_to_agent_framework(messages)
     if sanitize_tool_history:
-        provider_messages = _sanitize_tool_history(provider_messages)
+        provider_messages = _sanitize_tool_history(provider_messages, protected_tool_call_ids=protected_tool_call_ids)
     provider_messages = _deduplicate_messages(provider_messages)
     snapshot_messages = agui_messages_to_snapshot_format(messages)
     return provider_messages, snapshot_messages

@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 from abc import ABC
 from collections.abc import Sequence
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -47,8 +48,6 @@ from agent_framework._skills import (
 )
 
 from .conftest import MockAgent, MockAgentSession
-
-pytestmark = pytest.mark.filterwarnings(r"ignore:\[SKILLS\].*:FutureWarning")
 
 # Cross-platform absolute path prefix for tests
 _ABS = "C:\\skills" if os.name == "nt" else "/skills"
@@ -1008,44 +1007,6 @@ class TestSymlinkDetection:
 # ---------------------------------------------------------------------------
 # Tests: SkillResource
 # ---------------------------------------------------------------------------
-
-
-class TestSkillsExperimentalStage:
-    """Tests for the experimental stage annotations applied to skills APIs."""
-
-    def test_docstrings_include_experimental_warning(self) -> None:
-        assert SkillResource.__doc__ is not None
-        assert SkillScript.__doc__ is not None
-        assert Skill.__doc__ is not None
-        assert SkillScriptRunner.__doc__ is not None
-        assert SkillsProvider.__doc__ is not None
-        assert SkillScript.parameters_schema.__doc__ is not None
-
-        assert ".. warning:: Experimental" in SkillResource.__doc__
-        assert ".. warning:: Experimental" in SkillScript.__doc__
-        assert ".. warning:: Experimental" in Skill.__doc__
-        assert ".. warning:: Experimental" in SkillScriptRunner.__doc__
-        assert ".. warning:: Experimental" in SkillsProvider.__doc__
-        assert ".. warning:: Experimental" not in SkillScript.parameters_schema.__doc__
-
-    def test_feature_metadata_is_set(self) -> None:
-        assert getattr(SkillResource, "__feature_stage__", None) == "experimental"
-        assert getattr(SkillScript, "__feature_stage__", None) == "experimental"
-        assert getattr(Skill, "__feature_stage__", None) == "experimental"
-        assert getattr(SkillsProvider, "__feature_stage__", None) == "experimental"
-        feature_ids: list[str | None] = [
-            getattr(SkillResource, "__feature_id__", None),
-            getattr(SkillScript, "__feature_id__", None),
-            getattr(Skill, "__feature_id__", None),
-            getattr(SkillsProvider, "__feature_id__", None),
-        ]
-        assert all(isinstance(feature_id, str) and feature_id for feature_id in feature_ids)
-        assert len(set(feature_ids)) == 1
-        assert getattr(SkillScriptRunner, "__feature_stage__", None) is None
-        assert getattr(SkillScriptRunner, "__feature_id__", None) is None
-        assert SkillScript.parameters_schema.fget is not None  # type: ignore[attr-defined]
-        assert not hasattr(SkillScript.parameters_schema.fget, "__feature_stage__")  # type: ignore[attr-defined]
-        assert not hasattr(SkillScript.parameters_schema.fget, "__feature_id__")  # type: ignore[attr-defined]
 
 
 class TestSkillResource:
@@ -5710,6 +5671,102 @@ class TestSkillsSourceContext:
 
         assert inner.call_count == 1
 
+    async def test_refresh_interval_none_never_expires(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With no refresh_interval, the cache never expires regardless of elapsed time."""
+        clock = {"now": 1000.0}
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
+        inner = _CountingSkillsSource([
+            InlineSkill(frontmatter=SkillFrontmatter(name="skill-a", description="A"), instructions="body")
+        ])
+        cached = CachingSkillsSource(inner)
+
+        first = await cached.get_skills(_SOURCE_CTX)
+        clock["now"] += 10_000.0  # advance well past any plausible interval
+        second = await cached.get_skills(_SOURCE_CTX)
+
+        assert inner.call_count == 1
+        assert first is second
+
+    async def test_refresh_interval_serves_cache_within_interval(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A cached list younger than refresh_interval is served without re-querying."""
+        clock = {"now": 1000.0}
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
+        inner = _CountingSkillsSource([
+            InlineSkill(frontmatter=SkillFrontmatter(name="skill-a", description="A"), instructions="body")
+        ])
+        cached = CachingSkillsSource(inner, refresh_interval=timedelta(seconds=60))
+
+        first = await cached.get_skills(_SOURCE_CTX)
+        clock["now"] += 59.0  # still within the interval
+        second = await cached.get_skills(_SOURCE_CTX)
+
+        assert inner.call_count == 1
+        assert first is second
+
+    async def test_refresh_interval_refetches_after_expiry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Once refresh_interval has elapsed, the next call re-queries and replaces the cache."""
+        clock = {"now": 1000.0}
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
+        inner = _CountingSkillsSource([
+            InlineSkill(frontmatter=SkillFrontmatter(name="skill-a", description="A"), instructions="body")
+        ])
+        cached = CachingSkillsSource(inner, refresh_interval=timedelta(seconds=60))
+
+        first = await cached.get_skills(_SOURCE_CTX)
+        clock["now"] += 60.0  # exactly at the interval boundary -> stale
+        second = await cached.get_skills(_SOURCE_CTX)
+
+        assert inner.call_count == 2
+        assert first is not second
+        assert [s.frontmatter.name for s in second] == ["skill-a"]
+
+    async def test_refresh_interval_zero_always_refetches(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A zero refresh_interval makes every cached result immediately stale."""
+        clock = {"now": 1000.0}
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
+        inner = _CountingSkillsSource([
+            InlineSkill(frontmatter=SkillFrontmatter(name="skill-a", description="A"), instructions="body")
+        ])
+        cached = CachingSkillsSource(inner, refresh_interval=timedelta(0))
+
+        await cached.get_skills(_SOURCE_CTX)
+        await cached.get_skills(_SOURCE_CTX)  # no time advance, still refetches
+
+        assert inner.call_count == 2
+
+    async def test_refresh_interval_failed_refresh_retries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A failed refresh after expiry propagates and does not overwrite the cache; the next call retries."""
+        clock = {"now": 1000.0}
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
+
+        class FlakyOnRefreshSource(SkillsSource):
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
+                self.call_count += 1
+                if self.call_count == 2:
+                    raise RuntimeError("refresh failed")
+                return [
+                    InlineSkill(
+                        frontmatter=SkillFrontmatter(name="skill-a", description="A"),
+                        instructions="body",
+                    )
+                ]
+
+        inner = FlakyOnRefreshSource()
+        cached = CachingSkillsSource(inner, refresh_interval=timedelta(seconds=60))
+
+        await cached.get_skills(_SOURCE_CTX)  # fetch 1 succeeds
+        clock["now"] += 60.0  # expire
+
+        with pytest.raises(RuntimeError, match="refresh failed"):
+            await cached.get_skills(_SOURCE_CTX)  # fetch 2 fails
+
+        skills = await cached.get_skills(_SOURCE_CTX)  # fetch 3 retries and succeeds
+        assert inner.call_count == 3
+        assert [s.frontmatter.name for s in skills] == ["skill-a"]
+
 
 class TestSourceComposition:
     """Tests for composing sources directly instead of using a builder."""
@@ -6035,6 +6092,117 @@ class TestDisableCaching:
         context = SessionContext(input_messages=[])
         await provider.before_run(agent=AsyncMock(), session=AsyncMock(), context=context, state={})
         assert context.instructions  # Skills instructions were added
+
+    async def test_cache_refresh_interval_threaded_into_builtin_caching(self) -> None:
+        """cache_refresh_interval is applied to the built-in CachingSkillsSource."""
+        from agent_framework import CachingSkillsSource, DeduplicatingSkillsSource
+
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
+        provider = SkillsProvider([skill], cache_refresh_interval=timedelta(minutes=5))
+        source = provider._source  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(source, DeduplicatingSkillsSource)
+        caching = source.inner_source
+        assert isinstance(caching, CachingSkillsSource)
+        assert caching._refresh_interval == timedelta(minutes=5)  # pyright: ignore[reportPrivateUsage]
+
+    async def test_cache_refresh_interval_defaults_to_none(self) -> None:
+        """Without cache_refresh_interval, the built-in cache never expires."""
+        from agent_framework import CachingSkillsSource, DeduplicatingSkillsSource
+
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="test-skill", description="Test"), instructions="Body")
+        provider = SkillsProvider([skill])
+        source = provider._source  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(source, DeduplicatingSkillsSource)
+        caching = source.inner_source
+        assert isinstance(caching, CachingSkillsSource)
+        assert caching._refresh_interval is None  # pyright: ignore[reportPrivateUsage]
+        assert provider._cache_refresh_interval is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_from_paths_threads_cache_refresh_interval(self, tmp_path: Path) -> None:
+        """from_paths applies cache_refresh_interval to the file-discovery cache."""
+        from agent_framework import CachingSkillsSource, DeduplicatingSkillsSource
+
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: Test skill.\n---\nBody.",
+            encoding="utf-8",
+        )
+        provider = SkillsProvider.from_paths(tmp_path, cache_refresh_interval=timedelta(minutes=10))
+        source = provider._source  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(source, DeduplicatingSkillsSource)
+        caching = source.inner_source
+        assert isinstance(caching, CachingSkillsSource)
+        assert caching._refresh_interval == timedelta(minutes=10)  # pyright: ignore[reportPrivateUsage]
+
+    async def test_from_paths_disable_caching_ignores_refresh_interval(self, tmp_path: Path) -> None:
+        """With disable_caching=True, from_paths neither caches nor forwards the refresh interval."""
+        from agent_framework import CachingSkillsSource, DeduplicatingSkillsSource
+
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: Test skill.\n---\nBody.",
+            encoding="utf-8",
+        )
+        provider = SkillsProvider.from_paths(
+            tmp_path, disable_caching=True, cache_refresh_interval=timedelta(minutes=10)
+        )
+        source = provider._source  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(source, DeduplicatingSkillsSource)
+        assert not isinstance(source.inner_source, CachingSkillsSource)
+        assert provider._cache_refresh_interval is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_from_paths_legacy_subclass_with_interval_does_not_break(self, tmp_path: Path) -> None:
+        """A legacy subclass __init__ still works when cache_refresh_interval is passed.
+
+        from_paths bakes the interval into the composed CachingSkillsSource and does NOT forward
+        cache_refresh_interval into cls(...), so a subclass whose __init__ predates the kwarg never
+        receives an unexpected keyword argument — with caching either enabled or disabled — while
+        the cache still refreshes correctly.
+        """
+        from agent_framework import CachingSkillsSource, DeduplicatingSkillsSource
+
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: A test skill.\n---\nBody.", encoding="utf-8"
+        )
+
+        class LegacySkillsProvider(SkillsProvider):
+            def __init__(
+                self,
+                source: Any,
+                *,
+                instruction_template: str | None = None,
+                disable_caching: bool = False,
+                source_id: str | None = None,
+            ) -> None:
+                super().__init__(
+                    source,
+                    instruction_template=instruction_template,
+                    disable_caching=disable_caching,
+                    source_id=source_id,
+                )
+
+        # Caching enabled (the real break): must not raise, and the composed source must still
+        # carry the interval so refresh works without touching __init__.
+        provider = LegacySkillsProvider.from_paths(str(tmp_path), cache_refresh_interval=timedelta(minutes=10))
+        assert isinstance(provider, LegacySkillsProvider)
+        source = provider._source  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(source, DeduplicatingSkillsSource)
+        caching = source.inner_source
+        assert isinstance(caching, CachingSkillsSource)
+        assert caching._refresh_interval == timedelta(minutes=10)  # pyright: ignore[reportPrivateUsage]
+
+        # Caching disabled: must also not raise (no CachingSkillsSource is built).
+        disabled = LegacySkillsProvider.from_paths(
+            str(tmp_path), disable_caching=True, cache_refresh_interval=timedelta(minutes=10)
+        )
+        assert isinstance(disabled, LegacySkillsProvider)
+        disabled_source = disabled._source  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(disabled_source, DeduplicatingSkillsSource)
+        assert not isinstance(disabled_source.inner_source, CachingSkillsSource)
 
 
 # ---------------------------------------------------------------------------
