@@ -332,6 +332,7 @@ def test_mcp_server_tool_call_and_result():
     call = Content.from_mcp_server_tool_call(call_id="c-1", tool_name="tool", server_name="server", arguments={"x": 1})
     assert call.type == "mcp_server_tool_call"
     assert call.arguments == {"x": 1}
+    assert call.informational_only is True
 
     result = Content.from_mcp_server_tool_result(call_id="c-1", output=[{"type": "text", "text": "done"}])
     assert result.type == "mcp_server_tool_result"
@@ -340,6 +341,17 @@ def test_mcp_server_tool_call_and_result():
     # Empty call_id is allowed, validation happens elsewhere
     call2 = Content.from_mcp_server_tool_call(call_id="", tool_name="tool", server_name="server")
     assert call2.call_id == ""
+
+
+def test_mcp_server_tool_call_is_always_informational_only():
+    direct = Content("mcp_server_tool_call", call_id="c-1", tool_name="tool", informational_only=False)
+    assert direct.informational_only is True
+
+    serialized = direct.to_dict()
+    assert "informational_only" not in serialized
+
+    restored = Content.from_dict({**serialized, "informational_only": False})
+    assert restored.informational_only is True
 
 
 # region: Shell tool content
@@ -496,9 +508,25 @@ def test_function_call_content():
     assert content.type == "function_call"
     assert content.name == "example_function"
     assert content.arguments == {"param1": "value1"}
+    assert content.informational_only is False
 
     # Ensure the instance is of type BaseContent
     assert isinstance(content, Content)
+
+
+def test_function_call_content_informational_only_serialization():
+    content = Content.from_function_call(
+        call_id="1",
+        name="example_function",
+        arguments={"param1": "value1"},
+        informational_only=True,
+    )
+
+    assert content.informational_only is True
+    assert content.to_dict()["informational_only"] is True
+    assert Content.from_dict(content.to_dict()).informational_only is True
+    assert "informational_only" not in Content.from_function_call(call_id="1", name="f").to_dict()
+    assert "informational_only" not in Content.from_text("hello").to_dict(exclude_none=False)
 
 
 def test_function_call_content_parse_arguments():
@@ -522,6 +550,12 @@ def test_function_call_content_add_merging_and_errors():
     b = Content.from_function_call(call_id="1", name="f", arguments={"y": 2})
     c = a + b
     assert c.arguments == {"x": 1, "y": 2}
+
+    # informational_only is preserved across streamed chunks
+    a = Content.from_function_call(call_id="1", name="f", arguments='{"x":', informational_only=True)
+    b = Content.from_function_call(call_id="1", name="f", arguments="1}")
+    c = a + b
+    assert c.informational_only is True
 
     # incompatible argument types
     a = Content.from_function_call(call_id="1", name="f", arguments="abc")
@@ -691,6 +725,7 @@ def test_function_approval_accepts_mcp_call():
 
     assert isinstance(req.function_call, Content)
     assert req.function_call.call_id == "c-mcp"
+    assert req.function_call.informational_only is True
 
 
 # region BaseContent Serialization

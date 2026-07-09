@@ -204,10 +204,13 @@ Move a package to `released` when it no longer carries a prerelease qualifier.
 - If promoting a package changes a dependent package's published dependency metadata, bump the
   dependent package's own version in the correct lifecycle pattern for its current stage
 - Lifecycle version patterns:
-  - `alpha`: `1.0.0a<date>`
-  - `beta`: `1.0.0b<date>`
-  - `rc`: `1.0.0rc<number>`
-  - `released`: `1.0.0`
+  - `alpha`: `1.0.0a<date>` where `<date>` is the current Pacific (US west coast) `YYMMDD`
+  - `beta`: `1.0.0b<date>` where `<date>` is the current Pacific (US west coast) `YYMMDD`
+  - `rc`: `1.0.0rc<number>` where `<number>` increments only when the package has changes
+  - `released`: `X.Y.Z` using semver per package
+- For alpha/beta date stamps, use the current Pacific date as the cutoff, not UTC and not the user's local
+  timezone. Same-Pacific-day re-cuts use a `.postN` suffix. Honor an explicit user-provided date over this
+  default.
 - Keep the `Development Status` classifier in `pyproject.toml` aligned with the lifecycle stage:
   - `alpha` -> `Development Status :: 3 - Alpha`
   - `beta` -> `Development Status :: 4 - Beta`

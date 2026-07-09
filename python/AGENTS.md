@@ -15,6 +15,7 @@ Instructions for AI coding agents working in the Python codebase.
 - `python-package-management` — monorepo structure, lazy loading, versioning, new packages
 - `python-samples` — sample file structure, PEP 723, documentation guidelines
 - `pull-requests` — writing PR descriptions (template) and handling/resolving PR review comments
+- `agent-framework-py-release` — Python release PR workflow, CHANGELOG-driven package bumps, lifecycle version rules, and dependency-floor validation
 
 ## Maintaining Documentation
 
