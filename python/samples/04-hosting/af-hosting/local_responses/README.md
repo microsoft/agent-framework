@@ -15,8 +15,11 @@ request bodies, response objects, and server startup.
 
 What the route demonstrates:
 
-- **Strips** caller-supplied `model` / `temperature` / `store` so the app owns
-  deployment and persistence settings.
+- Uses an explicit request-option allowlist. This sample only allows
+  `max_tokens` and then overrides `reasoning`; all other caller-supplied
+  options, including `model`, `temperature`, `store`, `tools`, and
+  `tool_choice`, are denied by default. Your app decides the exact allowed,
+  altered, and denied options.
 - **Forces** a `reasoning` preset (`effort=medium`, `summary=auto`) on every
   turn.
 - Produces the AF messages, options, and session id that the route passes to

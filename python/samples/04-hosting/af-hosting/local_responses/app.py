@@ -107,6 +107,8 @@ def create_agent() -> Agent:
 app = FastAPI()
 state = AgentState(create_agent)
 
+ALLOWED_REQUEST_OPTIONS = frozenset({"max_tokens", "reasoning"})
+
 
 @app.post("/responses", response_model=None)
 async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | StreamingResponse:  # noqa: B008
@@ -118,12 +120,11 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
     session_id = responses_session_id(body)
     response_id = create_response_id()
 
-    options = dict(run["options"])
-    # App-specific policy: caller cannot pick deployment/persistence settings,
-    # and this sample forces a consistent reasoning preset.
-    options.pop("model", None)
-    options.pop("temperature", None)
-    options.pop("store", None)
+    # App-specific policy: allow only the request options this route is willing
+    # to honor. This denies tools, tool_choice, deployment/persistence fields,
+    # and all other caller-supplied options by default. Your app decides which
+    # options are allowed, altered, or denied.
+    options = {key: value for key, value in run["options"].items() if key in ALLOWED_REQUEST_OPTIONS}
     options["reasoning"] = {"effort": "medium", "summary": "auto"}
     options_for_run = cast(Any, options)
 
