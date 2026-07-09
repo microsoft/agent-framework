@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "microsoft-opentelemetry",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run python/samples/02-agents/observability/microsoft_opentelemetry_distro.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio

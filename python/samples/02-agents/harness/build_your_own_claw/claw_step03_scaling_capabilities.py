@@ -58,9 +58,9 @@ from typing import Annotated, Any, Literal
 
 import httpx
 from agent_framework import (
-    AggregatingSkillsSource,
     Agent,
     AgentModeProvider,
+    AggregatingSkillsSource,
     DeduplicatingSkillsSource,
     FileAccessProvider,
     FileSkillsSource,
@@ -84,7 +84,6 @@ from pydantic import Field
 # subprocess script runner used to execute file-based skill scripts.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from console import build_observers_with_planning, run_agent_async  # noqa: E402
-
 from subprocess_script_runner import subprocess_script_runner  # noqa: E402
 
 _SAMPLE_DIR = Path(__file__).resolve().parent
