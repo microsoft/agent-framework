@@ -39,7 +39,7 @@ gaia = [
 
 # Lightning RL training module dependencies
 lightning = [
-  "agentlightning>=0.2.0,<0.3.0",
+  "agentlightning>=0.2.0,<0.4.0",
 ]
 
 # TAU2 benchmark module dependencies
@@ -58,10 +58,10 @@ math = [
 [dependency-groups]
 dev = [
     "uv==0.11.17",
-    "ruff==0.15.15",
-    "pytest==9.0.3",
+    "ruff==0.15.20",
+    "pytest==9.1.0",
     "mypy==1.20.0",
-    "pyright==1.1.408",
+    "pyright==1.1.410",
     #tasks
     "poethepoet==0.46.0",
     "rich>=13.7.1,<15.0.0",
@@ -69,7 +69,7 @@ dev = [
     "tomli-w==1.2.0",
     # tau2 from source (not available on PyPI)
     "tau2@ git+https://github.com/sierra-research/tau2-bench@5ba9e3e56db57c5e4114bf7f901291f09b2c5619",
-    "prek==0.4.3",
+    "prek==0.4.5",
 ]
 
 [project.scripts]
@@ -126,42 +126,12 @@ extends = "../../pyproject.toml"
 include = ["gaia/agent_framework_lab_gaia", "lightning/agent_framework_lab_lightning", "tau2/agent_framework_lab_tau2"]
 exclude = ['gaia/tests', 'lightning/tests', 'tau2/tests', 'namespace', '**/samples']
 
-[tool.mypy]
-plugins = ['pydantic.mypy']
-strict = true
-python_version = "3.10"
-ignore_missing_imports = true
-disallow_untyped_defs = true
-no_implicit_optional = true
-check_untyped_defs = true
-warn_return_any = true
-show_error_codes = true
-warn_unused_ignores = false
-disallow_incomplete_defs = true
-disallow_untyped_decorators = true
-
 [tool.bandit]
 targets = ["agent_framework_lab_gaia", "agent_framework_lab_lightning", "agent_framework_lab_tau2"]
 exclude_dirs = ["gaia/tests", "lightning/tests", "tau2/tests"]
 
 [tool.poe]
 include = "../../shared_tasks.toml"
-
-[tool.poe.tasks.mypy-gaia]
-help = "Run MyPy for the lab GAIA package."
-cmd = "mypy --config-file $POE_ROOT/pyproject.toml gaia/agent_framework_lab_gaia"
-
-[tool.poe.tasks.mypy-lightning]
-help = "Run MyPy for the lab Lightning package."
-cmd = "mypy --config-file $POE_ROOT/pyproject.toml lightning/agent_framework_lab_lightning"
-
-[tool.poe.tasks.mypy-tau2]
-help = "Run MyPy for the lab Tau2 package."
-cmd = "mypy --config-file $POE_ROOT/pyproject.toml tau2/agent_framework_lab_tau2"
-
-[tool.poe.tasks.mypy]
-help = "Run MyPy across all lab subpackages."
-sequence = ["mypy-gaia", "mypy-lightning", "mypy-tau2"]
 
 [tool.poe.tasks.test]
 help = "Run the default lab unit test suite."

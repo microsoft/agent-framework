@@ -6,7 +6,7 @@ import builtins
 import sys
 import traceback as _traceback
 import warnings
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -16,9 +16,9 @@ from typing import Any, Generic, Literal, cast
 from ._typing_utils import deserialize_type, serialize_type
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore[import] # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 DataT = TypeVar("DataT", default=Any)
 
@@ -46,7 +46,7 @@ def _current_event_origin() -> WorkflowEventSource:
 
 
 @contextmanager
-def _framework_event_origin() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
+def _framework_event_origin() -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
     """Temporarily mark subsequently created events as originating from the framework (internal)."""
     token = _event_origin_context.set(WorkflowEventSource.FRAMEWORK)
     try:

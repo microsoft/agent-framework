@@ -11,7 +11,7 @@ from __future__ import annotations
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
-from invoice_data import query_by_invoice_id, query_by_transaction_id, query_invoices
+from invoice_data import query_by_invoice_id, query_by_transaction_id, query_invoices  # pyrefly: ignore[missing-import]
 
 # ---------------------------------------------------------------------------
 # Agent instructions

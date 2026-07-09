@@ -8,8 +8,9 @@ from typing import Any, Literal
 from agent_framework import SupportsAgentRun
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._executor import Executor
+from typing_extensions import Sentinel
 
-_MISSING = object()
+UNSET = Sentinel("UNSET")
 _ALL_OUTPUTS: Literal["all"] = "all"
 _ALL_OTHER_OUTPUTS: Literal["all_other"] = "all_other"
 _ParticipantOutputSpecifier = str | SupportsAgentRun | Executor
@@ -20,10 +21,10 @@ _WorkflowExecutorSpecifier = Executor | SupportsAgentRun
 
 def _coalesce_output_from(  # pyright: ignore[reportUnusedFunction]
     *,
-    output_from: Any = _MISSING,
+    output_from: Any = UNSET,
 ) -> _ParticipantOutputSelection:
     """Resolve orchestration output selection to ``output_from``."""
-    if output_from is not _MISSING:
+    if output_from is not UNSET:
         return _coerce_output_from(output_from)
     return None
 

@@ -47,12 +47,12 @@ skip_if_foundry_hosting_integration_tests_disabled = pytest.mark.skipif(
 @pytest.fixture
 def server() -> ResponsesHostServer:
     """Create a ResponsesHostServer backed by a real Foundry agent."""
-    client = FoundryChatClient(credential=AzureCliCredential())
+    client = FoundryChatClient(credential=AzureCliCredential())  # pyrefly: ignore[bad-argument-type]
 
     agent = Agent(
-        client=client,
+        client=client,  # ty: ignore[invalid-argument-type]
         instructions="You are a concise assistant. Keep answers very short (one or two sentences).",
-        default_options={"store": False},
+        default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
     )
 
     return ResponsesHostServer(agent, store=InMemoryResponseProvider())
@@ -67,13 +67,13 @@ async def get_weather(location: Annotated[str, "The city name"]) -> str:
 @pytest.fixture
 def server_with_tools() -> ResponsesHostServer:
     """Create a ResponsesHostServer whose agent has a tool."""
-    client = FoundryChatClient(credential=AzureCliCredential())
+    client = FoundryChatClient(credential=AzureCliCredential())  # pyrefly: ignore[bad-argument-type]
 
     agent = Agent(
-        client=client,
+        client=client,  # ty: ignore[invalid-argument-type]
         instructions="You are a concise assistant. Use the provided tools when appropriate. Keep answers very short.",
         tools=[get_weather],
-        default_options={"store": False},
+        default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
     )
 
     return ResponsesHostServer(agent, store=InMemoryResponseProvider())

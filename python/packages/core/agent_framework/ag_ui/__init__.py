@@ -11,6 +11,10 @@ Supported classes and functions:
 - AGUIChatClient
 - AGUIEventConverter
 - AGUIHttpService
+- AGUIThreadSnapshot
+- AGUIThreadSnapshotStore
+- InMemoryAGUIThreadSnapshotStore
+- SnapshotScopeResolver
 - add_agent_framework_fastapi_endpoint
 - state_update
 - __version__
@@ -28,6 +32,10 @@ _IMPORTS = [
     "AGUIChatClient",
     "AGUIEventConverter",
     "AGUIHttpService",
+    "AGUIThreadSnapshot",
+    "AGUIThreadSnapshotStore",
+    "InMemoryAGUIThreadSnapshotStore",
+    "SnapshotScopeResolver",
     "state_update",
     "__version__",
 ]

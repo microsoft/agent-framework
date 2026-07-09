@@ -72,21 +72,21 @@ Use the `demo.http` file with REST Client extension or curl:
 
 ### Test Spam Email
 ```bash
-curl -X POST http://localhost:7071/api/workflow/run \
+curl -X POST http://localhost:7071/api/workflow/email_triage/run \
   -H "Content-Type: application/json" \
   -d '{"email_id": "test-001", "email_content": "URGENT! You have won $1,000,000! Click here!"}'
 ```
 
 ### Test Legitimate Email
 ```bash
-curl -X POST http://localhost:7071/api/workflow/run \
+curl -X POST http://localhost:7071/api/workflow/email_triage/run \
   -H "Content-Type: application/json" \
   -d '{"email_id": "test-002", "email_content": "Hi team, reminder about our meeting tomorrow at 10 AM."}'
 ```
 
 ### Check Status
 ```bash
-curl http://localhost:7071/api/workflow/status/{instanceId}
+curl http://localhost:7071/api/workflow/email_triage/status/{instanceId}
 ```
 
 ## Expected Output

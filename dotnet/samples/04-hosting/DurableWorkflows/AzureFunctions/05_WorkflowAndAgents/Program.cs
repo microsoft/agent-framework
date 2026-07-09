@@ -27,6 +27,9 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYM
 string? azureOpenAiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY");
 AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
     ? new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(azureOpenAiKey))
+    // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+    // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+    // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
     : new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential());
 
 ChatClient chatClient = client.GetChatClient(deploymentName);
