@@ -892,7 +892,11 @@ class ObservabilitySettings:
             from opentelemetry.sdk.metrics.export import ConsoleMetricExporter
             from opentelemetry.sdk.trace.export import ConsoleSpanExporter
 
-            exporters.extend([ConsoleSpanExporter(), ConsoleLogRecordExporter(), ConsoleMetricExporter()])
+            exporters.extend([
+                ConsoleSpanExporter(),
+                ConsoleLogRecordExporter(),
+                ConsoleMetricExporter(),
+            ])
 
         # 4. Add VS Code extension exporters if port is specified
         if self.vs_code_extension_port:
@@ -1489,12 +1493,6 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             function_invocation_kwargs: Keyword arguments forwarded only to tool invocation layers.
             client_kwargs: Additional client-specific keyword arguments for downstream chat clients.
         """
-        from ._types import (  # type: ignore[reportUnusedImport]
-            ChatResponse,
-            ChatResponseUpdate,
-            ResponseStream,
-        )
-
         global OBSERVABILITY_SETTINGS
         super_get_response = super().get_response  # type: ignore[misc]
         merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
@@ -1588,7 +1586,11 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                         # Stream errored; skip get_final_response() to avoid firing
                         # result hooks such as after_run context providers on error
                         # paths. Capture the error on the span before returning.
-                        capture_exception(span=span, exception=result_stream._stream_error, timestamp=time_ns())  # pyright: ignore[reportPrivateUsage]
+                        capture_exception(
+                            span=span,
+                            exception=result_stream._stream_error,  # type: ignore
+                            timestamp=time_ns(),
+                        )
                         return
                     response: ChatResponse[Any] = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
@@ -1792,7 +1794,10 @@ class AgentTelemetryLayer:
         merged_options: Mapping[str, Any],
         client_kwargs: Mapping[str, Any] | None,
         stream: bool,
-        execute: Callable[[], Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]],
+        execute: Callable[
+            [],
+            Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]],
+        ],
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Trace an agent invocation while delegating execution to ``execute``."""
         global OBSERVABILITY_SETTINGS
@@ -1888,7 +1893,11 @@ class AgentTelemetryLayer:
                         # Stream errored; skip get_final_response() to avoid firing
                         # result hooks such as after_run context providers on error
                         # paths. Capture the error on the span before returning.
-                        capture_exception(span=span, exception=result_stream._stream_error, timestamp=time_ns())  # pyright: ignore[reportPrivateUsage]
+                        capture_exception(
+                            span=span,
+                            exception=result_stream._stream_error,  # type: ignore
+                            timestamp=time_ns(),
+                        )
                         return
                     response: AgentResponse[Any] = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
@@ -1992,8 +2001,15 @@ class AgentTelemetryLayer:
                                     INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields
                                 ),
                             )
-                            _apply_accumulated_usage(response_attributes, inner_response_telemetry_captured_fields)
-                            _capture_response(span=span, attributes=response_attributes, duration=duration)
+                            _apply_accumulated_usage(
+                                response_attributes,
+                                inner_response_telemetry_captured_fields,
+                            )
+                            _capture_response(
+                                span=span,
+                                attributes=response_attributes,
+                                duration=duration,
+                            )
                             if (
                                 OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
                                 and response.messages
@@ -2288,7 +2304,7 @@ def _get_instructions_from_options(options: Any) -> str | list[str] | None:
         instructions = cast(Mapping[str, Any], options).get("instructions")
         if isinstance(instructions, str):
             return instructions
-        if isinstance(instructions, list) and all(isinstance(item, str) for item in instructions):  # type: ignore[reportUnknownVariableType]
+        if isinstance(instructions, list) and all(isinstance(item, str) for item in instructions):  # type: ignore
             return instructions  # type: ignore[reportUnknownVariableType]
         return None
     return None
@@ -2320,7 +2336,10 @@ def _serialize_tool_definitions(tools: Any) -> str | None:
     try:
         tools_dict = _tools_to_dict(tools)
     except Exception:
-        logger.warning("Failed to build tool definitions for telemetry; skipping attribute.", exc_info=True)
+        logger.warning(
+            "Failed to build tool definitions for telemetry; skipping attribute.",
+            exc_info=True,
+        )
         return None
     if not tools_dict:
         return None
@@ -2564,7 +2583,12 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     options = kwargs.get("all_options", kwargs.get("options"))
     options_mapping = cast(Mapping[str, Any], options) if isinstance(options, Mapping) else None
 
-    for source_keys, (otel_key, transform_func, check_options, default_value) in OTEL_ATTR_MAP.items():
+    for source_keys, (
+        otel_key,
+        transform_func,
+        check_options,
+        default_value,
+    ) in OTEL_ATTR_MAP.items():
         # Normalize to tuple of keys
         keys = (source_keys,) if isinstance(source_keys, str) else source_keys
 
@@ -2604,7 +2628,10 @@ def _capture_system_instructions(span: trace.Span, system_instructions: str | li
     otel_sys_instructions = [
         {"type": "text", "content": instruction} for instruction in _normalize_instructions(system_instructions)
     ]
-    span.set_attribute(OtelAttr.SYSTEM_INSTRUCTIONS, json.dumps(otel_sys_instructions, ensure_ascii=False))
+    span.set_attribute(
+        OtelAttr.SYSTEM_INSTRUCTIONS,
+        json.dumps(otel_sys_instructions, ensure_ascii=False),
+    )
 
 
 def _capture_current_agent_system_instructions(
@@ -2703,14 +2730,18 @@ def _capture_messages(
     if finish_reason:
         otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason]
     span.set_attribute(
-        OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES, json.dumps(otel_messages, ensure_ascii=False)
+        OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES,
+        json.dumps(otel_messages, ensure_ascii=False),
     )
     _capture_system_instructions(span, system_instructions)
 
 
 def _to_otel_message(message: Message) -> dict[str, Any]:
     """Create a otel representation of a message."""
-    return {"role": message.role, "parts": [_to_otel_part(content) for content in message.contents]}
+    return {
+        "role": message.role,
+        "parts": [_to_otel_part(content) for content in message.contents],
+    }
 
 
 def _to_otel_part(content: Content) -> dict[str, Any] | None:
@@ -2737,7 +2768,12 @@ def _to_otel_part(content: Content) -> dict[str, Any] | None:
                 "modality": content.media_type.split("/")[0] if content.media_type else None,
             }
         case "function_call":
-            return {"type": "tool_call", "id": content.call_id, "name": content.name, "arguments": content.arguments}
+            return {
+                "type": "tool_call",
+                "id": content.call_id,
+                "name": content.name,
+                "arguments": content.arguments,
+            }
         case "function_result":
             return {
                 "type": "tool_call_response",
@@ -2751,7 +2787,9 @@ def _to_otel_part(content: Content) -> dict[str, Any] | None:
     return None
 
 
-def _mark_inner_response_telemetry_captured(response: ChatResponse | AgentResponse) -> None:
+def _mark_inner_response_telemetry_captured(
+    response: ChatResponse | AgentResponse,
+) -> None:
     """Record when an inner chat telemetry span already captured response metadata."""
     captured_fields = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.get()
     if captured_fields is None:
