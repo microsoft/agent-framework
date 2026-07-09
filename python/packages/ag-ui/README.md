@@ -342,6 +342,12 @@ credential or tenant boundary. Production applications must authenticate and aut
 and choose a Snapshot Scope that represents the app's real access boundary, such as an authenticated user, tenant,
 or workspace. Do not rely on untrusted client-provided fields by themselves to choose that boundary.
 
+Tool approval resumes are validated against server-owned Approval State. The default Approval State store is
+process-local and bounded, and stores only approval-specific state needed to validate and continue pending approvals.
+It is not an authentication, tenant authorization, or distributed durability mechanism; production applications remain
+responsible for endpoint authentication, tenant authorization, and deployment/storage architecture that matches their
+availability and worker topology requirements.
+
 Stored snapshots are untrusted application data with confidentiality impact. They may contain sensitive user text,
 model output, tool results, function arguments, UI payloads, Shared State, and interrupt data. The built-in
 `InMemoryAGUIThreadSnapshotStore` is in-memory only, process-local, bounded, latest-only, and not durable production
