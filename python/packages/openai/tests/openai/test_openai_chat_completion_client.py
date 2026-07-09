@@ -2193,7 +2193,7 @@ def test_parse_mistral_chunked_content_from_response(
 
     message = ChatCompletionMessage.model_construct(
         role="assistant",
-        content=chunked_content,
+        content=cast(Any, chunked_content),
     )
 
     mock_response = ChatCompletion(
@@ -2242,7 +2242,7 @@ def test_parse_mistral_chunked_content_streaming(
 
     delta = ChunkChoiceDelta.model_construct(
         role="assistant",
-        content=chunked_content,
+        content=cast(Any, chunked_content),
     )
 
     mock_chunk = ChatCompletionChunk(
