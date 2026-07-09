@@ -130,7 +130,7 @@ class Mem0ContextProvider(ContextProvider):
 
         # Fall back to an app-scoped search when only application_id is configured.
         if not search_tasks and self.application_id:
-            app_kwargs: dict[str, Any] = {"query": input_text, "filters": {"app_id": self.application_id}}
+            app_kwargs: dict[str, Any] = {"query": input_text, "filters": self._build_filters()}
             search_tasks.append(self.mem0_client.search(**app_kwargs))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
         if not search_tasks:
             return
@@ -218,12 +218,13 @@ class Mem0ContextProvider(ContextProvider):
         if messages:
             add_kwargs: dict[str, Any] = {
                 "messages": messages,
-                "user_id": self.user_id,
-                "agent_id": self.agent_id,
             }
 
-            if self.application_id and not isinstance(self.mem0_client, AsyncMemory):
-                add_kwargs["filters"] = {"app_id": self.application_id}
+            if isinstance(self.mem0_client, AsyncMemory):
+                add_kwargs["user_id"] = self.user_id
+                add_kwargs["agent_id"] = self.agent_id
+            else:
+                add_kwargs["filters"] = self._build_filters()
 
             await self.mem0_client.add(**add_kwargs)  # type: ignore[misc, call-arg]
 
@@ -253,6 +254,17 @@ class Mem0ContextProvider(ContextProvider):
         if self.application_id and not isinstance(self.mem0_client, AsyncMemory):
             filters["filters"]["app_id"] = self.application_id
 
+        return filters
+
+    def _build_filters(self) -> dict[str, Any]:
+        """Build identity filters from initialization parameters."""
+        filters: dict[str, Any] = {}
+        if self.user_id:
+            filters["user_id"] = self.user_id
+        if self.agent_id:
+            filters["agent_id"] = self.agent_id
+        if self.application_id:
+            filters["app_id"] = self.application_id
         return filters
 
 

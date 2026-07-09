@@ -330,7 +330,9 @@ class TestAfterRun:
             {"role": "user", "content": "question"},
             {"role": "assistant", "content": "answer"},
         ]
-        assert call_kwargs["user_id"] == "u1"
+        assert call_kwargs["filters"] == {"user_id": "u1"}
+        assert "user_id" not in call_kwargs
+        assert "agent_id" not in call_kwargs
         assert "run_id" not in call_kwargs
 
     async def test_only_stores_user_assistant_system(self, mock_mem0_client: AsyncMock) -> None:
@@ -395,6 +397,7 @@ class TestAfterRun:
         )  # type: ignore[arg-type]
 
         assert "run_id" not in mock_mem0_client.add.call_args.kwargs
+        assert "run_id" not in mock_mem0_client.add.call_args.kwargs["filters"]
 
     async def test_validates_filters(self, mock_mem0_client: AsyncMock) -> None:
         """Raises ValueError when no filters."""
@@ -411,10 +414,10 @@ class TestAfterRun:
                 state=session.state,
             )  # type: ignore[arg-type]
 
-    async def test_stores_with_application_id_filters(self, mock_mem0_client: AsyncMock) -> None:
-        """application_id is passed in filters."""
+    async def test_platform_stores_identity_fields_in_filters(self, mock_mem0_client: AsyncMock) -> None:
+        """Platform add receives all identity fields in filters for mem0ai 2.x."""
         provider = Mem0ContextProvider(
-            source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", application_id="app1"
+            source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", agent_id="a1", application_id="app1"
         )
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(input_messages=[Message(role="user", contents=["hi"])], session_id="s1")
@@ -427,7 +430,29 @@ class TestAfterRun:
             state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
-        assert mock_mem0_client.add.call_args.kwargs["filters"] == {"app_id": "app1"}
+        call_kwargs = mock_mem0_client.add.call_args.kwargs
+        assert call_kwargs["filters"] == {"user_id": "u1", "agent_id": "a1", "app_id": "app1"}
+        assert "user_id" not in call_kwargs
+        assert "agent_id" not in call_kwargs
+
+    async def test_oss_stores_identity_fields_as_direct_kwargs(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS add keeps user_id/agent_id as direct kwargs because AsyncMemory.add uses that signature."""
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1", agent_id="a1")
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["hi"])], session_id="s1")
+        ctx._response = AgentResponse(messages=[])
+
+        await provider.after_run(
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
+        )  # type: ignore[arg-type]
+
+        call_kwargs = mock_oss_mem0_client.add.call_args.kwargs
+        assert call_kwargs["user_id"] == "u1"
+        assert call_kwargs["agent_id"] == "a1"
+        assert "filters" not in call_kwargs
 
     async def test_oss_storage_rejects_application_id(self, mock_oss_mem0_client: AsyncMock) -> None:
         """OSS storage rejects Platform-only application_id because AsyncMemory.add has no app_id parameter."""
