@@ -33,11 +33,20 @@ async def main():
     # This will automatically enable instrumentation for Agent Framework
     # Install the Microsoft OpenTelemetry Distro package to enable this functionality:
     # pip install microsoft-opentelemetry
+    # Requires the following environment variables to be set:
+    # OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+    # APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey...
     use_microsoft_opentelemetry(enable_azure_monitor=True)
 
-    questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]
+    questions = [
+        "What's the weather in Amsterdam?",
+        "and in Paris, and which is better?",
+        "Why is the sky blue?",
+    ]
 
-    with get_tracer().start_as_current_span("Scenario: Agent Chat", kind=SpanKind.CLIENT) as current_span:
+    with get_tracer().start_as_current_span(
+        "Scenario: Agent Chat", kind=SpanKind.CLIENT
+    ) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
         agent = Agent(
