@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import os
+import uuid
 from collections.abc import AsyncIterable
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -780,8 +781,13 @@ class TestParallelToolCallUniqueness:
 
         assert id1 != id2, f"Parallel tool calls collided on call_id: {id1}"
 
-        assert id1.startswith("search:")
-        assert id2.startswith("search:")
+        assert id1 is not None
+        assert id2 is not None
+        try:
+            uuid.UUID(str(id1))
+            uuid.UUID(str(id2))
+        except ValueError:
+            pytest.fail(f"call_id is not a valid UUID: {id1=}, {id2=}")
 
     def test_format_tool_message_strips_unique_suffix(self) -> None:
         """_format_tool_message must send only the bare tool name to Ollama."""
@@ -790,7 +796,8 @@ class TestParallelToolCallUniqueness:
         # Fake a function_result content item
         mock_item = MagicMock()
         mock_item.type = "function_result"
-        mock_item.call_id = "search:0:a1b2c3d4"
+        mock_item.name = "search:advanced"
+        mock_item.call_id = str(uuid.uuid4())
         mock_item.result = "found it"
         mock_item.items = None
 
@@ -800,4 +807,6 @@ class TestParallelToolCallUniqueness:
         formatted = client._format_tool_message(mock_message)
 
         assert len(formatted) == 1
-        assert formatted[0].tool_name == "search", f"Expected bare name 'search', got '{formatted[0].tool_name}'"
+        assert formatted[0].tool_name == "search:advanced", (
+            f"Expected bare name 'search:advanced', got '{formatted[0].tool_name}'"
+        )
