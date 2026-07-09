@@ -80,7 +80,6 @@ async def main() -> None:
         print("===== Final Aggregated Conversation (messages) =====")
         for output in outputs:
             if not isinstance(output, AgentResponse):
-                print(f"[WARNING] Unexpected output type: {type(output).__name__}, skipping.")
                 continue
             for i, msg in enumerate(output.messages, start=1):
                 name = msg.author_name if msg.author_name else "user"
