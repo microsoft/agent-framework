@@ -108,13 +108,92 @@ jobs:
 
       - name: Run sample validation
         run: |
-          cd scripts && uv run python -m sample_validation --subdir 02-agents --exclude providers --save-report --report-name 02-agents
+          cd scripts && uv run python -m sample_validation --subdir 02-agents --exclude providers harness tools --save-report --report-name 02-agents
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: validation-report-02-agents
+          path: python/samples/sample_validation/reports/
+
+  validate-02-agents-harness:
+    name: Validate 02-agents/harness
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
+      # Optional: enables the Foundry memory path in harness samples
+      FOUNDRY_EMBEDDING_MODEL: ${{ vars.FOUNDRY_EMBEDDING_MODEL || '' }}
+      FOUNDRY_MEMORY_STORE: ${{ vars.FOUNDRY_MEMORY_STORE || '' }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
+          echo "FOUNDRY_EMBEDDING_MODEL=$FOUNDRY_EMBEDDING_MODEL" >> .env
+          echo "FOUNDRY_MEMORY_STORE=$FOUNDRY_MEMORY_STORE" >> .env
+
+      - name: Run sample validation
+        run: |
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/harness --save-report --report-name 02-agents-harness
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: validation-report-02-agents-harness
+          path: python/samples/sample_validation/reports/
+
+  validate-02-agents-tools:
+    name: Validate 02-agents/tools
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
+
+      - name: Run sample validation
+        run: |
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/tools --save-report --report-name 02-agents-tools
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: validation-report-02-agents-tools
           path: python/samples/sample_validation/reports/
 
   validate-02-agents-openai:
@@ -715,6 +794,8 @@ jobs:
     needs:
       - validate-01-get-started
       - validate-02-agents
+      - validate-02-agents-harness
+      - validate-02-agents-tools
       - validate-02-agents-openai
       - validate-02-agents-azure
       - validate-02-agents-anthropic

@@ -4,9 +4,8 @@ description: >
   Step-by-step process for validating a Python Foundry hosted agent sample
   (under python/samples/04-hosting/foundry-hosted-agents/) end to end — running
   it locally (native runtime and `azd ai agent run`) and after deploying it to
-  an Azure AI Foundry project with `azd`. Use this when asked to validate, smoke
-  test, or verify a hosted agent sample works locally and/or deployed, or when
-  deploying one of these samples to Foundry.
+  an Azure AI Foundry project with `azd`. Use this when asked to validate a hosted
+  agent sample.
 license: MIT
 compatibility: Works with any model that supports tool use.
 metadata:
