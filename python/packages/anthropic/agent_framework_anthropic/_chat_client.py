@@ -1188,6 +1188,7 @@ class RawAnthropicClient(
                                 call_id=content_block.id,
                                 name=resolved_tool_name,
                                 arguments=content_block.input,
+                                informational_only=content_block.type == "server_tool_use",
                                 raw_representation=content_block,
                             )
                         )

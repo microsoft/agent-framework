@@ -171,7 +171,8 @@ class SessionContext:
 
     Attributes:
         session_id: The ID of the current session.
-        service_session_id: Service-managed session ID (if present, service handles storage).
+        service_session_id: Service-managed session identifier
+            (if present, the service stores history).
         input_messages: The new messages being sent to the agent (set by caller).
         context_messages: Dict mapping source_id -> messages added by that provider.
             Maintains insertion order (provider execution order).
@@ -201,7 +202,7 @@ class SessionContext:
 
         Args:
             session_id: The ID of the current session.
-            service_session_id: Service-managed session ID.
+            service_session_id: Service-managed session identifier.
             input_messages: The new messages being sent to the agent.
             context_messages: Pre-populated context messages by source.
             instructions: Pre-populated instructions.
@@ -917,9 +918,16 @@ class AgentSession:
     Lightweight state container. Provider instances are owned by the agent,
     not the session. The session only holds session IDs and a mutable state dict.
 
+    ``service_session_id`` can contain a provider-issued service session
+    identifier, such as a service conversation ID or response ID. Treat this
+    value as trusted application state: it is scoped by the backing API key,
+    service account, or project, but it is not an end-user authorization
+    boundary by itself.
+
     Attributes:
         session_id: Unique identifier for this session.
-        service_session_id: Service-managed session ID (if using service-side storage).
+        service_session_id: Service-managed session identifier
+            (if using service-side storage).
         state: Mutable state dict shared with all providers.
     """
 
@@ -933,7 +941,7 @@ class AgentSession:
 
         Args:
             session_id: Optional session ID (generated if not provided).
-            service_session_id: Optional service-managed session ID.
+            service_session_id: Optional service-managed session identifier.
         """
         self._session_id = session_id or str(uuid.uuid4())
         self.service_session_id = service_session_id

@@ -198,6 +198,7 @@ dependencies = [
     { name = "ag-ui-protocol" },
     { name = "agent-framework-core" },
     { name = "fastapi" },
+    { name = "sse-starlette" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -211,9 +212,10 @@ dev = [
 requires-dist = [
     { name = "ag-ui-protocol", specifier = ">=0.1.19,<0.2" },
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "fastapi", specifier = ">=0.115.0,<0.138.1" },
+    { name = "fastapi", specifier = ">=0.121.0,<0.138.1" },
     { name = "httpx", marker = "extra == 'dev'", specifier = "==0.28.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.1.0" },
+    { name = "sse-starlette", specifier = ">=3.4.5,<4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0,<1" },
 ]
 provides-extras = ["dev"]

@@ -1452,9 +1452,10 @@ def test_parse_contents_server_tool_use_input_json_delta_ignored(
     server_tool_content.input = {}
 
     result = client._parse_contents_from_anthropic([server_tool_content])
-    # server_tool_use falls through to function_call (not mcp_tool_use / code_execution)
+    # server_tool_use falls through to informational-only function_call (not mcp_tool_use / code_execution)
     assert len(result) == 1
     assert result[0].type == "function_call"
+    assert result[0].informational_only is True
     assert client._last_call_content_type == "server_tool_use"  # type: ignore[attr-defined]
 
     # input_json_delta events after server_tool_use must be silently ignored
