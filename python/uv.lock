@@ -288,7 +288,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-azure-cosmos-memory"
-version = "1.0.0b260618"
+version = "1.0.0a260709"
 source = { editable = "packages/azure-cosmos-memory" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },

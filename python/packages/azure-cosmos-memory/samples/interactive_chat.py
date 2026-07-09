@@ -76,7 +76,7 @@ def create_agent_with_memory() -> tuple[Agent, CosmosMemoryContextProvider]:
     return agent, provider
 
 
-def _new_session(agent: Agent, provider: CosmosMemoryContextProvider, user_id: str) -> AgentSession:
+def new_session(agent: Agent, provider: CosmosMemoryContextProvider, user_id: str) -> AgentSession:
     """Start a fresh session (a new thread) scoped to the given user id.
 
     A new session gets a new session id, which the provider uses as the thread id. Setting a
@@ -96,7 +96,7 @@ async def chat_loop(agent: Agent, provider: CosmosMemoryContextProvider, user_id
     print("\nCommands:  /new (new thread)   /user (switch user)   /quit")
     print("Tip: tell the assistant your preferences, then /new and see if it remembers.\n")
 
-    session = _new_session(agent, provider, user_id)
+    session = new_session(agent, provider, user_id)
     print(f"Started thread: {session.session_id}\n")
 
     while True:
@@ -110,14 +110,14 @@ async def chat_loop(agent: Agent, provider: CosmosMemoryContextProvider, user_id
             print("\nGoodbye!")
             break
         if user_input == "/new":
-            session = _new_session(agent, provider, user_id)
+            session = new_session(agent, provider, user_id)
             print(f"\n[New thread: {session.session_id} - earlier memories still available]\n")
             continue
         if user_input == "/user":
             new_user_id = (await asyncio.to_thread(input, "Enter new user ID: ")).strip()
             if new_user_id:
                 user_id = new_user_id
-                session = _new_session(agent, provider, user_id)
+                session = new_session(agent, provider, user_id)
                 print(f"\n[Switched to user {user_id}; new thread {session.session_id}]\n")
             continue
 
