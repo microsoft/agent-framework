@@ -46,7 +46,7 @@ dev = [
     "opentelemetry-sdk==1.40.0",
     "azure-monitor-opentelemetry==1.8.8",
     #tasks
-    "poethepoet==0.46.0",
+    "poethepoet==0.48.0",
     "rich>=13.7.1,<16.0.0",
     "tomli==2.4.1",
     "prek==0.4.5",
