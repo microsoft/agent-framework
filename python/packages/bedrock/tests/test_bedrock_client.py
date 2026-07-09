@@ -207,8 +207,8 @@ def test_process_converse_response_preserves_non_ascii_in_json_block() -> None:
     assert "\\u" not in text
     # Serialized text must remain valid JSON that round-trips to the original payload.
     assert json.loads(text) == json_payload
-    
-    
+
+
 def test_parse_usage_surfaces_cache_tokens() -> None:
     """Bedrock Converse reports cache token counts when prompt caching is used."""
     client = _make_client()
