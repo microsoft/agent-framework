@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **agent-framework-declarative**: Promote to released (`1.0.0`) ([#7065](https://github.com/microsoft/agent-framework/pull/7065))
+
 ## [1.11.0] - 2026-07-09
 
 ### Added
