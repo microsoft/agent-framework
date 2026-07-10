@@ -3,14 +3,17 @@
 """Tests for native workflow AG-UI runner."""
 
 import json
+from collections.abc import AsyncIterator
 from enum import Enum
 from types import SimpleNamespace
 from typing import Any, cast
 
 from ag_ui.core import EventType, StateSnapshotEvent
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
+    ChatResponseUpdate,
     Content,
     Executor,
     Message,
@@ -20,7 +23,9 @@ from agent_framework import (
     executor,
     handler,
     response_handler,
+    tool,
 )
+from conftest import StreamingChatClientStub  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_ag_ui._workflow_run import (
     _coerce_content,
@@ -393,6 +398,66 @@ async def test_workflow_run_non_chat_output_maps_to_custom_output_event():
     output_custom = [event for event in events if event.type == "CUSTOM" and event.name == "workflow_output"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert len(output_custom) == 1
     assert output_custom[0].value == {"count": 3}  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
+async def test_workflow_participant_tool_call_emits_standard_tool_events() -> None:
+    """Participant tool calls should use the standard AG-UI tool event lifecycle."""
+
+    @tool
+    def get_weather(city: str) -> str:
+        return f"Sunny in {city}"
+
+    invocation = 0
+
+    async def scripted_stream(messages: Any, options: Any, **kwargs: Any) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal invocation
+        del messages, options, kwargs
+        if invocation == 0:
+            yield ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="weather-call",
+                        name="get_weather",
+                        arguments={"city": "Seattle"},
+                    )
+                ],
+                role=None,
+            )
+        else:
+            yield ChatResponseUpdate(contents=[Content.from_text("The weather is sunny.")], role="assistant")
+        invocation += 1
+
+    participant = Agent(
+        client=StreamingChatClientStub(scripted_stream),
+        name="weather-agent",
+        tools=[get_weather],
+    )
+    workflow = WorkflowBuilder(start_executor=participant, output_from="all").build()
+
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "What is the weather in Seattle?"}]},
+            workflow,
+        )
+    ]
+
+    tool_events = [
+        event
+        for event in events
+        if event.type in {"TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_RESULT", "TOOL_CALL_END"}
+    ]
+    assert [event.type for event in tool_events] == [
+        "TOOL_CALL_START",
+        "TOOL_CALL_ARGS",
+        "TOOL_CALL_END",
+        "TOOL_CALL_RESULT",
+    ]
+    assert tool_events[0].tool_call_name == "get_weather"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert all(event.tool_call_id == "weather-call" for event in tool_events)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert not [
+        event for event in events if event.type == "CUSTOM" and getattr(event, "name", None) == "workflow_output"
+    ]
 
 
 async def test_workflow_run_passthroughs_ag_ui_base_events():
@@ -1131,6 +1196,35 @@ class TestWorkflowPayloadToContents:
         """AgentResponseUpdate with None role returns None."""
         update = AgentResponseUpdate(contents=[Content.from_text(text="hi")], role=None)
         assert _workflow_payload_to_contents(update) is None
+
+    def test_agent_response_update_function_call_without_role(self) -> None:
+        """Function call content passes through without role metadata."""
+        function_call = Content.from_function_call(call_id="call-1", name="search", arguments={"query": "weather"})
+        update = AgentResponseUpdate(contents=[function_call], role=None)
+
+        assert _workflow_payload_to_contents(update) == [function_call]
+
+    def test_agent_response_update_function_result_with_tool_role(self) -> None:
+        """Function result content passes through with the tool role."""
+        function_result = Content.from_function_result(call_id="call-1", result={"temperature": 72})
+        update = AgentResponseUpdate(contents=[function_result], role="tool")
+
+        assert _workflow_payload_to_contents(update) == [function_result]
+
+    def test_agent_response_update_approval_request_without_role(self) -> None:
+        """Approval request content passes through without role metadata."""
+        function_call = Content.from_function_call(call_id="call-1", name="search", arguments={"query": "weather"})
+        approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+        update = AgentResponseUpdate(contents=[approval_request], role=None)
+
+        assert _workflow_payload_to_contents(update) == [approval_request]
+
+    def test_agent_response_update_assistant_text(self) -> None:
+        """Assistant text content continues to pass through."""
+        text = Content.from_text(text="hi")
+        update = AgentResponseUpdate(contents=[text], role="assistant")
+
+        assert _workflow_payload_to_contents(update) == [text]
 
     def test_list_with_none_item(self):
         """List containing None causes None return."""

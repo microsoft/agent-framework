@@ -62,6 +62,7 @@ _WORKFLOW_EVENT_BASE_FIELDS: set[str] = {
 }
 
 _INTERRUPT_CARD_EVENT_NAME = "WorkflowInterruptEvent"
+_FUNCTION_CONTENT_TYPES = {"function_call", "function_result", "function_approval_request"}
 
 
 def _json_schema_for_response_type(response_type: Any) -> dict[str, Any] | None:
@@ -675,16 +676,16 @@ def _workflow_payload_to_contents(payload: Any) -> list[Content] | None:
             return None
         return list(payload.contents or [])
     if isinstance(payload, AgentResponseUpdate):
+        contents = list(payload.contents or [])
         role_field = payload.role
-        if role_field is None:
-            return None
         if isinstance(role_field, str):
             role = role_field
         else:
             role = str(getattr(role_field, "value", role_field))
-        if role != "assistant":
-            return None
-        return list(payload.contents or [])
+        if role == "assistant":
+            return contents
+        function_contents = [content for content in contents if content.type in _FUNCTION_CONTENT_TYPES]
+        return function_contents or None
     if isinstance(payload, AgentResponse):
         return _latest_assistant_contents(list(payload.messages or []))
     if isinstance(payload, list):
