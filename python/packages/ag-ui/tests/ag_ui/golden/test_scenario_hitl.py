@@ -8,8 +8,8 @@ import json
 from typing import Any
 
 from agent_framework import AgentResponseUpdate, Content
-from conftest import StubAgent
-from event_stream import EventStream
+from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+from event_stream import EventStream  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_ag_ui import AgentFrameworkAgent
 
@@ -86,9 +86,7 @@ async def test_hitl_turn1_golden_sequence() -> None:
     assert "confirm_changes" in tool_names
 
     # RUN_FINISHED should have interrupt metadata
-    finished = stream.last("RUN_FINISHED")
-    interrupt = getattr(finished, "interrupt", None)
-    assert interrupt is not None, "Expected interrupt in RUN_FINISHED"
+    interrupt = stream.run_finished_interrupts()
     assert len(interrupt) > 0
 
 
@@ -192,5 +190,5 @@ async def test_hitl_turn2_resume_with_approval() -> None:
 
     # RUN_FINISHED should NOT have interrupt (approval completed)
     finished = stream.last("RUN_FINISHED")
-    interrupt = getattr(finished, "interrupt", None)
-    assert not interrupt, f"Expected no interrupt after approval, got {interrupt}"
+    dumped = finished.model_dump(by_alias=True, exclude_none=True)
+    assert "outcome" not in dumped, f"Expected no interrupt after approval, got {dumped.get('outcome')}"

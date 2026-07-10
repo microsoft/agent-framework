@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncGenerator, Awaitable, MutableSequence
 from typing import Any
 
+from ag_ui.core import Interrupt, ResumeEntry
 from agent_framework import (
     ChatOptions,
     ChatResponse,
@@ -37,15 +38,19 @@ class StubAGUIChatClient(AGUIChatClient):
         """Expose message conversion helper."""
         return self._convert_messages_to_agui_format(messages)
 
-    def get_thread_id(self, options: dict[str, Any]) -> str:
+    def get_thread_id(self, options: ChatOptions[Any] | dict[str, Any] | None) -> str:
         """Expose thread id helper."""
-        return self._get_thread_id(options)
+        return self._get_thread_id(options)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     def inner_get_response(
-        self, *, messages: MutableSequence[Message], options: dict[str, Any], stream: bool = False
+        self,
+        *,
+        messages: MutableSequence[Message],
+        options: ChatOptions[Any] | dict[str, Any] | None,
+        stream: bool = False,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Proxy to protected response call."""
-        return self._inner_get_response(messages=messages, options=options, stream=stream)
+        return self._inner_get_response(messages=messages, options=options, stream=stream)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
 
 class TestAGUIChatClient:
@@ -177,7 +182,9 @@ class TestAGUIChatClient:
         chat_options = ChatOptions()
 
         updates: list[ChatResponseUpdate] = []
-        async for update in client._inner_get_response(messages=messages, stream=True, options=chat_options):
+        stream = client.inner_get_response(messages=messages, stream=True, options=chat_options)
+        assert isinstance(stream, ResponseStream)
+        async for update in stream:
             updates.append(update)
 
         assert len(updates) == 4
@@ -207,7 +214,7 @@ class TestAGUIChatClient:
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         messages = [Message(role="user", contents=["Test message"])]
-        chat_options = {}
+        chat_options: dict[str, Any] = {}
 
         response = await client.inner_get_response(messages=messages, options=chat_options)
 
@@ -418,7 +425,9 @@ class TestAGUIChatClient:
 
         messages = [Message(role="user", contents=["Test"])]
         updates: list[ChatResponseUpdate] = []
-        async for update in client._inner_get_response(messages=messages, stream=True, options={"tools": [my_tool]}):
+        stream = client.inner_get_response(messages=messages, stream=True, options={"tools": [my_tool]})
+        assert isinstance(stream, ResponseStream)
+        async for update in stream:
             updates.append(update)
 
         # Find the function_call content - it should have agui_thread_id
@@ -435,7 +444,9 @@ class TestAGUIChatClient:
     async def test_interrupt_options_transmission(self, monkeypatch: MonkeyPatch) -> None:
         """Interrupt option fields are forwarded to the HTTP service."""
         available_interrupts = [{"id": "req_1", "type": "request_info"}]
+        expected_available_interrupts = [{"id": "req_1", "reason": "input_required"}]
         resume_payload = {"interrupts": [{"id": "req_1", "value": "approved"}]}
+        expected_resume_payload = [{"interruptId": "req_1", "status": "resolved", "payload": "approved"}]
 
         mock_events = [
             {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
@@ -443,8 +454,8 @@ class TestAGUIChatClient:
         ]
 
         async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
-            assert kwargs.get("available_interrupts") == available_interrupts
-            assert kwargs.get("resume") == resume_payload
+            assert kwargs.get("available_interrupts") == expected_available_interrupts
+            assert kwargs.get("resume") == expected_resume_payload
             for event in mock_events:
                 yield event
 
@@ -458,4 +469,48 @@ class TestAGUIChatClient:
         }
 
         response = await client.inner_get_response(messages=messages, options=options)
+        assert response is not None
+
+    async def test_typed_interrupt_options_forward_canonical_protocol_shape(self, monkeypatch: MonkeyPatch) -> None:
+        """Typed interrupt options are forwarded as canonical protocol JSON."""
+        mock_events = [
+            {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+            {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+        ]
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            assert kwargs.get("available_interrupts") == [
+                {
+                    "id": "approval_1",
+                    "reason": "tool_call",
+                    "toolCallId": "call_1",
+                    "responseSchema": {"type": "object"},
+                }
+            ]
+            assert kwargs.get("resume") == [
+                {"interruptId": "approval_1", "status": "resolved", "payload": {"approved": True}}
+            ]
+            for event in mock_events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        options: dict[str, Any] = {
+            "available_interrupts": [
+                Interrupt(
+                    id="approval_1",
+                    reason="tool_call",
+                    tool_call_id="call_1",
+                    response_schema={"type": "object"},
+                )
+            ],
+            "resume": [ResumeEntry(interrupt_id="approval_1", status="resolved", payload={"approved": True})],
+        }
+
+        response = await client.inner_get_response(
+            messages=[Message(role="user", contents=["continue"])],
+            options=options,
+        )
+
         assert response is not None

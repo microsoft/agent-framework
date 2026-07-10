@@ -16,6 +16,7 @@ from agent_framework_durabletask import (
     DurableAIAgentClient,
     DurableAIAgentOrchestrationContext,
     DurableAIAgentWorker,
+    DurableWorkflowClient,
 )
 
 __all__ = [
@@ -29,4 +30,5 @@ __all__ = [
     "DurableAIAgentClient",
     "DurableAIAgentOrchestrationContext",
     "DurableAIAgentWorker",
+    "DurableWorkflowClient",
 ]

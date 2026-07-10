@@ -43,7 +43,7 @@ def test_todo_item_round_trips_with_value_equality() -> None:
 
     item = TodoItem.from_dict(raw_item)
 
-    assert item == TodoItem(**raw_item)
+    assert item == TodoItem(**raw_item)  # type: ignore[arg-type]
     assert item.to_dict() == raw_item
     assert json.loads(item.to_json()) == raw_item
     assert "TodoItem(" in repr(item)
@@ -203,12 +203,12 @@ async def test_todo_provider_evicts_locks_when_session_is_garbage_collected() ->
 
     provider = TodoProvider()
     session = AgentSession(session_id="session-1")
-    provider._mutation_lock(session)  # type: ignore[reportPrivateUsage]
-    assert len(provider._mutation_locks) == 1  # type: ignore[reportPrivateUsage]
+    provider._mutation_lock(session)  # pyright: ignore[reportPrivateUsage]
+    assert len(provider._mutation_locks) == 1  # pyright: ignore[reportPrivateUsage]
 
     del session
     gc.collect()
-    assert len(provider._mutation_locks) == 0  # type: ignore[reportPrivateUsage]
+    assert len(provider._mutation_locks) == 0  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_todo_file_store_rejects_session_path_traversal(tmp_path: Path) -> None:
@@ -245,7 +245,7 @@ async def test_todo_provider_runs_with_file_store(tmp_path: Path, chat_client_ba
     provider = TodoProvider(store=TodoFileStore(tmp_path))
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Track this work"])],
     )
@@ -255,14 +255,14 @@ async def test_todo_provider_runs_with_file_store(tmp_path: Path, chat_client_ba
     add_todos = _tool_by_name(tools, "todos_add")
     get_all_todos = _tool_by_name(tools, "todos_get_all")
 
-    await add_todos.invoke(arguments={"todos": [{"title": "Persist me"}]})
+    await add_todos.invoke(arguments={"todos": [{"title": "Persist me"}]})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     state_path = tmp_path / "session-1" / "todos.todo.json"
     assert state_path.exists()
     persisted = json.loads(state_path.read_text(encoding="utf-8"))
     assert persisted["items"] == [{"id": 1, "title": "Persist me", "description": None, "is_complete": False}]
     assert persisted["next_id"] == 2
 
-    get_all_result = await get_all_todos.invoke()
+    get_all_result = await get_all_todos.invoke()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert json.loads(get_all_result[0].text) == [
         {"id": 1, "title": "Persist me", "description": None, "is_complete": False}
     ]
@@ -276,7 +276,7 @@ async def test_todo_provider_tools_manage_session_state(
     provider = TodoProvider()
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Track this work"])],
     )
@@ -289,7 +289,7 @@ async def test_todo_provider_tools_manage_session_state(
     get_remaining_todos = _tool_by_name(tools, "todos_get_remaining")
     get_all_todos = _tool_by_name(tools, "todos_get_all")
 
-    add_result = await add_todos.invoke(
+    add_result = await add_todos.invoke(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         arguments={
             "todos": [
                 {"title": "  Write tests  ", "description": "  Cover stores  "},
@@ -302,18 +302,18 @@ async def test_todo_provider_tools_manage_session_state(
         {"id": 2, "title": "Ship feature", "description": None, "is_complete": False},
     ]
 
-    complete_result = await complete_todos.invoke(arguments={"items": [{"id": 1, "reason": "Tests written"}]})
+    complete_result = await complete_todos.invoke(arguments={"items": [{"id": 1, "reason": "Tests written"}]})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert json.loads(complete_result[0].text) == {"completed": 1}
 
-    remaining_result = await get_remaining_todos.invoke()
+    remaining_result = await get_remaining_todos.invoke()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert json.loads(remaining_result[0].text) == [
         {"id": 2, "title": "Ship feature", "description": None, "is_complete": False}
     ]
 
-    remove_result = await remove_todos.invoke(arguments={"ids": [2]})
+    remove_result = await remove_todos.invoke(arguments={"ids": [2]})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert json.loads(remove_result[0].text) == {"removed": 1}
 
-    get_all_result = await get_all_todos.invoke()
+    get_all_result = await get_all_todos.invoke()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert json.loads(get_all_result[0].text) == [
         {"id": 1, "title": "Write tests", "description": "Cover stores", "is_complete": True}
     ]
@@ -327,7 +327,7 @@ async def test_todo_provider_serializes_concurrent_mutations(
     provider = TodoProvider()
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Track this work"])],
     )
@@ -338,15 +338,15 @@ async def test_todo_provider_serializes_concurrent_mutations(
     complete_todos = _tool_by_name(tools, "todos_complete")
     get_all_todos = _tool_by_name(tools, "todos_get_all")
 
-    await add_todos.invoke(arguments={"todos": [{"title": f"Existing {index}"} for index in range(1, 6)]})
+    await add_todos.invoke(arguments={"todos": [{"title": f"Existing {index}"} for index in range(1, 6)]})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     await asyncio.gather(
-        add_todos.invoke(arguments={"todos": [{"title": "Add A1"}, {"title": "Add A2"}]}),
-        add_todos.invoke(arguments={"todos": [{"title": "Add B1"}, {"title": "Add B2"}]}),
-        complete_todos.invoke(arguments={"items": [{"id": i, "reason": "Done"} for i in range(1, 6)]}),
+        add_todos.invoke(arguments={"todos": [{"title": "Add A1"}, {"title": "Add A2"}]}),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        add_todos.invoke(arguments={"todos": [{"title": "Add B1"}, {"title": "Add B2"}]}),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        complete_todos.invoke(arguments={"items": [{"id": i, "reason": "Done"} for i in range(1, 6)]}),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     )
 
-    get_all_result = await get_all_todos.invoke()
+    get_all_result = await get_all_todos.invoke()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     payload = json.loads(get_all_result[0].text)
     ids = [item["id"] for item in payload]
 
@@ -368,10 +368,10 @@ async def test_todo_provider_serializes_concurrent_mutations(
 
 def test_todo_harness_classes_are_marked_experimental() -> None:
     """Todo harness public classes should expose HARNESS experimental metadata."""
-    assert TodoStore.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert TodoItem.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert TodoInput.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert TodoSessionStore.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert TodoFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert TodoProvider.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert ".. warning:: Experimental" in TodoProvider.__doc__
+    assert TodoStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert TodoItem.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert TodoInput.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert TodoSessionStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert TodoFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert TodoProvider.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert ".. warning:: Experimental" in TodoProvider.__doc__  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]

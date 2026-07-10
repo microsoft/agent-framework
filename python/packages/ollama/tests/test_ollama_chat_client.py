@@ -2,11 +2,12 @@
 
 import os
 from collections.abc import AsyncIterable
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
+    Agent,
     BaseChatClient,
     ChatResponseUpdate,
     Content,
@@ -19,6 +20,7 @@ from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
 from openai import AsyncStream
+from pydantic import BaseModel
 from pytest import fixture
 
 from agent_framework_ollama import OllamaChatClient
@@ -73,6 +75,12 @@ def chat_history() -> list[Message]:
     return []
 
 
+def test_agent_accepts_ollama_chat_client(ollama_unit_test_env: dict[str, str]) -> None:
+    client = OllamaChatClient()
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
+
+
 @fixture
 def mock_streaming_chat_completion_response() -> AsyncStream[OllamaChatResponse]:
     response = OllamaChatResponse(
@@ -123,7 +131,7 @@ def mock_streaming_chat_completion_tool_call() -> AsyncStream[OllamaChatResponse
         message=OllamaMessage(
             content="",
             role="assistant",
-            tool_calls=[{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}],
+            tool_calls=cast(Any, [{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}]),
         ),
         model="test",
     )
@@ -138,7 +146,7 @@ def mock_chat_completion_tool_call() -> OllamaChatResponse:
         message=OllamaMessage(
             content="",
             role="assistant",
-            tool_calls=[{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}],
+            tool_calls=cast(Any, [{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}]),
         ),
         model="test",
         created_at="2024-01-01T00:00:00Z",
@@ -255,6 +263,71 @@ async def test_cmc(
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_maps_done_reason_to_finish_reason(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    mock_chat.return_value = OllamaChatResponse(
+        message=OllamaMessage(content="test", role="assistant"),
+        model="test",
+        eval_count=2,
+        prompt_eval_count=3,
+        done_reason="length",
+    )
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient()
+    result = await ollama_client.get_response(messages=chat_history)
+
+    assert result.finish_reason == "length"
+    assert result.usage_details == {
+        "input_token_count": 3,
+        "output_token_count": 2,
+        "total_token_count": 5,
+    }
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_leaves_unknown_done_reason_unset(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    mock_chat.return_value = OllamaChatResponse(
+        message=OllamaMessage(content="test", role="assistant"),
+        model="test",
+        done_reason="load",
+    )
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient()
+    result = await ollama_client.get_response(messages=chat_history)
+
+    assert result.finish_reason is None
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_omits_usage_when_token_counts_are_missing(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    mock_chat.return_value = OllamaChatResponse(
+        message=OllamaMessage(content="test", role="assistant"),
+        model="test",
+        done_reason="stop",
+    )
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient()
+    result = await ollama_client.get_response(messages=chat_history)
+
+    assert result.finish_reason == "stop"
+    assert not result.usage_details
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
 async def test_cmc_response_format_dict(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
@@ -282,6 +355,43 @@ async def test_cmc_response_format_dict(
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_response_format_pydantic_model(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    """A Pydantic model class is converted to a JSON schema dict for Ollama's ``format``.
+
+    Ollama only accepts ``''``, ``'json'``, or a JSON-schema dict for ``format``; a model
+    class would fail request construction. The class is still kept for typed parsing of
+    the response, matching OpenAI/Foundry behavior.
+    """
+
+    class Answer(BaseModel):
+        answer: str
+
+    mock_chat.return_value = OllamaChatResponse(
+        message=OllamaMessage(content='{"answer": "test"}', role="assistant"),
+        model="test",
+        eval_count=1,
+        prompt_eval_count=1,
+        created_at="2024-01-01T00:00:00Z",
+    )
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient()
+    result = await ollama_client.get_response(messages=chat_history, options={"response_format": Answer})
+
+    # Outgoing ``format`` must be the JSON schema dict, not the model class.
+    assert mock_chat.await_args is not None
+    assert mock_chat.await_args.kwargs["format"] == Answer.model_json_schema()
+
+    # Typed parsing still works because the original model class is preserved.
+    assert isinstance(result.value, Answer)
+    assert result.value.answer == "test"
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
 async def test_cmc_reasoning(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
@@ -294,7 +404,7 @@ async def test_cmc_reasoning(
     ollama_client = OllamaChatClient()
     result = await ollama_client.get_response(messages=chat_history)
 
-    reasoning = "".join(c.text for c in result.messages.pop().contents if c.type == "text_reasoning")
+    reasoning = "".join(cast("str", c.text) for c in result.messages.pop().contents if c.type == "text_reasoning")
     assert reasoning == "test"
 
 
@@ -336,6 +446,72 @@ async def test_cmc_streaming(
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_streaming_maps_done_reason_and_usage(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    response = OllamaChatResponse(
+        message=OllamaMessage(content="test", role="assistant"),
+        model="test",
+        done=True,
+        done_reason="stop",
+        eval_count=4,
+        prompt_eval_count=6,
+        created_at="2024-01-01T00:00:00Z",
+    )
+    stream = MagicMock(spec=AsyncStream)
+    stream.__aiter__.return_value = [response]
+    mock_chat.return_value = stream
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient()
+    result = ollama_client.get_response(messages=chat_history, stream=True)
+    async for _ in result:
+        pass
+    final_response = await result.get_final_response()
+
+    assert final_response.text == "test"
+    assert final_response.finish_reason == "stop"
+    assert final_response.usage_details == {
+        "input_token_count": 6,
+        "output_token_count": 4,
+        "total_token_count": 10,
+    }
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_streaming_ignores_done_reason_and_usage_before_final_chunk(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    response = OllamaChatResponse(
+        message=OllamaMessage(content="test", role="assistant"),
+        model="test",
+        done=False,
+        done_reason="stop",
+        eval_count=4,
+        prompt_eval_count=6,
+        created_at="2024-01-01T00:00:00Z",
+    )
+    stream = MagicMock(spec=AsyncStream)
+    stream.__aiter__.return_value = [response]
+    mock_chat.return_value = stream
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient()
+    result = ollama_client.get_response(messages=chat_history, stream=True)
+    async for _ in result:
+        pass
+    final_response = await result.get_final_response()
+
+    assert final_response.text == "test"
+    assert final_response.finish_reason is None
+    assert final_response.usage_details is None
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
 async def test_cmc_streaming_reasoning(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
@@ -349,7 +525,7 @@ async def test_cmc_streaming_reasoning(
     result = ollama_client.get_response(messages=chat_history, stream=True)
 
     async for chunk in result:
-        reasoning = "".join(c.text for c in chunk.contents if c.type == "text_reasoning")
+        reasoning = "".join(cast("str", c.text) for c in chunk.contents if c.type == "text_reasoning")
         assert reasoning == "test"
 
 
@@ -473,7 +649,7 @@ async def test_cmc_with_invalid_data_content_media_type(
         )
 
         ollama_client = OllamaChatClient()
-        ollama_client.client.chat = AsyncMock(return_value=mock_streaming_chat_completion_response)
+        ollama_client.client.chat = AsyncMock(return_value=mock_streaming_chat_completion_response)  # type: ignore[method-assign]
 
         await ollama_client.get_response(messages=chat_history)
 

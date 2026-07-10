@@ -321,6 +321,189 @@ public sealed class DefaultMcpToolHandlerTests
 
     #endregion
 
+    #region ComputeHeadersHash Tests
+
+    [Fact]
+    public void ComputeHeadersHash_WithNullHeaders_ReturnsEmptyString()
+    {
+        // Act
+        string result = DefaultMcpToolHandler.ComputeHeadersHash(null);
+
+        // Assert
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ComputeHeadersHash_WithEmptyHeaders_ReturnsEmptyString()
+    {
+        // Act
+        string result = DefaultMcpToolHandler.ComputeHeadersHash(new Dictionary<string, string>());
+
+        // Assert
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ComputeHeadersHash_SameHeadersDifferentOrder_ReturnsSameHash()
+    {
+        // Arrange
+        Dictionary<string, string> headers1 = new()
+        {
+            ["Authorization"] = "Bearer token123",
+            ["X-Custom"] = "value1"
+        };
+        Dictionary<string, string> headers2 = new()
+        {
+            ["X-Custom"] = "value1",
+            ["Authorization"] = "Bearer token123"
+        };
+
+        // Act
+        string hash1 = DefaultMcpToolHandler.ComputeHeadersHash(headers1);
+        string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
+
+        // Assert
+        hash1.Should().Be(hash2);
+    }
+
+    [Fact]
+    public void ComputeHeadersHash_SameKeysDifferentCaseKeys_ReturnsSameHash()
+    {
+        // Arrange — RFC 7230: header names are case-insensitive
+        Dictionary<string, string> headers1 = new() { ["Authorization"] = "Bearer token" };
+        Dictionary<string, string> headers2 = new() { ["authorization"] = "Bearer token" };
+
+        // Act
+        string hash1 = DefaultMcpToolHandler.ComputeHeadersHash(headers1);
+        string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
+
+        // Assert
+        hash1.Should().Be(hash2);
+    }
+
+    [Fact]
+    public void ComputeHeadersHash_SameKeysDifferentCaseValues_ReturnsDifferentHash()
+    {
+        // Arrange — RFC 7235: credentials are case-sensitive
+        Dictionary<string, string> headers1 = new() { ["Authorization"] = "Bearer ABC" };
+        Dictionary<string, string> headers2 = new() { ["Authorization"] = "Bearer abc" };
+
+        // Act
+        string hash1 = DefaultMcpToolHandler.ComputeHeadersHash(headers1);
+        string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
+
+        // Assert
+        hash1.Should().NotBe(hash2);
+    }
+
+    [Fact]
+    public void ComputeHeadersHash_DifferentHeaders_ReturnsDifferentHash()
+    {
+        // Arrange
+        Dictionary<string, string> headers1 = new() { ["Authorization"] = "Bearer token1" };
+        Dictionary<string, string> headers2 = new() { ["Authorization"] = "Bearer token2" };
+
+        // Act
+        string hash1 = DefaultMcpToolHandler.ComputeHeadersHash(headers1);
+        string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
+
+        // Assert
+        hash1.Should().NotBe(hash2);
+    }
+
+    #endregion
+
+    #region Cache Key Discrimination Tests
+
+    // These tests exercise BuildCacheKey directly because the integration path
+    // (InvokeToolAsync against a fake server) doesn't surface cache-hit behavior
+    // without standing up a real MCP server — McpClient.CreateAsync fails before
+    // _clients[key] = newClient runs, so nothing ever gets cached.
+    // Tuple equality on the returned 4-tuple verifies that the dimensions
+    // collectively discriminate cache entries.
+
+    [Fact]
+    public void BuildCacheKey_SameInputs_ReturnsEqualKeys()
+    {
+        // Arrange
+        Dictionary<string, string> headers = new() { ["Authorization"] = "Bearer token" };
+
+        // Act
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "conn", headers);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "conn", headers);
+
+        // Assert
+        key1.Should().Be(key2);
+    }
+
+    [Fact]
+    public void BuildCacheKey_DifferentConnectionName_ReturnsDifferentKeys()
+    {
+        // Act
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "connection-a", null);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "connection-b", null);
+
+        // Assert
+        key1.Should().NotBe(key2);
+        key1.Connection.Should().Be("connection-a");
+        key2.Connection.Should().Be("connection-b");
+    }
+
+    [Fact]
+    public void BuildCacheKey_DifferentServerLabel_ReturnsDifferentKeys()
+    {
+        // Act
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label-a", null, null);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label-b", null, null);
+
+        // Assert
+        key1.Should().NotBe(key2);
+        key1.Label.Should().Be("label-a");
+        key2.Label.Should().Be("label-b");
+    }
+
+    [Fact]
+    public void BuildCacheKey_CaseSensitiveUrlPath_ReturnsDifferentKeys()
+    {
+        // Arrange — RFC 3986: URL path is case-sensitive
+        // Act
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/Tools", null, null, null);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/tools", null, null, null);
+
+        // Assert
+        key1.Should().NotBe(key2);
+    }
+
+    [Fact]
+    public void BuildCacheKey_HeaderValuesCaseSensitive_ReturnsDifferentKeys()
+    {
+        // Arrange — RFC 7235: credentials are case-sensitive
+        Dictionary<string, string> headers1 = new() { ["Authorization"] = "Bearer ABC" };
+        Dictionary<string, string> headers2 = new() { ["Authorization"] = "Bearer abc" };
+
+        // Act
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, headers1);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, headers2);
+
+        // Assert — header value case must propagate into the cache key
+        key1.Should().NotBe(key2);
+        key1.HeadersHash.Should().NotBe(key2.HeadersHash);
+    }
+
+    [Fact]
+    public void BuildCacheKey_NullLabelAndConnection_NormalizesToEmptyString()
+    {
+        // Act
+        var key = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, null);
+
+        // Assert — verifies null-safety contract callers rely on
+        key.Label.Should().BeEmpty();
+        key.Connection.Should().BeEmpty();
+        key.HeadersHash.Should().BeEmpty();
+    }
+
+    #endregion
+
     #region Reserved Tools/List Tests
 
     [Fact]
@@ -750,6 +933,180 @@ public sealed class DefaultMcpToolHandlerTests
         result.AdditionalProperties.Should().NotBeNull();
         result.AdditionalProperties!.Should().ContainKey("traceId");
         result.AdditionalProperties.Should().ContainKey("priority");
+    }
+
+    #endregion
+
+    #region Origin Pinning Tests
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_SameOrigin_RetainsAuthorization()
+    {
+        // Arrange
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com/mcp/message");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert — same origin, credential is preserved
+        request.Headers.Contains("Authorization").Should().BeTrue();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_DifferentHost_RemovesAuthorization()
+    {
+        // Arrange — server-advertised endpoint on an attacker origin
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://attacker.example/collect");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert — credential must not cross the origin boundary
+        request.Headers.Contains("Authorization").Should().BeFalse();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_DifferentPort_RemovesAuthorization()
+    {
+        // Arrange — same host but a different port is a different origin
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com:8443/mcp");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert
+        request.Headers.Contains("Authorization").Should().BeFalse();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_ExplicitDefaultPort_RetainsAuthorization()
+    {
+        // Arrange — pinned endpoint carries an explicit :443 while the request omits it; these are
+        // the same origin and Uri.Compare must normalize the default port rather than strip.
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com/mcp/message");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com:443/mcp"));
+
+        // Assert — explicit vs implicit default port is the same origin
+        request.Headers.Contains("Authorization").Should().BeTrue();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_RelativeRequestUri_RetainsAuthorization()
+    {
+        // Arrange — a relative URI resolves against the client's base address (the pinned origin) and
+        // therefore can never target a foreign origin. It must not throw and must retain credentials.
+        using HttpRequestMessage request = new(HttpMethod.Post, new Uri("/mcp/message", UriKind.Relative));
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        Action act = () => OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert — does not throw and leaves the credential in place
+        act.Should().NotThrow();
+        request.Headers.Contains("Authorization").Should().BeTrue();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_DifferentScheme_RemovesAuthorization()
+    {
+        // Arrange — downgrade to http is a different origin (and would leak over plaintext)
+        using HttpRequestMessage request = new(HttpMethod.Post, "http://trusted.example.com/mcp");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert
+        request.Headers.Contains("Authorization").Should().BeFalse();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_CrossOrigin_RemovesCookieAndProxyAuthorization()
+    {
+        // Arrange
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://attacker.example/collect");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+        request.Headers.TryAddWithoutValidation("Cookie", "session=abc");
+        request.Headers.TryAddWithoutValidation("Proxy-Authorization", "Bearer proxy-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert — all credential-bearing headers are stripped
+        request.Headers.Contains("Authorization").Should().BeFalse();
+        request.Headers.Contains("Cookie").Should().BeFalse();
+        request.Headers.Contains("Proxy-Authorization").Should().BeFalse();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_CrossOrigin_PreservesNonCredentialHeaders()
+    {
+        // Arrange
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://attacker.example/collect");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+        request.Headers.TryAddWithoutValidation("X-Trace-Id", "trace-123");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert — only credential headers are removed; other headers are untouched
+        request.Headers.Contains("Authorization").Should().BeFalse();
+        request.Headers.Contains("X-Trace-Id").Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task OriginPinningHandler_CrossOriginRequest_DoesNotForwardAuthorizationAsync()
+    {
+        // Arrange — capture what the inner handler actually receives on the wire
+        CapturingHandler inner = new();
+        using OriginPinningHandler pinning = new(new Uri("https://trusted.example.com/mcp")) { InnerHandler = inner };
+        using HttpMessageInvoker invoker = new(pinning);
+
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://attacker.example/collect");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        using HttpResponseMessage response = await invoker.SendAsync(request, CancellationToken.None);
+
+        // Assert — the credential never reached the inner handler for the foreign origin
+        response.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
+        inner.LastRequestHadAuthorization.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task OriginPinningHandler_SameOriginRequest_ForwardsAuthorizationAsync()
+    {
+        // Arrange
+        CapturingHandler inner = new();
+        using OriginPinningHandler pinning = new(new Uri("https://trusted.example.com/mcp")) { InnerHandler = inner };
+        using HttpMessageInvoker invoker = new(pinning);
+
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com/mcp/message");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        using HttpResponseMessage response = await invoker.SendAsync(request, CancellationToken.None);
+
+        // Assert — same-origin credential flows through normally
+        response.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
+        inner.LastRequestHadAuthorization.Should().BeTrue();
+    }
+
+    private sealed class CapturingHandler : HttpMessageHandler
+    {
+        public bool LastRequestHadAuthorization { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            this.LastRequestHadAuthorization = request.Headers.Contains("Authorization");
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK));
+        }
     }
 
     #endregion

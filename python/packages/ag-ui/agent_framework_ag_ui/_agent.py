@@ -2,14 +2,15 @@
 
 """AgentFrameworkAgent wrapper for AG-UI protocol."""
 
-from collections import OrderedDict
 from collections.abc import AsyncGenerator
 from typing import Any, cast
 
 from ag_ui.core import BaseEvent
 from agent_framework import SupportsAgentRun
 
-from ._agent_run import run_agent_stream
+from ._agent_run import PendingApprovalEntry, PendingApprovalKey, run_agent_stream
+from ._approval_state import InMemoryAGUIApprovalStateStore
+from ._snapshots import AGUIThreadSnapshotStore
 
 
 class AgentConfig:
@@ -21,6 +22,7 @@ class AgentConfig:
         predict_state_config: dict[str, dict[str, str]] | None = None,
         use_service_session: bool = False,
         require_confirmation: bool = True,
+        snapshot_store: AGUIThreadSnapshotStore | None = None,
     ):
         """Initialize agent configuration.
 
@@ -29,11 +31,14 @@ class AgentConfig:
             predict_state_config: Configuration for predictive state updates
             use_service_session: Whether the agent session is service-managed
             require_confirmation: Whether predictive updates require user confirmation before applying
+            snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence remains inactive unless
+                endpoint setup also provides an explicit Snapshot Scope resolver.
         """
         self.state_schema = self._normalize_state_schema(state_schema)
         self.predict_state_config = predict_state_config or {}
         self.use_service_session = use_service_session
         self.require_confirmation = require_confirmation
+        self.snapshot_store = snapshot_store
 
     @staticmethod
     def _normalize_state_schema(state_schema: Any | None) -> dict[str, Any]:
@@ -53,7 +58,7 @@ class AgentConfig:
             base_model_type = None
 
         if base_model_type is not None and isinstance(state_schema, base_model_type):
-            schema_dict = state_schema.__class__.model_json_schema()  # type: ignore[union-attr]
+            schema_dict = state_schema.__class__.model_json_schema()
             return schema_dict.get("properties", {}) or {}
 
         if base_model_type is not None and isinstance(state_schema, type) and issubclass(state_schema, base_model_type):
@@ -79,6 +84,7 @@ class AgentFrameworkAgent:
         predict_state_config: dict[str, dict[str, str]] | None = None,
         require_confirmation: bool = True,
         use_service_session: bool = False,
+        snapshot_store: AGUIThreadSnapshotStore | None = None,
     ):
         """Initialize the AG-UI compatible agent wrapper.
 
@@ -90,6 +96,8 @@ class AgentFrameworkAgent:
             predict_state_config: Configuration for predictive state updates
             require_confirmation: Whether predictive updates require user confirmation before applying
             use_service_session: Whether the agent session is service-managed
+            snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence remains inactive unless
+                endpoint setup also provides an explicit Snapshot Scope resolver.
         """
         self.agent = agent
         self.name = name or getattr(agent, "name", "agent")
@@ -100,15 +108,21 @@ class AgentFrameworkAgent:
             predict_state_config=predict_state_config,
             use_service_session=use_service_session,
             require_confirmation=require_confirmation,
+            snapshot_store=snapshot_store,
         )
 
-        # Server-side registry of pending approval requests.
-        # Keys are "{thread_id}:{request_id}", values are the function name.
-        # Populated when approval requests are emitted; consumed when responses arrive.
-        # Prevents bypass, function name spoofing, and replay attacks.
-        # Bounded to prevent unbounded growth from abandoned approval requests.
-        self._pending_approvals: OrderedDict[str, str] = OrderedDict()
-        self._pending_approvals_max_size: int = 10_000
+        # Server-side Approval State. Populated when approval requests are emitted
+        # and consumed when resume decisions arrive.
+        self._approval_state_store = InMemoryAGUIApprovalStateStore()
+        self._pending_approvals = cast(
+            dict[PendingApprovalKey, PendingApprovalEntry],
+            self._approval_state_store.pending_approvals,
+        )
+
+    @property
+    def snapshot_store(self) -> AGUIThreadSnapshotStore | None:
+        """Configured AG-UI Thread Snapshot store, if any."""
+        return self.config.snapshot_store
 
     async def run(
         self,
@@ -123,6 +137,10 @@ class AgentFrameworkAgent:
             AG-UI events
         """
         async for event in run_agent_stream(
-            input_data, self.agent, self.config, pending_approvals=self._pending_approvals
+            input_data,
+            self.agent,
+            self.config,
+            pending_approvals=self._pending_approvals,
+            approval_state_store=self._approval_state_store,
         ):
             yield event

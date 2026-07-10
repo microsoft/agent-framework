@@ -111,12 +111,8 @@ class BackgroundTaskInfo(SerializationMixin):
 class _RuntimeState:
     """Non-serializable per-session runtime state for background tasks."""
 
-    in_flight_tasks: dict[int, asyncio.Task[AgentResponse[Any]]] = field(
-        default_factory=lambda: {}  # pyright: ignore[reportUnknownLambdaType]
-    )
-    background_sessions: dict[int, AgentSession] = field(
-        default_factory=lambda: {}  # pyright: ignore[reportUnknownLambdaType]
-    )
+    in_flight_tasks: dict[int, asyncio.Task[AgentResponse[Any]]] = field(default_factory=lambda: {})
+    background_sessions: dict[int, AgentSession] = field(default_factory=lambda: {})
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +253,15 @@ class BackgroundAgentsProvider(ContextProvider):
     - ``background_agents_get_all_tasks`` — List all background tasks with their IDs, statuses, and descriptions.
     - ``background_agents_continue_task`` — Send follow-up input to a completed task's session to resume work.
     - ``background_agents_clear_completed_task`` — Remove a completed task and release its session.
+
+    Security considerations:
+        The agents passed to the constructor are delegated arbitrary work by the parent agent — the
+        parent sends them text input (which may include content derived from the parent's own
+        untrusted context) and receives back whatever text they produce. A compromised or malicious
+        supplied agent (for example, one with a compromised system prompt, tools, or upstream model)
+        could exfiltrate that input to an external system, or return adversarial output designed to
+        influence the parent agent via indirect prompt injection once its result is retrieved. Only
+        supply background agents you have vetted and trust with the data the parent may pass to them.
     """
 
     def __init__(
@@ -271,6 +276,10 @@ class BackgroundAgentsProvider(ContextProvider):
         Args:
             agents: Collection of background agents available for delegation.
                 Each agent must have a non-empty, unique name (case-insensitive).
+                **Security:** each supplied agent should be vetted and trusted, since it will receive
+                text input from the parent agent and its output is fed back into the parent's
+                context — see the class-level security considerations for the exfiltration and
+                prompt-injection risks of untrusted agents.
 
         Keyword Args:
             source_id: Unique source ID for serializable task state in session.

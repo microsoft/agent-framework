@@ -61,7 +61,6 @@ class ExperimentalFeature(str, Enum):
     MCP_LONG_RUNNING_TASKS = "MCP_LONG_RUNNING_TASKS"
     MCP_SKILLS = "MCP_SKILLS"
     PROGRESSIVE_TOOLS = "PROGRESSIVE_TOOLS"
-    SKILLS = "SKILLS"
     TO_PROMPT_AGENT = "TO_PROMPT_AGENT"
 
 
@@ -226,15 +225,16 @@ def _resolve_user_frame() -> tuple[str, int, str] | None:
 def _warn_on_feature_use(
     *,
     stage: FeatureStageName,
-    feature_id: str,
+    feature_id: str | Enum,
     object_name: str,
     category: type[Warning],
 ) -> None:
-    warning_key = (category, feature_id)
+    normalized_feature_id = _normalize_feature_id(feature_id)
+    warning_key = (category, normalized_feature_id)
     if warning_key in _WARNED_FEATURES:
         return
 
-    message = _build_stage_warning_message(stage=stage, feature_id=feature_id, object_name=object_name)
+    message = _build_stage_warning_message(stage=stage, feature_id=normalized_feature_id, object_name=object_name)
     user_frame = _resolve_user_frame()
     if user_frame is None:
         # Last-resort fallback: emit at the immediate caller of this helper.
@@ -279,7 +279,7 @@ def _add_runtime_warning(
                 raise TypeError(f"{cls.__name__}() takes no arguments")
             return original_new(cls)
 
-        experimental_class.__new__ = staticmethod(__new__)  # type: ignore[assignment]
+        experimental_class.__new__ = staticmethod(__new__)
 
         original_init_subclass: Any = experimental_class.__init_subclass__
         if isinstance(original_init_subclass, MethodType):
@@ -308,7 +308,7 @@ def _add_runtime_warning(
                 )
                 return original_init_subclass(*args, **kwargs)
 
-            experimental_class.__init_subclass__ = init_subclass_wrapper  # type: ignore[assignment]
+            experimental_class.__init_subclass__ = init_subclass_wrapper
 
         return cast(FeatureStageT, experimental_class)
 

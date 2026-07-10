@@ -22,7 +22,6 @@ from agent_framework import (
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework.orchestrations import ConcurrentBuilder
-from typing_extensions import Never
 
 
 class _FakeAgentExec(Executor):
@@ -158,7 +157,7 @@ async def test_concurrent_with_aggregator_executor_instance() -> None:
 
     class CustomAggregator(Executor):
         @handler
-        async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
+        async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Any, str]) -> None:
             texts: list[str] = []
             for r in results:
                 msgs: list[Message] = r.agent_response.messages

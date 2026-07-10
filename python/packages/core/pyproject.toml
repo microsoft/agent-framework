@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.8.0"
+version = "1.11.0"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -58,6 +58,15 @@ all = [
     "agent-framework-redis",
 ]
 
+[dependency-groups]
+# These optional integrations depend on agent-framework-core, so core cannot list them as
+# runtime dependencies. They are declared here so isolated source checks can resolve their APIs.
+dev = [
+    "agent-framework-azure-contentunderstanding",
+    "agent-framework-tools",
+    "azure-ai-agentserver-core>=2.0.0b7,<3",
+]
+
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
 environments = [
@@ -90,7 +99,7 @@ extend = "../../pyproject.toml"
 
 [tool.pyright]
 extends = "../../pyproject.toml"
-include = ["agent_framework", "tests/workflow"]
+include = ["agent_framework"]
 
 [tool.mypy]
 plugins = ['pydantic.mypy']

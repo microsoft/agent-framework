@@ -51,6 +51,22 @@ public class AgentWorkflowBuilderTests
     }
 
     [Fact]
+    public async Task Test_AgentWorkflowBuilder_BuildSequential_ChainOnlyAgentResponsesAsync()
+    {
+        Workflow workflow = AgentWorkflowBuilder.BuildSequential(
+            chainOnlyAgentResponses: true,
+            new OrchestrationTestHelpers.DoubleEchoAgent("agent1"),
+            new OrchestrationTestHelpers.DoubleEchoAgent("agent2"));
+
+        (_, List<ChatMessage>? result, _, _) =
+            await OrchestrationTestHelpers.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
+
+        result.Should().NotBeNull();
+        result!.Should().ContainSingle();
+        result[0].AuthorName.Should().Be("agent2");
+    }
+
+    [Fact]
     public void Test_AgentWorkflowBuilder_BuildSequential_WithWorkflowNameSetsNameOnWorkflow()
     {
         Workflow workflow = AgentWorkflowBuilder.BuildSequential(
