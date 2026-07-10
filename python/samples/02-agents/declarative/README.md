@@ -10,6 +10,8 @@ Install the declarative package via pip:
 pip install agent-framework-declarative
 ```
 
+> **Note:** These samples use `AgentFactory` (declarative agents), which is **experimental** and emits an `ExperimentalWarning` on first use. The declarative *workflows* surface is stable.
+
 ## What is Declarative Agent Framework?
 
 The declarative package provides support for building agents based on YAML specifications. This approach offers several benefits:
