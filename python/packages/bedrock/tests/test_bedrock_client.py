@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
-from agent_framework import Content, Message
+from agent_framework import Agent, Content, Message
 
 from agent_framework_bedrock import BedrockChatClient
 
@@ -38,6 +39,12 @@ def _make_client() -> BedrockChatClient:
         region="us-west-2",
         client=_StubBedrockRuntime(),  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
+
+
+def test_agent_accepts_bedrock_chat_client() -> None:
+    client = _make_client()
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
 
 
 async def test_get_response_invokes_bedrock_runtime() -> None:
@@ -169,6 +176,37 @@ def test_prepare_options_tool_choice_required_without_tools_raises() -> None:
 
     with pytest.raises(ValueError, match="tool_choice='required' requires at least one tool"):
         client._prepare_options(messages, options)
+
+
+def test_process_converse_response_preserves_non_ascii_in_json_block() -> None:
+    """Non-ASCII text in a Bedrock ``json`` content block must be preserved, not \\uXXXX-escaped.
+
+    The Converse API can return structured ``json`` content blocks. These are serialized to
+    text via ``json.dumps``; without ``ensure_ascii=False`` CJK characters and emoji are escaped
+    to ``\\uXXXX`` sequences and surface garbled to the user.
+    """
+    client = _make_client()
+    json_payload = {"greeting": "你好世界", "emoji": "🎉"}
+    response: dict[str, Any] = {
+        "modelId": "amazon.titan-text",
+        "output": {
+            "completionReason": "end_turn",
+            "message": {
+                "role": "assistant",
+                "content": [{"json": json_payload}],
+            },
+        },
+    }
+
+    chat_response = client._process_converse_response(response)
+
+    text = chat_response.messages[0].text
+    assert "你好世界" in text
+    assert "🎉" in text
+    # Must not be escaped to Unicode code points.
+    assert "\\u" not in text
+    # Serialized text must remain valid JSON that round-trips to the original payload.
+    assert json.loads(text) == json_payload
 
 
 def test_parse_usage_surfaces_cache_tokens() -> None:

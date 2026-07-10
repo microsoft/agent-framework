@@ -388,7 +388,7 @@ def _create_workflow() -> Workflow:
     #   input_router -> content_analyzer_agent -> content_analyzer_executor
     #   -> human_review_executor (HITL pause here) -> publish_executor
     return (
-        WorkflowBuilder(start_executor=input_router)
+        WorkflowBuilder(name="content_moderation", start_executor=input_router)
         .add_edge(input_router, content_analyzer_agent)
         .add_edge(content_analyzer_agent, content_analyzer_executor)
         .add_edge(content_analyzer_executor, human_review_executor)
@@ -411,11 +411,12 @@ def launch(durable: bool = True) -> AgentFunctionApp | None:
     """
     if durable:
         # Azure Functions mode with Durable Functions
-        # The app automatically provides HITL endpoints:
-        # - POST /api/workflow/run - Start the workflow
-        # - GET /api/workflow/status/{instanceId} - Check status and pending HITL requests
-        # - POST /api/workflow/respond/{instanceId}/{requestId} - Send HITL response
-        # - GET /api/health - Health check
+        # The app automatically provides per-workflow HITL endpoints (workflow name
+        # "content_moderation"):
+        # - POST /api/workflow/content_moderation/run - Start the workflow
+        # - GET  /api/workflow/content_moderation/status/{instanceId} - Status + pending HITL requests
+        # - POST /api/workflow/content_moderation/respond/{instanceId}/{requestId} - Send HITL response
+        # - GET  /api/health - Health check
         workflow = _create_workflow()
         return AgentFunctionApp(workflow=workflow, enable_health_check=True)
     # Pure MAF mode with DevUI for local development

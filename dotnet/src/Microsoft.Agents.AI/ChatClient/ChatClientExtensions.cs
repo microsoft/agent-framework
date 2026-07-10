@@ -53,15 +53,17 @@ public static class ChatClientExtensions
     {
         var chatBuilder = chatClient.AsBuilder();
 
-        // NonApprovalRequiredFunctionBypassingChatClient is registered before FunctionInvokingChatClient so that
+        // ApprovalNotRequiredFunctionBypassingChatClient is registered before FunctionInvokingChatClient so that
         // it sits above FICC in the pipeline. ChatClientBuilder.Build applies factories in reverse order,
         // making the first Use() call outermost. By adding this decorator first, the resulting pipeline is:
-        //   NonApprovalRequiredFunctionBypassingChatClient → FunctionInvokingChatClient → ChatHistoryPersistingChatClient → leaf IChatClient
+        //   ApprovalNotRequiredFunctionBypassingChatClient → FunctionInvokingChatClient → [MessageInjectingChatClient]
+        //     → [PerServiceCallChatHistoryPersistingChatClient] → DeferredOpenTelemetryChatClient → leaf IChatClient
         // This allows the decorator to intercept FICC's responses and remove approval requests for tools
         // that don't actually require approval, storing them for automatic re-injection on the next request.
-        if (options?.EnableNonApprovalRequiredFunctionBypassing is true)
+        if (options?.DisableApprovalNotRequiredFunctionBypassing is not true)
         {
-            chatBuilder.Use(innerClient => new NonApprovalRequiredFunctionBypassingChatClient(innerClient));
+            chatBuilder.Use((innerClient, services) =>
+                new ApprovalNotRequiredFunctionBypassingChatClient(innerClient, services.GetService<ILoggerFactory>()));
         }
 
         if (chatClient.GetService<FunctionInvokingChatClient>() is null)

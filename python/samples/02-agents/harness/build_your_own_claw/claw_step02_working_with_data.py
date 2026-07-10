@@ -144,6 +144,8 @@ def get_stock_price(
         "currency": "USD",
         "as_of": datetime.now(timezone.utc).isoformat(),
     }
+
+
 # </get_stock_price>
 
 
@@ -163,6 +165,8 @@ def place_trade(
     verb = "Sold" if action == "sell" else "Bought"
     confirmation = f"TRADE-{uuid.uuid4().hex[:8].upper()}"
     return f"{verb} {quantity} share(s) of {symbol.upper()}. Confirmation: {confirmation}."
+
+
 # </place_trade>
 
 
@@ -217,6 +221,8 @@ async def _maybe_enable_foundry_memory(stack: AsyncExitStack) -> FoundryMemoryPr
     )
     print(f"Foundry memory enabled (store: {store_name}).")
     return provider
+
+
 # </memory>
 
 

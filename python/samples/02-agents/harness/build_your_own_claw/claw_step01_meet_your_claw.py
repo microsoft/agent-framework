@@ -105,6 +105,8 @@ def get_stock_price(
         "currency": "USD",
         "as_of": datetime.now(timezone.utc).isoformat(),
     }
+
+
 # </get_stock_price>
 
 

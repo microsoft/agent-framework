@@ -131,6 +131,32 @@ Even without Agent wrapper, client-side tools work:
 - Server can also have its own tools
 - Hybrid execution works automatically
 
+### Interrupts and Resume Entries
+
+Human-in-the-loop approvals and workflow input requests pause by emitting a terminal `RUN_FINISHED` event whose
+`outcome.type` is `"interrupt"`. Generic AG-UI clients should read prompts from `RUN_FINISHED.outcome.interrupts`
+and resume the same `threadId` with a canonical `resume` array of `ResumeEntry` values.
+
+```json
+{
+  "threadId": "thread-1",
+  "messages": [],
+  "resume": [
+    {
+      "interruptId": "approval_1",
+      "status": "resolved",
+      "payload": {
+        "approved": true
+      }
+    }
+  ]
+}
+```
+
+`Interrupt` and `ResumeEntry` are AG-UI protocol models from `ag_ui.core`; Agent Framework does not define a
+separate interrupt model. New interrupted runs use `RUN_FINISHED.outcome.interrupts`, not a stable top-level
+`RUN_FINISHED.interrupt` field.
+
 ## What is AG-UI?
 
 AG-UI is a protocol that enables:

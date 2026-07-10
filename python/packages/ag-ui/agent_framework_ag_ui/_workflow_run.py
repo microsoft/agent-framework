@@ -34,6 +34,7 @@ from ._run_common import (
     _emit_content,
     _extract_resume_payload,
     _normalize_resume_interrupts,
+    _resume_contract_error,
 )
 from ._utils import canonical_function_arguments, generate_event_id, make_json_safe
 
@@ -63,6 +64,63 @@ _WORKFLOW_EVENT_BASE_FIELDS: set[str] = {
 _INTERRUPT_CARD_EVENT_NAME = "WorkflowInterruptEvent"
 
 
+def _json_schema_for_response_type(response_type: Any) -> dict[str, Any] | None:
+    """Build a lightweight response schema for a workflow request_info response type."""
+    if response_type is None:
+        return None
+
+    target_type = get_origin(response_type) or response_type
+    if target_type is Any:
+        return {"description": "Resolved workflow response payload."}
+    if target_type is dict:
+        return {"type": "object", "additionalProperties": True}
+    if target_type is list:
+        item_types = get_args(response_type)
+        schema: dict[str, Any] = {"type": "array"}
+        if item_types:
+            item_schema = _json_schema_for_response_type(item_types[0])
+            if item_schema is not None:
+                schema["items"] = item_schema
+        return schema
+    if target_type is str:
+        return {"type": "string"}
+    if target_type is bool:
+        return {"type": "boolean"}
+    if target_type is int:
+        return {"type": "integer"}
+    if target_type is float:
+        return {"type": "number"}
+    if target_type in {Message, Content}:
+        return {"type": "object", "additionalProperties": True}
+    return {"description": f"Resolved workflow response payload for {getattr(target_type, '__name__', target_type)}."}
+
+
+def _workflow_interrupt_value(request_data: Any) -> Any:
+    """Normalize workflow request data into legacy metadata value form."""
+    safe_request_data = make_json_safe(request_data)
+    if isinstance(safe_request_data, dict):
+        return safe_request_data
+    return {"data": safe_request_data}
+
+
+def _workflow_interrupt_metadata(request_payload: dict[str, Any], value: Any) -> dict[str, Any]:
+    """Build Agent Framework metadata for workflow request_info interrupts."""
+    agent_framework_metadata = {
+        key: make_json_safe(value)
+        for key, value in {
+            "type": "workflow_request_info",
+            "request_id": request_payload.get("request_id"),
+            "source_executor_id": request_payload.get("source_executor_id"),
+            "request_type": request_payload.get("request_type"),
+            "response_type": request_payload.get("response_type"),
+            "data": request_payload.get("data"),
+            "value": value,
+        }.items()
+        if value is not None
+    }
+    return {"agent_framework": agent_framework_metadata}
+
+
 async def _pending_request_events(workflow: Workflow) -> dict[str, Any]:
     """Best-effort retrieval of pending request_info events from workflow context."""
     runner_context = getattr(workflow, "_runner_context", None)
@@ -86,15 +144,21 @@ async def _pending_request_events(workflow: Workflow) -> dict[str, Any]:
 
 def _interrupt_entry_for_request_event(request_event: Any) -> dict[str, Any] | None:
     """Build AG-UI interrupt payload from a workflow request_info event."""
-    request_id = getattr(request_event, "request_id", None)
-    if request_id is None:
+    request_payload = _request_payload_from_request_event(request_event)
+    if request_payload is None:
         return None
-    request_data = make_json_safe(getattr(request_event, "data", None))
-    if isinstance(request_data, dict):
-        value: Any = request_data
-    else:
-        value = {"data": request_data}
-    return {"id": str(request_id), "value": value}
+
+    value = _workflow_interrupt_value(request_payload.get("data"))
+    entry: dict[str, Any] = {
+        "id": str(request_payload["request_id"]),
+        "reason": "input_required",
+        "value": value,
+        "metadata": _workflow_interrupt_metadata(request_payload, value),
+    }
+    response_schema = _json_schema_for_response_type(getattr(request_event, "response_type", None))
+    if response_schema is not None:
+        entry["responseSchema"] = response_schema
+    return entry
 
 
 def _interrupts_from_pending_requests(pending_events: dict[str, Any]) -> list[dict[str, Any]]:
@@ -155,9 +219,78 @@ def _resume_to_workflow_responses(resume_payload: Any) -> dict[str, Any]:
     """Convert AG-UI resume payloads into workflow responses."""
     responses: dict[str, Any] = {}
     for interrupt in _normalize_resume_interrupts(resume_payload):
+        if interrupt.get("status") not in {None, "resolved"}:
+            continue
         value = _coerce_json_value(interrupt.get("value"))
         responses[str(interrupt["id"])] = value
     return responses
+
+
+def _merge_workflow_response_sources(
+    resume_responses: dict[str, Any],
+    message_responses: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge workflow response sources with explicit resume payloads taking precedence."""
+    if not resume_responses:
+        return dict(message_responses)
+
+    responses = dict(message_responses)
+    responses.update(resume_responses)
+    return responses
+
+
+def _resume_entries_to_workflow_responses(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Convert validated resume entries into workflow responses."""
+    responses: dict[str, Any] = {}
+    for entry in entries:
+        if entry.get("status") == "resolved":
+            responses[str(entry["interrupt_id"])] = _coerce_json_value(entry.get("payload"))
+    return responses
+
+
+def _pending_workflow_interrupt_ids(pending_events: dict[str, Any]) -> set[str]:
+    """Return canonical interrupt ids for pending workflow request_info events."""
+    pending_ids: set[str] = set()
+    for request_id, request_event in pending_events.items():
+        pending_id = getattr(request_event, "request_id", None) or request_id
+        if pending_id:
+            pending_ids.add(str(pending_id))
+    return pending_ids
+
+
+def _resume_error_for_pending_workflow_requests(
+    resume_entries: list[dict[str, Any]],
+) -> RunErrorEvent | None:
+    """Return a workflow resume error for explicit non-resolved canonical resume entries."""
+    for entry in resume_entries:
+        interrupt_id = str(entry["interrupt_id"])
+        status = entry.get("status")
+        if status == "cancelled":
+            return RunErrorEvent(
+                message=f"Workflow resume for interruptId '{interrupt_id}' was cancelled.",
+                code="WORKFLOW_RESUME_CANCELLED",
+            )
+        if status not in {None, "resolved"}:
+            return RunErrorEvent(
+                message=f"Unsupported workflow resume status '{status}' for interruptId '{interrupt_id}'.",
+                code="WORKFLOW_RESUME_INVALID",
+            )
+    return None
+
+
+def _consume_cancelled_workflow_requests(workflow: Workflow, resume_entries: list[dict[str, Any]]) -> None:
+    """Remove cancelled workflow request_info events from the runner context."""
+    cancelled_ids = {str(entry["interrupt_id"]) for entry in resume_entries if entry.get("status") == "cancelled"}
+    if not cancelled_ids:
+        return
+
+    runner_context = getattr(workflow, "_runner_context", None)
+    pending_events = getattr(runner_context, "_pending_request_info_events", None)
+    if not isinstance(pending_events, dict):
+        return
+
+    for interrupt_id in cancelled_ids:
+        pending_events.pop(interrupt_id, None)
 
 
 def _coerce_json_value(value: Any) -> Any:
@@ -385,7 +518,12 @@ def _coerce_responses_for_pending_requests(
         return responses
 
     normalized: dict[str, Any] = {}
-    pending_by_id = {str(request_id): event for request_id, event in pending_events.items()}
+    pending_by_id: dict[str, Any] = {}
+    for request_id, event in pending_events.items():
+        pending_by_id[str(request_id)] = event
+        event_request_id = getattr(event, "request_id", None)
+        if event_request_id:
+            pending_by_id[str(event_request_id)] = event
 
     for request_id, value in responses.items():
         request_key = str(request_id)
@@ -410,6 +548,53 @@ def _coerce_responses_for_pending_requests(
             continue
         normalized[request_key] = coerced_value
     return normalized
+
+
+def _coerce_responses_for_pending_requests_strict(
+    responses: dict[str, Any],
+    pending_events: dict[str, Any],
+) -> tuple[dict[str, Any], RunErrorEvent | None]:
+    """Coerce resume responses or return RUN_ERROR for invalid pending response payloads."""
+    if not responses or not pending_events:
+        return responses, None
+
+    normalized: dict[str, Any] = {}
+    pending_by_id: dict[str, Any] = {}
+    for request_id, event in pending_events.items():
+        pending_by_id[str(request_id)] = event
+        event_request_id = getattr(event, "request_id", None)
+        if event_request_id:
+            pending_by_id[str(event_request_id)] = event
+
+    for request_id, value in responses.items():
+        request_key = str(request_id)
+        request_event = pending_by_id.get(request_key)
+        if request_event is None:
+            normalized[request_key] = value
+            continue
+
+        coerced_value = _coerce_response_for_request(request_event, value)
+        if coerced_value is None:
+            return (
+                {},
+                RunErrorEvent(
+                    message=(
+                        f"Workflow resume for interruptId '{request_key}' does not match expected "
+                        f"response type {_response_type_name(request_event)}."
+                    ),
+                    code="WORKFLOW_RESUME_INVALID_RESPONSE",
+                ),
+            )
+        if not _approval_response_matches_request(request_key, request_event, coerced_value):
+            return (
+                {},
+                RunErrorEvent(
+                    message=f"Workflow resume for interruptId '{request_key}' does not match pending approval request.",
+                    code="WORKFLOW_RESUME_INVALID_RESPONSE",
+                ),
+            )
+        normalized[request_key] = coerced_value
+    return normalized, None
 
 
 def _latest_user_text(messages: list[Message]) -> str | None:
@@ -577,15 +762,42 @@ async def run_workflow_stream(
     last_assistant_text: str | None = None
 
     resume_payload = _extract_resume_payload(input_data)
-    responses = _resume_to_workflow_responses(resume_payload)
-    responses.update(_extract_responses_from_messages(messages))
     pending_before_run = await _pending_request_events(workflow)
-    responses = _coerce_responses_for_pending_requests(responses, pending_before_run)
+    pending_interrupt_ids = _pending_workflow_interrupt_ids(pending_before_run)
+    resume_entries: list[dict[str, Any]] = []
+    if pending_interrupt_ids:
+        resume_entries, contract_error, contract_code = _resume_contract_error(
+            resume_payload,
+            pending_interrupt_ids,
+            required_code="WORKFLOW_RESUME_REQUIRED",
+            invalid_code="WORKFLOW_RESUME_INVALID",
+            unknown_code="WORKFLOW_RESUME_NOT_FOUND",
+            missing_code="WORKFLOW_RESUME_MISSING_INTERRUPT",
+        )
+        if contract_error is not None and contract_code is not None:
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield RunErrorEvent(message=contract_error, code=contract_code)
+            return
+        resume_error = _resume_error_for_pending_workflow_requests(resume_entries)
+        if resume_error is not None:
+            if getattr(resume_error, "code", None) == "WORKFLOW_RESUME_CANCELLED":
+                _consume_cancelled_workflow_requests(workflow, resume_entries)
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield resume_error
+            return
+
+    resume_responses = (
+        _resume_entries_to_workflow_responses(resume_entries)
+        if pending_interrupt_ids
+        else _resume_to_workflow_responses(resume_payload)
+    )
+    responses = _merge_workflow_response_sources(resume_responses, _extract_responses_from_messages(messages))
+    responses, response_error = _coerce_responses_for_pending_requests_strict(responses, pending_before_run)
+    if response_error is not None:
+        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield response_error
+        return
     pending_interrupts = _interrupts_from_pending_requests(pending_before_run)
-    if not responses and pending_before_run:
-        responses.update(_single_pending_response_from_value(pending_before_run, resume_payload))
-    if not responses and pending_before_run:
-        responses.update(_single_pending_response_from_value(pending_before_run, _latest_user_text(messages)))
 
     if not responses and pending_before_run:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
@@ -730,12 +942,9 @@ async def run_workflow_stream(
                 if request_payload is None:
                     continue
                 request_id = request_payload["request_id"]
-                request_data = request_payload.get("data")
-                if isinstance(request_data, dict):
-                    interrupt_value: Any = request_data
-                else:
-                    interrupt_value = {"data": request_data}
-                interrupts.append({"id": str(request_id), "value": interrupt_value})
+                interrupt_entry = _interrupt_entry_for_request_event(event)
+                if interrupt_entry is not None:
+                    interrupts.append(interrupt_entry)
                 args_delta = json.dumps(request_payload)
 
                 yield ToolCallStartEvent(tool_call_id=str(request_id), tool_call_name="request_info")

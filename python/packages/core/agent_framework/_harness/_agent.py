@@ -11,16 +11,18 @@ context providers (todo, mode, memory, skills).
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from .._agents import Agent, SupportsAgentRun
 from .._clients import SupportsShellTool, SupportsWebSearchTool
 from .._compaction import CompactionProvider, ContextWindowCompactionStrategy, ToolResultCompactionStrategy
 from .._feature_stage import ExperimentalFeature, experimental
-from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider
+from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider, MessageInjectionMiddleware
 from .._skills import SkillsProvider
+from .._types import ChatOptions
 from ._background_agents import BackgroundAgentsProvider
 from ._file_access import AgentFileStore, FileAccessProvider, FileSystemAgentFileStore
 from ._file_memory import FileMemoryProvider
@@ -28,6 +30,11 @@ from ._loop import DEFAULT_MAX_ITERATIONS, AgentLoopMiddleware
 from ._mode import AgentModeProvider
 from ._todo import TodoProvider
 from ._tool_approval import ToolApprovalMiddleware
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # pragma: no cover
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -246,10 +253,16 @@ def _assemble_shell(
 
 HARNESS_AGENT_PROVIDER_NAME = "microsoft.agent_framework.harness"
 
+OptionsCoT = TypeVar(
+    "OptionsCoT",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="ChatOptions[None]",
+)
+
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 def create_harness_agent(
-    client: SupportsChatGetResponse[Any],
+    client: SupportsChatGetResponse[OptionsCoT],
     *,
     id: str | None = None,
     name: str | None = None,
@@ -291,7 +304,7 @@ def create_harness_agent(
     context_providers: Sequence[ContextProvider] | None = None,
     middleware: Sequence[MiddlewareTypes] | None = None,
     default_options: Mapping[str, Any] | None = None,
-) -> Agent[Any]:
+) -> Agent[OptionsCoT]:
     """Create a pre-configured agent with batteries included.
 
     Assembles an :class:`~agent_framework.Agent` from a chat client, automatically wiring:
@@ -401,6 +414,9 @@ def create_harness_agent(
             (default), they require approval. Ignored when disable_file_access is True.
         skills_provider: Custom SkillsProvider instance for code-defined skills.
             Can be combined with ``skills_paths`` to aggregate file and code-based skills.
+            **Security:** if the provider is configured with an external skill source (e.g.
+            :class:`~agent_framework.MCPSkillsSource`), the skill content it loads is untrusted input
+            — only enable sources you trust; see :class:`~agent_framework.SkillsSource`.
         skills_paths: Paths for file-based skill discovery (looks for SKILL.md files).
             Accepts a single ``str`` or :class:`~pathlib.Path`, or a sequence of
             ``str | Path``. Can be combined with ``skills_provider``. When neither
@@ -410,6 +426,10 @@ def create_harness_agent(
             When provided, a ``BackgroundAgentsProvider`` is automatically included,
             enabling the agent to start, monitor, and retrieve results from background tasks.
             Each agent must have a non-empty, unique name (case-insensitive).
+            **Security:** supplied agents receive text input from this agent and their output is fed
+            back into its context, so only supply agents you have vetted and trust — see
+            :class:`~agent_framework.BackgroundAgentsProvider` for the exfiltration and
+            prompt-injection risks of untrusted agents.
         background_agents_instructions: Optional instruction override for the
             ``BackgroundAgentsProvider``. May include ``{background_agents}`` placeholder
             which will be replaced with the agent listing.
@@ -564,6 +584,9 @@ def create_harness_agent(
                 next_message=loop_next_message,
             ),
         )
+    # Message injection is always on. It is a no-op when no messages are queued for the session,
+    # so there is no opt-out.
+    assembled_middleware.append(MessageInjectionMiddleware())
     if middleware:
         assembled_middleware.extend(middleware)
 

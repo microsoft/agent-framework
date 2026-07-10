@@ -66,6 +66,9 @@ class DurableTaskWorkflowContext:
     def prepare_activity_task(self, activity_name: str, input_json: str) -> Any:
         return cast(Any, self._context.call_activity(activity_name, input=input_json))
 
+    def call_sub_orchestrator(self, name: str, input: Any, instance_id: str | None = None) -> Any:
+        return cast(Any, self._context.call_sub_orchestrator(name, input=input, instance_id=instance_id))
+
     # -- Composite tasks ------------------------------------------------------
 
     def task_all(self, tasks: list[Any]) -> Any:

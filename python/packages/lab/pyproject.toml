@@ -4,7 +4,7 @@ description = "Experimental modules for Microsoft Agent Framework"
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260521"
+version = "1.0.0b260709"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -22,7 +22,7 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-  "agent-framework-core>=1.6.0,<2",
+  "agent-framework-core>=1.11.0,<2",
 ]
 
 [project.optional-dependencies]
@@ -39,7 +39,7 @@ gaia = [
 
 # Lightning RL training module dependencies
 lightning = [
-  "agentlightning>=0.2.0,<0.3.0",
+  "agentlightning>=0.2.0,<0.4.0",
 ]
 
 # TAU2 benchmark module dependencies
@@ -57,13 +57,13 @@ math = [
 
 [dependency-groups]
 dev = [
-    "uv==0.11.17",
-    "ruff==0.15.15",
-    "pytest==9.1.0",
-    "mypy==1.20.0",
-    "pyright==1.1.410",
+    "uv==0.11.28",
+    "ruff==0.15.20",
+    "pytest==9.1.1",
+    "mypy==2.2.0",
+    "pyright==1.1.411",
     #tasks
-    "poethepoet==0.46.0",
+    "poethepoet==0.48.0",
     "rich>=13.7.1,<15.0.0",
     "tomli==2.4.1",
     "tomli-w==1.2.0",
