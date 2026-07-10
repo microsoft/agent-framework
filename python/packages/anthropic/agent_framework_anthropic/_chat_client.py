@@ -594,7 +594,9 @@ class RawAnthropicClient(
         # This includes underscore-prefixed internal objects (like _function_middleware_pipeline)
         # and framework kwargs like 'thread' and 'middleware'.
         filtered_kwargs = {
-            k: v for k, v in kwargs.items() if not k.startswith("_") and k not in {"thread", "middleware"}
+            k: v
+            for k, v in kwargs.items()
+            if not k.startswith("_") and k not in {"thread", "middleware", "additional_beta_flags"}
         }
         _apply_option_translations(filtered_kwargs)
         run_options.update(filtered_kwargs)

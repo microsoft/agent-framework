@@ -1291,6 +1291,27 @@ async def test_prepare_options_consumes_additional_beta_flags(
     assert "extended-cache-ttl-2025-04-11" in run_options["betas"]
 
 
+async def test_prepare_options_drops_additional_beta_flags_passed_as_kwarg(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """additional_beta_flags must also be excluded when passed as a raw kwarg,
+    not just via the options dict.
+
+    Flagged in code review on the fix for #5764: the initial fix only excluded
+    the key from the options-dict copy, but filtered_kwargs (built from
+    **kwargs at the call site) had no equivalent exclusion, so
+    ``_prepare_options(messages, {}, additional_beta_flags=[...])`` would still
+    forward the raw key and reproduce the same TypeError.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    messages = [Message(role="user", contents=["Hello"])]
+
+    run_options = client._prepare_options(messages, {}, additional_beta_flags=["extended-cache-ttl-2025-04-11"])
+
+    assert "additional_beta_flags" not in run_options
+
+
 async def test_prepare_options_filters_internal_kwargs(
     mock_anthropic_client: MagicMock,
 ) -> None:
