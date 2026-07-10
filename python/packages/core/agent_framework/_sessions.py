@@ -251,6 +251,8 @@ class SessionContext:
                 object is passed, its class name is recorded as
                 ``source_type`` in the attribution.
             messages: The messages to add.
+
+        Keyword Args:
             origin_session_ids: Optional session IDs that originally produced
                 these messages, when different from the current session. Set
                 by providers that inject content stored under other sessions

@@ -144,3 +144,13 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+"""
+Sample output:
+--- Same-session case complete (no detections expected above) ---
+
+[cross-session detected] source='memory_provider' origin_sessions=['session-A', 'session-C'] \
+current_session='session-B' preview='Remember: API key for prod is <REDACTED> (from prior sessions).'
+--- Cross-session case complete (one detection expected above) ---
+"""
