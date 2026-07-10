@@ -1250,12 +1250,38 @@ class TestWorkflowPayloadToContents:
         assert _workflow_payload_to_contents(update) == [function_result]
 
     def test_agent_response_update_approval_request_without_role(self) -> None:
-        """Approval request content passes through without role metadata."""
+        """Approval request content is excluded from the role bypass.
+
+        Workflow approvals resume through request_info pending state; an approval interrupt
+        emitted from streamed content would have no pending request to resume against.
+        """
         function_call = Content.from_function_call(call_id="call-1", name="search", arguments={"query": "weather"})
         approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
         update = AgentResponseUpdate(contents=[approval_request], role=None)
 
-        assert _workflow_payload_to_contents(update) == [approval_request]
+        assert _workflow_payload_to_contents(update) is None
+
+    def test_agent_response_update_mcp_tool_call_without_role(self) -> None:
+        """MCP server tool call content passes through without role metadata."""
+        mcp_call = Content.from_mcp_server_tool_call(call_id="mcp-1", tool_name="search", arguments={"q": "weather"})
+        update = AgentResponseUpdate(contents=[mcp_call], role=None)
+
+        assert _workflow_payload_to_contents(update) == [mcp_call]
+
+    def test_agent_response_update_mcp_tool_result_without_role(self) -> None:
+        """MCP server tool result content passes through without role metadata."""
+        mcp_result = Content.from_mcp_server_tool_result(call_id="mcp-1", output={"temperature": 72})
+        update = AgentResponseUpdate(contents=[mcp_result], role=None)
+
+        assert _workflow_payload_to_contents(update) == [mcp_result]
+
+    def test_agent_response_update_mixed_content_without_role(self) -> None:
+        """Non-assistant updates keep tool content and drop text content."""
+        text = Content.from_text(text="calling the tool")
+        function_call = Content.from_function_call(call_id="call-1", name="search", arguments={"query": "weather"})
+        update = AgentResponseUpdate(contents=[text, function_call], role=None)
+
+        assert _workflow_payload_to_contents(update) == [function_call]
 
     def test_agent_response_update_assistant_text(self) -> None:
         """Assistant text content continues to pass through."""
