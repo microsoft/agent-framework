@@ -1270,6 +1270,27 @@ async def test_prepare_options_excludes_stream_option(
     assert "stream" not in run_options
 
 
+async def test_prepare_options_consumes_additional_beta_flags(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Per-run additional_beta_flags must be folded into betas, not forwarded raw.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/5764:
+    the key survived into run_options and was passed straight through to
+    ``AsyncMessages.create()``, which rejects it with
+    ``TypeError: got an unexpected keyword argument 'additional_beta_flags'``.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    messages = [Message(role="user", contents=["Hello"])]
+    chat_options: dict[str, Any] = {"additional_beta_flags": ["extended-cache-ttl-2025-04-11"]}
+
+    run_options = client._prepare_options(messages, chat_options)
+
+    assert "additional_beta_flags" not in run_options
+    assert "extended-cache-ttl-2025-04-11" in run_options["betas"]
+
+
 async def test_prepare_options_filters_internal_kwargs(
     mock_anthropic_client: MagicMock,
 ) -> None:
