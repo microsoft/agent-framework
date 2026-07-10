@@ -538,9 +538,9 @@ class RawGeminiChatClient(
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 validated = await self._validate_options(options)
                 model, contents, config = self._prepare_request(messages, validated)
-                async for chunk in await self._genai_client.aio.models.generate_content_stream(  # pyright: ignore[reportUnknownMemberType]
+                async for chunk in await self._genai_client.aio.models.generate_content_stream(
                     model=model,
-                    contents=contents,
+                    contents=contents,  # pyright: ignore[reportArgumentType]
                     config=config,
                 ):
                     yield self._process_chunk(chunk)
