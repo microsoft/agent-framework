@@ -51,6 +51,7 @@ members = [
     "agent-framework-gemini",
     "agent-framework-github-copilot",
     "agent-framework-hosting",
+    "agent-framework-hosting-a2a",
     "agent-framework-hosting-responses",
     "agent-framework-hyperlight",
     "agent-framework-lab",
@@ -653,6 +654,23 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "agent-framework-core", editable = "packages/core" }]
+
+[[package]]
+name = "agent-framework-hosting-a2a"
+version = "1.0.0a260710"
+source = { editable = "packages/hosting-a2a" }
+dependencies = [
+    { name = "a2a-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "a2a-sdk", specifier = ">=1.0.0,<2" },
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "agent-framework-hosting", editable = "packages/hosting" },
+]
 
 [[package]]
 name = "agent-framework-hosting-responses"

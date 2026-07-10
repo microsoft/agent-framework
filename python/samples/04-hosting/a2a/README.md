@@ -2,6 +2,11 @@
 
 This sample demonstrates how to **host** Agent Framework agents as A2A-compliant servers using the [A2A (Agent2Agent) protocol](https://a2a-protocol.org/latest/).
 
+`agent-framework-hosting-a2a` only converts between native A2A values and
+Agent Framework run values. The sample deliberately keeps the A2A SDK's
+`AgentExecutor`, task lifecycle, event queue, task store, and Starlette routes
+in application code. The helper package does not choose a web framework.
+
 > **Looking for client samples?** See [`samples/02-agents/a2a/`](../../02-agents/a2a/) for consuming remote A2A agents.
 
 ## Server Samples
@@ -92,3 +97,8 @@ def resolve_tenant_user_scope(context):
     return f"{context.tenant}:{context.user.user_name}"
 task_store = InMemoryTaskStore(owner_resolver=resolve_tenant_user_scope)
 ```
+
+The sample also includes the authenticated A2A tenant and protocol context id
+in its Agent Framework session key. Production applications must derive that
+tenant from trusted authentication context and use a durable session store when
+running multiple replicas or transient workers.

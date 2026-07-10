@@ -92,6 +92,7 @@ agent-framework-foundry-local = { workspace = true }
 agent-framework-gemini = { workspace = true }
 agent-framework-github-copilot = { workspace = true }
 agent-framework-hosting = { workspace = true }
+agent-framework-hosting-a2a = { workspace = true }
 agent-framework-hosting-responses = { workspace = true }
 agent-framework-hyperlight = { workspace = true }
 agent-framework-lab = { workspace = true }
