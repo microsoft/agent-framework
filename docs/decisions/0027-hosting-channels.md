@@ -181,8 +181,8 @@ The app chooses which helper to call for that route and deployment. For example:
 
 - `responses_session_id(body)` from `agent-framework-hosting-responses`, which can return either a `resp_*` previous
   response id or a `conv_*` conversation id when present;
-- `telegram_session_id(update)` from `agent-framework-hosting-telegram`, which can choose the chat, user, thread, or
-  other Telegram-native partitioning logic for that helper;
+- `telegram_session_id(update, bot_id=...)` from `agent-framework-hosting-telegram`, which uses the bot and sender for
+  private chats and the bot and chat for shared group sessions;
 - `activity_session_id(activity)`, `discord_session_id(interaction_or_message)`, or
   `a2a_session_id(request_context)` from their respective protocol packages;
 - `foundry_user_isolation_key()` or `foundry_chat_isolation_key()` from `agent-framework-foundry-hosting`.

@@ -64,6 +64,11 @@ python/samples/
 4. **Single-file for 01-03**: Only 04-hosting and 05-end-to-end use multi-file
    projects with their own README.
 
+5. **Self-contained alternatives**: When a sample offers alternative entry
+   points (for example polling and webhook hosting), keep each entry point
+   self-contained. Do not extract a shared helper module solely to remove
+   duplication between sample variants.
+
 ## Default provider
 
 All canonical samples (01-get-started) use **Azure AI Foundry project-backed chat** via `FoundryChatClient`
