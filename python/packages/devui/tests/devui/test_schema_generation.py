@@ -170,9 +170,7 @@ def test_extract_response_type_from_executor():
         class TestDecision(BaseModel):
             """Test decision response."""
 
-            decision: Literal["approve", "reject"] = Field(
-                description="User's decision"
-            )
+            decision: Literal["approve", "reject"] = Field(description="User's decision")
             reason: str = Field(description="Reason for decision", default="")
 
         # Create test executor with @response_handler
@@ -201,17 +199,11 @@ def test_extract_response_type_from_executor():
 
         # Test extraction
         executor = TestExecutor()
-        extracted_type = extract_response_type_from_executor(
-            executor, TestApprovalRequest
-        )
+        extracted_type = extract_response_type_from_executor(executor, TestApprovalRequest)
 
         # Verify correct type was extracted
-        assert (
-            extracted_type is not None
-        ), "Should extract response type from @response_handler"
-        assert (
-            extracted_type == TestDecision
-        ), f"Expected TestDecision, got {extracted_type}"
+        assert extracted_type is not None, "Should extract response type from @response_handler"
+        assert extracted_type == TestDecision, f"Expected TestDecision, got {extracted_type}"
 
         # Test full schema generation pipeline
         schema = generate_input_schema(extracted_type)
@@ -251,9 +243,7 @@ def test_extract_response_type_no_match():
         executor = MinimalExecutor()
         extracted_type = extract_response_type_from_executor(executor, UnmatchedRequest)
 
-        assert (
-            extracted_type is None
-        ), "Should return None when no matching handler exists"
+        assert extracted_type is None, "Should return None when no matching handler exists"
 
     except ImportError as e:
         pytest.skip(f"Required dependencies not available: {e}")
