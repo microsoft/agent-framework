@@ -399,7 +399,7 @@ class MessageMapper:
                     input_tokens=usage_data["input_tokens"],
                     output_tokens=usage_data["output_tokens"],
                     total_tokens=usage_data["total_tokens"],
-                    input_tokens_details=InputTokensDetails(cached_tokens=0),
+                    input_tokens_details=InputTokensDetails(cached_tokens=0, cache_write_tokens=0),
                     output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
                 )
                 # Cleanup accumulator
@@ -412,7 +412,7 @@ class MessageMapper:
                     input_tokens=input_token_count,
                     output_tokens=output_token_count,
                     total_tokens=input_token_count + output_token_count,
-                    input_tokens_details=InputTokensDetails(cached_tokens=0),
+                    input_tokens_details=InputTokensDetails(cached_tokens=0, cache_write_tokens=0),
                     output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
                 )
 
@@ -1869,7 +1869,7 @@ class MessageMapper:
             input_tokens=0,
             output_tokens=0,
             total_tokens=0,
-            input_tokens_details=InputTokensDetails(cached_tokens=0),
+            input_tokens_details=InputTokensDetails(cached_tokens=0, cache_write_tokens=0),
             output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
         )
 
