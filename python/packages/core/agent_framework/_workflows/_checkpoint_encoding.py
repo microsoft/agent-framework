@@ -20,9 +20,9 @@ Checkpoint storage is treated as a **trusted data source**.  The serialization
 format uses Python's ``pickle`` module which can execute arbitrary code during
 deserialization.  The ``RestrictedUnpickler`` provides a defense-in-depth
 allowlist that limits instantiable classes, but it is **not** a security
-boundary — certain allowlisted builtins (e.g. ``getattr``) are required for
-legitimate object reconstruction (enums, named tuples) and cannot be removed
-without breaking compatibility.
+boundary — certain reconstruction helpers are required for legitimate object
+reconstruction and application-defined types can provide custom pickle
+behavior.
 
 Developers **must** ensure that:
 
@@ -81,9 +81,9 @@ _BLOCKED_FRAMEWORK_GLOBAL_KEYS: frozenset[str] = frozenset({
     "agent_framework._workflows._checkpoint_encoding:encode_checkpoint_value",
 })
 
-# Built-in types considered safe for checkpoint deserialization.
+# Built-in globals considered safe for checkpoint deserialization.
 # Each entry is a ``module:qualname`` string matching the format produced by
-# :func:`_type_to_key`.  These are the classes for which pickle's
+# :func:`_type_to_key`.  These are the globals for which pickle's
 # ``find_class`` will be called when unpickling common Python value types.
 _BUILTIN_ALLOWED_TYPE_KEYS: frozenset[str] = frozenset({
     # builtins
@@ -103,7 +103,8 @@ _BUILTIN_ALLOWED_TYPE_KEYS: frozenset[str] = frozenset({
     "builtins:dict",
     "builtins:tuple",
     "builtins:type",
-    # getattr is used by pickle to reconstruct enum members
+    # getattr is used by pickle to reconstruct nested types. find_class
+    # substitutes a restricted implementation during unpickling.
     "builtins:getattr",
     # copyreg helpers used by pickle for object reconstruction
     "copyreg:_reconstructor",
@@ -124,6 +125,19 @@ _BUILTIN_ALLOWED_TYPE_KEYS: frozenset[str] = frozenset({
 })
 
 
+def _restricted_getattr(obj: Any, name: str) -> type:
+    """Resolve type-valued attributes needed for legitimate pickle reconstruction."""
+    if not isinstance(obj, type) or not isinstance(name, str):
+        raise pickle.UnpicklingError("Checkpoint deserialization blocked for unsafe attribute traversal.")
+
+    resolved = getattr(obj, name)
+    if not isinstance(resolved, type):
+        raise pickle.UnpicklingError(
+            f"Checkpoint deserialization blocked for non-type attribute '{obj.__module__}:{obj.__qualname__}.{name}'."
+        )
+    return resolved
+
+
 class _RestrictedUnpickler(pickle.Unpickler):  # noqa: S301
     """Unpickler that restricts which classes may be instantiated.
 
@@ -137,14 +151,23 @@ class _RestrictedUnpickler(pickle.Unpickler):  # noqa: S301
         super().__init__(io.BytesIO(data))
         self._allowed_types = allowed_types
 
-    def find_class(self, module: str, name: str) -> type:
+    def find_class(self, module: str, name: str) -> Any:
         type_key = f"{module}:{name}"
 
         if type_key in _BLOCKED_FRAMEWORK_GLOBAL_KEYS:
             raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for type '{type_key}'.")
 
-        if type_key in _BUILTIN_ALLOWED_TYPE_KEYS or type_key in self._allowed_types:
+        if type_key == "builtins:getattr":
+            return _restricted_getattr
+
+        if type_key in _BUILTIN_ALLOWED_TYPE_KEYS:
             return super().find_class(module, name)  # nosec
+
+        if type_key in self._allowed_types:
+            resolved = super().find_class(module, name)  # nosec
+            if isinstance(resolved, type):
+                return resolved
+            raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for non-type global '{type_key}'.")
 
         if module.startswith(_FRAMEWORK_MODULE_PREFIX) or module.startswith(_OPENAI_MODULE_PREFIX):
             # Pickle dotted names traverse attributes on an allowed module; keep the prefix allowlist to concrete
@@ -154,6 +177,7 @@ class _RestrictedUnpickler(pickle.Unpickler):  # noqa: S301
             resolved = super().find_class(module, name)  # nosec
             if isinstance(resolved, type):
                 return resolved
+            raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for non-type global '{type_key}'.")
 
         raise pickle.UnpicklingError(
             f"Checkpoint deserialization blocked for type '{type_key}'. "

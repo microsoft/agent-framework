@@ -49,6 +49,11 @@ class FrameworkHelperPayload:
         return (_base64_to_unpickle, (self.nested_payload,))
 
 
+class _NestedTypeContainer:
+    class NestedType:
+        pass
+
+
 def test_restricted_decode_blocks_arbitrary_callable():
     """Restricted decoding blocks arbitrary module-level callables."""
     pickled = pickle.dumps(os.getpid, protocol=pickle.HIGHEST_PROTOCOL)
@@ -298,6 +303,60 @@ def test_restricted_unpickler_raises_pickle_error():
     unpickler = _RestrictedUnpickler(pickled, frozenset())
     with pytest.raises(pickle.UnpicklingError, match="deserialization blocked"):
         unpickler.load()
+
+
+def test_restricted_decode_rejects_non_type_global_in_allowed_types():
+    """Explicit allowed_types entries must resolve to types."""
+    from agent_framework._workflows._checkpoint_encoding import _RestrictedUnpickler
+
+    unpickler = _RestrictedUnpickler(pickle.dumps(object), frozenset({"os:getpid"}))
+    with pytest.raises(pickle.UnpicklingError, match="non-type global"):
+        unpickler.find_class("os", "getpid")
+
+
+def test_restricted_decode_rejects_non_type_global_under_prefix():
+    """Allowed package prefixes must not expose arbitrary module globals."""
+    from agent_framework._workflows._checkpoint_encoding import _RestrictedUnpickler
+
+    unpickler = _RestrictedUnpickler(pickle.dumps(object), frozenset())
+    with pytest.raises(pickle.UnpicklingError, match="non-type global"):
+        unpickler.find_class(
+            "agent_framework._workflows._checkpoint_encoding",
+            "encode_checkpoint_value",
+        )
+
+
+def test_restricted_getattr_allows_nested_type_resolution():
+    """The restricted getattr replacement preserves nested-type reconstruction."""
+    from agent_framework._workflows._checkpoint_encoding import _RestrictedUnpickler
+
+    unpickler = _RestrictedUnpickler(pickle.dumps(object), frozenset())
+    restricted_getattr = unpickler.find_class("builtins", "getattr")
+
+    assert restricted_getattr(_NestedTypeContainer, "NestedType") is _NestedTypeContainer.NestedType
+
+
+def test_restricted_decode_blocks_getattr_globals_pickle_loads_chain():
+    """Restricted decoding blocks attribute traversal to an inner unrestricted pickle load."""
+    inner_pickle = b"cbuiltins\neval\n(V40 + 2\ntR."
+    escaped_inner_pickle = inner_pickle.decode("ascii").replace("\\", "\\u005c").replace("\n", "\\u000a")
+    # The outer pickle memoizes getattr and walks __init__.__globals__["pickle"].loads.
+    payload = (
+        b"cbuiltins\ngetattr\np0\n0"
+        b"g0\n(cagent_framework._workflows._checkpoint_encoding\n_RestrictedUnpickler\nV__init__\ntRp1\n0"
+        b"g0\n(g1\nV__globals__\ntRp2\n0"
+        b"g0\n(cbuiltins\ndict\nV__getitem__\ntRp3\n0"
+        b"g3\n(g2\nVpickle\ntRp4\n0"
+        b"g0\n(g4\nVloads\ntRp5\n0"
+        b"g5\n(cbuiltins\nbytearray\n(V" + escaped_inner_pickle.encode("ascii") + b"\nVascii\ntRtR."
+    )
+    checkpoint_value = {
+        _PICKLE_MARKER: base64.b64encode(payload).decode("ascii"),
+        _TYPE_MARKER: "builtins:int",
+    }
+
+    with pytest.raises(WorkflowCheckpointException, match="non-type attribute"):
+        decode_checkpoint_value(checkpoint_value, allowed_types=frozenset())
 
 
 def test_restricted_decode_allows_openai_types():
