@@ -149,18 +149,28 @@ class TestSessionContext:
         msg = Message(
             role="system",
             contents=["loaded from a prior session"],
-            additional_properties={"_attribution": {"source_id": "custom", "custom_key": "value"}},
+            additional_properties={
+                "_attribution": {
+                    "source_id": "custom",
+                    "custom_key": "value",
+                    "origin_session_ids": ["existing", "prior"],
+                }
+            },
         )
 
-        ctx.extend_messages("memory_provider", [msg], origin_session_ids=["prior"])
+        ctx.extend_messages("memory_provider", [msg], origin_session_ids=["prior", "new"])
 
         stored = ctx.context_messages["memory_provider"][0]
         assert stored.additional_properties["_attribution"] == {
             "source_id": "custom",
             "custom_key": "value",
-            "origin_session_ids": ["prior"],
+            "origin_session_ids": ["existing", "prior", "new"],
         }
-        assert msg.additional_properties["_attribution"] == {"source_id": "custom", "custom_key": "value"}
+        assert msg.additional_properties["_attribution"] == {
+            "source_id": "custom",
+            "custom_key": "value",
+            "origin_session_ids": ["existing", "prior"],
+        }
 
     def test_extend_instructions_string(self) -> None:
         ctx = SessionContext(input_messages=[])

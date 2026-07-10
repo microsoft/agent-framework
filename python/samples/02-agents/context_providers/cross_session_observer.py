@@ -107,8 +107,8 @@ async def main() -> None:
         input_messages=[Message("user", ["What did we discuss last time?"])],
     )
     # Simulate a same-session provider injecting same-session history. Omitting
-    # Omitting origin_session_ids means "no origin info"; observers treat it as
-    # equivalent to same-session for backward compatibility.
+    # origin_session_ids means "no origin info"; observers treat it as equivalent
+    # to same-session for backward compatibility.
     same_session_context.extend_messages(
         "history_provider",
         [Message("assistant", ["We talked about Q3 revenue projections."])],
@@ -130,7 +130,7 @@ async def main() -> None:
     # written in sessions A and C while we're now running in session B.
     cross_session_context.extend_messages(
         "memory_provider",
-        [Message("assistant", ["Remember: API key for prod is sk-7f3a... (from prior sessions)."])],
+        [Message("assistant", ["Remember: API key for prod is <REDACTED> (from prior sessions)."])],
         origin_session_ids=["session-A", "session-C"],
     )
     await observer.before_run(

@@ -282,7 +282,19 @@ class SessionContext:
             if isinstance(existing_attribution, Mapping):
                 merged_attribution = dict(cast(Mapping[str, Any], existing_attribution))
                 for key, value in message_attribution.items():
-                    merged_attribution.setdefault(key, value)
+                    if key == "origin_session_ids":
+                        existing_origins = merged_attribution.get(key)
+                        if isinstance(existing_origins, Sequence) and not isinstance(existing_origins, str):
+                            existing_origin_values = cast(Sequence[Any], existing_origins)
+                            value = list(
+                                dict.fromkeys(
+                                    [origin for origin in existing_origin_values if isinstance(origin, str)]
+                                    + cast(list[str], value)
+                                )
+                            )
+                        merged_attribution[key] = value
+                    else:
+                        merged_attribution.setdefault(key, value)
                 msg_copy.additional_properties["_attribution"] = merged_attribution
             else:
                 msg_copy.additional_properties.setdefault("_attribution", message_attribution)
