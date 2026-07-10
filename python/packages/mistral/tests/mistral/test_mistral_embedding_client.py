@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import inspect
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -60,6 +61,13 @@ def test_mistral_embedding_construction_with_client() -> None:
             client=mock_client,
         )
         assert client.client is mock_client
+
+
+def test_mistral_sdk_supports_output_dimension() -> None:
+    """Test that the supported SDK range includes the dimensions parameter."""
+    client = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
+
+    assert "output_dimension" in inspect.signature(client.client.embeddings.create_async).parameters
 
 
 def test_mistral_embedding_construction_missing_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Sequence
+from importlib import import_module
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
@@ -17,7 +18,10 @@ from agent_framework import (
 )
 from agent_framework._settings import SecretString
 from agent_framework.observability import EmbeddingTelemetryLayer
-from mistralai.client import Mistral
+
+Mistral: Any = getattr(import_module("mistralai.client"), "Mistral", None)
+if Mistral is None:
+    Mistral = import_module("mistralai").Mistral
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -93,7 +97,7 @@ class RawMistralEmbeddingClient(
         model: str | None = None,
         api_key: str | SecretString | None = None,
         server_url: str | None = None,
-        client: Mistral | None = None,
+        client: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -231,7 +235,7 @@ class MistralEmbeddingClient(
         model: str | None = None,
         api_key: str | SecretString | None = None,
         server_url: str | None = None,
-        client: Mistral | None = None,
+        client: Any | None = None,
         otel_provider_name: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,

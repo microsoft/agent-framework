@@ -42,15 +42,17 @@ def main() -> None:
     else:
         verdict = "roughly fairly valued"
 
-    print(json.dumps({
-        "price": round(args.price, 2),
-        "eps": round(args.eps, 2),
-        "target_pe": round(args.target_pe, 2),
-        "pe": round(pe, 2),
-        "fair_value": round(fair_value, 2),
-        "upside_pct": round(upside * 100, 1),
-        "verdict": verdict,
-    }))
+    print(
+        json.dumps({
+            "price": round(args.price, 2),
+            "eps": round(args.eps, 2),
+            "target_pe": round(args.target_pe, 2),
+            "pe": round(pe, 2),
+            "fair_value": round(fair_value, 2),
+            "upside_pct": round(upside * 100, 1),
+            "verdict": verdict,
+        })
+    )
 
 
 if __name__ == "__main__":

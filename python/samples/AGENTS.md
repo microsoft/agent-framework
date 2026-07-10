@@ -122,6 +122,9 @@ Every sample file follows this order:
 
 Use PEP 723 inline script metadata for external sample-only dependencies; do not add sample-only dependencies to
 the root `pyproject.toml` dev group.
+PEP 723 dependencies must list the minimal specific Agent Framework distributions used by the script (for example,
+`agent-framework-core`, `agent-framework-foundry`, or `agent-framework-openai`), never the `agent-framework`
+meta-package.
 
 ## Syntax checking
 
