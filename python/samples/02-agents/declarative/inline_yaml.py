@@ -15,7 +15,7 @@ This sample shows how to create an agent using an inline YAML string rather than
 It uses a Azure AI Client so it needs the credential to be passed into the AgentFactory.
 
 Prerequisites:
-- `pip install agent-framework-foundry agent-framework-declarative --pre`
+- `pip install agent-framework-foundry agent-framework-declarative`
 - Set the following environment variables in a .env file or your environment:
     - FOUNDRY_PROJECT_ENDPOINT
     - FOUNDRY_MODEL

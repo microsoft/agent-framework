@@ -7,7 +7,7 @@ This folder contains sample code demonstrating how to use the **Microsoft Agent 
 Install the declarative package via pip:
 
 ```bash
-pip install agent-framework-declarative --pre
+pip install agent-framework-declarative
 ```
 
 ## What is Declarative Agent Framework?
