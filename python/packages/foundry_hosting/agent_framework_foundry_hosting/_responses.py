@@ -112,7 +112,6 @@ from azure.ai.agentserver.responses.streaming._builders import (
     ReasoningSummaryPartBuilder,
     TextContentBuilder,
 )
-from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
 from typing_extensions import Any
 
@@ -433,9 +432,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             2. The agent must not have any context providers that maintain context
                in memory, because the hosting environment may get deactivated between
                requests, and any in-memory context would be lost.
+            3. Resiliency (resilient_background=True) is ONLY supported for workflows.
         """
         super().__init__(prefix=prefix, options=options, store=store, **kwargs)
-        self._server_options = options
 
         for provider in getattr(agent, "context_providers", []):
             if isinstance(provider, HistoryProvider) and provider.load_messages:
@@ -544,7 +543,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         request: CreateResponse,
         context: ResponseContext,
         cancellation_signal: asyncio.Event,
-    ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
+    ) -> AsyncIterable[ResponseStreamEvent]:
         """Handle the creation of a response."""
         # Fail fast if the service is on protocol v1.0.0
         if self.config.is_hosted and context.platform_context.call_id is None:
@@ -562,18 +561,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             async for event in self._handle_inner_agent(request, context, cancellation_signal):
                 yield event
 
-    def _checkpoint_if_supported(
-        self, request: CreateResponse, stream: ResponseEventStream
-    ) -> ResponseCheckpointEvent | None:
-        """Return a checkpoint event when supported by the current responses SDK."""
-        if (
-            self._server_options is not None
-            and self._server_options.resilient_background
-            and request.background is True
-        ):
-            return stream.checkpoint()
-        return None
-
     @staticmethod
     def _create_response_event_stream(request: CreateResponse, context: ResponseContext) -> ResponseEventStream:
         """Create a response stream seeded from recovery state when available."""
@@ -588,15 +575,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         request: CreateResponse,
         context: ResponseContext,
         cancellation_signal: asyncio.Event | None = None,
-    ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
+    ) -> AsyncIterable[ResponseStreamEvent]:
         """Handle the creation of a response for a regular (non-workflow) agent."""
         response_event_stream = self._create_response_event_stream(request, context)
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
-        # Track the current active output item builder for streaming;
-        # lazily created on matching content, closed when a different type arrives.
-        tracker: _OutputItemTracker | None = None
+        # Track the current active output item builder for streaming
+        # We always run the agent in streaming mode. Foundry Hosted Agent
+        # handles streaming vs. non-streaming at the platform level
+        tracker = _OutputItemTracker(response_event_stream)
 
         try:
             user_id = context.platform_context.user_id_key
@@ -611,7 +599,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     *input_messages,
                 ]
             }
-            is_streaming_request = request.stream is not None and request.stream is True
 
             chat_options, are_options_set = _to_chat_options(request)
 
@@ -648,64 +635,41 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 yield response_event_stream.emit_completed()
                 return
 
-            tracker = _OutputItemTracker(response_event_stream) if is_streaming_request else None
+            async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
+                # Cooperative exit on shutdown: defer to crash recovery when durable.
+                if context.shutdown.is_set():
+                    for event in tracker.close():
+                        yield event
+                    await context.exit_for_recovery()
+                if cancellation_signal is not None and cancellation_signal.is_set():
+                    for event in tracker.close():
+                        yield event
+                    # Emit a terminal so the framework can finalise this turn correctly.
+                    # The framework overrides completed → cancelled when
+                    # context.client_cancelled is True; for steering pressure
+                    # (client_cancelled=False) completed is the right terminal.
+                    logger.debug(
+                        "Response handler exiting early: %s",
+                        "client cancelled" if context.client_cancelled else "steering pressure",
+                    )
+                    yield response_event_stream.emit_completed()
+                    return
+                for content in update.contents:
+                    for event in tracker.handle(content):
+                        yield event
+                    if tracker.needs_async:
+                        async for item in _to_outputs(
+                            response_event_stream,
+                            content,
+                            approval_storage=approval_storage,
+                        ):
+                            yield item
+                        tracker.needs_async = False
 
-            if not is_streaming_request:
-                # Run the agent in non-streaming mode
-                response = await self._agent.run(stream=False, **run_kwargs)  # type: ignore[reportUnknownMemberType]
-
-                async for item in _to_outputs_for_messages(
-                    response_event_stream,
-                    response.messages,
-                    approval_storage=approval_storage,
-                ):
-                    yield item
-
-                if checkpoint_event := self._checkpoint_if_supported(request, response_event_stream):
-                    yield cast(ResponseStreamEvent, checkpoint_event)
-                yield response_event_stream.emit_completed()
-            else:
-                if tracker is None:  # pragma: no cover - defensive, set above
-                    raise RuntimeError("Streaming tracker was not initialized.")
-                # Run the agent in streaming mode
-                async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
-                    # Cooperative exit on shutdown: defer to crash recovery when durable.
-                    if context.shutdown.is_set():
-                        for event in tracker.close():
-                            yield event
-                        await context.exit_for_recovery()
-                    if cancellation_signal is not None and cancellation_signal.is_set():
-                        for event in tracker.close():
-                            yield event
-                        # Emit a terminal so the framework can finalise this turn correctly.
-                        # The framework overrides completed → cancelled when
-                        # context.client_cancelled is True; for steering pressure
-                        # (client_cancelled=False) completed is the right terminal.
-                        logger.debug(
-                            "Response handler exiting early: %s",
-                            "client cancelled" if context.client_cancelled else "steering pressure",
-                        )
-                        yield response_event_stream.emit_completed()
-                        return
-                    for content in update.contents:
-                        for event in tracker.handle(content):
-                            yield event
-                        if tracker.needs_async:
-                            async for item in _to_outputs(
-                                response_event_stream,
-                                content,
-                                approval_storage=approval_storage,
-                            ):
-                                yield item
-                            tracker.needs_async = False
-
-                # Close any remaining active builder
-                for event in tracker.close():
-                    yield event
-
-                if checkpoint_event := self._checkpoint_if_supported(request, response_event_stream):
-                    yield cast(ResponseStreamEvent, checkpoint_event)
-                yield response_event_stream.emit_completed()
+            # Close any remaining active builder
+            for event in tracker.close():
+                yield event
+            yield response_event_stream.emit_completed()
         except Exception as ex:
             logger.exception("Failed to produce response for agent")
             for event in self._emit_failure(response_event_stream, tracker, ex):
@@ -716,22 +680,22 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         request: CreateResponse,
         context: ResponseContext,
         cancellation_signal: asyncio.Event | None = None,
-    ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
+    ) -> AsyncIterable[ResponseStreamEvent]:
         """Handle the creation of a response for a workflow agent."""
         response_event_stream = self._create_response_event_stream(request, context)
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
-        # Track the current active output item builder for streaming;
-        # lazily created on matching content, closed when a different type arrives.
-        tracker: _OutputItemTracker | None = None
+        # Track the current active output item builder for streaming
+        # We always run the agent in streaming mode. Foundry Hosted Agent
+        # handles streaming vs. non-streaming at the platform level
+        tracker: _OutputItemTracker = _OutputItemTracker(response_event_stream)
 
         try:
             user_id = context.platform_context.user_id_key
             approval_storage = self._approval_storage_for_user(user_id)
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
-            is_streaming_request = request.stream is not None and request.stream is True
 
             _, are_options_set = _to_chat_options(request)
             if are_options_set:
@@ -812,42 +776,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # items (carried as FunctionResult/FunctionApprovalResponse content)
             # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
             if latest_checkpoint_id is not None:
-                if is_streaming_request:
-                    async for _ in self._agent.run(
-                        stream=True,
-                        checkpoint_id=latest_checkpoint_id,
-                        checkpoint_storage=restore_storage,
-                    ):
-                        pass
-                else:
-                    await self._agent.run(
-                        stream=False,
-                        checkpoint_id=latest_checkpoint_id,
-                        checkpoint_storage=restore_storage,
-                    )
-
-            if not is_streaming_request:
-                # Run the agent in non-streaming mode with the new user input.
-                response = await self._agent.run(
-                    input_messages,
-                    stream=False,
-                    checkpoint_storage=write_storage,
-                )
-
-                async for item in _to_outputs_for_messages(
-                    response_event_stream,
-                    response.messages,
-                    approval_storage=approval_storage,
+                async for _ in self._agent.run(
+                    stream=True,
+                    checkpoint_id=latest_checkpoint_id,
+                    checkpoint_storage=restore_storage,
                 ):
-                    yield item
+                    pass
 
-                await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
-                yield response_event_stream.emit_completed()
-                return
-
-            tracker = _OutputItemTracker(response_event_stream)
-
-            # Run the workflow agent in streaming mode with the new user input.
             async for update in self._agent.run(
                 input_messages,
                 stream=True,
@@ -885,8 +820,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 yield event
 
             await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
-            if checkpoint_event := self._checkpoint_if_supported(request, response_event_stream):
-                yield cast(ResponseStreamEvent, checkpoint_event)
+            yield cast(ResponseStreamEvent, response_event_stream.checkpoint())
             yield response_event_stream.emit_completed()
         except Exception as ex:
             logger.exception("Failed to produce response for workflow agent")
@@ -1972,76 +1906,6 @@ def _stringify_mcp_output(output: Any) -> str:
             parts.append(_stringify_mcp_output(entry))
         return "".join(parts)
     return str(output)
-
-
-async def _emit_completed_mcp_call(
-    stream: ResponseEventStream,
-    call_content: Content,
-    *,
-    arguments: str,
-    output: str,
-) -> AsyncIterator[ResponseStreamEvent]:
-    """Emit a completed MCP call item followed by a separate output item.
-
-    In b8 the mcp_call done event no longer carries an inline ``output`` field.
-    The output is emitted as a ``custom_tool_call_output`` item so that history
-    reconstruction on subsequent turns can recover the result.
-    """
-    mcp_call = stream.add_output_item_mcp_call(
-        server_label=call_content.server_name or "default",
-        name=call_content.tool_name or "",
-    )
-    yield mcp_call.emit_added()
-    yield mcp_call.emit_arguments_done(arguments)
-    yield mcp_call.emit_completed()
-    yield mcp_call.emit_done()
-    async for event in stream.aoutput_item_custom_tool_call_output(call_content.call_id or "", output):
-        yield event
-
-
-async def _to_outputs_for_messages(
-    stream: ResponseEventStream,
-    messages: Sequence[Message],
-    *,
-    approval_storage: ApprovalStorage | None = None,
-) -> AsyncIterator[ResponseStreamEvent]:
-    """Convert messages to output events with hosted-MCP call/result coalescing.
-
-    Parse once in message/content order and emit either:
-    - a single canonical completed ``mcp_call`` when adjacent hosted MCP
-      call/result content are encountered, or
-    - standard output items for all other content types.
-    """
-    pending_mcp_call: Content | None = None
-
-    for message in messages:
-        for content in message.contents:
-            if pending_mcp_call is not None:
-                if content.type == "mcp_server_tool_result" and content.call_id == pending_mcp_call.call_id:
-                    async for event in _emit_completed_mcp_call(
-                        stream,
-                        pending_mcp_call,
-                        arguments=_arguments_to_str(pending_mcp_call.arguments),
-                        output=_stringify_mcp_output(content.output),
-                    ):
-                        yield event
-                    pending_mcp_call = None
-                    continue
-
-                async for event in _to_outputs(stream, pending_mcp_call, approval_storage=approval_storage):
-                    yield event
-                pending_mcp_call = None
-
-            if content.type == "mcp_server_tool_call" and content.call_id:
-                pending_mcp_call = content
-                continue
-
-            async for event in _to_outputs(stream, content, approval_storage=approval_storage):
-                yield event
-
-    if pending_mcp_call is not None:
-        async for event in _to_outputs(stream, pending_mcp_call, approval_storage=approval_storage):
-            yield event
 
 
 # endregion

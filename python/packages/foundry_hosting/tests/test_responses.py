@@ -31,6 +31,7 @@ from agent_framework import (
     Message,
     RawAgent,
     ResponseStream,
+    ServiceSessionId,
     SupportsAgentRun,
     WorkflowAgent,
     WorkflowBuilder,
@@ -77,9 +78,8 @@ def _make_function_approval_request_content(
 
 
 def _make_agent(
+    stream_updates: list[AgentResponseUpdate],
     *,
-    response: AgentResponse | None = None,
-    stream_updates: list[AgentResponseUpdate] | None = None,
     raw_agent: bool = True,
 ) -> MagicMock:
     """Create a mock agent implementing SupportsAgentRun."""
@@ -89,25 +89,16 @@ def _make_agent(
     agent.description = "A mock agent for testing"
     agent.context_providers = []
 
-    if response is not None:
+    async def _stream_gen() -> AsyncIterator[AgentResponseUpdate]:
+        for update in stream_updates:
+            yield update
 
-        async def run_non_streaming(*args: Any, **kwargs: Any) -> AgentResponse:
-            return response
+    def run_streaming(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("stream"):
+            return ResponseStream(_stream_gen())  # type: ignore
+        raise NotImplementedError("Only streaming is configured on this mock")
 
-        agent.run = AsyncMock(side_effect=run_non_streaming)
-
-    if stream_updates is not None:
-
-        async def _stream_gen() -> AsyncIterator[AgentResponseUpdate]:
-            for update in stream_updates:
-                yield update
-
-        def run_streaming(*args: Any, **kwargs: Any) -> Any:
-            if kwargs.get("stream"):
-                return ResponseStream(_stream_gen())  # type: ignore
-            raise NotImplementedError("Only streaming is configured on this mock")
-
-        agent.run = MagicMock(side_effect=run_streaming)
+    agent.run = MagicMock(side_effect=run_streaming)
 
     return agent
 
@@ -181,18 +172,36 @@ def _sse_event_types(events: list[dict[str, Any]]) -> list[str]:
 
 class TestResponsesHostServerInit:
     def test_init_basic(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
+        update1 = AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")
+        update2 = AgentResponseUpdate(contents=[Content.from_text("!")], role="assistant")
+        agent = _make_agent(stream_updates=[update1, update2])
         server = _make_server(agent)
         assert server is not None
 
     def test_init_rejects_history_provider_with_load_messages(self) -> None:
-        hp = HistoryProvider(source_id="test", load_messages=True)
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
+
+        class _LoadMessagesHistoryProvider(HistoryProvider):
+            async def get_messages(
+                self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
+            ) -> list[Message]:
+                return []
+
+            async def save_messages(
+                self,
+                session_id: str | None,
+                messages: Sequence[Message],
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> None:
+                pass
+
+        hp = _LoadMessagesHistoryProvider(source_id="test", load_messages=True)
+        update1 = AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")
+        update2 = AgentResponseUpdate(contents=[Content.from_text("!")], role="assistant")
+        agent = _make_agent(stream_updates=[update1, update2])
         agent.context_providers = [hp]
+
         with pytest.raises(RuntimeError, match="history provider"):
             ResponsesHostServer(agent)
 
@@ -200,9 +209,10 @@ class TestResponsesHostServerInit:
         """resilient_background is never auto-enabled — it requires explicit opt-in."""
         from azure.ai.agentserver.responses import ResponsesServerOptions
 
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
+        update1 = AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")
+        update2 = AgentResponseUpdate(contents=[Content.from_text("!")], role="assistant")
+        agent = _make_agent(stream_updates=[update1, update2])
+
         created_options: list[ResponsesServerOptions] = []
         original_init = ResponsesServerOptions.__init__
 
@@ -222,9 +232,10 @@ class TestResponsesHostServerInit:
         """Explicit options are used as-is without modification."""
         from azure.ai.agentserver.responses import ResponsesServerOptions
 
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
+        update1 = AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")
+        update2 = AgentResponseUpdate(contents=[Content.from_text("!")], role="assistant")
+        agent = _make_agent(stream_updates=[update1, update2])
+
         explicit_options = ResponsesServerOptions(resilient_background=False)
         server = ResponsesHostServer(agent, options=explicit_options, store=InMemoryResponseProvider())
         assert server is not None
@@ -233,9 +244,10 @@ class TestResponsesHostServerInit:
         """steerable_conversations=True creates options even when an explicit store is supplied."""
         from azure.ai.agentserver.responses import ResponsesServerOptions
 
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
+        update1 = AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")
+        update2 = AgentResponseUpdate(contents=[Content.from_text("!")], role="assistant")
+        agent = _make_agent(stream_updates=[update1, update2])
+
         captured_options: list[ResponsesServerOptions] = []
         original_init = ResponsesServerOptions.__init__
 
@@ -246,41 +258,12 @@ class TestResponsesHostServerInit:
         with patch.object(ResponsesServerOptions, "__init__", capture_options):
             ResponsesHostServer(
                 agent,
+                options=ResponsesServerOptions(steerable_conversations=True),
                 store=InMemoryResponseProvider(),
-                steerable_conversations=True,
             )
 
         assert any(o.steerable_conversations for o in captured_options), (
             "Expected at least one ResponsesServerOptions with steerable_conversations=True"
-        )
-
-    def test_init_steerable_conversations_ignored_when_explicit_options_provided(self) -> None:
-        """steerable_conversations parameter is ignored when options= is supplied explicitly."""
-        from azure.ai.agentserver.responses import ResponsesServerOptions
-
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
-        explicit_options = ResponsesServerOptions(steerable_conversations=False)
-        new_options_created: list[ResponsesServerOptions] = []
-        original_init = ResponsesServerOptions.__init__
-
-        def capture_new_options(self: ResponsesServerOptions, **kwargs: Any) -> None:
-            original_init(self, **kwargs)
-            new_options_created.append(self)
-
-        # Passing steerable_conversations=True as a kwarg but with explicit options=
-        # should NOT cause a second ResponsesServerOptions to be constructed.
-        with patch.object(ResponsesServerOptions, "__init__", capture_new_options):
-            ResponsesHostServer(
-                agent,
-                options=explicit_options,
-                store=InMemoryResponseProvider(),
-                steerable_conversations=True,
-            )
-
-        assert new_options_created == [], (
-            "No new ResponsesServerOptions should be created when explicit options are provided"
         )
 
 
@@ -288,39 +271,6 @@ class TestResponsesHostServerInit:
 
 
 class TestDurableResponseStreamSeeding:
-    async def test_recovery_turn_seeds_stream_from_persisted_response(self) -> None:
-        from azure.ai.agentserver.responses import ResponseContext
-        from azure.ai.agentserver.responses.models import CreateResponse
-
-        agent = _make_agent(response=AgentResponse(messages=[]))
-        server = _make_server(agent)
-        request = CreateResponse(model="test-model", input="hi")
-        context = ResponseContext(response_id="resp_123", mode_flags=MagicMock())
-        context.is_recovery = True
-        context.persisted_response = MagicMock()
-
-        stream = MagicMock()
-        stream.emit_created.return_value = {"type": "response.created"}
-        stream.emit_in_progress.return_value = {"type": "response.in_progress"}
-        stream.checkpoint.return_value = {"type": "_checkpoint"}
-        stream.emit_completed.return_value = {"type": "response.completed"}
-
-        async def _empty_outputs(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, Any]]:
-            if False:
-                yield {}
-
-        with (
-            patch("agent_framework_foundry_hosting._responses.ResponseEventStream", return_value=stream) as stream_ctor,
-            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
-            patch("agent_framework_foundry_hosting._responses._to_outputs_for_messages", side_effect=_empty_outputs),
-        ):
-            async for _ in server._handle_inner_agent(request, context):  # pyright: ignore[reportPrivateUsage]
-                pass
-
-        stream_ctor.assert_called_once_with(response=context.persisted_response, response_id=context.response_id)
-        assert stream.checkpoint.call_count == 1
-
     async def test_cancellation_signal_emits_completed_for_streaming(self) -> None:
         """On steering pressure or client cancel the streaming handler emits response.completed."""
         from azure.ai.agentserver.responses import ResponseContext
@@ -382,9 +332,9 @@ class TestDurableResponseStreamSeeding:
 
 class TestHealthCheck:
     async def test_readiness(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
+        update1 = AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")
+        update2 = AgentResponseUpdate(contents=[Content.from_text("!")], role="assistant")
+        agent = _make_agent(stream_updates=[update1, update2])
         server = _make_server(agent)
         transport = httpx.ASGITransport(app=server)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -400,9 +350,9 @@ class TestHealthCheck:
 
 class TestNonStreaming:
     async def test_basic_text_response(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Hello!")])])
-        )
+        update1 = AgentResponseUpdate(contents=[Content.from_text("Hello")], role="assistant")
+        update2 = AgentResponseUpdate(contents=[Content.from_text("!")], role="assistant")
+        agent = _make_agent(stream_updates=[update1, update2])
         server = _make_server(agent)
         resp = await _post(server, input_text="Hi", stream=False)
 
@@ -424,18 +374,13 @@ class TestNonStreaming:
         assert text_found, f"Expected 'Hello!' in output, got: {body['output']}"
 
     async def test_function_call_and_result(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(
-                messages=[
-                    Message(
-                        role="assistant",
-                        contents=[Content.from_function_call("call_1", "get_weather", arguments='{"loc": "NYC"}')],
-                    ),
-                    Message(role="tool", contents=[Content.from_function_result("call_1", result="sunny")]),
-                    Message(role="assistant", contents=[Content.from_text("The weather is sunny!")]),
-                ]
-            )
+        update1 = AgentResponseUpdate(
+            contents=[Content.from_function_call("call_1", "get_weather", arguments='{"loc": "NYC"}')], role="assistant"
         )
+        update2 = AgentResponseUpdate(contents=[Content.from_function_result("call_1", result="sunny")], role="tool")
+        update3 = AgentResponseUpdate(contents=[Content.from_text("The weather")], role="assistant")
+        update4 = AgentResponseUpdate(contents=[Content.from_text(" is sunny!")], role="assistant")
+        agent = _make_agent(stream_updates=[update1, update2, update3, update4])
         server = _make_server(agent)
         resp = await _post(server, stream=False)
 
@@ -449,33 +394,29 @@ class TestNonStreaming:
         assert "message" in types
 
     async def test_hosted_mcp_call_and_result_persist_as_single_mcp_call(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(
-                messages=[
-                    Message(
-                        role="assistant",
-                        contents=[
-                            Content.from_mcp_server_tool_call(
-                                call_id="mcp_abc123",
-                                tool_name="search",
-                                server_name="api_specs",
-                                arguments='{"q": "cats"}',
-                            )
-                        ],
-                    ),
-                    Message(
-                        role="tool",
-                        contents=[
-                            Content.from_mcp_server_tool_result(
-                                call_id="mcp_abc123",
-                                output=[Content.from_text(text="found 10 cats")],
-                            )
-                        ],
-                    ),
-                    Message(role="assistant", contents=[Content.from_text("I found 10 cats!")]),
-                ]
-            )
+        update1 = AgentResponseUpdate(
+            contents=[
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_abc123",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "cats"}',
+                )
+            ],
+            role="assistant",
         )
+        update2 = AgentResponseUpdate(
+            contents=[
+                Content.from_mcp_server_tool_result(
+                    call_id="mcp_abc123",
+                    output=[Content.from_text(text="found 10 cats")],
+                )
+            ],
+            role="tool",
+        )
+        update3 = AgentResponseUpdate(contents=[Content.from_text("I found ")], role="assistant")
+        update4 = AgentResponseUpdate(contents=[Content.from_text("10 cats!")], role="assistant")
+        agent = _make_agent(stream_updates=[update1, update2, update3, update4])
         server = _make_server(agent)
         resp = await _post(server, stream=False)
 
@@ -498,19 +439,17 @@ class TestNonStreaming:
         assert output_items[0]["output"] == "found 10 cats"
 
     async def test_reasoning_content(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(
-                messages=[
-                    Message(
-                        role="assistant",
-                        contents=[
-                            Content.from_text_reasoning(text="Let me think..."),
-                            Content.from_text("The answer is 42"),
-                        ],
-                    ),
-                ]
-            )
+        update1 = AgentResponseUpdate(
+            contents=[Content.from_text_reasoning(text="Let me")],
+            role="assistant",
         )
+        update2 = AgentResponseUpdate(
+            contents=[Content.from_text_reasoning(text=" think...")],
+            role="assistant",
+        )
+        update3 = AgentResponseUpdate(contents=[Content.from_text("The answer is")], role="assistant")
+        update4 = AgentResponseUpdate(contents=[Content.from_text(" 42")], role="assistant")
+        agent = _make_agent(stream_updates=[update1, update2, update3, update4])
         server = _make_server(agent)
         resp = await _post(server, stream=False)
 
@@ -523,7 +462,7 @@ class TestNonStreaming:
         assert "message" in types
 
     async def test_empty_response(self) -> None:
-        agent = _make_agent(response=AgentResponse(messages=[]))
+        agent = _make_agent([])
         server = _make_server(agent)
         resp = await _post(server, stream=False)
 
@@ -532,10 +471,9 @@ class TestNonStreaming:
         assert body["status"] == "completed"
 
     async def test_chat_options_forwarded(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
-            raw_agent=True,
-        )
+        update1 = AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")
+        update2 = AgentResponseUpdate(contents=[Content.from_text("!")], role="assistant")
+        agent = _make_agent(stream_updates=[update1, update2], raw_agent=True)
         server = _make_server(agent)
         resp = await _post(
             server,
@@ -547,9 +485,9 @@ class TestNonStreaming:
         )
 
         assert resp.status_code == 200
-        agent.run.assert_awaited_once()
+        agent.run.assert_called_once()
         call_kwargs = agent.run.call_args.kwargs
-        assert call_kwargs["stream"] is False
+        assert call_kwargs["stream"] is True
         options = call_kwargs["options"]
         assert options["temperature"] == 0.5
         assert options["top_p"] == 0.9
@@ -660,7 +598,7 @@ class TestStreaming:
         agent = _make_agent(
             stream_updates=[
                 AgentResponseUpdate(
-                    contents=[Content.from_function_call("call_1", "handoff_to_refund", arguments=request)],
+                    contents=[Content.from_function_call("call_1", "handoff_to_refund", arguments=request.__dict__)],
                     role="assistant",
                 ),
             ]
@@ -965,7 +903,7 @@ class TestOutputItemToMessage:
         from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
 
         item = FunctionCallOutputItemParam({"type": "function_call_output", "call_id": "call_1", "output": "sunny"})
-        msg = await _output_item_to_message(item)  # type: ignore[arg-type]
+        msg = await _output_item_to_message(item)  # type: ignore[arg-type] # ty: ignore[invalid-argument-type]
         assert msg.role == "tool"
         assert msg.contents[0].type == "function_result"
         assert msg.contents[0].call_id == "call_1"
@@ -1838,7 +1776,7 @@ def _make_multi_response_agent(
     responses: list[AgentResponse],
     stream_updates_list: list[list[AgentResponseUpdate]] | None = None,
 ) -> MagicMock:
-    """Create a mock agent that returns different responses on successive calls."""
+    """Create a streaming-only mock agent that streams a different response on successive calls."""
     agent = MagicMock(spec=RawAgent)
     agent.id = "test-agent"
     agent.name = "Test Agent"
@@ -1847,10 +1785,15 @@ def _make_multi_response_agent(
 
     call_index = [0]
 
-    async def run_non_streaming(*args: Any, **kwargs: Any) -> AgentResponse:
-        idx = call_index[0]
-        call_index[0] += 1
-        return responses[idx]
+    def _updates_for(idx: int) -> list[AgentResponseUpdate]:
+        # Prefer explicitly provided streaming updates for this turn; otherwise
+        # derive them from the AgentResponse messages (one update per message).
+        if stream_updates_list is not None and stream_updates_list[idx]:
+            return stream_updates_list[idx]
+        return [
+            AgentResponseUpdate(contents=list(message.contents), role=message.role)
+            for message in responses[idx].messages
+        ]
 
     async def _stream_gen(updates: list[AgentResponseUpdate]) -> AsyncIterator[AgentResponseUpdate]:
         for update in updates:
@@ -1859,20 +1802,11 @@ def _make_multi_response_agent(
     def run_dispatch(*args: Any, **kwargs: Any) -> Any:
         idx = call_index[0]
         call_index[0] += 1
-        if kwargs.get("stream") and stream_updates_list is not None:
-            return ResponseStream(_stream_gen(stream_updates_list[idx]))  # type: ignore
         if not kwargs.get("stream"):
-            # Need to return a coroutine for non-streaming
-            async def _ret() -> AgentResponse:
-                return responses[idx]
+            raise NotImplementedError("Only streaming is configured on this mock")
+        return ResponseStream(_stream_gen(_updates_for(idx)))  # type: ignore
 
-            return _ret()
-        raise NotImplementedError("Streaming not configured for this call index")
-
-    if stream_updates_list is not None:
-        agent.run = MagicMock(side_effect=run_dispatch)
-    else:
-        agent.run = AsyncMock(side_effect=run_non_streaming)
+    agent.run = MagicMock(side_effect=run_dispatch)
 
     return agent
 
@@ -1882,9 +1816,9 @@ class TestMultiTurnMixedContent:
 
     async def test_text_and_image_input_single_turn(self) -> None:
         """Agent receives a message with text and image content via URL."""
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("I see a cat!")])])
-        )
+        update1 = AgentResponseUpdate(contents=[Content.from_text("I see")], role="assistant")
+        update2 = AgentResponseUpdate(contents=[Content.from_text(" a cat!")], role="assistant")
+        agent = _make_agent(stream_updates=[update1, update2])
         server = _make_server(agent)
 
         resp = await _post_json(
@@ -1921,9 +1855,9 @@ class TestMultiTurnMixedContent:
 
     async def test_text_and_file_input_single_turn(self) -> None:
         """Agent receives a message with text and file content via URL."""
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("File received")])])
-        )
+        update1 = AgentResponseUpdate(contents=[Content.from_text("File ")], role="assistant")
+        update2 = AgentResponseUpdate(contents=[Content.from_text("received")], role="assistant")
+        agent = _make_agent(stream_updates=[update1, update2])
         server = _make_server(agent)
 
         resp = await _post_json(
@@ -1958,9 +1892,9 @@ class TestMultiTurnMixedContent:
 
     async def test_text_and_file_data_input_single_turn(self) -> None:
         """Agent receives a message with text and file content via inline file_data."""
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("File received")])])
-        )
+        update1 = AgentResponseUpdate(contents=[Content.from_text("File ")], role="assistant")
+        update2 = AgentResponseUpdate(contents=[Content.from_text("received")], role="assistant")
+        agent = _make_agent(stream_updates=[update1, update2])
         server = _make_server(agent)
 
         resp = await _post_json(
@@ -1999,9 +1933,8 @@ class TestMultiTurnMixedContent:
 
     async def test_text_mime_file_data_decoded(self) -> None:
         """Agent receives a text/* file_data that is base64-decoded to plain text."""
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Got it")])])
-        )
+        update1 = AgentResponseUpdate(contents=[Content.from_text("Got it")], role="assistant")
+        agent = _make_agent(stream_updates=[update1])
         server = _make_server(agent)
 
         import base64
@@ -2038,9 +1971,8 @@ class TestMultiTurnMixedContent:
 
     async def test_text_mime_file_data_invalid_base64_falls_through(self) -> None:
         """Invalid base64 in a text/* file_data falls through to URI passthrough."""
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Got it")])])
-        )
+        update1 = AgentResponseUpdate(contents=[Content.from_text("Got it")], role="assistant")
+        agent = _make_agent(stream_updates=[update1])
         server = _make_server(agent)
 
         resp = await _post_json(
@@ -2073,9 +2005,8 @@ class TestMultiTurnMixedContent:
 
     async def test_mixed_text_and_image_input(self) -> None:
         """Agent receives a single message with both text and image content."""
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Got it!")])])
-        )
+        update1 = AgentResponseUpdate(contents=[Content.from_text("Got it")], role="assistant")
+        agent = _make_agent(stream_updates=[update1])
         server = _make_server(agent)
 
         resp = await _post_json(
@@ -2110,11 +2041,9 @@ class TestMultiTurnMixedContent:
 
     async def test_function_call_items_in_input(self) -> None:
         """Input contains function_call and function_call_output items."""
-        agent = _make_agent(
-            response=AgentResponse(
-                messages=[Message(role="assistant", contents=[Content.from_text("Weather is sunny!")])]
-            )
-        )
+        update1 = AgentResponseUpdate(contents=[Content.from_text("Weather is")], role="assistant")
+        update2 = AgentResponseUpdate(contents=[Content.from_text(" sunny!")], role="assistant")
+        agent = _make_agent(stream_updates=[update1, update2])
         server = _make_server(agent)
 
         resp = await _post_json(
@@ -2434,9 +2363,7 @@ class TestMultiTurnMixedContent:
     async def test_text_with_mcp_call_items(self) -> None:
         """Input contains text message + mcp_call item and the agent processes it."""
         agent = _make_agent(
-            response=AgentResponse(
-                messages=[Message(role="assistant", contents=[Content.from_text("MCP result received")])]
-            )
+            stream_updates=[AgentResponseUpdate(contents=[Content.from_text("MCP result received")], role="assistant")]
         )
         server = _make_server(agent)
 
@@ -2559,7 +2486,7 @@ class TestMultiTurnMixedContent:
     async def test_input_with_hosted_file_image(self) -> None:
         """Input contains an image referenced by file_id (hosted file)."""
         agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Image analyzed")])])
+            stream_updates=[AgentResponseUpdate(contents=[Content.from_text("Image analyzed")], role="assistant")]
         )
         server = _make_server(agent)
 
@@ -2782,7 +2709,9 @@ class TestFunctionApprovalStorage:
         assert loaded.type == "function_approval_request"
         assert loaded.id == "apr_1"  # type: ignore[attr-defined]
         # The embedded function_call survives the round trip.
-        assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined]
+        function_call = loaded.function_call
+        assert function_call is not None
+        assert function_call.name == "delete_file"
 
     async def test_file_based_duplicate_save_raises(self, tmp_path: Any) -> None:
         path = tmp_path / "approvals.json"
@@ -2822,7 +2751,9 @@ class TestFunctionApprovalConversion:
         assert c.type == "function_approval_request"
         assert c.id == "apr-1"  # type: ignore[attr-defined]
         # The full saved Content (incl. function_call) is restored.
-        assert c.function_call.name == "delete_file"  # type: ignore[attr-defined]
+        function_call = c.function_call
+        assert function_call is not None
+        assert function_call.name == "delete_file"
 
     async def test_output_item_mcp_approval_request_without_storage_raises(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalRequest
@@ -2856,7 +2787,9 @@ class TestFunctionApprovalConversion:
         assert c.type == "function_approval_response"
         assert c.approved is True  # type: ignore[attr-defined]
         assert c.id == "apr-1"  # type: ignore[attr-defined]
-        assert c.function_call.name == "delete_file"  # type: ignore[attr-defined]
+        function_call = c.function_call
+        assert function_call is not None
+        assert function_call.name == "delete_file"
 
     async def test_output_item_mcp_approval_response_without_storage_raises(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalResponseResource
@@ -2921,7 +2854,7 @@ class TestFunctionApprovalRoundTrip:
 
     async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
         request_content = _make_function_approval_request_content()
-        agent = _make_agent(response=AgentResponse(messages=[Message(role="assistant", contents=[request_content])]))
+        agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[request_content], role="assistant")])
         server = _make_server(agent)
 
         resp = await _post(server, stream=False)
@@ -2940,7 +2873,7 @@ class TestFunctionApprovalRoundTrip:
             approval_request_id
         )
         assert loaded.type == "function_approval_request"
-        assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined]
+        assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
 
     async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
         request_content = _make_function_approval_request_content(request_id="apr_streaming")
@@ -2959,7 +2892,7 @@ class TestFunctionApprovalRoundTrip:
         for e in events:
             if e["event"] != "response.output_item.added":
                 continue
-            item = e["data"].get("item") or {}
+            item: dict[str, Any] = e["data"].get("item") or {}
             if item.get("type") == "mcp_approval_request":
                 approval_request_id = item.get("id")
                 break
@@ -3059,10 +2992,9 @@ class TestFunctionApprovalRoundTrip:
 
     async def test_approval_response_referencing_unknown_id_fails(self) -> None:
         """Sending an `mcp_approval_response` for a request id that was
-        never persisted must fail (storage raises KeyError)."""
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])])
-        )
+        never persisted must surface as a ``response.failed`` event whose
+        ``error.message`` contains the missing approval request id."""
+        agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[Content.from_text("ok")], role="assistant")])
         server = _make_server(agent)
 
         resp = await _post_json(
@@ -3079,9 +3011,15 @@ class TestFunctionApprovalRoundTrip:
                 "stream": False,
             },
         )
-        # The handler raises a KeyError when the storage lookup misses;
-        # the hosting layer surfaces this as a 5xx response.
-        assert resp.status_code >= 500
+        # The handler converts the underlying KeyError into a terminal
+        # ``response.failed`` event, so non-streaming callers see HTTP 200
+        # with status="failed" and a meaningful error message rather than
+        # a generic 5xx response.
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "failed"
+        error: dict[str, Any] = body.get("error") or {}
+        assert "apr_unknown" in (error.get("message") or "")
 
 
 # endregion
@@ -3102,7 +3040,7 @@ class TestCheckpointContextPathValidation:
     """
 
     @staticmethod
-    def _helper() -> Callable[[str, str], FileCheckpointStorage]:
+    def _helper() -> Callable[..., FileCheckpointStorage]:
         from agent_framework_foundry_hosting._responses import (  # pyright: ignore[reportPrivateUsage]
             _checkpoint_storage_for_context,
         )
@@ -3222,12 +3160,20 @@ class TestCheckpointContextPathValidation:
         agent.workflow = MagicMock()
         agent.workflow.name = "wf"
         agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
-        agent.run = AsyncMock(
-            side_effect=[
-                AgentResponse(messages=[]),
-                AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
-            ]
-        )
+
+        async def _restore_stream() -> AsyncIterator[AgentResponseUpdate]:
+            for _ in ():
+                yield AgentResponseUpdate(contents=[], role="assistant")
+
+        async def _new_turn_stream() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("ok")], role="assistant")
+
+        run_streams = [_restore_stream(), _new_turn_stream()]
+
+        def run_dispatch(*args: Any, **kwargs: Any) -> Any:
+            return ResponseStream(run_streams.pop(0))  # type: ignore[arg-type]
+
+        agent.run = MagicMock(side_effect=run_dispatch)
         server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
         server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
 
@@ -3244,13 +3190,13 @@ class TestCheckpointContextPathValidation:
         assert agent.run.call_count == 2
         restore_call = agent.run.call_args_list[0]
         assert restore_call.kwargs["checkpoint_id"] == checkpoint.checkpoint_id
-        assert restore_call.kwargs["checkpoint_storage"]._inner.storage_path == (root / previous_response_id).resolve()  # pyright: ignore[reportPrivateUsage]
+        assert restore_call.kwargs["checkpoint_storage"].storage_path == (root / previous_response_id).resolve()
 
         new_turn_call = agent.run.call_args_list[1]
         new_turn_messages = new_turn_call.args[0]
         assert len(new_turn_messages) == 1
         assert new_turn_messages[0].text == "next turn"
-        assert new_turn_call.kwargs["checkpoint_storage"]._inner.storage_path == (root / response_id).resolve()  # pyright: ignore[reportPrivateUsage]
+        assert new_turn_call.kwargs["checkpoint_storage"].storage_path == (root / response_id).resolve()
 
     @pytest.mark.parametrize(
         "bad_id",
@@ -3294,7 +3240,7 @@ class TestCheckpointContextPathValidation:
     def test_non_string_context_id_is_rejected(self, tmp_path: Any) -> None:
         helper = self._helper()
         with pytest.raises(RuntimeError):
-            helper(str(tmp_path), None)  # type: ignore[arg-type]
+            helper(str(tmp_path), None)
 
     def test_url_encoded_traversal_is_treated_as_literal_segment(self, tmp_path: Any) -> None:
         """URL-encoded traversal should not decode to traversal at the filesystem layer.
@@ -3308,6 +3254,59 @@ class TestCheckpointContextPathValidation:
         storage = helper(str(root), "%2e%2e")
         assert storage.storage_path.parent == root.resolve()
         assert storage.storage_path.name == "%2e%2e"
+
+    def test_user_id_scopes_storage_under_user_partition(self, tmp_path: Any) -> None:
+        """A per-user partition key nests the context dir under ``<root>/<user_id>``."""
+        helper = self._helper()
+        root = tmp_path / "root"
+        root.mkdir()
+        storage = helper(str(root), "resp_abc123", user_id="user-A")
+        assert storage.storage_path.is_dir()
+        assert storage.storage_path == (root / "user-A" / "resp_abc123").resolve()
+
+    @pytest.mark.parametrize("absent_user_id", [None, ""])
+    def test_absent_user_id_uses_unscoped_layout(self, tmp_path: Any, absent_user_id: str | None) -> None:
+        """``None``/empty user id (local dev or protocol v1) falls back to the unscoped layout."""
+        helper = self._helper()
+        root = tmp_path / "root"
+        root.mkdir()
+        storage = helper(str(root), "resp_abc123", user_id=absent_user_id)
+        assert storage.storage_path == (root / "resp_abc123").resolve()
+
+    def test_distinct_users_get_isolated_storage(self, tmp_path: Any) -> None:
+        """Two users sharing a context id must not resolve to the same directory."""
+        helper = self._helper()
+        root = tmp_path / "root"
+        root.mkdir()
+        a = helper(str(root), "shared_context", user_id="user-A")
+        b = helper(str(root), "shared_context", user_id="user-B")
+        assert a.storage_path != b.storage_path
+        assert a.storage_path.is_relative_to((root / "user-A").resolve())
+        assert b.storage_path.is_relative_to((root / "user-B").resolve())
+
+    @pytest.mark.parametrize(
+        "bad_user_id",
+        [
+            "../../escape",
+            "..",
+            ".",
+            "/tmp/escape",
+            "C:\\temp\\escape",
+            "user/../../escape",
+            "with\x00null",
+            "a/b",
+        ],
+    )
+    def test_malicious_user_id_is_rejected(self, tmp_path: Any, bad_user_id: str) -> None:
+        helper = self._helper()
+        root = tmp_path / "root"
+        root.mkdir()
+        before = sorted(p.name for p in tmp_path.iterdir())
+        with pytest.raises(RuntimeError):
+            helper(str(root), "resp_abc123", user_id=bad_user_id)
+        after = sorted(p.name for p in tmp_path.iterdir())
+        assert before == after, f"Unexpected filesystem artifacts created for user id {bad_user_id!r}"
+        assert list(root.iterdir()) == []
 
     @pytest.mark.parametrize(
         "context_field,bad_id",
@@ -3375,11 +3374,21 @@ class TestCheckpointContextPathValidation:
         with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
             context = ResponseContext(**kwargs)
             before = sorted(p.name for p in tmp_path.iterdir())
-            with pytest.raises(RuntimeError, match="Invalid checkpoint context id"):
-                async for _ in server._handle_inner_workflow(request, context):  # pyright: ignore[reportPrivateUsage]
-                    pass
+            # The handler converts the underlying ``RuntimeError`` into a
+            # terminal ``response.failed`` event whose error message names
+            # the rejected context id, so the SSE / non-streaming consumer
+            # observes a well-formed failure rather than a raw exception.
+            events = [event async for event in server._handle_inner_workflow(request, context)]  # pyright: ignore[reportPrivateUsage]
             after = sorted(p.name for p in tmp_path.iterdir())
 
+        failed = [e for e in events if getattr(e, "type", None) == "response.failed"]
+        assert len(failed) == 1, (
+            f"Expected exactly one response.failed event, got types={[getattr(e, 'type', None) for e in events]}"
+        )
+        response_obj = getattr(failed[0], "response", None)
+        error = getattr(response_obj, "error", None) if response_obj is not None else None
+        assert error is not None
+        assert "Invalid context id" in (error.message or "")
         assert before == after, f"Unexpected filesystem artifacts created for {context_field}={bad_id!r}"
         assert list(root.iterdir()) == [], f"Checkpoint dir created inside root for {context_field}={bad_id!r}"
 
@@ -3394,7 +3403,8 @@ class TestCheckpointContextPathValidation:
             ("previous_response_id", "caresp_x/../../service-data/api-made-dir" + "A" * 14),
             # Restore sink: server-issued conversation id (defense in depth).
             # Reaches the checkpoint code and is rejected there, surfacing as
-            # an HTTP 5xx without creating any filesystem artifacts.
+            # a terminal ``response.failed`` (HTTP 200, status="failed")
+            # without creating any filesystem artifacts.
             ("conversation", "../../escape"),
             ("conversation", "/tmp/escape-abs"),
         ],
@@ -3444,17 +3454,78 @@ class TestCheckpointContextPathValidation:
             resp = await client.post("/responses", json=payload)
         after = sorted(p.name for p in tmp_path.iterdir())
 
-        # The request must not succeed; either request validation rejects it
-        # (4xx) or the checkpoint layer raises and the server returns 5xx.
-        # Either way, no successful response may be produced.
-        assert resp.status_code >= 400, (
-            f"Expected non-2xx for {context_field}={bad_id!r}, got {resp.status_code}: {resp.text[:200]}"
-        )
+        # The request must not succeed: either request validation rejects it
+        # (HTTP 4xx) before reaching the handler, or the checkpoint layer
+        # raises and the handler converts the failure into a
+        # ``response.failed`` terminal event (HTTP 200, status="failed").
+        # Either way, no successful response and no filesystem artifacts.
+        if resp.status_code == 200:
+            body = resp.json()
+            assert body.get("status") == "failed", (
+                f"Expected status='failed' for {context_field}={bad_id!r}, got {body.get('status')!r}"
+            )
+        else:
+            assert resp.status_code >= 400, (
+                f"Expected non-2xx for {context_field}={bad_id!r}, got {resp.status_code}: {resp.text[:200]}"
+            )
         assert before == after, (
             f"Unexpected filesystem artifacts under tmp_path for {context_field}={bad_id!r}: "
             f"before={before} after={after}"
         )
         assert list(root.iterdir()) == [], f"Checkpoint directory created inside root for {context_field}={bad_id!r}"
+
+
+class TestApprovalStoragePathValidation:
+    """Path-traversal and per-user scoping tests for function approval storage.
+
+    Mirrors the checkpoint validation: the per-user approval directory is
+    derived by joining the platform-injected ``x-agent-user-id`` partition key
+    under the base approval directory, and the user id must be a single safe
+    path segment (CWE-22).
+    """
+
+    @staticmethod
+    def _helper() -> Callable[..., str]:
+        from agent_framework_foundry_hosting._responses import (  # pyright: ignore[reportPrivateUsage]
+            _approval_storage_path_for_user,
+        )
+
+        return _approval_storage_path_for_user
+
+    def test_user_id_scopes_path_under_base_directory(self, tmp_path: Any) -> None:
+        from pathlib import Path
+
+        helper = self._helper()
+        base = tmp_path / "approvals" / "requests.json"
+        scoped = Path(helper(str(base), "user-A"))
+        assert scoped.name == "requests.json"
+        assert scoped.parent.name == "user-A"
+        assert scoped.parent.parent == (tmp_path / "approvals").resolve()
+
+    def test_distinct_users_get_isolated_paths(self, tmp_path: Any) -> None:
+        helper = self._helper()
+        base = tmp_path / "approvals" / "requests.json"
+        assert helper(str(base), "user-A") != helper(str(base), "user-B")
+
+    @pytest.mark.parametrize(
+        "bad_user_id",
+        [
+            "../../escape",
+            "..",
+            ".",
+            "/tmp/escape",
+            "C:\\temp\\escape",
+            "user/../../escape",
+            "with\x00null",
+            "a/b",
+            "",
+        ],
+    )
+    def test_malicious_user_id_is_rejected(self, tmp_path: Any, bad_user_id: str) -> None:
+        helper = self._helper()
+        base = tmp_path / "approvals" / "requests.json"
+        with pytest.raises(RuntimeError):
+            helper(str(base), bad_user_id)
 
 
 # region Agent lifecycle (lazy entry & OAuth consent surfacing)
@@ -3525,9 +3596,7 @@ class TestConsentUrlFromError:
 
 class TestAgentLifecycle:
     async def test_agent_entered_lazily_on_first_request(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
+        agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")])
         server = _make_server(agent)
         # Construction must not enter the agent.
         assert agent.__aenter__.await_count == 0
@@ -3536,9 +3605,7 @@ class TestAgentLifecycle:
         assert agent.__aenter__.await_count == 1
 
     async def test_agent_entered_only_once_across_requests(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
+        agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")])
         server = _make_server(agent)
 
         await _post(server, input_text="first", stream=False)
@@ -3547,9 +3614,7 @@ class TestAgentLifecycle:
         assert agent.__aenter__.await_count == 1
 
     async def test_cleanup_exits_agent_and_allows_reentry(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
+        agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")])
         server = _make_server(agent)
 
         await _post(server, input_text="hello", stream=False)
@@ -3568,9 +3633,7 @@ class TestAgentLifecycle:
         assert agent.__aenter__.await_count == 2
 
     async def test_failed_entry_does_not_cache_stack(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
+        agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")])
         agent.__aenter__.side_effect = [_make_consent_error(), None]
         server = _make_server(agent)
 
@@ -3582,9 +3645,7 @@ class TestAgentLifecycle:
 
 class TestOAuthConsentSurfacing:
     async def test_non_streaming_consent_error_emits_oauth_output_item(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
+        agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")])
         agent.__aenter__.side_effect = _make_consent_error("https://consent.example.com/auth")
         server = _make_server(agent)
 
@@ -3627,24 +3688,25 @@ class TestOAuthConsentSurfacing:
         agent.run.assert_not_called()
 
     async def test_non_consent_error_during_entry_propagates(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
+        agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")])
         agent.__aenter__.side_effect = RuntimeError("boom")
         server = _make_server(agent)
 
         resp = await _post(server, input_text="hello", stream=False)
         # Non-consent errors are not swallowed: the response is marked failed
-        # and no `oauth_consent_request` item is emitted.
+        # and no `oauth_consent_request` item is emitted. The exception
+        # message is propagated to the client via ``error.message``.
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "failed"
         assert not any(it["type"] == "oauth_consent_request" for it in body.get("output", []))
+        error: dict[str, Any] = body.get("error") or {}
+        assert error.get("message") == "boom"
         agent.run.assert_not_called()
 
     async def test_retry_after_consent_succeeds(self) -> None:
         agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hello!")])])
+            stream_updates=[AgentResponseUpdate(contents=[Content.from_text("hello!")], role="assistant")]
         )
         agent.__aenter__.side_effect = [_make_consent_error("https://consent.example.com/auth"), None]
         server = _make_server(agent)
@@ -3664,7 +3726,143 @@ class TestOAuthConsentSurfacing:
         assert body2["status"] == "completed"
         assert any(it["type"] == "message" for it in body2["output"])
         assert agent.__aenter__.await_count == 2
-        agent.run.assert_awaited_once()
+        agent.run.assert_called_once()
+
+
+# endregion
+
+# region Error handling (response.failed surfacing)
+
+
+class TestResponseFailedSurfacing:
+    """Tests that exceptions raised by the hosted agent are converted into
+    terminal ``response.failed`` events carrying the exception message,
+    rather than propagating as 5xx HTTP errors or being replaced by the
+    orchestrator's generic ``"An internal server error occurred."``
+    fallback.
+    """
+
+    async def test_non_streaming_run_failure_emits_response_failed(self) -> None:
+        async def _raise_stream() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("partial ")], role="assistant")
+            raise RuntimeError("non-stream kaboom")
+
+        agent = MagicMock(spec=RawAgent)
+        agent.id = "test-agent"
+        agent.name = "Test Agent"
+        agent.description = "A mock agent for testing"
+        agent.context_providers = []
+
+        def run_streaming(*args: Any, **kwargs: Any) -> Any:
+            if kwargs.get("stream"):
+                return ResponseStream(_raise_stream())  # type: ignore[arg-type]
+            raise NotImplementedError("Only streaming is configured on this mock")
+
+        agent.run = MagicMock(side_effect=run_streaming)
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "failed"
+        error: dict[str, Any] = body.get("error") or {}
+        assert error.get("message") == "non-stream kaboom"
+
+    async def test_streaming_run_failure_emits_response_failed(self) -> None:
+        async def _raise_stream() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("partial ")], role="assistant")
+            raise RuntimeError("stream kaboom")
+
+        agent = MagicMock(spec=RawAgent)
+        agent.id = "test-agent"
+        agent.name = "Test Agent"
+        agent.description = "A mock agent for testing"
+        agent.context_providers = []
+
+        def run_streaming(*args: Any, **kwargs: Any) -> Any:
+            if kwargs.get("stream"):
+                return ResponseStream(_raise_stream())  # type: ignore[arg-type]
+            raise NotImplementedError("Only streaming is configured on this mock")
+
+        agent.run = MagicMock(side_effect=run_streaming)
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+        assert types[0] == "response.created"
+        assert types[1] == "response.in_progress"
+        # Last lifecycle event must be ``response.failed``, never ``response.completed``.
+        assert types[-1] == "response.failed"
+        assert "response.completed" not in types
+
+        failed = [e for e in events if e["event"] == "response.failed"]
+        assert len(failed) == 1
+        response_payload: dict[str, Any] = failed[0]["data"].get("response") or {}
+        error: dict[str, Any] = response_payload.get("error") or {}
+        assert error.get("message") == "stream kaboom"
+
+    async def test_streaming_run_failure_drains_pending_output_item(self) -> None:
+        """If a streaming output item was open when the failure happens, the
+        handler must close it before emitting ``response.failed`` so the SSE
+        stream stays well-formed (every ``output_item.added`` has a matching
+        ``output_item.done``).
+        """
+
+        async def _raise_stream() -> AsyncIterator[AgentResponseUpdate]:
+            # Open a text output item, then blow up before it closes.
+            yield AgentResponseUpdate(contents=[Content.from_text("hello ")], role="assistant")
+            raise RuntimeError("mid-item kaboom")
+
+        agent = MagicMock(spec=RawAgent)
+        agent.id = "test-agent"
+        agent.name = "Test Agent"
+        agent.description = "A mock agent for testing"
+        agent.context_providers = []
+
+        def run_streaming(*args: Any, **kwargs: Any) -> Any:
+            return ResponseStream(_raise_stream())  # type: ignore[arg-type]
+
+        agent.run = MagicMock(side_effect=run_streaming)
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+        assert types.count("response.output_item.added") == types.count("response.output_item.done")
+        assert types[-1] == "response.failed"
+
+    async def test_workflow_agent_run_failure_emits_response_failed(self) -> None:
+        """Exceptions raised by a hosted ``WorkflowAgent`` are converted into a
+        terminal ``response.failed`` event in the same way as the regular
+        agent path.
+        """
+        workflow_agent = _build_text_workflow_agent("ignored")
+
+        async def _raise_stream() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("partial ")], role="assistant")
+            raise RuntimeError("workflow kaboom")
+
+        def _run_stream(*args: Any, **kwargs: Any) -> Any:
+            return ResponseStream(_raise_stream())  # type: ignore[arg-type]
+
+        # Patch the public ``run`` to stream and then fail. ``_handle_inner_workflow``
+        # only invokes the agent once (no checkpoint to restore on a fresh
+        # request), so this is the call that will raise.
+        with patch.object(workflow_agent, "run", new=MagicMock(side_effect=_run_stream)):
+            server = _make_server(workflow_agent)
+            resp = await _post(server, input_text="hello", stream=False)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "failed"
+        error: dict[str, Any] = body.get("error") or {}
+        assert error.get("message") == "workflow kaboom"
 
 
 # endregion
@@ -3706,7 +3904,7 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
     def create_session(self, **kwargs: Any) -> AgentSession:
         return AgentSession()
 
-    def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+    def get_session(self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
         return AgentSession()
 
     def _next_request_id(self) -> str:
@@ -3840,7 +4038,9 @@ def _build_text_workflow_agent(text: str) -> WorkflowAgent:
         def create_session(self, **kwargs: Any) -> AgentSession:
             return AgentSession()
 
-        def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+        def get_session(
+            self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None
+        ) -> AgentSession:
             return AgentSession()
 
         @overload
@@ -3986,7 +4186,7 @@ class TestWorkflowAgentHosting:
             approval_request_id
         )
         assert loaded.type == "function_approval_request"
-        assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined]
+        assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
         assert mock_agent.run_count == 1
 
     async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
@@ -4005,7 +4205,7 @@ class TestWorkflowAgentHosting:
         for e in events:
             if e["event"] != "response.output_item.added":
                 continue
-            item = e["data"].get("item") or {}
+            item: dict[str, Any] = e["data"].get("item") or {}
             if item.get("type") == "mcp_approval_request":
                 approval_request_id = item.get("id")
                 break
