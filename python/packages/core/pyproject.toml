@@ -35,6 +35,7 @@ all = [
     "agent-framework-a2a",
     "agent-framework-ag-ui",
     "agent-framework-anthropic",
+    "agent-framework-atr",
     "agent-framework-azure-ai-search",
     "agent-framework-azure-cosmos",
     "agent-framework-azurefunctions",

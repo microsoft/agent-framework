@@ -33,6 +33,7 @@ members = [
     "agent-framework-a2a",
     "agent-framework-ag-ui",
     "agent-framework-anthropic",
+    "agent-framework-atr",
     "agent-framework-azure-ai-search",
     "agent-framework-azure-contentunderstanding",
     "agent-framework-azure-cosmos",
@@ -238,6 +239,21 @@ requires-dist = [
 ]
 
 [[package]]
+name = "agent-framework-atr"
+version = "1.0.0b260711"
+source = { editable = "packages/atr" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pyatr", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "pyatr", specifier = ">=0.2,<1" },
+]
+
+[[package]]
 name = "agent-framework-azure-ai-search"
 version = "1.0.0b260709"
 source = { editable = "packages/azure-ai-search" }
@@ -388,6 +404,7 @@ all = [
     { name = "agent-framework-a2a", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-ag-ui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-anthropic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-atr", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-azure-ai-search", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-azure-cosmos", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-azurefunctions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -424,6 +441,7 @@ requires-dist = [
     { name = "agent-framework-a2a", marker = "extra == 'all'", editable = "packages/a2a" },
     { name = "agent-framework-ag-ui", marker = "extra == 'all'", editable = "packages/ag-ui" },
     { name = "agent-framework-anthropic", marker = "extra == 'all'", editable = "packages/anthropic" },
+    { name = "agent-framework-atr", marker = "extra == 'all'", editable = "packages/atr" },
     { name = "agent-framework-azure-ai-search", marker = "extra == 'all'", editable = "packages/azure-ai-search" },
     { name = "agent-framework-azure-cosmos", marker = "extra == 'all'", editable = "packages/azure-cosmos" },
     { name = "agent-framework-azurefunctions", marker = "extra == 'all'", editable = "packages/azurefunctions" },
@@ -6200,6 +6218,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e9/e6/78ebbb10a8c8e4b61a59249394a4a594c1a7af95593dc933a349c8d00964/pyasn1_modules-0.4.2.tar.gz", hash = "sha256:677091de870a80aae844b1ca6134f54652fa2c8c5a52aa396440ac3106e941e6", size = 307892, upload-time = "2025-03-28T02:41:22.17Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/47/8d/d529b5d697919ba8c11ad626e835d4039be708a35b0d22de83a269a6682c/pyasn1_modules-0.4.2-py3-none-any.whl", hash = "sha256:29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a", size = 181259, upload-time = "2025-03-28T02:41:19.028Z" },
+]
+
+[[package]]
+name = "pyatr"
+version = "0.2.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyyaml", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7e/07/345ec0a6a4177b766541b57ae0eefca36ba720f825eb3dd97be52cb44b67/pyatr-0.2.7.tar.gz", hash = "sha256:4504386e62f8c8061515531c6e2ad2646f59ecbc8eb3b08b787b13a7a6d3c1a2", size = 584664, upload-time = "2026-07-10T11:57:17.112Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/05/b6/01530b9ba5fc5c080910f9f36b839956ade20561313eabeb8a3caf9e803c/pyatr-0.2.7-py3-none-any.whl", hash = "sha256:cab83b782a67c81431294d588a6d4a35f856a61843dcae39e2c8b8a4ba257cc9", size = 581124, upload-time = "2026-07-10T11:57:15.692Z" },
 ]
 
 [[package]]
