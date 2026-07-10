@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.ML.Tokenizers;
 using Microsoft.Shared.DiagnosticIds;
@@ -525,5 +526,10 @@ public sealed class CompactionMessageIndex
 
     private static bool IsSummaryMessage(ChatMessage message) =>
         message.AdditionalProperties?.TryGetValue(CompactionMessageGroup.SummaryPropertyKey, out object? value) is true
-            && value is true;
+            && value switch
+            {
+                bool b => b,
+                JsonElement j => j.GetBoolean(),
+                _ => false,
+            };
 }

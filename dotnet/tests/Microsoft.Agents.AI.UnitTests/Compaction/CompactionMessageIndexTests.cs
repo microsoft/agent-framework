@@ -3,6 +3,7 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Text.Json;
 using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
 using Microsoft.ML.Tokenizers;
@@ -1473,5 +1474,33 @@ public class CompactionMessageIndexTests
         Assert.Equal(CompactionGroupKind.AssistantText, index.Groups[1].Kind);
         Assert.Equal(CompactionGroupKind.ToolCall, index.Groups[2].Kind);
         Assert.Equal(3, index.Groups[2].MessageCount); // reasoning + toolCall + toolResult
+    }
+
+    [Theory]
+    [InlineData(null, CompactionGroupKind.AssistantText)]
+    [InlineData(false, CompactionGroupKind.AssistantText)]
+    [InlineData("false", CompactionGroupKind.AssistantText)]
+    [InlineData(true, CompactionGroupKind.Summary)]
+    [InlineData("true", CompactionGroupKind.Summary)]
+    public void SummaryPropertyKeyIsRespected(object? summaryPropertyValue, CompactionGroupKind expectedCompactionGroupKind)
+    {
+        ChatMessage message = new(ChatRole.Assistant, "Hello");
+        message.AdditionalProperties ??= [];
+
+        // Convert string to JsonElement for the deserialized case
+        if (summaryPropertyValue != null)
+        {
+            message.AdditionalProperties[CompactionMessageGroup.SummaryPropertyKey] = summaryPropertyValue switch
+            {
+                string s => JsonDocument.Parse(s).RootElement,
+                _ => summaryPropertyValue
+            };
+        }
+
+        CompactionMessageIndex index = CompactionMessageIndex.Create([message]);
+
+        // Assert — the message is recognized as a summary message
+        Assert.Single(index.Groups);
+        Assert.Equal(expectedCompactionGroupKind, index.Groups[0].Kind);
     }
 }
