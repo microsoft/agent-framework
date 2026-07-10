@@ -15,6 +15,7 @@ injection, and dynamic (progressive) tool exposure.
 | [`function_tool_with_session_injection.py`](function_tool_with_session_injection.py) | Injecting the session into a tool. |
 | [`tool_in_class.py`](tool_in_class.py) | Using a method on a class as a tool. |
 | [`agent_as_tool_with_session_propagation.py`](agent_as_tool_with_session_propagation.py) | Exposing an agent as a tool with session propagation. |
+| [`agent_as_subagent_with_context.py`](agent_as_subagent_with_context.py) | Parallel sub-agent execution via `asyncio.gather` with structured context, error handling, and result aggregation. |
 
 ## Approvals & invocation control
 
