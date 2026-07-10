@@ -1830,7 +1830,7 @@ async def test_chat_agent_as_tool_propagate_session_clears_service_session_id(cl
         assert captured_session.state["data"] == "shared"
         return original_run(*args, **kwargs)
 
-    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
 
     await tool.invoke(
         context=FunctionInvocationContext(
@@ -1857,7 +1857,7 @@ async def test_chat_agent_as_tool_propagate_session_restores_service_session_id_
     def failing_run(*args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("Child agent failed")
 
-    agent.run = failing_run  # type: ignore[assignment, method-assign]
+    agent.run = failing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
 
     with raises(RuntimeError, match="Child agent failed"):
         await tool.invoke(
@@ -1892,7 +1892,7 @@ async def test_chat_agent_as_tool_propagate_session_no_service_session_id(client
         captured_session.service_session_id = "resp_child_leaked"
         return original_run(*args, **kwargs)
 
-    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
 
     await tool.invoke(
         context=FunctionInvocationContext(
