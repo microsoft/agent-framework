@@ -3244,13 +3244,13 @@ class TestCheckpointContextPathValidation:
         assert agent.run.call_count == 2
         restore_call = agent.run.call_args_list[0]
         assert restore_call.kwargs["checkpoint_id"] == checkpoint.checkpoint_id
-        assert restore_call.kwargs["checkpoint_storage"].storage_path == (root / previous_response_id).resolve()
+        assert restore_call.kwargs["checkpoint_storage"]._inner.storage_path == (root / previous_response_id).resolve()  # pyright: ignore[reportPrivateUsage]
 
         new_turn_call = agent.run.call_args_list[1]
         new_turn_messages = new_turn_call.args[0]
         assert len(new_turn_messages) == 1
         assert new_turn_messages[0].text == "next turn"
-        assert new_turn_call.kwargs["checkpoint_storage"].storage_path == (root / response_id).resolve()
+        assert new_turn_call.kwargs["checkpoint_storage"]._inner.storage_path == (root / response_id).resolve()  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.parametrize(
         "bad_id",
