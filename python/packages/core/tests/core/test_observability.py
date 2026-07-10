@@ -3341,6 +3341,70 @@ def test_build_tool_otel_definition_falls_back_to_type_when_name_missing() -> No
     assert result == {"type": "code_interpreter", "name": "code_interpreter"}
 
 
+def test_build_tool_otel_definition_omits_secrets_from_mcp_tool_spec() -> None:
+    """Generic MCP tool specs must not leak secret fields (e.g. auth token/headers)."""
+    from agent_framework.observability import _build_tool_otel_definition
+
+    mcp_spec = {
+        "type": "mcp",
+        "name": "github_mcp",
+        "server_url": "https://mcp.example.com",
+        "authorization": "super-secret-oauth-token",
+        "headers": {"Authorization": "Bearer super-secret-oauth-token"},
+    }
+
+    result = _build_tool_otel_definition(mcp_spec)
+
+    assert result is not None
+    assert result["type"] == "mcp"
+    assert result["name"] == "github_mcp"
+    assert result["server_url"] == "https://mcp.example.com"
+    # Secrets are dropped.
+    assert "authorization" not in result
+    assert "headers" not in result
+
+
+def test_build_tool_otel_definition_omits_secrets_from_mcp_tool_mapping() -> None:
+    """MCP tool objects exposing a mapping (e.g. Azure SDK models) also drop secrets."""
+    from collections.abc import Mapping
+
+    from agent_framework.observability import _build_tool_otel_definition
+
+    class _AzureLikeMcpTool(Mapping):  # type: ignore[type-arg]
+        """Minimal stand-in for an Azure SDK ``MCPTool`` model with an ``as_dict``."""
+
+        def __init__(self) -> None:
+            self._data = {
+                "type": "mcp",
+                "name": "azure_mcp",
+                "server_label": "azure_mcp",
+                "authorization": "super-secret-oauth-token",
+                "headers": {"Authorization": "Bearer super-secret-oauth-token"},
+            }
+
+        def as_dict(self) -> dict[str, Any]:
+            return dict(self._data)
+
+        def __getitem__(self, key: str) -> Any:
+            return self._data[key]
+
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            return iter(self._data)
+
+        def __len__(self) -> int:
+            return len(self._data)
+
+    result = _build_tool_otel_definition(_AzureLikeMcpTool())
+
+    assert result is not None
+    assert result["type"] == "mcp"
+    assert result["name"] == "azure_mcp"
+    assert result["server_label"] == "azure_mcp"
+    # Secrets are dropped.
+    assert "authorization" not in result
+    assert "headers" not in result
+
+
 def test_build_tool_otel_definition_warns_when_type_missing(caplog: pytest.LogCaptureFixture) -> None:
     """Tools without an extractable ``type`` are skipped with a warning."""
     from agent_framework.observability import _build_tool_otel_definition

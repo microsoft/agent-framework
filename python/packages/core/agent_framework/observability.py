@@ -2325,6 +2325,10 @@ def _get_instructions_from_options(options: Any) -> str | list[str] | None:
 _TOOL_OTEL_JSON_CACHE: weakref.WeakKeyDictionary[Any, str | None] = weakref.WeakKeyDictionary()
 # Sentinel distinguishing "not cached" from a cached ``None`` (unparseable tool).
 _CACHE_MISS: Final = object()
+# Tool-spec fields that can carry secrets (e.g. an OAuth access token on an MCP
+# tool, or injected auth headers) and must never be copied into emitted telemetry.
+# Matched by field name so any MCP tool spec is covered, not just a specific class.
+_SENSITIVE_TOOL_DEFINITION_KEYS: Final[frozenset[str]] = frozenset({"authorization", "headers"})
 
 
 def _serialize_tool_definitions(tools: Any) -> str | None:
@@ -2484,9 +2488,13 @@ def _otel_definition_from_mapping(raw: Mapping[str, Any]) -> dict[str, Any] | No
         if parameters:
             definition["parameters"] = parameters
         # Forward extra properties from both layers, preferring the inner spec.
+        # Sensitive fields (e.g. auth tokens/headers) are dropped so telemetry
+        # never carries secrets.
         for source in (nested, raw):
             for key, value in source.items():
                 if key in {"type", "function", "name", "description", "parameters"}:
+                    continue
+                if key in _SENSITIVE_TOOL_DEFINITION_KEYS:
                     continue
                 definition.setdefault(key, value)
         return definition
@@ -2513,12 +2521,19 @@ def _otel_definition_from_mapping(raw: Mapping[str, Any]) -> dict[str, Any] | No
         for key, value in raw.items():
             if key in {"type", "name", "description", "parameters"}:
                 continue
+            if key in _SENSITIVE_TOOL_DEFINITION_KEYS:
+                continue
             definition.setdefault(key, value)
         return definition
 
+    # Generic (non-function) tool definition, e.g. an MCP tool. Sensitive fields
+    # (e.g. an OAuth ``authorization`` token or auth ``headers``) are dropped so
+    # telemetry never carries secrets.
     definition = {"type": type_value, "name": name_value}
     for key, value in raw.items():
         if key in {"type", "name"}:
+            continue
+        if key in _SENSITIVE_TOOL_DEFINITION_KEYS:
             continue
         definition[key] = value
     return definition
