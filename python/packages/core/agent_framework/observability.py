@@ -2314,13 +2314,15 @@ def _get_instructions_from_options(options: Any) -> str | list[str] | None:
 
 # region OTel tool definitions
 
-# Per-item in-memory cache of computed OTel tool definitions, keyed by the tool
-# object's identity. Tool objects (e.g. ``FunctionTool``, ``MCPTool``) are often
-# reused across runs, so caching their converted definitions avoids repeating the
-# isinstance checks, schema generation, and dict construction on every invocation.
-# A ``WeakKeyDictionary`` lets entries be garbage collected with their tools.
-# Unhashable / non-weak-referenceable specs (e.g. plain dicts) bypass the cache.
-_TOOL_OTEL_DEFINITION_CACHE: weakref.WeakKeyDictionary[Any, dict[str, Any] | None] = weakref.WeakKeyDictionary()
+# Per-item in-memory cache of the *serialized* OTel tool-definition JSON fragment,
+# keyed by the tool object's identity. Tool objects (e.g. ``FunctionTool``,
+# ``MCPTool``) are often reused across runs, so caching the encoded string (rather
+# than just the definition dict) lets repeated runs reuse the fragment without
+# repeating the isinstance checks, schema generation, dict construction, and
+# ``json.dumps``. A ``WeakKeyDictionary`` lets entries be garbage collected with
+# their tools; unhashable / non-weak-referenceable specs (e.g. plain dicts) bypass
+# the cache.
+_TOOL_OTEL_JSON_CACHE: weakref.WeakKeyDictionary[Any, str | None] = weakref.WeakKeyDictionary()
 # Sentinel distinguishing "not cached" from a cached ``None`` (unparseable tool).
 _CACHE_MISS: Final = object()
 
@@ -2330,100 +2332,92 @@ def _serialize_tool_definitions(tools: Any) -> str | None:
 
     Returns ``None`` when no tool can be represented. Serialization is
     best-effort: any failure is swallowed with a warning so telemetry never
-    raises into the caller. When a tool spec carries a value that is not
-    JSON-serializable, definitions are encoded individually so the offending
-    tool is skipped (and named in the warning) while the rest are still
-    captured.
+    raises into the caller. Each tool's JSON fragment is cached per tool object
+    (see :func:`_tool_to_otel_json`), so reused tool instances skip both the
+    definition build and ``json.dumps``; the fragments are joined into a JSON
+    array, and a tool that cannot be represented or serialized is skipped (and
+    named in the warning) while the rest are still captured.
     """
+    from ._tools import normalize_tools
+
     try:
-        tools_dict = _tools_to_dict(tools)
+        normalized_tools = normalize_tools(tools)
     except Exception:
         logger.warning(
             "Failed to build tool definitions for telemetry; skipping attribute.",
             exc_info=True,
         )
         return None
-    if not tools_dict:
+    if not normalized_tools:
+        return None
+    fragments: list[str] = []
+    for tool_item in normalized_tools:
+        fragment = _tool_to_otel_json(tool_item)
+        if fragment is not None:
+            fragments.append(fragment)
+    return f"[{','.join(fragments)}]" if fragments else None
+
+
+def _tool_to_otel_json(tool_item: Any) -> str | None:
+    """Serialize a single tool spec into its OTel tool-definition JSON fragment.
+
+    The encoded fragment is cached per tool object (keyed by identity) so that
+    repeated runs reuse the JSON without rebuilding the definition dict or
+    re-running ``json.dumps``. Specs that cannot be weakly referenced (e.g.
+    plain dicts) are serialized without caching.
+
+    Returns ``None`` when the tool cannot be represented or serialized.
+    """
+    try:
+        cached = _TOOL_OTEL_JSON_CACHE.get(tool_item, _CACHE_MISS)
+    except TypeError:
+        # Unhashable spec (e.g. a plain dict); serialize without caching.
+        return _build_tool_otel_json(tool_item)
+    if cached is not _CACHE_MISS:
+        return cast("str | None", cached)
+
+    fragment = _build_tool_otel_json(tool_item)
+    with contextlib.suppress(TypeError):
+        # Object may not support weak references; skip caching when that is the case.
+        _TOOL_OTEL_JSON_CACHE[tool_item] = fragment
+    return fragment
+
+
+def _build_tool_otel_json(tool_item: Any) -> str | None:
+    """Build and encode a single tool's OTel definition JSON fragment (uncached)."""
+    try:
+        definition = _build_tool_otel_definition(tool_item)
+    except Exception:
+        logger.warning(
+            "Failed to build tool definition for telemetry; skipping tool.",
+            exc_info=True,
+        )
+        return None
+    if definition is None:
         return None
     try:
-        return json.dumps(tools_dict, ensure_ascii=False)
+        return json.dumps(definition, ensure_ascii=False)
     except Exception:
-        # A tool spec holds a value that is not JSON-serializable. Encode each
-        # definition on its own so the rest are still captured and the offending
-        # tool is named in the warning.
-        serializable: list[dict[str, Any]] = []
-        for definition in tools_dict:
-            try:
-                json.dumps(definition, ensure_ascii=False)
-            except Exception:
-                logger.warning(
-                    "Failed to serialize tool definition for telemetry; skipping tool %r.",
-                    definition.get("name") or definition.get("type") or "<unknown>",
-                    exc_info=True,
-                )
-            else:
-                serializable.append(definition)
-        return json.dumps(serializable, ensure_ascii=False) if serializable else None
+        logger.warning(
+            "Failed to serialize tool definition for telemetry; skipping tool %r.",
+            definition.get("name") or definition.get("type") or "<unknown>",
+            exc_info=True,
+        )
+        return None
 
 
-def _tools_to_dict(
-    tools: Any,
-) -> list[dict[str, Any]] | None:
-    """Convert tools into OpenTelemetry GenAI tool definitions.
+def _build_tool_otel_definition(tool_item: Any) -> dict[str, Any] | None:
+    """Convert a single tool spec into an OTel GenAI tool-definition dict (uncached).
 
-    The output conforms to the OTel GenAI tool-definitions schema, where each
-    entry is either a ``FunctionToolDefinition`` (``type="function"`` with
+    The output conforms to the OTel GenAI tool-definitions schema, where the
+    result is either a ``FunctionToolDefinition`` (``type="function"`` with
     ``name`` and optional ``description``/``parameters``) or a
     ``GenericToolDefinition`` (any ``type`` plus a ``name``). See
     https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-tool-definitions.json.
 
-    Args:
-        tools: The tools to parse. Can be a single tool or a sequence of tools.
-
-    Returns:
-        A list of OTel-conformant tool-definition dicts, or ``None`` when
-        ``tools`` is empty or no tool can be represented.
-    """
-    from ._tools import normalize_tools
-
-    normalized_tools = normalize_tools(tools)
-    if not normalized_tools:
-        return None
-    results: list[dict[str, Any]] = []
-    for tool_item in normalized_tools:
-        otel_def = _tool_to_otel_definition(tool_item)
-        if otel_def is not None:
-            results.append(otel_def)
-    return results or None
-
-
-def _tool_to_otel_definition(tool_item: Any) -> dict[str, Any] | None:
-    """Convert a single tool spec into an OTel GenAI tool-definition dict.
-
-    Results are cached per tool object (keyed by identity) so repeated runs that
-    reuse the same tool instances skip the conversion work. Specs that cannot be
-    weakly referenced (e.g. plain dicts) are converted without caching.
-
     Returns ``None`` and emits a warning when the input cannot be represented
     as either a ``FunctionToolDefinition`` or a ``GenericToolDefinition``.
     """
-    try:
-        cached = _TOOL_OTEL_DEFINITION_CACHE.get(tool_item, _CACHE_MISS)
-    except TypeError:
-        # Unhashable spec (e.g. a plain dict); convert without caching.
-        return _build_tool_otel_definition(tool_item)
-    if cached is not _CACHE_MISS:
-        return cast("dict[str, Any] | None", cached)
-
-    definition = _build_tool_otel_definition(tool_item)
-    with contextlib.suppress(TypeError):
-        # Object may not support weak references; skip caching when that is the case.
-        _TOOL_OTEL_DEFINITION_CACHE[tool_item] = definition
-    return definition
-
-
-def _build_tool_otel_definition(tool_item: Any) -> dict[str, Any] | None:
-    """Convert a single tool spec into an OTel GenAI tool-definition dict (uncached)."""
     from pydantic import BaseModel
 
     from ._mcp import MCPTool
