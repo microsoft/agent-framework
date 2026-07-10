@@ -1480,6 +1480,8 @@ public class CompactionMessageIndexTests
     [InlineData(null, CompactionGroupKind.AssistantText)]
     [InlineData(false, CompactionGroupKind.AssistantText)]
     [InlineData("false", CompactionGroupKind.AssistantText)]
+    [InlineData("null", CompactionGroupKind.AssistantText)]
+    [InlineData("\"Unexpected string\"", CompactionGroupKind.AssistantText)]
     [InlineData(true, CompactionGroupKind.Summary)]
     [InlineData("true", CompactionGroupKind.Summary)]
     public void SummaryPropertyKeyIsRespected(object? summaryPropertyValue, CompactionGroupKind expectedCompactionGroupKind)

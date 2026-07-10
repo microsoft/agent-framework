@@ -529,7 +529,7 @@ public sealed class CompactionMessageIndex
             && value switch
             {
                 bool b => b,
-                JsonElement j => j.GetBoolean(),
+                JsonElement j => j.ValueKind == JsonValueKind.True,
                 _ => false,
             };
 }
