@@ -63,7 +63,14 @@ class AppAgentExecutor(AgentExecutor, Generic[AgentT]):
             agent = await self.state.get_target()
             session_id = f"a2a:{context.tenant}:{context.context_id}"
             session = await self.state.get_or_create_session(session_id)
-            stream = agent.run(run["messages"], session=session, stream=True)
+            if not run["stream"]:
+                raise RuntimeError("This executor requires streaming run arguments.")
+            stream = agent.run(  # pyright: ignore[reportCallIssue]
+                run["messages"],
+                session=session,
+                options=run["options"],
+                stream=run["stream"],
+            )
             default_artifact_id = uuid.uuid4().hex
             streamed_artifact_ids: set[str] = set()
             async for update in stream:
@@ -76,7 +83,14 @@ class AppAgentExecutor(AgentExecutor, Generic[AgentT]):
                         append=True if artifact_id in streamed_artifact_ids else None,
                     )
                     streamed_artifact_ids.add(artifact_id)
-            await stream.get_final_response()
+            final_response = await stream.get_final_response()
+            if not streamed_artifact_ids:
+                parts = a2a_from_run(final_response)
+                if parts:
+                    await updater.update_status(
+                        state=TaskState.TASK_STATE_WORKING,
+                        message=updater.new_agent_message(parts),
+                    )
             await self.state.set_session(session_id, session)
             await updater.complete()
         except CancelledError:
