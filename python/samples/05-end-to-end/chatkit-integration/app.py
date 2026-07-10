@@ -588,11 +588,16 @@ async def upload_file(attachment_id: str, file: UploadFile = File(...)):  # noqa
     logger.info(f"Receiving file upload for attachment: {attachment_id}")
 
     try:
+        file_path = attachment_store.get_file_path(attachment_id)
+    except ValueError:
+        logger.warning(f"Rejected invalid attachment ID: {attachment_id!r}")
+        return JSONResponse(status_code=400, content={"error": "Invalid attachment ID."})
+
+    try:
         # Read file contents
         contents = await file.read()
 
         # Save to disk
-        file_path = attachment_store.get_file_path(attachment_id)
         file_path.write_bytes(contents)
 
         logger.info(f"Saved {len(contents)} bytes to {file_path}")
@@ -625,7 +630,11 @@ async def preview_image(attachment_id: str):
 
     try:
         file_path = attachment_store.get_file_path(attachment_id)
+    except ValueError:
+        logger.warning(f"Rejected invalid attachment ID: {attachment_id!r}")
+        return JSONResponse(status_code=400, content={"error": "Invalid attachment ID."})
 
+    try:
         if not file_path.exists():
             return JSONResponse(status_code=404, content={"error": "File not found"})
 
