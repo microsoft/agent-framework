@@ -235,7 +235,7 @@ class SessionContext:
         source: str | object,
         messages: Sequence[Message],
         *,
-        origin_session_id: str | None = None,
+        origin_session_ids: Sequence[str] | None = None,
     ) -> None:
         """Add context messages from a specific source.
 
@@ -251,31 +251,41 @@ class SessionContext:
                 object is passed, its class name is recorded as
                 ``source_type`` in the attribution.
             messages: The messages to add.
-            origin_session_id: Optional session_id that originally produced
+            origin_session_ids: Optional session IDs that originally produced
                 these messages, when different from the current session. Set
-                by providers that inject content stored under a different
-                session than the requesting one (cross-session memory). The
-                value is exposed under ``additional_properties["_attribution"]
-                ["origin_session_id"]`` so downstream context observers can
-                detect cross-session content for governance, audit, or
-                behavioral-analysis purposes. Omit (default) when content
-                originates in the current session — absence of the field is
-                semantically equivalent to "no origin information."
+                by providers that inject content stored under other sessions
+                (cross-session memory). The values are exposed under
+                ``additional_properties["_attribution"]["origin_session_ids"]``
+                so downstream context observers can detect cross-session
+                content for governance, audit, or behavioral-analysis
+                purposes. Omit (default) when content originates in the
+                current session; absence of the field means that no origin
+                information was supplied.
         """
         if isinstance(source, str):
             source_id = source
-            attribution: dict[str, str] = {"source_id": source_id}
+            attribution: dict[str, Any] = {"source_id": source_id}
         else:
             source_id = source.source_id  # type: ignore[attr-defined]
             attribution = {"source_id": source_id, "source_type": type(source).__name__}
-        if origin_session_id is not None:
-            attribution["origin_session_id"] = origin_session_id
+        if origin_session_ids:
+            attribution["origin_session_ids"] = list(dict.fromkeys(origin_session_ids))
 
         copied: list[Message] = []
         for message in messages:
             msg_copy = copy.copy(message)
             msg_copy.additional_properties = dict(message.additional_properties)
-            msg_copy.additional_properties.setdefault("_attribution", attribution)
+            message_attribution = dict(attribution)
+            if "origin_session_ids" in message_attribution:
+                message_attribution["origin_session_ids"] = list(message_attribution["origin_session_ids"])
+            existing_attribution = msg_copy.additional_properties.get("_attribution")
+            if isinstance(existing_attribution, Mapping):
+                merged_attribution = dict(cast(Mapping[str, Any], existing_attribution))
+                for key, value in message_attribution.items():
+                    merged_attribution.setdefault(key, value)
+                msg_copy.additional_properties["_attribution"] = merged_attribution
+            else:
+                msg_copy.additional_properties.setdefault("_attribution", message_attribution)
             copied.append(msg_copy)
         if source_id not in self.context_messages:
             self.context_messages[source_id] = []

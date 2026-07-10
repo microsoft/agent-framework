@@ -505,8 +505,8 @@ async def test_memory_context_provider_recent_turns_can_skip_tool_call_groups(tm
     assert with_tools_messages[4].text == "Second final answer"
 
 
-async def test_memory_context_provider_marks_cross_session_origin(tmp_path) -> None:
-    """Injected memory should carry origin_session_id when topics originate in a prior session.
+async def test_memory_context_provider_marks_cross_session_origins(tmp_path) -> None:
+    """Injected memory should carry all prior session origins without duplicates.
 
     Exercises the cross-session attribution surface added to support downstream observers
     detecting attacks of the class documented in Dai et al. (arXiv:2605.06158).
@@ -527,15 +527,15 @@ async def test_memory_context_provider_marks_cross_session_origin(tmp_path) -> N
             summary="Loves Oslo trips.",
             memories=["Prefers Oslo in summer."],
             updated_at=updated_at,
-            session_ids=["session-prior"],
+            session_ids=["session-current", "session-prior-1", "session-prior-2", "session-prior-1"],
         ),
         source_id=DEFAULT_MEMORY_SOURCE_ID,
     )
 
     agent = Agent(
-        client=_MemoryHarnessClient(),
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         context_providers=[MemoryContextProvider(store=store)],
-        default_options={"store": False},
+        default_options=_no_store_options(),
     )
 
     session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
@@ -547,8 +547,8 @@ async def test_memory_context_provider_marks_cross_session_origin(tmp_path) -> N
         m for m in session_context.context_messages.get(DEFAULT_MEMORY_SOURCE_ID, []) if "### MEMORY.md" in m.text
     ]
     assert memory_messages, "expected an injected memory block under the memory source"
-    attribution = memory_messages[0].additional_properties.get("_attribution") or {}
-    assert attribution.get("origin_session_id") == "session-prior"
+    attribution: dict[str, Any] = memory_messages[0].additional_properties.get("_attribution") or {}
+    assert attribution.get("origin_session_ids") == ["session-prior-1", "session-prior-2"]
 
 
 async def test_memory_context_provider_omits_origin_when_only_current_session(tmp_path) -> None:
@@ -575,9 +575,9 @@ async def test_memory_context_provider_omits_origin_when_only_current_session(tm
     )
 
     agent = Agent(
-        client=_MemoryHarnessClient(),
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         context_providers=[MemoryContextProvider(store=store)],
-        default_options={"store": False},
+        default_options=_no_store_options(),
     )
 
     session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
@@ -589,8 +589,8 @@ async def test_memory_context_provider_omits_origin_when_only_current_session(tm
         m for m in session_context.context_messages.get(DEFAULT_MEMORY_SOURCE_ID, []) if "### MEMORY.md" in m.text
     ]
     assert memory_messages
-    attribution = memory_messages[0].additional_properties.get("_attribution") or {}
-    assert "origin_session_id" not in attribution
+    attribution: dict[str, Any] = memory_messages[0].additional_properties.get("_attribution") or {}
+    assert "origin_session_ids" not in attribution
 
 
 async def test_memory_context_provider_uses_explicit_consolidation_client(tmp_path) -> None:

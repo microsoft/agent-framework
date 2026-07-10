@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from collections.abc import Mapping
-from typing import Any, Callable, cast
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, cast
 
 from agent_framework import AgentSession, ContextProvider, Message, SessionContext
 
@@ -11,8 +11,8 @@ from agent_framework import AgentSession, ContextProvider, Message, SessionConte
 When a context provider injects messages from a different ``session_id`` than
 the requesting one — the legitimate cross-session memory use case (consolidated
 memories, Mem0 with default scope, shared knowledge bases) — the framework
-records the originating session under
-``message.additional_properties["_attribution"]["origin_session_id"]``.
+records the originating sessions under
+``message.additional_properties["_attribution"]["origin_session_ids"]``.
 
 Downstream context observers can subscribe to this signal for governance,
 audit, and behavioral analysis purposes. This is useful for defending against
@@ -31,11 +31,11 @@ class CrossSessionObserver(ContextProvider):
 
     Subscribes via the standard ``ContextProvider`` pipeline. In ``before_run``,
     walks the accumulated context messages and invokes a user-supplied
-    callback for each message whose ``_attribution["origin_session_id"]``
-    is present and differs from the current ``session_id``.
+    callback for each message whose ``_attribution["origin_session_ids"]``
+    contains one or more sessions other than the current ``session_id``.
 
     The callback receives the source_id that injected the content, the
-    originating session_id, the current session_id, and the message itself.
+    originating session IDs, the current session_id, and the message itself.
     Use it to log, alert, increment metrics, or enforce policy — the observer
     itself only surfaces the signal, leaving the response policy to the caller.
     """
@@ -44,7 +44,7 @@ class CrossSessionObserver(ContextProvider):
 
     def __init__(
         self,
-        on_cross_session_access: Callable[[str, str, str | None, Message], None],
+        on_cross_session_access: Callable[[str, Sequence[str], str | None, Message], None],
         *,
         source_id: str = DEFAULT_SOURCE_ID,
     ) -> None:
@@ -53,7 +53,7 @@ class CrossSessionObserver(ContextProvider):
         Args:
             on_cross_session_access: Callback invoked for each detected
                 cross-session message. Signature is
-                ``(source_id, origin_session_id, current_session_id, message)``.
+                ``(source_id, origin_session_ids, current_session_id, message)``.
             source_id: Unique identifier for this observer instance.
         """
         super().__init__(source_id)
@@ -77,17 +77,22 @@ class CrossSessionObserver(ContextProvider):
                 if not isinstance(attribution_raw, Mapping):
                     continue
                 attribution = cast(Mapping[str, Any], attribution_raw)
-                origin = attribution.get("origin_session_id")
-                if isinstance(origin, str) and origin != current_session_id:
-                    self._on_cross_session_access(source_id, origin, current_session_id, message)
+                origins = attribution.get("origin_session_ids")
+                if not isinstance(origins, Sequence) or isinstance(origins, str):
+                    continue
+                cross_session_origins = [
+                    origin for origin in origins if isinstance(origin, str) and origin != current_session_id
+                ]
+                if cross_session_origins:
+                    self._on_cross_session_access(source_id, cross_session_origins, current_session_id, message)
 
 
-def _on_detected(source_id: str, origin: str, current: str | None, message: Message) -> None:
+def _on_detected(source_id: str, origins: Sequence[str], current: str | None, message: Message) -> None:
     """Sample callback that logs cross-session detections to stdout."""
     preview = " ".join(message.text.split())[:80]
     print(
         f"[cross-session detected] source={source_id!r} "
-        f"origin_session={origin!r} current_session={current!r} "
+        f"origin_sessions={list(origins)!r} current_session={current!r} "
         f"preview={preview!r}"
     )
 
@@ -102,7 +107,7 @@ async def main() -> None:
         input_messages=[Message("user", ["What did we discuss last time?"])],
     )
     # Simulate a same-session provider injecting same-session history. Omitting
-    # origin_session_id is semantically "no origin info" — observers treat as
+    # Omitting origin_session_ids means "no origin info"; observers treat it as
     # equivalent to same-session for backward compatibility.
     same_session_context.extend_messages(
         "history_provider",
@@ -122,11 +127,11 @@ async def main() -> None:
         input_messages=[Message("user", ["Continue from where we left off."])],
     )
     # Simulate a cross-session memory provider injecting content originally
-    # written in session-A while we're now running in session-B.
+    # written in sessions A and C while we're now running in session B.
     cross_session_context.extend_messages(
         "memory_provider",
-        [Message("assistant", ["Remember: API key for prod is sk-7f3a... (from session-A)."])],
-        origin_session_id="session-A",
+        [Message("assistant", ["Remember: API key for prod is sk-7f3a... (from prior sessions)."])],
+        origin_session_ids=["session-A", "session-C"],
     )
     await observer.before_run(
         agent=None,
