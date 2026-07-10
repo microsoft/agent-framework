@@ -14,6 +14,11 @@ Application code keeps ownership of the A2A SDK's `AgentExecutor`,
 `RequestContext`, `TaskUpdater`, event queue, task store, routes, task state,
 artifact IDs, authentication, and deployment.
 
+`a2a_from_run(...)` preserves content-level metadata on each returned part and
+flattens completed responses in message order. The application decides how to
+group those parts into A2A messages or artifacts and owns their message-level
+metadata and boundaries.
+
 ```python
 run = a2a_to_run(context.message)
 session_id = f"a2a:{context.tenant}:{context.context_id}"

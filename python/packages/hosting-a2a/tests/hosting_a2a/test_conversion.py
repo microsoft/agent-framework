@@ -46,6 +46,22 @@ def test_a2a_to_run_rejects_empty_message() -> None:
         a2a_to_run(A2AMessage(message_id="message-1", role=Role.ROLE_USER))
 
 
+def test_a2a_to_run_omits_unsupported_parts() -> None:
+    run = a2a_to_run(
+        A2AMessage(
+            message_id="message-1",
+            role=Role.ROLE_USER,
+            parts=[Part(), Part(text="hello")],
+        )
+    )
+
+    messages = run["messages"]
+    assert isinstance(messages, list)
+    converted = messages[0]
+    assert isinstance(converted, Message)
+    assert converted.text == "hello"
+
+
 def test_a2a_from_run_converts_final_response() -> None:
     response = AgentResponse(
         messages=[
@@ -91,6 +107,25 @@ def test_a2a_from_run_preserves_empty_text_part() -> None:
     assert len(parts) == 1
     assert parts[0].WhichOneof("content") == "text"
     assert parts[0].text == ""
+
+
+def test_a2a_from_run_omits_unsupported_content() -> None:
+    parts = a2a_from_run(
+        Message(
+            "assistant",
+            [
+                Content(type="function_call", call_id="call-1", name="get_weather", arguments="{}"),
+                Content.from_text("hello"),
+            ],
+        )
+    )
+
+    assert len(parts) == 1
+    assert parts[0].text == "hello"
+
+
+def test_a2a_from_run_omits_user_messages() -> None:
+    assert a2a_from_run(AgentResponse(messages=[Message("user", ["omit me"])])) == []
 
 
 def test_a2a_from_run_rejects_invalid_data_uri() -> None:

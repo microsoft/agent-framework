@@ -95,11 +95,11 @@ class AppAgentExecutor(AgentExecutor, Generic[AgentT]):
             await updater.complete()
         except CancelledError:
             await updater.update_status(state=TaskState.TASK_STATE_CANCELED)
-        except Exception as exc:
+        except Exception:
             logger.exception("A2A agent execution failed.")
             await updater.update_status(
                 state=TaskState.TASK_STATE_FAILED,
-                message=updater.new_agent_message([Part(text=str(exc))]),
+                message=updater.new_agent_message([Part(text="Agent execution failed.")]),
             )
 
 

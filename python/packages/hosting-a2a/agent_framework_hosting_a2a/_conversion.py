@@ -102,9 +102,10 @@ def a2a_from_run(result: AgentResponse[Any] | Message | AgentResponseUpdate) -> 
 
     ``AgentResponse`` values are flattened in message order. User-role
     messages are omitted. Text, external URI, and inline data content become
-    the corresponding native A2A part types. The caller remains responsible
-    for creating A2A messages or artifacts and publishing them through
-    ``TaskUpdater`` or an event queue.
+    the corresponding native A2A part types. Content-level metadata is
+    preserved on each part. The caller remains responsible for grouping parts
+    into A2A messages or artifacts, including message boundaries and metadata,
+    and publishing them through ``TaskUpdater`` or an event queue.
 
     Args:
         result: A completed response, response message, or streaming update.
