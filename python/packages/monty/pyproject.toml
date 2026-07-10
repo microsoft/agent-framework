@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.6.0,<2",
+    "agent-framework-core>=1.11.0,<2",
     "pydantic-monty>=0.0.1,<0.1",
 ]
 
