@@ -19,9 +19,23 @@ from agent_framework import (
 from agent_framework._settings import SecretString
 from agent_framework.observability import EmbeddingTelemetryLayer
 
-Mistral: Any = getattr(import_module("mistralai.client"), "Mistral", None)
-if Mistral is None:
-    Mistral = import_module("mistralai").Mistral
+
+def _load_mistral_client_class() -> Any:
+    try:
+        mistral_class = getattr(import_module("mistralai.client"), "Mistral", None)
+    except ModuleNotFoundError as exc:
+        if exc.name != "mistralai.client":
+            raise
+        mistral_class = None
+
+    if mistral_class is None:
+        mistral_class = getattr(import_module("mistralai"), "Mistral", None)
+    if mistral_class is None:
+        raise ImportError("The installed mistralai package does not expose the Mistral client class.")
+    return mistral_class
+
+
+Mistral: Any = _load_mistral_client_class()
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
