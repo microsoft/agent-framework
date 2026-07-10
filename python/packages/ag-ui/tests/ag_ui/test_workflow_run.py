@@ -460,6 +460,44 @@ async def test_workflow_participant_tool_call_emits_standard_tool_events() -> No
     ]
 
 
+async def test_workflow_stream_does_not_repeat_tool_call_from_final_response() -> None:
+    """A final response containing streamed history should not repeat its tool call."""
+    function_call = Content.from_function_call(
+        call_id="weather-call",
+        name="get_weather",
+        arguments={"city": "Seattle"},
+    )
+
+    @executor(id="participant")
+    async def participant(message: Any, ctx: WorkflowContext[Any, AgentResponse | AgentResponseUpdate]) -> None:
+        del message
+        await ctx.yield_output(AgentResponseUpdate(contents=[function_call], role=None))
+        await ctx.yield_output(
+            AgentResponse(
+                messages=[
+                    Message(role="assistant", contents=[function_call]),
+                    Message(
+                        role="tool",
+                        contents=[Content.from_function_result(call_id="weather-call", result="Sunny in Seattle")],
+                    ),
+                    Message(role="assistant", contents=[Content.from_text("The weather is sunny.")]),
+                ]
+            )
+        )
+
+    workflow = WorkflowBuilder(start_executor=participant, output_from="all").build()
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "What is the weather in Seattle?"}]},
+            workflow,
+        )
+    ]
+
+    tool_call_starts = [event for event in events if event.type == "TOOL_CALL_START"]
+    assert [event.tool_call_id for event in tool_call_starts] == ["weather-call"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
 async def test_workflow_run_passthroughs_ag_ui_base_events():
     """Workflow outputs that are AG-UI BaseEvent instances should be emitted directly."""
 
