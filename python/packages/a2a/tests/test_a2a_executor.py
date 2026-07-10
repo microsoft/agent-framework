@@ -855,14 +855,14 @@ class TestA2AExecutorHandleEvents:
 
         # Assert
         mock_logger.warning.assert_not_called()
-        mock_logger.debug.assert_called_once()
+        mock_logger.debug.assert_called_once_with("Skipping unsupported content type for A2A: %s", "unknown")
         mock_updater.update_status.assert_not_called()
 
     async def test_handle_intermediate_content_type(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
         """Test that intermediate tool content (e.g. function_call) is skipped quietly (debug, not warning)."""
         # Arrange
         message = Message(
-            contents=[Content(type=cast(Any, "function_call"))],  # type: ignore[arg-type]
+            contents=[Content(type="function_call")],
             role="assistant",
         )
 
@@ -872,7 +872,7 @@ class TestA2AExecutorHandleEvents:
 
         # Assert
         mock_logger.warning.assert_not_called()
-        mock_logger.debug.assert_called_once()
+        mock_logger.debug.assert_called_once_with("Skipping unsupported content type for A2A: %s", "function_call")
         mock_updater.update_status.assert_not_called()
 
 
