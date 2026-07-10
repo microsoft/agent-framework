@@ -46,7 +46,7 @@ SpamDetectionAgent → [branch based on is_spam]:
 
 1. Copy configuration files:
    ```bash
-   cp local.settings.json.sample local.settings.json
+   cp local.settings.json.template local.settings.json
    ```
 
 2. Configure `local.settings.json`:

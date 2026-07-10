@@ -89,7 +89,7 @@ When running on Durable Functions, the HITL pattern maps to:
 
 1. Copy the sample settings file:
    ```bash
-   cp local.settings.json.sample local.settings.json
+   cp local.settings.json.template local.settings.json
    ```
 
 2. Update `local.settings.json` with your Foundry project settings:

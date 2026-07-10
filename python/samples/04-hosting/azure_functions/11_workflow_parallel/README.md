@@ -124,7 +124,7 @@ The sample can run locally without Azure Functions infrastructure using DevUI:
 1. Copy configuration files:
    ```bash
    cp .env.template .env
-   cp local.settings.json.sample local.settings.json
+   cp local.settings.json.template local.settings.json
    ```
 
 2. Configure `local.settings.json` with your Azure OpenAI credentials

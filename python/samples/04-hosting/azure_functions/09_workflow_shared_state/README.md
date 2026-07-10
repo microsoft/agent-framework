@@ -38,7 +38,7 @@ SharedState allows executors to pass large payloads (like email content) by refe
 
 ## Setup
 
-1. Copy `local.settings.json.sample` to `local.settings.json` and configure:
+1. Copy `local.settings.json.template` to `local.settings.json` and configure:
    ```json
    {
      "Values": {

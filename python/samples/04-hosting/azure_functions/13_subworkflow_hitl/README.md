@@ -61,7 +61,7 @@ workflow is driven as a child orchestration, not addressed directly.
 
 1. Start Azurite: `azurite --silent --location .`
 2. Start the Durable Task Scheduler emulator on `localhost:8080`.
-3. Copy `local.settings.json.sample` to `local.settings.json`.
+3. Copy `local.settings.json.template` to `local.settings.json`.
 4. `func start`
 5. Drive it with [demo.http](./demo.http): start a run, GET the status to read the
    qualified `review_sub~0~{requestId}`, then POST the response to the top-level
