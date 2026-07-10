@@ -85,8 +85,8 @@ Python-side knobs:
 
 It uses the agent-sandbox **async** SDK (`AsyncSandboxClient` / `AsyncSandbox`) directly — no thread offloading inside Agent Framework's async run loop. Each `execute_code` call:
 
-1. `await sandbox.files.write("_agent_sandbox_exec.py", code)` — ships the source as a file into the Pod's `/app` working directory (sidesteps shell quoting; the model gets real tracebacks with file/line info).
-2. `await sandbox.commands.run("python3 -u _agent_sandbox_exec.py")` via the Pod's `/execute` endpoint (commands run from `/app`).
+1. `await sandbox.files.write("_agent_sandbox_exec_<uuid>.py", code)` — ships the source as a file into the Pod's `/app` working directory under a per-call unique name, so concurrent `execute_code` calls in one turn never clobber each other (sidesteps shell quoting; the model gets real tracebacks with file/line info).
+2. `await sandbox.commands.run("python3 -u _agent_sandbox_exec_<uuid>.py")` via the Pod's `/execute` endpoint (commands run from `/app`).
 3. Maps `stdout` / `stderr` / `exit_code` into `Content` objects: stdout as text, stderr appended on success, or `Content.from_error(...)` on non-zero exit.
 
 ### Runtime notes

@@ -104,13 +104,33 @@ async def test_run_code_happy_path() -> None:
         "labels": None,
         "shutdown_after_seconds": 300,
     }
-    # One write (the source file), one exec (python3 -u <file>).
-    assert recorder["writes"] == [("_agent_sandbox_exec.py", code, 60)]
-    assert recorder["runs"] == [("python3 -u _agent_sandbox_exec.py", 120)]
+    # One write (the source file), one exec that runs the file just written.
+    assert len(recorder["writes"]) == 1
+    write_path, write_code, write_timeout = recorder["writes"][0]
+    assert write_path.startswith("_agent_sandbox_exec_") and write_path.endswith(".py")
+    assert write_code == code
+    assert write_timeout == 60
+    assert recorder["runs"] == [(f"python3 -u {write_path}", 120)]
     # Stdout surfaces as a single text Content with trailing newline stripped.
     assert len(contents) == 1
     assert contents[0].type == "text"
     assert contents[0].text == "832040"
+
+
+async def test_concurrent_run_code_uses_distinct_filenames() -> None:
+    """Two execute_code calls in one turn must not clobber each other's file."""
+    sandbox, recorder = _fake_sandbox(_fake_execution_result(stdout="ok\n"))
+    client = _FakeAsyncClient(sandbox)
+    tool = AgentSandboxExecuteCodeTool(warmpool=WARMPOOL, _client=cast("AsyncSandboxClient", client))
+
+    await asyncio.gather(tool._run_code(code="print(1)"), tool._run_code(code="print(2)"))
+
+    write_paths = [w[0] for w in recorder["writes"]]
+    run_cmds = [r[0] for r in recorder["runs"]]
+    assert len(write_paths) == 2
+    assert write_paths[0] != write_paths[1]  # each call gets its own scratch file
+    # Every run targets exactly the file its own call wrote.
+    assert set(run_cmds) == {f"python3 -u {path}" for path in write_paths}
 
 
 async def test_run_code_surfaces_error_on_nonzero_exit() -> None:
@@ -183,9 +203,10 @@ async def test_close_terminates_sandbox_and_rejects_further_calls() -> None:
         warmpool=WARMPOOL,
         _client=cast("AsyncSandboxClient", client),
     )
-    # The concrete tool type exposes the internal _run_code; cast because the
-    # pydantic mypy plugin widens the property's return to FunctionTool.
-    tool = cast("AgentSandboxExecuteCodeTool", provider.execute_code_tool)
+    # Reach the internal _run_code via the private attribute (the public
+    # execute_code_tool property is widened to FunctionTool by the pydantic
+    # mypy plugin, which hides _run_code).
+    tool = provider._execute_code_tool
     # Trigger sandbox creation.
     await tool._run_code(code="print('hi')")
     assert recorder["terminated"] is False
@@ -209,7 +230,7 @@ async def test_provider_as_async_context_manager_cleans_up() -> None:
         warmpool=WARMPOOL,
         _client=cast("AsyncSandboxClient", client),
     ) as provider:
-        tool = cast("AgentSandboxExecuteCodeTool", provider.execute_code_tool)
+        tool = provider._execute_code_tool
         await tool._run_code(code="print('hi')")
 
     assert recorder["terminated"] is True
@@ -240,7 +261,7 @@ async def test_close_during_in_flight_claim_terminates_new_sandbox() -> None:
         warmpool=WARMPOOL,
         _client=cast("AsyncSandboxClient", slow_client),
     )
-    tool = cast("AgentSandboxExecuteCodeTool", provider.execute_code_tool)
+    tool = provider._execute_code_tool
 
     claim = asyncio.create_task(tool._ensure_sandbox())
     await started.wait()  # _ensure_sandbox holds the lock, awaiting create_sandbox

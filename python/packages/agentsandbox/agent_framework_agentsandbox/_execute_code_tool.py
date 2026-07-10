@@ -22,12 +22,18 @@ makes ``python3 -c '<code>'`` brittle for non-trivial programs (quoting,
 multi-line strings, embedded shell metacharacters). Writing the code to a file
 via the sandbox's files API and running ``python3 -u <file>`` avoids all of
 that and gives the model real tracebacks with file/line info.
+
+Each invocation writes to a unique filename. Agent Framework runs a batch of
+tool calls in one turn concurrently, so a shared scratch filename would let one
+call overwrite another's source before it runs; a per-call name keeps
+concurrent ``execute_code`` calls isolated.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from typing import Any
 
 from agent_framework import Content, FunctionTool
@@ -41,7 +47,7 @@ from ._instructions import build_codeact_instructions, build_execute_code_descri
 logger = logging.getLogger(__name__)
 
 EXECUTE_CODE_TOOL_NAME = "execute_code"
-DEFAULT_CODE_FILENAME = "_agent_sandbox_exec.py"
+CODE_FILENAME_PREFIX = "_agent_sandbox_exec"
 DEFAULT_PYTHON_COMMAND = "python3 -u"
 DEFAULT_EXEC_TIMEOUT_SECONDS = 120
 DEFAULT_SANDBOX_READY_TIMEOUT_SECONDS = 180
@@ -89,7 +95,6 @@ class AgentSandboxExecuteCodeTool(FunctionTool):
         approval_mode: ApprovalMode | None = None,
         python_command: str = DEFAULT_PYTHON_COMMAND,
         exec_timeout: int = DEFAULT_EXEC_TIMEOUT_SECONDS,
-        code_filename: str = DEFAULT_CODE_FILENAME,
         _client: AsyncSandboxClient[Any] | None = None,
     ) -> None:
         """Initialize the tool.
@@ -119,9 +124,6 @@ class AgentSandboxExecuteCodeTool(FunctionTool):
                 Default ``"python3 -u"`` keeps stdout unbuffered.
             exec_timeout: Per-call timeout for the ``python3`` subprocess
                 inside the Pod, in seconds.
-            code_filename: Scratch file name (under ``/app/``) used to ship the
-                model's source to the Pod. The file is overwritten on each
-                call.
             _client: Internal hook for tests and shared-client scenarios. When
                 provided, the tool does not own the client and will not delete
                 it on close.
@@ -152,7 +154,6 @@ class AgentSandboxExecuteCodeTool(FunctionTool):
         self._labels = labels
         self._python_command = python_command
         self._exec_timeout = exec_timeout
-        self._code_filename = code_filename
 
         # Track whether the client was injected by a caller (e.g. shared across
         # providers) or owned by this tool. Only owned clients get cleaned up.
@@ -228,18 +229,20 @@ class AgentSandboxExecuteCodeTool(FunctionTool):
         """Execute ``code`` inside the sandbox Pod and return tool ``Content``."""
         sandbox = await self._ensure_sandbox()
 
-        # Write the source to a file inside the sandbox, then exec it.
-        # Two HTTP round-trips, but it sidesteps shell quoting entirely and
-        # the model gets a real path in its tracebacks. The filename is
-        # reused so we do not accumulate cruft in /app over a long session.
+        # Write the source to a file inside the sandbox, then exec it. Two HTTP
+        # round-trips, but it sidesteps shell quoting entirely and the model
+        # gets a real path in its tracebacks. The filename is unique per call so
+        # concurrent execute_code calls (Agent Framework batches tool calls in a
+        # turn) never clobber each other's source before it runs.
         files = sandbox.files
         commands = sandbox.commands
         if files is None or commands is None:
             raise RuntimeError("Sandbox connection is not active.")
 
-        await files.write(self._code_filename, code)
+        filename = f"{CODE_FILENAME_PREFIX}_{uuid.uuid4().hex}.py"
+        await files.write(filename, code)
         result = await commands.run(
-            f"{self._python_command} {self._code_filename}",
+            f"{self._python_command} {filename}",
             self._exec_timeout,
         )
         return _build_execution_contents(
