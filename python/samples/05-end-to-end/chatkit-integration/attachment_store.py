@@ -48,7 +48,7 @@ class FileBasedAttachmentStore(AttachmentStore[dict[str, Any]]):
             base_url: Base URL for generating upload and preview URLs
             data_store: Optional data store to persist attachment metadata
         """
-        self.uploads_dir = Path(uploads_dir)
+        self.uploads_dir = Path(uploads_dir).resolve()
         self.base_url = base_url.rstrip("/")
         self.data_store = data_store
 
@@ -56,8 +56,21 @@ class FileBasedAttachmentStore(AttachmentStore[dict[str, Any]]):
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
 
     def get_file_path(self, attachment_id: str) -> Path:
-        """Get the filesystem path for an attachment."""
-        return self.uploads_dir / attachment_id
+        """Get the filesystem path for an attachment.
+
+        Args:
+            attachment_id: Identifier used as the attachment filename.
+
+        Returns:
+            The resolved path within the uploads directory.
+
+        Raises:
+            ValueError: If the attachment ID does not resolve to a direct child of the uploads directory.
+        """
+        file_path = (self.uploads_dir / attachment_id).resolve()
+        if not file_path.is_relative_to(self.uploads_dir) or file_path.parent != self.uploads_dir:
+            raise ValueError(f"Invalid attachment ID: {attachment_id!r}")
+        return file_path
 
     async def delete_attachment(self, attachment_id: str, context: dict[str, Any]) -> None:
         """Delete an attachment and its file from disk."""
