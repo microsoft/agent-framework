@@ -192,7 +192,10 @@ async def handle_update(update: Mapping[str, Any]) -> None:
             return None
         destination = BytesIO()
         await bot.download_file(file.file_path, destination=destination)
-        encoded = base64.b64encode(destination.getvalue()).decode("ascii")
+        data = destination.getvalue()
+        if len(data) > MAX_MEDIA_BYTES:
+            return None
+        encoded = base64.b64encode(data).decode("ascii")
         return f"data:application/octet-stream;base64,{encoded}"
 
     try:

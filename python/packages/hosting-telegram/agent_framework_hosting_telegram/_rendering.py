@@ -18,8 +18,6 @@ from agent_framework import AgentResponse, AgentResponseUpdate, ResponseStream
 
 # Telegram's documented maximum length, in UTF-16 code units, for message
 # text (`sendMessage` / `editMessageText`) and photo captions (`sendPhoto`).
-# Agent Framework text is plain `str`; truncating by Python character count
-# is a conservative (never-too-long) approximation of the UTF-16 limit.
 TELEGRAM_MAX_TEXT_LENGTH = 4096
 TELEGRAM_MAX_CAPTION_LENGTH = 1024
 
@@ -39,8 +37,13 @@ class TelegramOperation(TypedDict):
 
 
 def _truncate(text: str, max_length: int) -> str:
-    """Deterministically cap ``text`` at ``max_length`` characters."""
-    return text if len(text) <= max_length else text[:max_length]
+    """Deterministically cap ``text`` at ``max_length`` UTF-16 code units."""
+    units = 0
+    for index, char in enumerate(text):
+        units += 2 if ord(char) > 0xFFFF else 1
+        if units > max_length:
+            return text[:index]
+    return text
 
 
 def _text_and_image_uris(result: AgentResponse[Any]) -> tuple[str, list[str]]:
@@ -49,7 +52,7 @@ def _text_and_image_uris(result: AgentResponse[Any]) -> tuple[str, list[str]]:
         content.uri
         for message in result.messages
         for content in message.contents
-        if content.type in ("data", "uri") and content.uri and (content.media_type or "").startswith("image/")
+        if content.type == "uri" and content.uri and (content.media_type or "").startswith("image/")
     ]
     return result.text, image_uris
 

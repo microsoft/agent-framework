@@ -12,10 +12,10 @@ A local Telegram bot built from the helper-first hosting pieces:
 
 There is no Telegram client, polling runtime, webhook router, command registry,
 or delivery framework in `agent-framework-hosting-telegram`. This sample uses
-the native `aiogram` SDK for those concerns. The helpers we provide through
-`agent-framework-hosting-telegram` are deliberately agnostic to which SDK you use,
-you can just as easily build your telegram bot with other SDKs for python,
-see the [Telegram docs](https://core.telegram.org/bots/samples#python) for more
+the native `aiogram` SDK for those concerns. The helpers are deliberately
+agnostic to the Telegram SDK you choose. See the
+[Telegram documentation](https://core.telegram.org/bots/samples#python) for
+other Python SDK options.
 
 Each entry point is intentionally self-contained so it can be read and copied
 without following a shared sample helper module. Both handle text, captions,

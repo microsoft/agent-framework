@@ -10,6 +10,7 @@ import pytest
 from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream
 
 from agent_framework_hosting_telegram import (
+    TELEGRAM_MAX_CAPTION_LENGTH,
     TELEGRAM_MAX_TEXT_LENGTH,
     telegram_from_run,
     telegram_from_streaming_run,
@@ -42,6 +43,10 @@ class TestTelegramFromRun:
         assert len(operation["payload"]["text"]) == TELEGRAM_MAX_TEXT_LENGTH
         assert operation["payload"]["text"] == "x" * TELEGRAM_MAX_TEXT_LENGTH
 
+    def test_text_is_truncated_by_utf16_code_units(self) -> None:
+        operation = telegram_from_run(_text_response("😀" * (TELEGRAM_MAX_TEXT_LENGTH // 2 + 1)), chat_id=1)
+        assert operation["payload"]["text"] == "😀" * (TELEGRAM_MAX_TEXT_LENGTH // 2)
+
     def test_image_uri_renders_send_photo(self) -> None:
         result = AgentResponse(
             messages=Message(
@@ -67,6 +72,30 @@ class TestTelegramFromRun:
         assert operation["method"] == "sendPhoto"
         assert operation["payload"]["caption"] == "a cat"
         assert operation["payload"]["parse_mode"] == "HTML"
+
+    def test_image_caption_is_truncated_by_utf16_code_units(self) -> None:
+        caption = "😀" * (TELEGRAM_MAX_CAPTION_LENGTH // 2 + 1)
+        result = AgentResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_text(text=caption),
+                    Content.from_uri(uri="https://example.com/cat.png", media_type="image/png"),
+                ],
+            )
+        )
+        operation = telegram_from_run(result, chat_id=1)
+        assert operation["payload"]["caption"] == "😀" * (TELEGRAM_MAX_CAPTION_LENGTH // 2)
+
+    def test_inline_image_data_is_not_rendered_as_photo(self) -> None:
+        result = AgentResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_data(data=b"image", media_type="image/png")],
+            )
+        )
+        operation = telegram_from_run(result, chat_id=1)
+        assert operation == {"method": "sendMessage", "payload": {"chat_id": 1, "text": "(no response)"}}
 
     def test_non_image_uri_is_not_rendered_as_photo(self) -> None:
         result = AgentResponse(
