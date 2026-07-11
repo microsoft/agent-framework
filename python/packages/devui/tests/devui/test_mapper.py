@@ -934,3 +934,70 @@ async def test_superstep_completed_event(mapper: MessageMapper, test_request: Ag
     # superstep_completed event (type='superstep_completed') may not emit events (internal workflow signal)
     # Just ensure it doesn't crash
     assert isinstance(events, list)
+
+
+# =============================================================================
+# Usage and Aggregation Tests
+# =============================================================================
+
+
+async def test_aggregate_to_response_accumulated_usage(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Test that accumulated usage path correctly constructs InputTokensDetails."""
+    request_key = str(id(test_request))
+    mapper._usage_accumulator[request_key] = {
+        "input_tokens": 10,
+        "output_tokens": 20,
+        "total_tokens": 30,
+    }
+    
+    # Empty events list to keep it simple
+    response = await mapper.aggregate_to_response([], test_request)
+    
+    assert response.usage is not None
+    assert response.usage.input_tokens == 10
+    assert response.usage.output_tokens == 20
+    assert response.usage.input_tokens_details is not None
+    assert getattr(response.usage.input_tokens_details, "cache_write_tokens", None) == 0
+
+
+async def test_aggregate_to_response_fallback_usage(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Test that fallback estimated usage path correctly constructs InputTokensDetails."""
+    # Ensure accumulator is empty
+    request_key = str(id(test_request))
+    if request_key in mapper._usage_accumulator:
+        del mapper._usage_accumulator[request_key]
+        
+    test_request.input = "test input" * 10  # Ensure some input tokens
+    
+    response = await mapper.aggregate_to_response([], test_request)
+    
+    assert response.usage is not None
+    assert response.usage.input_tokens_details is not None
+    assert getattr(response.usage.input_tokens_details, "cache_write_tokens", None) == 0
+
+
+async def test_aggregate_to_response_error_path(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Test that the error path in aggregate_to_response correctly constructs InputTokensDetails."""
+    # Create an object that raises an exception when accessed to trigger the error path
+    class ExplodingEvent:
+        @property
+        def type(self):
+            raise ValueError("Boom!")
+            
+    response = await mapper.aggregate_to_response([ExplodingEvent()], test_request)
+    
+    # Verify we hit the error path
+    assert len(response.output) == 1
+    assert "Error: Boom!" in response.output[0].content[0].text
+    
+    # Verify usage was constructed safely
+    assert response.usage is not None
+    assert response.usage.input_tokens == 0
+    assert response.usage.input_tokens_details is not None
+    assert getattr(response.usage.input_tokens_details, "cache_write_tokens", None) == 0
