@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "agent-framework",
+#     "agent-framework-foundry",
 #     "azure-ai-projects",
 #     "textual>=6.2.1",
 #     "rich>=13.7.1",
