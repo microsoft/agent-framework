@@ -64,6 +64,55 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
             await function.InvokeAsync(args, CancellationToken.None));
     }
 
+    [Theory]
+    // Direct access is the baseline the validator has always caught.
+    [InlineData("import os\nos.system('id')")]
+    // Regression for #7068: aliased and re-bound references to the `os` module
+    // reach the same os.system/os.popen/... and must not bypass the
+    // os.environ/os.path-only allow-list keyed on the module name.
+    [InlineData("import os as x\nx.system('id')")]
+    [InlineData("import os\n_o = os\n_o.system('id')")]
+    [InlineData("import os as x\na = x\nb = a\nb.popen('id')")]
+    [InlineData("import os.path\nos.system('id')")]
+    public async Task ExecuteCode_ValidationBlocksDisallowedOsAccessAsync(string code)
+    {
+        SkipIfNoPython();
+
+        var function = new LocalExecuteCodeFunction(s_python!);
+
+        var args = new AIFunctionArguments
+        {
+            ["code"] = code,
+        };
+
+        var ex = await Assert.ThrowsAsync<CodeValidationException>(async () =>
+            await function.InvokeAsync(args, CancellationToken.None));
+        Assert.Contains("os.", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    // `os.environ`/`os.path` remain reachable, including through an alias, and
+    // `import os.path as p` binds `p` to the submodule (not `os`), so ordinary
+    // `p.join(...)` must not be misflagged as disallowed `os` access.
+    [InlineData("import os\nprint(os.environ.get('PATH') is not None)")]
+    [InlineData("import os as x\nprint(x.path.join('a', 'b'))")]
+    [InlineData("import os.path as p\nprint(p.join('a', 'b'))")]
+    public async Task ExecuteCode_AllowsPermittedOsAccessAsync(string code)
+    {
+        SkipIfNoPython();
+
+        var function = new LocalExecuteCodeFunction(s_python!);
+
+        var args = new AIFunctionArguments
+        {
+            ["code"] = code,
+        };
+
+        // Should validate and execute without throwing.
+        var result = await function.InvokeAsync(args, CancellationToken.None);
+        Assert.NotNull(result);
+    }
+
     [Fact]
     public async Task ExecuteCode_CapturesFilesInWritableMountAsync()
     {

@@ -271,6 +271,12 @@ class _CodeValidator(ast.NodeVisitor):
         self._allowed_builtins = allowed_builtins if allowed_builtins is not None else ALLOWED_BUILTINS
         self._blocked_builtins = blocked_builtins if blocked_builtins is not None else BLOCKED_BUILTINS
         self._allowed_os_attrs = allowed_os_attrs if allowed_os_attrs is not None else ALLOWED_OS_ATTRS
+        # Names currently bound to the ``os`` module. Enforcement in
+        # ``visit_Attribute`` is keyed on membership here rather than the literal
+        # name ``os`` so that aliases (``import os as x``) and re-bindings
+        # (``_o = os``) cannot slip past the ``os.environ`` / ``os.path``-only
+        # contract with the very same attribute access (``x.system``, ``_o.system``).
+        self._os_aliases: set[str] = {"os"}
 
     def validate(self, code: str) -> None:
         """Validate code and raise CodeValidationError if it violates policy."""
@@ -303,6 +309,16 @@ class _CodeValidator(ast.NodeVisitor):
                 self._errors.append(f"Import of '{alias_node.name}' is not allowed (blocked: {module_name})")
             elif module_name not in self._allowed_imports:
                 self._errors.append(f"Import of '{alias_node.name}' is not allowed (not in allow-list)")
+            # Record every name bound to the ``os`` module so aliased access is
+            # still subject to the ``os`` attribute allow-list.
+            if alias_node.name == "os":
+                # ``import os`` / ``import os as x`` -> binds the ``os`` module.
+                self._os_aliases.add(alias_node.asname or "os")
+            elif alias_node.name.startswith("os.") and alias_node.asname is None:
+                # ``import os.path`` binds the top-level name ``os``.
+                # (``import os.path as p`` instead binds ``p`` to the submodule,
+                # not ``os``, so it is intentionally not tracked here.)
+                self._os_aliases.add("os")
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
@@ -322,6 +338,29 @@ class _CodeValidator(ast.NodeVisitor):
             for alias_node in node.names:
                 if alias_node.name not in self._allowed_os_attrs:
                     self._errors.append(f"Import from 'os' of '{alias_node.name}' is not allowed")
+        self.generic_visit(node)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        """Track re-bindings of the ``os`` module (e.g. ``_o = os``).
+
+        Assigning an existing ``os`` alias to new names must carry the
+        ``os`` attribute allow-list along, otherwise ``_o = os; _o.system(...)``
+        would sidestep ``visit_Attribute``.
+        """
+        if isinstance(node.value, ast.Name) and node.value.id in self._os_aliases:
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self._os_aliases.add(target.id)
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        """Track annotated re-bindings of the ``os`` module (e.g. ``_o: object = os``)."""
+        if (
+            isinstance(node.value, ast.Name)
+            and node.value.id in self._os_aliases
+            and isinstance(node.target, ast.Name)
+        ):
+            self._os_aliases.add(node.target.id)
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -357,7 +396,9 @@ class _CodeValidator(ast.NodeVisitor):
         # Enforce the `os` attribute allow-list. Anything outside `ALLOWED_OS_ATTRS`
         # (file I/O, process control, mutating helpers, etc.) is rejected so the
         # validator matches the documented `os.environ` / `os.path`-only contract.
-        if isinstance(node.value, ast.Name) and node.value.id == "os" and node.attr not in self._allowed_os_attrs:
+        # Membership in `self._os_aliases` (not a literal `== "os"`) catches
+        # aliased imports and re-bindings that reach the same module.
+        if isinstance(node.value, ast.Name) and node.value.id in self._os_aliases and node.attr not in self._allowed_os_attrs:
             self._errors.append(f"Access to os.{node.attr} is not allowed")
 
         # Block access to certain dangerous attributes
