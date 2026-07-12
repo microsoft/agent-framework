@@ -9,16 +9,31 @@ on:
   workflow_call:
     inputs:
       checkout-ref:
-        description: "Git ref to checkout (e.g., refs/pull/123/head)"
+        description: "Immutable commit SHA to check out"
         required: true
         type: string
+    secrets:
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
+      AZURE_SUBSCRIPTION_ID:
+        required: false
+      AZUREAI__ENDPOINT:
+        required: false
+      COPILOT_GITHUB_TOKEN:
+        required: false
+      OPENAI__APIKEY:
+        required: false
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   dotnet-integration-tests:
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:

@@ -13,13 +13,27 @@ on:
   workflow_call:
     inputs:
       checkout-ref:
-        description: "Git ref to checkout (e.g., refs/pull/123/head)"
+        description: "Immutable commit SHA to check out"
         required: true
         type: string
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
+      AZURE_SUBSCRIPTION_ID:
+        required: false
+      COPILOT_GITHUB_TOKEN:
+        required: false
+      FOUNDRY_MODELS_API_KEY:
+        required: false
+      OPENAI__APIKEY:
+        required: false
 
 permissions:
   contents: read
-  id-token: write
 
 env:
   UV_CACHE_DIR: /tmp/.uv-cache
@@ -99,6 +113,9 @@ jobs:
   # Azure OpenAI integration tests
   python-tests-azure-openai:
     name: Python Integration Tests - Azure OpenAI
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     environment: integration
     timeout-minutes: 60
@@ -260,6 +277,9 @@ jobs:
   # Azure Functions + Durable Task integration tests
   python-tests-functions:
     name: Python Integration Tests - Functions
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     environment: integration
     timeout-minutes: 60
@@ -324,6 +344,9 @@ jobs:
   # Foundry integration tests
   python-tests-foundry:
     name: Python Integration Tests - Foundry
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     environment: integration
     timeout-minutes: 60
@@ -378,6 +401,9 @@ jobs:
   # Foundry Hosting integration tests
   python-tests-foundry-hosting:
     name: Python Integration Tests - Foundry Hosting
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     environment: integration
     timeout-minutes: 60
