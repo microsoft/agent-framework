@@ -119,7 +119,7 @@ class PackagePlan:
     package_name: str
     pyproject_path: Path
     internal_editables: list[Path]
-    include_dev_group: bool
+    dependency_groups: list[str]
     include_dev_extra: bool
     optional_extras: list[str]
 
@@ -332,10 +332,16 @@ def _load_lock_versions(workspace_root: Path) -> dict[str, list[Version]]:
 class VersionCatalog:
     """Cache and fetch available dependency versions."""
 
-    def __init__(self, lock_versions: dict[str, list[Version]], source: str) -> None:
+    def __init__(
+        self,
+        lock_versions: dict[str, list[Version]],
+        source: str,
+        exclude_newer: datetime | None = None,
+    ) -> None:
         """Initialize the catalog with lock-based fallback and fetch source."""
         self._lock_versions = lock_versions
         self._source = source
+        self._exclude_newer = exclude_newer if exclude_newer is not None else _load_exclude_newer_from_env()
         self._cache: dict[str, list[Version]] = {}
         self._lock = threading.Lock()
 
@@ -365,7 +371,11 @@ class VersionCatalog:
         for raw_version, files in payload.get("releases", {}).items():
             if not files:
                 continue
-            non_yanked = any(not bool(file_info.get("yanked", False)) for file_info in files)
+            non_yanked = any(
+                not bool(file_info.get("yanked", False))
+                and _upload_is_not_newer(file_info, exclude_newer=self._exclude_newer)
+                for file_info in files
+            )
             if not non_yanked:
                 continue
             try:
@@ -375,6 +385,35 @@ class VersionCatalog:
         if versions:
             return sorted(versions)
         return self._lock_versions.get(package_name, [])
+
+
+def _load_exclude_newer_from_env() -> datetime | None:
+    raw_value = os.environ.get("DEPENDENCY_RELEASE_CUTOFF") or os.environ.get("UV_EXCLUDE_NEWER")
+    if not raw_value:
+        return None
+    normalized = raw_value.removesuffix("Z")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _upload_is_not_newer(file_info: dict[str, object], *, exclude_newer: datetime | None) -> bool:
+    if exclude_newer is None:
+        return True
+    upload_time = file_info.get("upload_time_iso_8601") or file_info.get("upload_time")
+    if not isinstance(upload_time, str) or not upload_time:
+        return False
+    normalized = upload_time.removesuffix("Z")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return False
+    parsed = parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    return parsed <= exclude_newer
 
 
 def _load_package_name(pyproject_file: Path) -> str:
@@ -571,7 +610,7 @@ def _run_tasks(
     internal_editables: list[Path],
     resolution: str,
     dependency_pin: tuple[str, Version] | None,
-    include_dev_group: bool,
+    dependency_groups: list[str],
     include_dev_extra: bool,
     optional_extras: list[str],
     timeout_seconds: int,
@@ -598,8 +637,8 @@ def _run_tasks(
             "--quiet",
         ]
         extend_command_with_runtime_tools(command, workspace_root)
-        if include_dev_group:
-            command.extend(["--group", "dev"])
+        for group_name in dependency_groups:
+            command.extend(["--group", group_name])
         if include_dev_extra:
             command.extend(["--extra", "dev"])
         for extra_name in optional_extras:
@@ -640,7 +679,7 @@ def _optimize_dependency(
     max_candidates: int,
     timeout_seconds: int,
     package_label: str,
-    include_dev_group: bool,
+    dependency_groups: list[str],
     include_dev_extra: bool,
     optional_extras: list[str],
 ) -> DependencyOutcome:
@@ -681,7 +720,7 @@ def _optimize_dependency(
         internal_editables=internal_editables,
         resolution="lowest-direct",
         dependency_pin=(dependency.name, baseline_version),
-        include_dev_group=include_dev_group,
+        dependency_groups=dependency_groups,
         include_dev_extra=include_dev_extra,
         optional_extras=optional_extras,
         timeout_seconds=timeout_seconds,
@@ -740,7 +779,7 @@ def _optimize_dependency(
             internal_editables=internal_editables,
             resolution="lowest-direct",
             dependency_pin=(dependency.name, candidate),
-            include_dev_group=include_dev_group,
+            dependency_groups=dependency_groups,
             include_dev_extra=include_dev_extra,
             optional_extras=optional_extras,
             timeout_seconds=timeout_seconds,
@@ -863,7 +902,7 @@ def _process_package(
                 max_candidates=max_candidates,
                 timeout_seconds=timeout_seconds,
                 package_label=package_label,
-                include_dev_group=plan.include_dev_group,
+                dependency_groups=plan.dependency_groups,
                 include_dev_extra=plan.include_dev_extra,
                 optional_extras=plan.optional_extras,
             )
@@ -1014,7 +1053,7 @@ def main() -> None:
                 package_name=package_name,
                 pyproject_path=pyproject_file,
                 internal_editables=_resolve_internal_editables(package_name, package_map, internal_graph),
-                include_dev_group="dev" in dependency_groups,
+                dependency_groups=sorted(dependency_groups),
                 include_dev_extra="dev" in optional_dependencies,
                 optional_extras=sorted(name for name in optional_dependencies if name not in {"all", "dev"}),
             )

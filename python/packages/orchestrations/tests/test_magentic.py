@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Sequence
+from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
@@ -158,11 +159,11 @@ class StubAgent(BaseAgent):
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+    ) -> Any:
         if stream:
             return self._run_stream()
 
-        async def _run() -> AgentResponse:
+        async def _run() -> AgentResponse[Any]:
             response = Message("assistant", [self._reply_text], author_name=self.name)
             return AgentResponse(messages=[response])
 
@@ -475,17 +476,17 @@ class StubManagerAgent(BaseAgent):
         stream: bool = False,
         session: Any = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+    ) -> Any:
         if stream:
             return self._run_stream()
 
-        async def _run() -> AgentResponse:
+        async def _run() -> AgentResponse[Any]:
             return AgentResponse(messages=[Message("assistant", ["ok"])])
 
         return _run()
 
     async def _run_stream(self) -> AsyncIterable[AgentResponseUpdate]:
-        yield AgentResponseUpdate(message_deltas=[Message("assistant", ["ok"])])
+        yield AgentResponseUpdate(contents=[Content.from_text(text="ok")])
 
 
 async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
@@ -498,7 +499,7 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
         return Message("assistant", ["GIVEN OR VERIFIED FACTS\n- fact1"])
 
     # First, patch to produce facts then plan
-    mgr._complete = fake_complete_plan  # type: ignore[attr-defined]
+    mgr._complete = fake_complete_plan  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
 
     ctx = MagenticContext(task="T", participant_descriptions={"A": "desc"})
     combined = await mgr.plan(ctx.clone())
@@ -513,7 +514,7 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
             return Message("assistant", ["- new step"])
         return Message("assistant", ["GIVEN OR VERIFIED FACTS\n- updated"])
 
-    mgr._complete = fake_complete_replan  # type: ignore[attr-defined]
+    mgr._complete = fake_complete_replan  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
     combined2 = await mgr.replan(ctx.clone())
     assert "updated" in combined2.text or "new step" in combined2.text
 
@@ -533,7 +534,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
         )
         return Message("assistant", [json_text])
 
-    mgr._complete = fake_complete_ok  # type: ignore[attr-defined]
+    mgr._complete = fake_complete_ok  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
     ledger = await mgr.create_progress_ledger(ctx.clone())
     assert ledger.next_speaker.answer == "alice"
 
@@ -541,7 +542,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
     async def fake_complete_bad(messages: list[Message], **kwargs: Any) -> Message:
         return Message("assistant", ["not-json"])
 
-    mgr._complete = fake_complete_bad  # type: ignore[attr-defined]
+    mgr._complete = fake_complete_bad  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
     with pytest.raises(RuntimeError):
         await mgr.create_progress_ledger(ctx.clone())
 
@@ -585,11 +586,11 @@ class StubThreadAgent(BaseAgent):
     def __init__(self, name: str | None = None) -> None:
         super().__init__(name=name or "agentA")
 
-    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs) -> Any:  # type: ignore[override]
         if stream:
             return self._run_stream()
 
-        async def _run():
+        async def _run() -> AgentResponse[Any]:
             return AgentResponse(messages=[Message("assistant", ["thread-ok"], author_name=self.name)])
 
         return _run()
@@ -613,11 +614,11 @@ class StubAssistantsAgent(BaseAgent):
         super().__init__(name="agentA")
         self.client = StubAssistantsClient()  # type name contains 'AssistantsClient'
 
-    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs) -> Any:  # type: ignore[override]
         if stream:
             return self._run_stream()
 
-        async def _run():
+        async def _run() -> AgentResponse[Any]:
             return AgentResponse(messages=[Message("assistant", ["assistants-ok"], author_name=self.name)])
 
         return _run()
@@ -990,6 +991,33 @@ def test_magentic_builder_requires_exactly_one_manager_option():
         MagenticBuilder(participants=[agent], manager=manager, manager_factory=manager_factory)
 
 
+def test_magentic_with_custom_manager_does_not_warn_without_standard_manager_options(caplog: Any) -> None:
+    caplog.set_level(logging.WARNING, logger="agent_framework_orchestrations._magentic")
+
+    MagenticBuilder(participants=[StubAgent("agentA", "reply")], manager=FakeManager())
+
+    assert "Custom manager provided; all other manager arguments will be ignored." not in caplog.text
+
+
+def test_magentic_with_custom_manager_factory_does_not_warn_without_standard_manager_options(caplog: Any) -> None:
+    caplog.set_level(logging.WARNING, logger="agent_framework_orchestrations._magentic")
+
+    def manager_factory() -> MagenticManagerBase:
+        return FakeManager()
+
+    MagenticBuilder(participants=[StubAgent("agentA", "reply")], manager_factory=manager_factory)
+
+    assert "Custom manager provided; all other manager arguments will be ignored." not in caplog.text
+
+
+def test_magentic_with_custom_manager_warns_when_standard_manager_option_is_provided(caplog: Any) -> None:
+    caplog.set_level(logging.WARNING, logger="agent_framework_orchestrations._magentic")
+
+    MagenticBuilder(participants=[StubAgent("agentA", "reply")], manager=FakeManager(), max_stall_count=3)
+
+    assert "Custom manager provided; all other manager arguments will be ignored." in caplog.text
+
+
 async def test_magentic_with_manager_factory():
     """Test workflow creation using manager_factory."""
     factory_call_count = 0
@@ -1038,6 +1066,20 @@ async def test_magentic_with_agent_factory():
             break
 
     assert event_count > 0
+
+
+def test_magentic_agent_factory_uses_default_max_stall_count() -> None:
+    def agent_factory() -> SupportsAgentRun:
+        return cast(SupportsAgentRun, StubManagerAgent())
+
+    participant = StubAgent("agentA", "reply from agentA")
+    workflow = MagenticBuilder(participants=[participant], manager_agent_factory=agent_factory).build()
+
+    orchestrator = next(e for e in workflow.executors.values() if isinstance(e, MagenticOrchestrator))
+    manager = orchestrator._manager  # type: ignore[reportPrivateUsage]
+
+    assert isinstance(manager, StandardMagenticManager)
+    assert manager.max_stall_count == 3
 
 
 async def test_magentic_manager_factory_reusable_builder():
@@ -1154,10 +1196,10 @@ async def test_standard_manager_propagates_session_to_agent():
             stream: bool = False,
             session: Any = None,
             **kwargs: Any,
-        ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+        ) -> Any:
             captured_sessions.append(session)
 
-            async def _run() -> AgentResponse:
+            async def _run() -> AgentResponse[Any]:
                 return AgentResponse(messages=[Message("assistant", ["ok"])])
 
             return _run()

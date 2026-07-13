@@ -5,7 +5,7 @@
 import asyncio
 import os
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from agent_framework import (
@@ -21,6 +21,7 @@ from agent_framework import (
     executor,
 )
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -200,7 +201,7 @@ def create_email_analysis_agent() -> Agent:
             "and 'reason' (string)."
         ),
         name="email_analysis_agent",
-        default_options={"response_format": AnalysisResultAgent},
+        default_options=OpenAIChatOptions[Any](response_format=AnalysisResultAgent),
     )
 
 
@@ -214,7 +215,7 @@ def create_email_assistant_agent() -> Agent:
         ),
         instructions=("You are an email assistant that helps users draft responses to emails with professionalism."),
         name="email_assistant_agent",
-        default_options={"response_format": EmailResponse},
+        default_options=OpenAIChatOptions[Any](response_format=EmailResponse),
     )
 
 
@@ -228,7 +229,7 @@ def create_email_summary_agent() -> Agent:
         ),
         instructions=("You are an assistant that helps users summarize emails."),
         name="email_summary_agent",
-        default_options={"response_format": EmailSummaryModel},
+        default_options=OpenAIChatOptions[Any](response_format=EmailSummaryModel),
     )
 
 

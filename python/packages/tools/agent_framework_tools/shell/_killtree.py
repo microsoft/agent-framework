@@ -25,12 +25,12 @@ import signal
 import sys
 
 try:  # pragma: no cover - importable on every platform we ship
-    import psutil  # type: ignore[import-untyped]
+    import psutil
 
     _has_psutil = True
 except ImportError:  # pragma: no cover
     _has_psutil = False
-    psutil = None  # type: ignore[assignment]
+    psutil = None
 
 
 _taskkill_path: str | None = None

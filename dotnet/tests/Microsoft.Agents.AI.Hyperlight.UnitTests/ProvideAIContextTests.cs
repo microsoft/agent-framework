@@ -2,6 +2,7 @@
 
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Hyperlight.Internal;
 using Microsoft.Extensions.AI;
 using Moq;
 
@@ -81,5 +82,23 @@ public sealed class ProvideAIContextTests
         var function = Assert.IsAssignableFrom<AIFunction>(context!.Tools!.First());
         Assert.Contains("first_tool", function.Description);
         Assert.DoesNotContain("second_tool", function.Description);
+    }
+
+    [Fact]
+    public async Task ProvideAIContextAsync_AddToolsSameNameReplacement_ChangesSnapshotFingerprintAsync()
+    {
+        // Arrange
+        using var provider = new HyperlightCodeActProvider(new HyperlightCodeActProviderOptions());
+        provider.AddTools(AIFunctionFactory.Create(() => "one", name: "same_tool"));
+
+        // Act
+        var firstContext = await provider.InvokingAsync(NewInvokingContext());
+        provider.AddTools(AIFunctionFactory.Create(() => "two", name: "same_tool"));
+        var secondContext = await provider.InvokingAsync(NewInvokingContext());
+
+        // Assert
+        var firstFunction = Assert.IsType<ExecuteCodeFunction>(firstContext!.Tools!.First());
+        var secondFunction = Assert.IsType<ExecuteCodeFunction>(secondContext!.Tools!.First());
+        Assert.NotEqual(firstFunction.ConfigFingerprint, secondFunction.ConfigFingerprint);
     }
 }

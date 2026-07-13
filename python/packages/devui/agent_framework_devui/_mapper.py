@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any, Union, cast
 from uuid import uuid4
 
-from agent_framework import Content, Message
+from agent_framework import Content, Message, UsageDetails, add_usage_details
 from openai.types.responses import (
     Response,
     ResponseContentPartAddedEvent,
@@ -81,6 +81,25 @@ def _workflow_output_metadata(event_type: Any, executor_id: Any) -> dict[str, An
         "workflow_output_kind": "terminal" if event_type == "output" else "intermediate",
         "executor_id": executor_id,
     }
+
+
+def _response_usage(usage_details: UsageDetails) -> ResponseUsage:
+    input_tokens = int(usage_details.get("input_token_count") or 0)
+    output_tokens = int(usage_details.get("output_token_count") or 0)
+    total_token_count = usage_details.get("total_token_count")
+
+    return ResponseUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=int(total_token_count) if total_token_count is not None else input_tokens + output_tokens,
+        input_tokens_details=InputTokensDetails(
+            cached_tokens=int(usage_details.get("cache_read_input_token_count") or 0),
+            cache_write_tokens=int(usage_details.get("cache_creation_input_token_count") or 0),
+        ),
+        output_tokens_details=OutputTokensDetails(
+            reasoning_tokens=int(usage_details.get("reasoning_output_token_count") or 0)
+        ),
+    )
 
 
 def _serialize_content_recursive(value: Any) -> Any:
@@ -152,7 +171,7 @@ class MessageMapper:
         self._max_contexts = max_contexts
 
         # Track usage per request for final Response.usage (OpenAI standard)
-        self._usage_accumulator: dict[str, dict[str, int]] = {}
+        self._usage_accumulator: dict[str, UsageDetails] = {}
 
         # Register content type mappers for all 12 Agent Framework content types
         self.content_mappers = {
@@ -392,28 +411,20 @@ class MessageMapper:
 
             # Get usage from accumulator (OpenAI standard)
             request_id = str(id(request))
-            usage_data = self._usage_accumulator.get(request_id)
+            usage_data = self._usage_accumulator.pop(request_id, None)
 
-            if usage_data:
-                usage = ResponseUsage(
-                    input_tokens=usage_data["input_tokens"],
-                    output_tokens=usage_data["output_tokens"],
-                    total_tokens=usage_data["total_tokens"],
-                    input_tokens_details=InputTokensDetails(cached_tokens=0),
-                    output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
-                )
-                # Cleanup accumulator
-                del self._usage_accumulator[request_id]
+            if usage_data is not None:
+                usage = _response_usage(usage_data)
             else:
                 # Fallback: estimate if no usage was tracked
                 input_token_count = len(str(request.input)) // 4 if request.input else 0
                 output_token_count = len(full_content) // 4
-                usage = ResponseUsage(
-                    input_tokens=input_token_count,
-                    output_tokens=output_token_count,
-                    total_tokens=input_token_count + output_token_count,
-                    input_tokens_details=InputTokensDetails(cached_tokens=0),
-                    output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+                usage = _response_usage(
+                    UsageDetails(
+                        input_token_count=input_token_count,
+                        output_token_count=output_token_count,
+                        total_token_count=input_token_count + output_token_count,
+                    )
                 )
 
             return OpenAIResponse(
@@ -543,7 +554,7 @@ class MessageMapper:
         # Handle SerializationMixin (like Message) - call to_dict()
         if hasattr(value, "to_dict") and callable(getattr(value, "to_dict", None)):
             try:
-                return value.to_dict()  # type: ignore[attr-defined, no-any-return]
+                return value.to_dict()
             except Exception as e:
                 logger.debug(f"Failed to serialize with to_dict(): {e}")
                 return str(value)
@@ -551,7 +562,7 @@ class MessageMapper:
         # Handle Pydantic models - call model_dump()
         if hasattr(value, "model_dump") and callable(getattr(value, "model_dump", None)):
             try:
-                return value.model_dump()  # type: ignore[attr-defined, no-any-return]
+                return value.model_dump()
             except Exception as e:
                 logger.debug(f"Failed to serialize Pydantic model: {e}")
                 return str(value)
@@ -606,7 +617,7 @@ class MessageMapper:
                 logger.debug(f"Failed to serialize dataclass fields: {e}")
                 # Fallback to asdict() if our custom serialization fails
                 try:
-                    return asdict(request_data)  # type: ignore[arg-type]
+                    return asdict(request_data)
                 except Exception as e2:
                     logger.debug(f"Failed to serialize dataclass with asdict(): {e2}")
 
@@ -1484,19 +1495,11 @@ class MessageMapper:
             None - no event emitted (usage goes in final Response.usage)
         """
         # Extract usage from UsageContent.usage_details (UsageDetails object)
-        details = _to_str_dict(getattr(content, "usage_details", None)) or {}
-        total_tokens = int(details.get("total_token_count", 0) or 0)
-        prompt_tokens = int(details.get("input_token_count", 0) or 0)
-        completion_tokens = int(details.get("output_token_count", 0) or 0)
+        details = cast(UsageDetails, _to_str_dict(getattr(content, "usage_details", None)) or {})
 
         # Accumulate for final Response.usage
         request_id = context.get("request_id", "default")
-        if request_id not in self._usage_accumulator:
-            self._usage_accumulator[request_id] = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-
-        self._usage_accumulator[request_id]["input_tokens"] += prompt_tokens
-        self._usage_accumulator[request_id]["output_tokens"] += completion_tokens
-        self._usage_accumulator[request_id]["total_tokens"] += total_tokens
+        self._usage_accumulator[request_id] = add_usage_details(self._usage_accumulator.get(request_id), details)
 
         logger.debug(f"Accumulated usage for {request_id}: {self._usage_accumulator[request_id]}")
 
@@ -1865,21 +1868,13 @@ class MessageMapper:
             status="completed",
         )
 
-        usage = ResponseUsage(
-            input_tokens=0,
-            output_tokens=0,
-            total_tokens=0,
-            input_tokens_details=InputTokensDetails(cached_tokens=0),
-            output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
-        )
-
         return OpenAIResponse(
             id=f"resp_{uuid.uuid4().hex[:12]}",
             object="response",
             created_at=datetime.now().timestamp(),
             model=request.model or "devui",
             output=[response_output_message],
-            usage=usage,
+            usage=_response_usage(UsageDetails()),
             parallel_tool_calls=False,
             tool_choice="none",
             tools=[],

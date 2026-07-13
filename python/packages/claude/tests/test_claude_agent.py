@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -271,6 +271,55 @@ class TestClaudeAgentRun:
             await agent.run("Hello", session=session)
             assert session.service_session_id == "test-session-id"
 
+    async def test_run_captures_result_message_usage_and_finish_reason(self) -> None:
+        """Test that ResultMessage metadata is propagated to the final AgentResponse."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Response"},
+                },
+                uuid="event-1",
+                session_id="test-session-id",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Response")],
+                model="claude-sonnet",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="test-session-id",
+                stop_reason="end_turn",
+                usage={
+                    "input_tokens": 42,
+                    "output_tokens": 18,
+                    "cache_creation_input_tokens": 3,
+                    "cache_read_input_tokens": 5,
+                },
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            response = await agent.run("Hello")
+
+        assert response.finish_reason == "end_turn"
+        assert response.usage_details == {
+            "input_token_count": 42,
+            "output_token_count": 18,
+            "total_token_count": 60,
+            "cache_creation_input_token_count": 3,
+            "cache_read_input_token_count": 5,
+        }
+
     async def test_run_with_session(self) -> None:
         """Test run with existing session."""
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
@@ -377,6 +426,51 @@ class TestClaudeAgentRunStream:
             assert updates[0].role == "assistant"
             assert updates[0].text == "Streaming "
             assert updates[1].text == "response"
+
+    async def test_run_stream_final_response_captures_usage_and_finish_reason(self) -> None:
+        """Test run(stream=True) final response includes ResultMessage metadata."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Streaming response"},
+                },
+                uuid="event-1",
+                session_id="stream-session",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Streaming response")],
+                model="claude-sonnet",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="stream-session",
+                stop_reason="max_tokens",
+                usage={"input_tokens": 7, "output_tokens": 9},
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            stream = agent.run("Hello", stream=True)
+            async for _ in stream:
+                pass
+            response = await stream.get_final_response()
+
+        assert response.finish_reason == "max_tokens"
+        assert response.usage_details == {
+            "input_token_count": 7,
+            "output_token_count": 9,
+            "total_token_count": 16,
+        }
 
     async def test_run_stream_raises_on_assistant_message_error(self) -> None:
         """Test run raises AgentException when AssistantMessage has an error."""
@@ -567,10 +661,11 @@ class TestClaudeAgentToolConversion:
 
         # Verify $defs is preserved in the schema
         assert sdk_tool.input_schema is not None
-        assert "$defs" in sdk_tool.input_schema  # type: ignore[operator]
-        assert "Address" in sdk_tool.input_schema["$defs"]  # type: ignore[index]
+        input_schema = cast(dict[str, Any], sdk_tool.input_schema)
+        assert "$defs" in input_schema
+        assert "Address" in input_schema["$defs"]
         # Verify the nested reference exists in properties
-        assert "person" in sdk_tool.input_schema["properties"]  # type: ignore[index]
+        assert "person" in input_schema["properties"]
 
     async def test_tool_handler_success(self) -> None:
         """Test tool handler executes successfully."""

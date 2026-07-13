@@ -6,7 +6,8 @@ from unittest.mock import Mock
 
 import pytest
 from agent_framework import Message
-from chatkit.types import UserMessageTextContent
+from chatkit.types import InferenceOptions, UserMessageTextContent
+from pydantic import AnyUrl
 
 from agent_framework_chatkit import ThreadItemConverter, simple_to_agent_input
 
@@ -37,7 +38,7 @@ class TestThreadItemConverter:
             type="user_message",
             content=[UserMessageTextContent(text="Hello, how can you help me?")],
             attachments=[],
-            inference_options={},
+            inference_options=InferenceOptions(),
         )
 
         result = await converter.to_agent_input(input_item)
@@ -60,7 +61,7 @@ class TestThreadItemConverter:
             type="user_message",
             content=[UserMessageTextContent(text="   ")],
             attachments=[],
-            inference_options={},
+            inference_options=InferenceOptions(),
         )
 
         result = await converter.to_agent_input(input_item)
@@ -79,7 +80,7 @@ class TestThreadItemConverter:
             type="user_message",
             content=[],
             attachments=[],
-            inference_options={},
+            inference_options=InferenceOptions(),
         )
 
         result = await converter.to_agent_input(input_item)
@@ -101,7 +102,7 @@ class TestThreadItemConverter:
                 UserMessageTextContent(text="world!"),
             ],
             attachments=[],
-            inference_options={},
+            inference_options=InferenceOptions(),
         )
 
         result = await converter.to_agent_input(input_item)
@@ -176,7 +177,7 @@ class TestThreadItemConverter:
             name="photo.jpg",
             mime_type="image/jpeg",
             type="image",
-            preview_url="https://example.com/photo.jpg",
+            preview_url=AnyUrl("https://example.com/photo.jpg"),
         )
 
         result = await converter.attachment_to_message_content(attachment)
@@ -202,6 +203,7 @@ class TestThreadItemConverter:
         )
 
         result = await converter.attachment_to_message_content(attachment)
+        assert result is not None
         assert result.type == "data"
         assert result.media_type == "application/pdf"
 
@@ -216,7 +218,7 @@ class TestThreadItemConverter:
             name="photo.jpg",
             mime_type="image/jpeg",
             type="image",
-            preview_url="https://example.com/photo.jpg",
+            preview_url=AnyUrl("https://example.com/photo.jpg"),
         )
 
         input_item = UserMessageItem(
@@ -226,7 +228,7 @@ class TestThreadItemConverter:
             type="user_message",
             content=[UserMessageTextContent(text="Check out this photo!")],
             attachments=[attachment],
-            inference_options={},
+            inference_options=InferenceOptions(),
         )
 
         converter = ThreadItemConverter()
@@ -266,7 +268,7 @@ class TestThreadItemConverter:
             type="user_message",
             content=[UserMessageTextContent(text="Here's the document")],
             attachments=[attachment],
-            inference_options={},
+            inference_options=InferenceOptions(),
         )
 
         # Create converter with data fetcher
@@ -373,14 +375,14 @@ class TestThreadItemConverter:
         from datetime import datetime
 
         from chatkit.types import WidgetItem
-        from chatkit.widgets import Card, Text
+        from chatkit.widgets import Card, Text  # ty: ignore[deprecated]
 
         widget_item = WidgetItem(
             id="widget_1",
             thread_id="thread_1",
             created_at=datetime.now(),
             type="widget",
-            widget=Card(key="card1", children=[Text(value="Hello")]),
+            widget=Card(key="card1", children=[Text(value="Hello")]),  # ty: ignore[deprecated]
         )
 
         result = converter.widget_to_input(widget_item)
@@ -411,7 +413,7 @@ class TestSimpleToAgentInput:
             type="user_message",
             content=[UserMessageTextContent(text="Test message")],
             attachments=[],
-            inference_options={},
+            inference_options=InferenceOptions(),
         )
 
         result = await simple_to_agent_input(input_item)

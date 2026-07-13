@@ -1,9 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <VersionSuffix>preview</VersionSuffix>
+    <IsReleaseCandidate>true</IsReleaseCandidate>
     <!-- GitHub.Copilot.SDK only supports .NET 8.0+ -->
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <NoWarn>$(NoWarn);GHCP001</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -30,5 +31,53 @@
     <Title>Microsoft Agent Framework GitHub Copilot</Title>
     <Description>Provides Microsoft Agent Framework support for GitHub Copilot SDK.</Description>
   </PropertyGroup>
+
+  <!--
+    buildTransitive bridge for GitHub.Copilot.SDK's CLI binary-download targets.
+
+    GitHub.Copilot.SDK ships its CLI download targets under build/, which NuGet
+    only auto-imports for projects with a DIRECT PackageReference to the SDK.
+    Consumers of this package (who reference Microsoft.Agents.AI.GitHub.Copilot
+    instead of GitHub.Copilot.SDK directly) would otherwise get only the managed
+    adapter .dll, no copilot.exe in their output, and a runtime failure at the
+    first RunAsync call.
+
+    The targets file in buildTransitive/ is static and contains all of the
+    Condition / Import logic. The .props file generated here just bakes the
+    SDK version this package was built against into a dedicated property
+    ($(_MicrosoftAgentsAICopilotSdkPackagedVersion)) — no Condition or
+    inner $(...) reference in the generated file, so we avoid any MSBuild
+    escape gymnastics during string construction. The static targets file
+    then defaults $(_MicrosoftAgentsAICopilotSdkVersion) to the packaged
+    version unless the consumer overrides it.
+  -->
+  <ItemGroup>
+    <None Include="buildTransitive\Microsoft.Agents.AI.GitHub.Copilot.targets" Pack="true" PackagePath="buildTransitive\" />
+    <None Include="buildTransitive\Microsoft.Agents.AI.GitHub.Copilot.props" Pack="true" PackagePath="buildTransitive\" />
+  </ItemGroup>
+
+  <Target Name="_GenerateBuildTransitiveProps" BeforeTargets="Build;Pack;_GetPackageFiles">
+    <ItemGroup>
+      <_CopilotSdkPackageVersion Include="@(PackageVersion)" Condition="'%(Identity)' == 'GitHub.Copilot.SDK'" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_CopilotSdkResolvedVersion>@(_CopilotSdkPackageVersion->'%(Version)')</_CopilotSdkResolvedVersion>
+    </PropertyGroup>
+    <Error Condition="'$(_CopilotSdkResolvedVersion)' == ''"
+           Text="Could not resolve GitHub.Copilot.SDK version from PackageVersion items. Ensure the central package version is declared in Directory.Packages.props." />
+    <PropertyGroup>
+      <_BuildTransitivePropsContent>
+<![CDATA[<Project>
+  <PropertyGroup>
+    <_MicrosoftAgentsAICopilotSdkPackagedVersion>$(_CopilotSdkResolvedVersion)</_MicrosoftAgentsAICopilotSdkPackagedVersion>
+  </PropertyGroup>
+</Project>]]>
+      </_BuildTransitivePropsContent>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(MSBuildThisFileDirectory)buildTransitive\Microsoft.Agents.AI.GitHub.Copilot.props"
+                      Lines="$(_BuildTransitivePropsContent)"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+  </Target>
 
 </Project>

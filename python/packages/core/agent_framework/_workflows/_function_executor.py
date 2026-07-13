@@ -24,7 +24,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ._executor import Executor
-from ._typing_utils import normalize_type_to_list, resolve_type_annotation
+from ._typing_utils import contains_typevar, normalize_type_to_list, resolve_type_annotation
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
 
 if sys.version_info >= (3, 11):
@@ -94,6 +94,19 @@ class FunctionExecutor(Executor):
             _validate_function_signature(func, skip_message_annotation=resolved_input_type is not None)
         )
 
+        # Check for unresolved TypeVars in explicit type parameters
+        for param_name, param_type in [
+            ("input", resolved_input_type),
+            ("output", resolved_output_type),
+            ("workflow_output", resolved_workflow_output_type),
+        ]:
+            if param_type is not None and contains_typevar(param_type):
+                raise ValueError(
+                    f"Executor '{func.__name__}' has an unresolved TypeVar '{param_type}' "
+                    f"as its {param_name} type. "
+                    f"Use @executor(input=ConcreteType, output=ConcreteType) with concrete types."
+                )
+
         # Use explicit types if provided, otherwise fall back to introspection
         message_type = resolved_input_type if resolved_input_type is not None else introspected_message_type
         output_types: list[type[Any] | types.UnionType] = (
@@ -112,6 +125,14 @@ class FunctionExecutor(Executor):
             raise ValueError(
                 f"Function {func.__name__} requires either a message parameter type annotation "
                 "or an explicit input_type parameter"
+            )
+
+        # Check for unresolved TypeVar in introspected message type
+        if contains_typevar(message_type):
+            raise ValueError(
+                f"Executor '{func.__name__}' has an unresolved TypeVar '{message_type}' "
+                f"as its message type. "
+                f"Use @executor(input=ConcreteType, output=ConcreteType) with concrete types."
             )
 
         # Store the original function
@@ -136,19 +157,19 @@ class FunctionExecutor(Executor):
             # Sync function with context - wrap to make async using thread pool
             async def wrapped_func(message: Any, ctx: WorkflowContext[Any]) -> Any:
                 # Call the sync function with both parameters in a thread
-                return await asyncio.to_thread(func, message, ctx)  # type: ignore
+                return await asyncio.to_thread(func, message, ctx)
 
         elif not self._has_context and self._is_async:
             # Async function without context - wrap to ignore context
             async def wrapped_func(message: Any, ctx: WorkflowContext[Any]) -> Any:
                 # Call the async function with just the message
-                return await func(message)  # type: ignore
+                return await func(message)
 
         else:
             # Sync function without context - wrap to make async and ignore context using thread pool
             async def wrapped_func(message: Any, ctx: WorkflowContext[Any]) -> Any:
                 # Call the sync function with just the message in a thread
-                return await asyncio.to_thread(func, message)  # type: ignore
+                return await asyncio.to_thread(func, message)
 
         # Now register our instance handler
         self._register_instance_handler(
@@ -351,7 +372,7 @@ def _validate_function_signature(
 
     # Reject unresolved TypeVar in message annotation -- these are not supported
     # for workflow type validation and must be replaced with concrete types.
-    if not skip_message_annotation and isinstance(message_type, typing.TypeVar):
+    if not skip_message_annotation and contains_typevar(message_type):
         raise ValueError(
             f"Function instance {func.__name__} has an unresolved TypeVar '{message_type}' as its message type "
             "annotation. Generic TypeVar annotations are not supported for workflow type validation. "

@@ -41,14 +41,17 @@ $ErrorActionPreference = 'Stop'
 
 $Scenarios = @(
     'happy-path',
+    'store-config',
     'tool-calling',
     'tool-calling-approval',
     'mcp-toolbox',
+    'toolbox-oauth-consent',
     'custom-storage',
     'memory',
     'azure-search-rag',
     'session-files',
-    'agent-skills'
+    'agent-skills',
+    'unsupported-protocol'
 )
 
 # Resolve project ARM scope from the endpoint.
@@ -89,7 +92,7 @@ foreach ($scenario in $Scenarios) {
         $body = @{
             definition = @{
                 kind = 'hosted'
-                container_protocol_versions = @(@{ protocol = 'responses'; version = '1.0.0' })
+                container_protocol_versions = @(@{ protocol = 'responses'; version = '2.0.0' })
                 cpu = '0.25'
                 memory = '0.5Gi'
                 environment_variables = @{ IT_SCENARIO = $scenario }

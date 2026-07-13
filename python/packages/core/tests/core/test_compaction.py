@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import pytest
+
 from agent_framework import (
     EXCLUDED_KEY,
     GROUP_ANNOTATION_KEY,
@@ -42,6 +44,35 @@ def _assistant_function_call(call_id: str) -> Message:
     return Message(
         role="assistant",
         contents=[Content.from_function_call(call_id=call_id, name="tool", arguments='{"value":"x"}')],
+    )
+
+
+def _assistant_mcp_call(call_id: str) -> Message:
+    return Message(
+        role="assistant",
+        contents=[
+            Content.from_mcp_server_tool_call(
+                call_id=call_id,
+                tool_name="search",
+                server_name="test_server",
+                arguments='{"query":"x"}',
+            )
+        ],
+    )
+
+
+def _assistant_mcp_call_with_result(call_id: str, output: str) -> Message:
+    return Message(
+        role="assistant",
+        contents=[
+            Content.from_mcp_server_tool_call(
+                call_id=call_id,
+                tool_name="search",
+                server_name="test_server",
+                arguments='{"query":"x"}',
+            ),
+            Content.from_mcp_server_tool_result(call_id=call_id, output=[Content.from_text(output)]),
+        ],
     )
 
 
@@ -154,6 +185,45 @@ def test_group_annotations_handle_same_message_reasoning_and_function_calls() ->
     assert _group_has_reasoning(messages[1]) is True
 
 
+async def test_sliding_window_keeps_reasoning_and_mcp_call_atomic() -> None:
+    messages = [
+        Message(role="system", contents=["system"]),
+        Message(role="assistant", contents=[Content.from_text_reasoning(id="rs_1", text="thinking")]),
+        _assistant_mcp_call("mcp_1"),
+        Message(role="assistant", contents=["answer"]),
+        Message(role="user", contents=["follow up"]),
+    ]
+    annotate_message_groups(messages)
+
+    await SlidingWindowStrategy(keep_last_groups=3)(messages)
+
+    assert messages[1].additional_properties[EXCLUDED_KEY] is False
+    assert messages[2].additional_properties[EXCLUDED_KEY] is False
+    assert _group_id(messages[1]) == _group_id(messages[2])
+
+
+@pytest.mark.parametrize(
+    "tool_call",
+    [
+        Content.from_code_interpreter_tool_call(call_id="ci_1"),
+        Content.from_shell_tool_call(call_id="sh_1", commands=["echo hi"]),
+        Content.from_image_generation_tool_call(image_id="img_1"),
+    ],
+)
+def test_group_annotations_keep_reasoning_with_hosted_tool_calls(tool_call: Content) -> None:
+    messages = [
+        Message(role="assistant", contents=[Content.from_text_reasoning(id="rs_1", text="thinking")]),
+        Message(role="assistant", contents=[tool_call]),
+        Message(role="assistant", contents=["answer"]),
+    ]
+
+    annotate_message_groups(messages)
+
+    assert _group_id(messages[0]) == _group_id(messages[1])
+    assert _group_kind(messages[0]) == "tool_call"
+    assert _group_has_reasoning(messages[0]) is True
+
+
 def test_annotate_message_groups_with_tokenizer_adds_token_counts() -> None:
     messages = [
         Message(role="user", contents=["hello"]),
@@ -194,6 +264,64 @@ def test_append_compaction_message_annotates_new_message() -> None:
 
     assert len(messages) == 2
     assert isinstance(_group_id(messages[1]), str)
+
+
+def test_incremental_annotation_assigns_unique_message_ids() -> None:
+    # Regression test for #5237: ``_ensure_message_ids`` assigned ``msg_{index}``
+    # using the position within the slice handed to ``group_messages``. Successive
+    # incremental annotations restart the index at 0, so distinct messages collided
+    # on the same ``message_id``.
+    messages: list[Message] = []
+    for turn in range(4):
+        messages.append(Message(role="user", contents=[f"user {turn}"]))
+        annotate_message_groups(messages)
+        messages.append(Message(role="assistant", contents=[f"assistant {turn}"]))
+        annotate_message_groups(messages)
+
+    message_ids = [message.message_id for message in messages]
+    assert all(message_ids), "every message should receive an id"
+    assert len(set(message_ids)) == len(message_ids), f"duplicate message ids: {message_ids}"
+
+
+def test_ensure_message_ids_avoids_existing_id_collisions() -> None:
+    # An auto-generated ``msg_{index}`` must not collide with an id already present
+    # on another message (user-supplied or assigned by an earlier annotation pass).
+    messages = [
+        Message(role="user", contents=["zero"]),
+        Message(role="assistant", contents=["one"], message_id="msg_2"),
+        Message(role="user", contents=["two"]),
+    ]
+    annotate_message_groups(messages)
+
+    message_ids = [message.message_id for message in messages]
+    assert message_ids[1] == "msg_2"
+    assert len(set(message_ids)) == len(message_ids), f"duplicate message ids: {message_ids}"
+
+
+def test_incremental_annotation_avoids_prefix_id_collision() -> None:
+    # Regression for the PR review on #5237: when only a suffix is re-annotated,
+    # an auto-assigned ``msg_{index}`` in the suffix must not collide with a
+    # preexisting id carried by a message in the *preserved prefix* (a group
+    # before the one re-annotation pulls back to). Otherwise ``_group_id_for``
+    # derives the same group id and merges groups across the boundary.
+    messages = [
+        # Out-of-position, user-supplied id that matches the ``msg_{index}`` the
+        # suffix pass would assign to the appended message below. This message is
+        # two groups back, so it stays outside the re-annotated slice.
+        Message(role="user", contents=["zero"], message_id="msg_2"),
+        Message(role="user", contents=["one"]),
+    ]
+    annotate_message_groups(messages)
+    assert messages[0].message_id == "msg_2"
+    assert messages[1].message_id == "msg_1"
+
+    messages.append(Message(role="user", contents=["two"]))
+    annotate_message_groups(messages, from_index=2)
+
+    message_ids = [message.message_id for message in messages]
+    assert all(message_ids), "every message should receive an id"
+    assert len(set(message_ids)) == len(message_ids), f"duplicate message ids: {message_ids}"
+    assert messages[0].message_id == "msg_2"
 
 
 async def test_truncation_strategy_keeps_system_anchor() -> None:
@@ -341,7 +469,7 @@ async def test_summarization_strategy_adds_bidirectional_trace_links() -> None:
         Message(role="user", contents=["u3"]),
         Message(role="assistant", contents=["a3"]),
     ]
-    strategy = SummarizationStrategy(client=_FakeSummarizer(), target_count=2, threshold=0)
+    strategy = SummarizationStrategy(client=_FakeSummarizer(), target_count=2, threshold=0)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     annotate_message_groups(messages)
 
     changed = await strategy(messages)
@@ -374,7 +502,7 @@ async def test_summarization_strategy_returns_false_when_summary_generation_fail
         Message(role="user", contents=["u3"]),
         Message(role="assistant", contents=["a3"]),
     ]
-    strategy = SummarizationStrategy(client=_FailingSummarizer(), target_count=2, threshold=0)
+    strategy = SummarizationStrategy(client=_FailingSummarizer(), target_count=2, threshold=0)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     annotate_message_groups(messages)
 
     with caplog.at_level(logging.WARNING, logger="agent_framework"):
@@ -396,7 +524,7 @@ async def test_summarization_strategy_returns_false_when_summary_is_empty(
         Message(role="user", contents=["u3"]),
         Message(role="assistant", contents=["a3"]),
     ]
-    strategy = SummarizationStrategy(client=_EmptySummarizer(), target_count=2, threshold=0)
+    strategy = SummarizationStrategy(client=_EmptySummarizer(), target_count=2, threshold=0)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     annotate_message_groups(messages)
 
     with caplog.at_level(logging.WARNING, logger="agent_framework"):
@@ -481,6 +609,44 @@ async def test_tool_result_compaction_collapses_old_groups_into_summary() -> Non
     summary_msgs = [t for t in texts if t.startswith("[Tool results:")]
     assert len(summary_msgs) == 1
     assert "r1" in summary_msgs[0]
+    assert any(m.role == "tool" for m in projected)
+
+
+async def test_tool_result_compaction_is_idempotent_after_summary_insertion() -> None:
+    """Re-running compaction after a mid-list summary insertion must not duplicate it.
+
+    Mirrors a subsequent tool-loop iteration (issue #4991): the inserted summary and the
+    excluded originals now persist on the same list, so a second annotate + compaction pass
+    over the same groups should be a no-op rather than collapsing the group again.
+    """
+    messages = [
+        Message(role="user", contents=["u"]),
+        _assistant_function_call("call-1"),
+        _tool_result("call-1", "r1"),
+        _assistant_function_call("call-2"),
+        _tool_result("call-2", "r2"),
+        Message(role="assistant", contents=["done"]),
+    ]
+    strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)
+    annotate_message_groups(messages)
+    assert await strategy(messages) is True
+
+    summaries_after_first = [m for m in messages if (m.text or "").startswith("[Tool results:")]
+    assert len(summaries_after_first) == 1
+    summary = summaries_after_first[0]
+    summary_group_ids = _group_unknown_value(summary, SUMMARY_OF_GROUP_IDS_KEY)
+
+    # Second pass over the same (now partially compacted) list.
+    annotate_message_groups(messages)
+    changed = await strategy(messages)
+
+    assert changed is False
+    summaries_after_second = [m for m in messages if (m.text or "").startswith("[Tool results:")]
+    assert len(summaries_after_second) == 1
+    assert _group_unknown_value(summaries_after_second[0], SUMMARY_OF_GROUP_IDS_KEY) == summary_group_ids
+
+    # The kept tool-call group stays atomic and included.
+    projected = included_messages(messages)
     assert any(m.role == "tool" for m in projected)
 
 
@@ -615,6 +781,24 @@ async def test_tool_result_compaction_summary_has_full_annotations() -> None:
     assert summary.additional_properties.get(EXCLUDED_KEY) is False
 
 
+async def test_tool_result_compaction_summarizes_mcp_tool_results() -> None:
+    messages = [
+        Message(role="user", contents=["hello"]),
+        _assistant_mcp_call_with_result("mcp_1", "found 10 cats"),
+        Message(role="assistant", contents=["I found cats."]),
+        _assistant_function_call("c1"),
+        _tool_result("c1", "new result"),
+    ]
+    annotate_message_groups(messages)
+
+    changed = await ToolResultCompactionStrategy(keep_last_tool_call_groups=1)(messages)
+
+    assert changed is True
+    projected = included_messages(messages)
+    summary = next(m for m in projected if (m.text or "").startswith("[Tool results:"))
+    assert summary.text == "[Tool results: search: found 10 cats]"
+
+
 async def test_summarization_strategy_summary_has_full_annotations() -> None:
     """Summary messages inserted by SummarizationStrategy must have all compaction annotations."""
     messages = [
@@ -625,7 +809,7 @@ async def test_summarization_strategy_summary_has_full_annotations() -> None:
         Message(role="user", contents=["u3"]),
         Message(role="assistant", contents=["a3"]),
     ]
-    strategy = SummarizationStrategy(client=_FakeSummarizer(), target_count=2, threshold=0)
+    strategy = SummarizationStrategy(client=_FakeSummarizer(), target_count=2, threshold=0)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     annotate_message_groups(messages)
 
     changed = await strategy(messages)

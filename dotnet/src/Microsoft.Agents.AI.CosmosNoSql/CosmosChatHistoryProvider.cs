@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
+using Microsoft.Agents.AI.CosmosNoSql;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
@@ -126,6 +127,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
             Throw.IfNull(stateInitializer),
             stateKey ?? this.GetType().Name);
         this._cosmosClient = Throw.IfNull(cosmosClient);
+        CosmosOptionsHelper.EnsureApplicationName(this._cosmosClient, nameof(CosmosChatHistoryProvider));
         this.DatabaseId = Throw.IfNullOrWhitespace(databaseId);
         this.ContainerId = Throw.IfNullOrWhitespace(containerId);
         this._container = this._cosmosClient.GetContainer(databaseId, containerId);
@@ -157,7 +159,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputRequestMessageFilter = null,
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null)
-        : this(new CosmosClient(Throw.IfNullOrWhitespace(connectionString)), databaseId, containerId, stateInitializer, ownsClient: true, stateKey, provideOutputMessageFilter, storeInputRequestMessageFilter, storeInputResponseMessageFilter)
+        : this(new CosmosClient(Throw.IfNullOrWhitespace(connectionString), CosmosOptionsHelper.CreateOptions(nameof(CosmosChatHistoryProvider))), databaseId, containerId, stateInitializer, ownsClient: true, stateKey, provideOutputMessageFilter, storeInputRequestMessageFilter, storeInputResponseMessageFilter)
     {
     }
 
@@ -185,7 +187,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputRequestMessageFilter = null,
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null)
-        : this(new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), Throw.IfNull(tokenCredential)), databaseId, containerId, stateInitializer, ownsClient: true, stateKey, provideOutputMessageFilter, storeInputRequestMessageFilter, storeInputResponseMessageFilter)
+        : this(new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), Throw.IfNull(tokenCredential), CosmosOptionsHelper.CreateOptions(nameof(CosmosChatHistoryProvider))), databaseId, containerId, stateInitializer, ownsClient: true, stateKey, provideOutputMessageFilter, storeInputRequestMessageFilter, storeInputResponseMessageFilter)
     {
     }
 
@@ -605,7 +607,10 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         [Newtonsoft.Json.JsonProperty("type")]
         public string Type { get; set; } = string.Empty;
 
-        [Newtonsoft.Json.JsonProperty("ttl")]
+        // Omit "ttl" from the document when null so Cosmos DB leaves TTL unset (disabled) instead of
+        // rejecting the write. Cosmos requires ttl to be a positive integer or -1; a literal null is
+        // invalid, so serializing MessageTtlSeconds = null must drop the property entirely.
+        [Newtonsoft.Json.JsonProperty("ttl", NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore)]
         public int? Ttl { get; set; }
 
         /// <summary>

@@ -3,14 +3,17 @@
 """Tests for native workflow AG-UI runner."""
 
 import json
+from collections.abc import AsyncIterator
 from enum import Enum
 from types import SimpleNamespace
 from typing import Any, cast
 
 from ag_ui.core import EventType, StateSnapshotEvent
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
+    ChatResponseUpdate,
     Content,
     Executor,
     Message,
@@ -20,8 +23,9 @@ from agent_framework import (
     executor,
     handler,
     response_handler,
+    tool,
 )
-from typing_extensions import Never
+from conftest import StreamingChatClientStub  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_ag_ui._workflow_run import (
     _coerce_content,
@@ -30,6 +34,7 @@ from agent_framework_ag_ui._workflow_run import (
     _coerce_message_content,
     _coerce_response_for_request,
     _coerce_responses_for_pending_requests,
+    _coerce_responses_for_pending_requests_strict,
     _custom_event_value,
     _details_code,
     _details_message,
@@ -52,14 +57,42 @@ class ProgressEvent(WorkflowEvent):
     """Custom workflow event used to validate CUSTOM mapping."""
 
     def __init__(self, progress: int) -> None:
-        super().__init__("custom_progress", data={"progress": progress})
+        super().__init__(cast(Any, "custom_progress"), data={"progress": progress})
+
+
+def _run_finished_dump(event: Any) -> dict[str, Any]:
+    """Serialize a RUN_FINISHED event as AG-UI wire JSON."""
+    return cast(dict[str, Any], event.model_dump(by_alias=True, exclude_none=True))
+
+
+def _interrupts_from_run_finished(event: Any) -> list[dict[str, Any]]:
+    """Return canonical interrupts from a RUN_FINISHED event."""
+    dumped = _run_finished_dump(event)
+    assert "interrupt" not in dumped
+    outcome = dumped.get("outcome")
+    assert isinstance(outcome, dict)
+    assert outcome.get("type") == "interrupt"
+    interrupts = outcome.get("interrupts")
+    assert isinstance(interrupts, list)
+    return cast(list[dict[str, Any]], interrupts)
+
+
+def _interrupt_metadata_value(interrupt: dict[str, Any]) -> dict[str, Any]:
+    """Return Agent Framework legacy interruption details from canonical metadata."""
+    metadata = interrupt.get("metadata")
+    assert isinstance(metadata, dict)
+    agent_framework_metadata = metadata.get("agent_framework")
+    assert isinstance(agent_framework_metadata, dict)
+    value = agent_framework_metadata.get("value")
+    assert isinstance(value, dict)
+    return cast(dict[str, Any], value)
 
 
 async def test_workflow_run_maps_custom_and_text_events():
     """Custom workflow events and yielded text are mapped to AG-UI events."""
 
     @executor(id="start")
-    async def start(message: Any, ctx: WorkflowContext[Never, str]) -> None:
+    async def start(message: Any, ctx: WorkflowContext[Any, str]) -> None:
         await ctx.add_event(ProgressEvent(10))
         await ctx.yield_output("Hello workflow")
 
@@ -76,9 +109,9 @@ async def test_workflow_run_maps_custom_and_text_events():
     assert "STEP_FINISHED" in event_types
     assert "RUN_FINISHED" in event_types
 
-    custom_events = [event for event in events if event.type == "CUSTOM" and event.name == "custom_progress"]
+    custom_events = [event for event in events if event.type == "CUSTOM" and event.name == "custom_progress"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert len(custom_events) == 1
-    assert custom_events[0].value == {"progress": 10}
+    assert custom_events[0].value == {"progress": 10}  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 async def test_workflow_run_request_info_emits_interrupt_and_resume_works():
@@ -90,20 +123,19 @@ async def test_workflow_run_request_info_emits_interrupt_and_resume_works():
 
     workflow = WorkflowBuilder(start_executor=requester).build()
 
-    first_run_events = [
+    first_run_events: list[Any] = [
         event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
     ]
 
     run_finished_events = [event for event in first_run_events if event.type == "RUN_FINISHED"]
     assert len(run_finished_events) == 1
-    interrupt_payload = run_finished_events[0].model_dump().get("interrupt")
-    assert isinstance(interrupt_payload, list)
+    interrupt_payload = _interrupts_from_run_finished(run_finished_events[0])
     assert len(interrupt_payload) == 1
 
     request_id = str(interrupt_payload[0]["id"])
     assert request_id
 
-    resumed_events = [
+    resumed_events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {"messages": [], "resume": {"interrupts": [{"id": request_id, "value": "approved"}]}},
@@ -123,7 +155,7 @@ async def test_workflow_run_request_info_closes_open_text_message() -> None:
     @executor(id="requester")
     async def requester(message: Any, ctx: WorkflowContext) -> None:
         del message
-        await ctx.yield_output("Please confirm this action.")
+        await ctx.yield_output("Please confirm this action.")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         await ctx.request_info("Need approval", str, request_id="approval-1")
 
     workflow = WorkflowBuilder(start_executor=requester).build()
@@ -141,7 +173,7 @@ async def test_workflow_run_request_info_closes_open_text_message() -> None:
 
 
 async def test_workflow_run_request_info_interrupt_uses_raw_dict_value():
-    """Dict request payloads should be surfaced directly in RUN_FINISHED.interrupt.value."""
+    """Dict request payloads should be preserved in canonical interrupt metadata."""
 
     @executor(id="requester")
     async def requester(message: Any, ctx: WorkflowContext) -> None:
@@ -159,16 +191,18 @@ async def test_workflow_run_request_info_interrupt_uses_raw_dict_value():
     workflow = WorkflowBuilder(start_executor=requester).build()
     events = [event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)]
 
-    run_finished = [event for event in events if event.type == "RUN_FINISHED"][0].model_dump()
-    interrupt_payload = run_finished.get("interrupt")
-    assert isinstance(interrupt_payload, list)
+    run_finished = [event for event in events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(run_finished)
+    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
     assert interrupt_payload[0]["id"] == "flights-choice"
-    assert interrupt_payload[0]["value"]["agent"] == "flights"
-    assert interrupt_payload[0]["value"]["message"] == "Choose a flight"
+    assert interrupt_payload[0]["reason"] == "input_required"
+    assert interrupt_payload[0]["message"] == "Choose a flight"
+    assert interrupt_value["agent"] == "flights"
+    assert interrupt_value["message"] == "Choose a flight"
 
 
 async def test_workflow_run_resume_from_forwarded_command_payload() -> None:
-    """forwarded_props.command.resume should resume a pending dict request."""
+    """forwarded_props.command.resume should support canonical resume entries."""
 
     @executor(id="requester")
     async def requester(message: Any, ctx: WorkflowContext) -> None:
@@ -178,13 +212,21 @@ async def test_workflow_run_resume_from_forwarded_command_payload() -> None:
     workflow = WorkflowBuilder(start_executor=requester).build()
     _ = [event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)]
 
-    resumed_events = [
+    resumed_events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {
                 "messages": [],
                 "forwarded_props": {
-                    "command": {"resume": json.dumps({"airline": "KLM", "departure": "AMS", "arrival": "SFO"})}
+                    "command": {
+                        "resume": [
+                            {
+                                "interruptId": "flights-choice",
+                                "status": "resolved",
+                                "payload": {"airline": "KLM", "departure": "AMS", "arrival": "SFO"},
+                            }
+                        ]
+                    }
                 },
             },
             workflow,
@@ -197,8 +239,8 @@ async def test_workflow_run_resume_from_forwarded_command_payload() -> None:
     assert "interrupt" not in finished
 
 
-async def test_workflow_run_structured_user_json_resumes_single_pending_request() -> None:
-    """A JSON user reply should resume a single pending dict request without heuristics."""
+async def test_workflow_run_structured_user_json_with_pending_request_emits_run_error() -> None:
+    """A pending request requires canonical resume entries, not heuristic JSON user replies."""
 
     @executor(id="requester")
     async def requester(message: Any, ctx: WorkflowContext) -> None:
@@ -208,7 +250,7 @@ async def test_workflow_run_structured_user_json_resumes_single_pending_request(
     workflow = WorkflowBuilder(start_executor=requester).build()
     _ = [event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)]
 
-    resumed_events = [
+    resumed_events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {
@@ -219,9 +261,9 @@ async def test_workflow_run_structured_user_json_resumes_single_pending_request(
     ]
 
     resumed_types = [event.type for event in resumed_events]
-    assert "RUN_ERROR" not in resumed_types
-    finished = [event for event in resumed_events if event.type == "RUN_FINISHED"][0].model_dump()
-    assert "interrupt" not in finished
+    assert resumed_types == ["RUN_STARTED", "RUN_ERROR"]
+    run_error = [event for event in resumed_events if event.type == "RUN_ERROR"][0]
+    assert run_error.code == "WORKFLOW_RESUME_REQUIRED"
 
 
 async def test_workflow_run_resume_content_response_from_json_payload() -> None:
@@ -246,17 +288,17 @@ async def test_workflow_run_resume_content_response_from_json_payload() -> None:
         async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
             del original_request
             status = "approved" if bool(response.approved) else "rejected"
-            await ctx.yield_output(f"Refund tool call {status}.")
+            await ctx.yield_output(f"Refund tool call {status}.")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
     first_events = [
         event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
     ]
-    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0].model_dump()
-    interrupt_payload = cast(list[dict[str, Any]], first_finished.get("interrupt"))
-    interrupt_value = cast(dict[str, Any], interrupt_payload[0]["value"])
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(first_finished)
+    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
 
-    resumed_events = [
+    resumed_events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {
@@ -306,12 +348,12 @@ async def test_workflow_run_resume_message_list_from_json_payload() -> None:
         ) -> None:
             del original_request
             user_text = response[0].text if response else ""
-            await ctx.yield_output(f"Captured response: {user_text}")
+            await ctx.yield_output(f"Captured response: {user_text}")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     workflow = WorkflowBuilder(start_executor=MessageRequestExecutor()).build()
     _ = [event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "start"}]}, workflow)]
 
-    resumed_events = [
+    resumed_events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {
@@ -347,22 +389,120 @@ async def test_workflow_run_non_chat_output_maps_to_custom_output_event():
     """Non-chat workflow outputs are emitted as CUSTOM workflow_output events."""
 
     @executor(id="structured")
-    async def structured(message: Any, ctx: WorkflowContext[Never, dict[str, int]]) -> None:
+    async def structured(message: Any, ctx: WorkflowContext[Any, dict[str, int]]) -> None:
         await ctx.yield_output({"count": 3})
 
     workflow = WorkflowBuilder(start_executor=structured).build()
     events = [event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)]
 
-    output_custom = [event for event in events if event.type == "CUSTOM" and event.name == "workflow_output"]
+    output_custom = [event for event in events if event.type == "CUSTOM" and event.name == "workflow_output"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert len(output_custom) == 1
-    assert output_custom[0].value == {"count": 3}
+    assert output_custom[0].value == {"count": 3}  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
+async def test_workflow_participant_tool_call_emits_standard_tool_events() -> None:
+    """Participant tool calls should use the standard AG-UI tool event lifecycle."""
+
+    @tool
+    def get_weather(city: str) -> str:
+        return f"Sunny in {city}"
+
+    invocation = 0
+
+    async def scripted_stream(messages: Any, options: Any, **kwargs: Any) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal invocation
+        del messages, options, kwargs
+        if invocation == 0:
+            yield ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="weather-call",
+                        name="get_weather",
+                        arguments={"city": "Seattle"},
+                    )
+                ],
+                role=None,
+            )
+        else:
+            yield ChatResponseUpdate(contents=[Content.from_text("The weather is sunny.")], role="assistant")
+        invocation += 1
+
+    participant = Agent(
+        client=StreamingChatClientStub(scripted_stream),
+        name="weather-agent",
+        tools=[get_weather],
+    )
+    workflow = WorkflowBuilder(start_executor=participant, output_from="all").build()
+
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "What is the weather in Seattle?"}]},
+            workflow,
+        )
+    ]
+
+    tool_events = [
+        event
+        for event in events
+        if event.type in {"TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_RESULT", "TOOL_CALL_END"}
+    ]
+    assert [event.type for event in tool_events] == [
+        "TOOL_CALL_START",
+        "TOOL_CALL_ARGS",
+        "TOOL_CALL_END",
+        "TOOL_CALL_RESULT",
+    ]
+    assert tool_events[0].tool_call_name == "get_weather"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert all(event.tool_call_id == "weather-call" for event in tool_events)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert not [
+        event for event in events if event.type == "CUSTOM" and getattr(event, "name", None) == "workflow_output"
+    ]
+
+
+async def test_workflow_stream_does_not_repeat_tool_call_from_final_response() -> None:
+    """A final response containing streamed history should not repeat its tool call."""
+    function_call = Content.from_function_call(
+        call_id="weather-call",
+        name="get_weather",
+        arguments={"city": "Seattle"},
+    )
+
+    @executor(id="participant")
+    async def participant(message: Any, ctx: WorkflowContext[Any, AgentResponse | AgentResponseUpdate]) -> None:
+        del message
+        await ctx.yield_output(AgentResponseUpdate(contents=[function_call], role=None))
+        await ctx.yield_output(
+            AgentResponse(
+                messages=[
+                    Message(role="assistant", contents=[function_call]),
+                    Message(
+                        role="tool",
+                        contents=[Content.from_function_result(call_id="weather-call", result="Sunny in Seattle")],
+                    ),
+                    Message(role="assistant", contents=[Content.from_text("The weather is sunny.")]),
+                ]
+            )
+        )
+
+    workflow = WorkflowBuilder(start_executor=participant, output_from="all").build()
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "What is the weather in Seattle?"}]},
+            workflow,
+        )
+    ]
+
+    tool_call_starts = [event for event in events if event.type == "TOOL_CALL_START"]
+    assert [event.tool_call_id for event in tool_call_starts] == ["weather-call"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 async def test_workflow_run_passthroughs_ag_ui_base_events():
     """Workflow outputs that are AG-UI BaseEvent instances should be emitted directly."""
 
     @executor(id="stateful")
-    async def stateful(message: Any, ctx: WorkflowContext[Never, StateSnapshotEvent]) -> None:
+    async def stateful(message: Any, ctx: WorkflowContext[Any, StateSnapshotEvent]) -> None:
         await ctx.yield_output(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot={"active_agent": "flights"}))
 
     workflow = WorkflowBuilder(start_executor=stateful).build()
@@ -370,7 +510,7 @@ async def test_workflow_run_passthroughs_ag_ui_base_events():
 
     snapshots = [event for event in events if event.type == "STATE_SNAPSHOT"]
     assert len(snapshots) == 1
-    assert snapshots[0].snapshot["active_agent"] == "flights"
+    assert snapshots[0].snapshot["active_agent"] == "flights"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 async def test_workflow_run_plain_text_follow_up_does_not_infer_interrupt_response():
@@ -416,18 +556,13 @@ async def test_workflow_run_plain_text_follow_up_does_not_infer_interrupt_respon
     ]
 
     follow_up_types = [event.type for event in follow_up_events]
-    assert "RUN_ERROR" not in follow_up_types
-    assert "TOOL_CALL_START" in follow_up_types
-
-    run_finished = [event for event in follow_up_events if event.type == "RUN_FINISHED"][0].model_dump()
-    interrupt_payload = run_finished.get("interrupt")
-    assert isinstance(interrupt_payload, list)
-    assert interrupt_payload[0]["id"] == "flights-choice"
-    assert interrupt_payload[0]["value"]["agent"] == "flights"
+    assert follow_up_types == ["RUN_STARTED", "RUN_ERROR"]
+    run_error = [event for event in follow_up_events if event.type == "RUN_ERROR"][0]
+    assert getattr(run_error, "code") == "WORKFLOW_RESUME_REQUIRED"
 
 
-async def test_workflow_run_empty_turn_with_pending_request_preserves_interrupts():
-    """An empty turn should still return pending workflow interrupts without errors."""
+async def test_workflow_run_empty_turn_with_pending_request_emits_run_error():
+    """An empty turn with pending workflow interrupts must provide resume entries."""
 
     @executor(id="requester")
     async def requester(message: Any, ctx: WorkflowContext) -> None:
@@ -439,21 +574,16 @@ async def test_workflow_run_empty_turn_with_pending_request_preserves_interrupts
 
     events = [event async for event in run_workflow_stream({"messages": []}, workflow)]
     types = [event.type for event in events]
-    assert types[0] == "RUN_STARTED"
-    assert "RUN_FINISHED" in types
-    assert "RUN_ERROR" not in types
-
-    finished = [event for event in events if event.type == "RUN_FINISHED"][0].model_dump()
-    interrupts = finished.get("interrupt")
-    assert isinstance(interrupts, list)
-    assert interrupts[0]["id"] == "pick-one"
+    assert types == ["RUN_STARTED", "RUN_ERROR"]
+    run_error = [event for event in events if event.type == "RUN_ERROR"][0]
+    assert getattr(run_error, "code") == "WORKFLOW_RESUME_REQUIRED"
 
 
 async def test_workflow_run_agent_response_output_uses_latest_assistant_message_only() -> None:
     """Conversation payload outputs should not flatten full history into one assistant message."""
 
     @executor(id="responder")
-    async def responder(message: Any, ctx: WorkflowContext[Never, AgentResponse]) -> None:
+    async def responder(message: Any, ctx: WorkflowContext[Any, AgentResponse]) -> None:
         del message
         response = AgentResponse(
             messages=[
@@ -469,7 +599,7 @@ async def test_workflow_run_agent_response_output_uses_latest_assistant_message_
     workflow = WorkflowBuilder(start_executor=responder).build()
     events = [event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)]
 
-    text_deltas = [event.delta for event in events if event.type == "TEXT_MESSAGE_CONTENT"]
+    text_deltas = [event.delta for event in events if event.type == "TEXT_MESSAGE_CONTENT"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert text_deltas == ["Order Agent: Got it. I submitted the replacement request."]
 
 
@@ -477,7 +607,7 @@ async def test_workflow_run_skips_duplicate_text_from_conversation_snapshot() ->
     """Do not emit duplicate assistant text when a snapshot repeats the latest output."""
 
     @executor(id="responder")
-    async def responder(message: Any, ctx: WorkflowContext[Never, Any]) -> None:
+    async def responder(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
         del message
         duplicate_text = "Order Agent: Got it. I submitted the replacement request."
         await ctx.yield_output(duplicate_text)
@@ -493,7 +623,7 @@ async def test_workflow_run_skips_duplicate_text_from_conversation_snapshot() ->
     workflow = WorkflowBuilder(start_executor=responder).build()
     events = [event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)]
 
-    text_deltas = [event.delta for event in events if event.type == "TEXT_MESSAGE_CONTENT"]
+    text_deltas = [event.delta for event in events if event.type == "TEXT_MESSAGE_CONTENT"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert text_deltas == ["Order Agent: Got it. I submitted the replacement request."]
 
 
@@ -501,7 +631,7 @@ async def test_workflow_run_skips_consecutive_duplicate_text_outputs() -> None:
     """Do not emit duplicate assistant text when consecutive outputs are identical."""
 
     @executor(id="responder")
-    async def responder(message: Any, ctx: WorkflowContext[Never, Any]) -> None:
+    async def responder(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
         del message
         duplicate_text = "Order Agent: Replacement processed. Case complete."
         await ctx.yield_output(duplicate_text)
@@ -510,7 +640,7 @@ async def test_workflow_run_skips_consecutive_duplicate_text_outputs() -> None:
     workflow = WorkflowBuilder(start_executor=responder).build()
     events = [event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)]
 
-    text_deltas = [event.delta for event in events if event.type == "TEXT_MESSAGE_CONTENT"]
+    text_deltas = [event.delta for event in events if event.type == "TEXT_MESSAGE_CONTENT"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert text_deltas == ["Order Agent: Replacement processed. Case complete."]
 
 
@@ -518,7 +648,7 @@ async def test_workflow_run_skips_final_snapshot_when_streamed_chunks_already_ma
     """Do not append full snapshot text when prior chunk outputs already formed the same message."""
 
     @executor(id="responder")
-    async def responder(message: Any, ctx: WorkflowContext[Never, Any]) -> None:
+    async def responder(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
         del message
         full_text = (
             "Your replacement request for order 28939393 has been submitted with expedited shipping, "
@@ -540,7 +670,7 @@ async def test_workflow_run_skips_final_snapshot_when_streamed_chunks_already_ma
     workflow = WorkflowBuilder(start_executor=responder).build()
     events = [event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)]
 
-    text_deltas = [event.delta for event in events if event.type == "TEXT_MESSAGE_CONTENT"]
+    text_deltas = [event.delta for event in events if event.type == "TEXT_MESSAGE_CONTENT"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert text_deltas == [
         "Your replacement request for order 28939393 has been submitted with expedited shipping, ",
         "as you requested.\n\nCase complete.",
@@ -551,7 +681,7 @@ async def test_workflow_run_usage_content_emits_custom_usage_event() -> None:
     """Usage output from workflows should be surfaced as a custom usage event."""
 
     @executor(id="usage")
-    async def usage(message: Any, ctx: WorkflowContext[Never, Content]) -> None:
+    async def usage(message: Any, ctx: WorkflowContext[Any, Content]) -> None:
         del message
         await ctx.yield_output(
             Content.from_usage(
@@ -566,11 +696,11 @@ async def test_workflow_run_usage_content_emits_custom_usage_event() -> None:
     workflow = WorkflowBuilder(start_executor=usage).build()
     events = [event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)]
 
-    usage_events = [event for event in events if event.type == "CUSTOM" and event.name == "usage"]
+    usage_events = [event for event in events if event.type == "CUSTOM" and event.name == "usage"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert len(usage_events) == 1
-    assert usage_events[0].value["input_token_count"] == 12
-    assert usage_events[0].value["output_token_count"] == 6
-    assert usage_events[0].value["total_token_count"] == 18
+    assert usage_events[0].value["input_token_count"] == 12  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert usage_events[0].value["output_token_count"] == 6  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert usage_events[0].value["total_token_count"] == 18  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 async def test_workflow_run_accepts_multimodal_input_messages() -> None:
@@ -589,7 +719,7 @@ async def test_workflow_run_accepts_multimodal_input_messages() -> None:
             return _stream()
 
     workflow = CapturingWorkflow()
-    events = [
+    events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {
@@ -684,7 +814,7 @@ async def test_workflow_run_emits_run_error_when_stream_raises() -> None:
 
             return _stream()
 
-    events = [
+    events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {"messages": [{"role": "user", "content": "go"}]},
@@ -740,13 +870,22 @@ class TestInterruptEntryForRequestEvent:
         """Dict data is used as interrupt value."""
         event = SimpleNamespace(request_id="r1", data={"key": "val"})
         result = _interrupt_entry_for_request_event(event)
-        assert result == {"id": "r1", "value": {"key": "val"}}
+        assert result is not None
+        assert result["id"] == "r1"
+        assert result["reason"] == "input_required"
+        assert result["value"] == {"key": "val"}
+        assert result["metadata"]["agent_framework"]["type"] == "workflow_request_info"
+        assert result["metadata"]["agent_framework"]["request_id"] == "r1"
 
     def test_non_dict_data_wrapped(self):
         """Non-dict data is wrapped in {data: ...}."""
         event = SimpleNamespace(request_id="r1", data="text")
         result = _interrupt_entry_for_request_event(event)
-        assert result == {"id": "r1", "value": {"data": "text"}}
+        assert result is not None
+        assert result["id"] == "r1"
+        assert result["reason"] == "input_required"
+        assert result["value"] == {"data": "text"}
+        assert result["metadata"]["agent_framework"]["value"] == {"data": "text"}
 
 
 class TestRequestPayloadFromRequestEvent:
@@ -963,7 +1102,7 @@ class TestCoerceResponsesForPendingRequests:
     def test_unknown_request_id_preserved(self):
         """Responses for unknown request IDs are preserved as-is."""
         responses = {"unknown_id": "value"}
-        pending = {}
+        pending = {}  # type: ignore[var-annotated]
         result = _coerce_responses_for_pending_requests(responses, pending)
         assert result == {"unknown_id": "value"}
 
@@ -971,6 +1110,23 @@ class TestCoerceResponsesForPendingRequests:
         """Empty responses dict returns responses unchanged."""
         result = _coerce_responses_for_pending_requests({}, {"r1": SimpleNamespace()})
         assert result == {}
+
+
+class TestCoerceResponsesForPendingRequestsStrict:
+    """Tests for strict pending request response coercion."""
+
+    def test_event_request_id_alias_is_validated(self) -> None:
+        """Responses addressed to event.request_id are type-checked even when dict keys differ."""
+        event = SimpleNamespace(request_id="canonical-request", response_type=bool)
+
+        responses, error = _coerce_responses_for_pending_requests_strict(
+            {"canonical-request": "not-a-bool"},
+            {"runner-context-key": event},
+        )
+
+        assert responses == {}
+        assert error is not None
+        assert error.code == "WORKFLOW_RESUME_INVALID_RESPONSE"
 
 
 class TestMessageRoleValue:
@@ -1054,7 +1210,7 @@ class TestWorkflowInterruptEventValue:
     def test_dict_data_serialized(self):
         """Dict data is JSON-serialized."""
         result = _workflow_interrupt_event_value({"data": {"key": "val"}})
-        assert json.loads(result) == {"key": "val"}
+        assert json.loads(result) == {"key": "val"}  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
 
 class TestWorkflowPayloadToContents:
@@ -1078,6 +1234,61 @@ class TestWorkflowPayloadToContents:
         """AgentResponseUpdate with None role returns None."""
         update = AgentResponseUpdate(contents=[Content.from_text(text="hi")], role=None)
         assert _workflow_payload_to_contents(update) is None
+
+    def test_agent_response_update_function_call_without_role(self) -> None:
+        """Function call content passes through without role metadata."""
+        function_call = Content.from_function_call(call_id="call-1", name="search", arguments={"query": "weather"})
+        update = AgentResponseUpdate(contents=[function_call], role=None)
+
+        assert _workflow_payload_to_contents(update) == [function_call]
+
+    def test_agent_response_update_function_result_with_tool_role(self) -> None:
+        """Function result content passes through with the tool role."""
+        function_result = Content.from_function_result(call_id="call-1", result={"temperature": 72})
+        update = AgentResponseUpdate(contents=[function_result], role="tool")
+
+        assert _workflow_payload_to_contents(update) == [function_result]
+
+    def test_agent_response_update_approval_request_without_role(self) -> None:
+        """Approval request content is excluded from the role bypass.
+
+        Workflow approvals resume through request_info pending state; an approval interrupt
+        emitted from streamed content would have no pending request to resume against.
+        """
+        function_call = Content.from_function_call(call_id="call-1", name="search", arguments={"query": "weather"})
+        approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+        update = AgentResponseUpdate(contents=[approval_request], role=None)
+
+        assert _workflow_payload_to_contents(update) is None
+
+    def test_agent_response_update_mcp_tool_call_without_role(self) -> None:
+        """MCP server tool call content passes through without role metadata."""
+        mcp_call = Content.from_mcp_server_tool_call(call_id="mcp-1", tool_name="search", arguments={"q": "weather"})
+        update = AgentResponseUpdate(contents=[mcp_call], role=None)
+
+        assert _workflow_payload_to_contents(update) == [mcp_call]
+
+    def test_agent_response_update_mcp_tool_result_without_role(self) -> None:
+        """MCP server tool result content passes through without role metadata."""
+        mcp_result = Content.from_mcp_server_tool_result(call_id="mcp-1", output={"temperature": 72})
+        update = AgentResponseUpdate(contents=[mcp_result], role=None)
+
+        assert _workflow_payload_to_contents(update) == [mcp_result]
+
+    def test_agent_response_update_mixed_content_without_role(self) -> None:
+        """Non-assistant updates keep tool content and drop text content."""
+        text = Content.from_text(text="calling the tool")
+        function_call = Content.from_function_call(call_id="call-1", name="search", arguments={"query": "weather"})
+        update = AgentResponseUpdate(contents=[text, function_call], role=None)
+
+        assert _workflow_payload_to_contents(update) == [function_call]
+
+    def test_agent_response_update_assistant_text(self) -> None:
+        """Assistant text content continues to pass through."""
+        text = Content.from_text(text="hi")
+        update = AgentResponseUpdate(contents=[text], role="assistant")
+
+        assert _workflow_payload_to_contents(update) == [text]
 
     def test_list_with_none_item(self):
         """List containing None causes None return."""
@@ -1284,8 +1495,8 @@ class TestExtractResponsesFromMessages:
 # ── Stream integration tests ──
 
 
-async def test_workflow_run_approval_via_messages_approved() -> None:
-    """Approval response sent via messages (function_approvals) should satisfy the pending request."""
+async def test_workflow_run_approval_resume_entry_approved() -> None:
+    """Approval response sent via canonical resume entry should satisfy the pending request."""
 
     class ApprovalExecutor(Executor):
         def __init__(self) -> None:
@@ -1306,18 +1517,87 @@ async def test_workflow_run_approval_via_messages_approved() -> None:
         async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
             del original_request
             status = "approved" if bool(response.approved) else "rejected"
-            await ctx.yield_output(f"Refund {status}.")
+            await ctx.yield_output(f"Refund {status}.")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
     first_events = [
         event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
     ]
-    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0].model_dump()
-    interrupt_payload = cast(list[dict[str, Any]], first_finished.get("interrupt"))
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(first_finished)
     assert isinstance(interrupt_payload, list) and len(interrupt_payload) == 1
 
-    # Second turn: send approval via function_approvals on a message (not resume.interrupts)
-    resumed_events = [
+    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
+    resumed_events: list[Any] = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [],
+                "resume": [
+                    {
+                        "interruptId": "approval-1",
+                        "status": "resolved",
+                        "payload": {
+                            "type": "function_approval_response",
+                            "approved": True,
+                            "id": "approval-1",
+                            "function_call": interrupt_value.get("function_call"),
+                        },
+                    }
+                ],
+            },
+            workflow,
+        )
+    ]
+
+    resumed_types = [event.type for event in resumed_events]
+    assert "RUN_STARTED" in resumed_types
+    assert "RUN_FINISHED" in resumed_types
+    assert "RUN_ERROR" not in resumed_types
+    assert "TEXT_MESSAGE_CONTENT" in resumed_types
+    text_deltas = [event.delta for event in resumed_events if event.type == "TEXT_MESSAGE_CONTENT"]
+    assert any("approved" in delta for delta in text_deltas)
+    resumed_finished = _run_finished_dump([event for event in resumed_events if event.type == "RUN_FINISHED"][0])
+    assert "outcome" not in resumed_finished
+
+
+async def test_workflow_run_explicit_resume_overrides_stale_message_approval() -> None:
+    """Explicit resume payloads should not be overwritten by stale function_approvals in messages."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345", "amount": "$89.99"},
+            )
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(
+            self, original_request: Content, response: Content, ctx: WorkflowContext[Any, str]
+        ) -> None:
+            del original_request
+            status = "approved" if bool(response.approved) else "rejected"
+            await ctx.yield_output(f"Refund {status}.")
+
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    first_events: list[Any] = [
+        event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
+    ]
+    first_finished_events = [event for event in first_events if event.type == "RUN_FINISHED"]
+    assert len(first_finished_events) == 1
+    interrupt_payload = _interrupts_from_run_finished(first_finished_events[0])
+    assert len(interrupt_payload) == 1
+    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
+
+    resumed_events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {
@@ -1336,24 +1616,97 @@ async def test_workflow_run_approval_via_messages_approved() -> None:
                         ],
                     }
                 ],
+                "resume": [
+                    {
+                        "interruptId": "approval-1",
+                        "status": "resolved",
+                        "payload": {
+                            "type": "function_approval_response",
+                            "approved": False,
+                            "id": interrupt_value.get("id", "approval-1"),
+                            "function_call": interrupt_value.get("function_call"),
+                        },
+                    }
+                ],
             },
             workflow,
         )
     ]
 
+    assistant_text = "".join(event.delta for event in resumed_events if event.type == "TEXT_MESSAGE_CONTENT")
+    assert "rejected" in assistant_text
+    assert "approved" not in assistant_text
+
+
+async def test_workflow_run_approval_argument_mismatch_emits_run_error() -> None:
+    """Workflow approval responses must fail when function arguments change."""
+
+    handled_responses: list[dict[str, Any]] = []
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345", "amount": "$89.99"},
+            )
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+            del original_request
+            if response.function_call is not None:
+                handled_responses.append(response.function_call.parse_arguments() or {})
+            await ctx.yield_output("handled")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    first_events = [
+        event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
+    ]
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(first_finished)
+    assert isinstance(interrupt_payload, list) and len(interrupt_payload) == 1
+    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
+    mismatched_function_call = dict(cast(dict[str, Any], interrupt_value["function_call"]))
+    mismatched_function_call["arguments"] = {"order_id": "99999", "amount": "$1000.00"}
+
+    resumed_events: list[Any] = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [],
+                "resume": [
+                    {
+                        "interruptId": "approval-1",
+                        "status": "resolved",
+                        "payload": {
+                            "type": "function_approval_response",
+                            "approved": True,
+                            "id": "approval-1",
+                            "function_call": mismatched_function_call,
+                        },
+                    }
+                ],
+            },
+            workflow,
+        )
+    ]
+
+    assert handled_responses == []
     resumed_types = [event.type for event in resumed_events]
-    assert "RUN_STARTED" in resumed_types
-    assert "RUN_FINISHED" in resumed_types
-    assert "RUN_ERROR" not in resumed_types
-    assert "TEXT_MESSAGE_CONTENT" in resumed_types
-    text_deltas = [event.delta for event in resumed_events if event.type == "TEXT_MESSAGE_CONTENT"]
-    assert any("approved" in delta for delta in text_deltas)
-    resumed_finished = [event for event in resumed_events if event.type == "RUN_FINISHED"][0].model_dump()
-    assert not resumed_finished.get("interrupt")
+    assert resumed_types == ["RUN_STARTED", "RUN_ERROR"]
+    run_error = [event for event in resumed_events if event.type == "RUN_ERROR"][0]
+    assert run_error.code == "WORKFLOW_RESUME_INVALID_RESPONSE"
 
 
-async def test_workflow_run_approval_via_messages_denied() -> None:
-    """Denied approval response sent via messages (function_approvals) should satisfy the pending request."""
+async def test_workflow_run_approval_resume_entry_denied() -> None:
+    """Denied approval response sent via canonical resume entry should satisfy the pending request."""
 
     class ApprovalExecutor(Executor):
         def __init__(self) -> None:
@@ -1374,34 +1727,32 @@ async def test_workflow_run_approval_via_messages_denied() -> None:
         async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
             del original_request
             status = "approved" if bool(response.approved) else "rejected"
-            await ctx.yield_output(f"Delete {status}.")
+            await ctx.yield_output(f"Delete {status}.")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
     first_events = [
         event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
     ]
-    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0].model_dump()
-    interrupt_payload = cast(list[dict[str, Any]], first_finished.get("interrupt"))
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(first_finished)
     assert isinstance(interrupt_payload, list) and len(interrupt_payload) == 1
+    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
 
-    # Second turn: send denial via function_approvals on a message (not resume.interrupts)
-    resumed_events = [
+    resumed_events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {
-                "messages": [
+                "messages": [],
+                "resume": [
                     {
-                        "role": "user",
-                        "content": "",
-                        "function_approvals": [
-                            {
-                                "approved": False,
-                                "id": "deny-1",
-                                "call_id": "delete-call",
-                                "name": "delete_record",
-                                "arguments": {"record_id": "abc"},
-                            }
-                        ],
+                        "interruptId": "deny-1",
+                        "status": "resolved",
+                        "payload": {
+                            "type": "function_approval_response",
+                            "approved": False,
+                            "id": "deny-1",
+                            "function_call": interrupt_value.get("function_call"),
+                        },
                     }
                 ],
             },
@@ -1416,8 +1767,8 @@ async def test_workflow_run_approval_via_messages_denied() -> None:
     assert "TEXT_MESSAGE_CONTENT" in resumed_types
     text_deltas = [event.delta for event in resumed_events if event.type == "TEXT_MESSAGE_CONTENT"]
     assert any("rejected" in delta for delta in text_deltas)
-    resumed_finished = [event for event in resumed_events if event.type == "RUN_FINISHED"][0].model_dump()
-    assert not resumed_finished.get("interrupt")
+    resumed_finished = _run_finished_dump([event for event in resumed_events if event.type == "RUN_FINISHED"][0])
+    assert "outcome" not in resumed_finished
 
 
 async def test_workflow_run_available_interrupts_logged():
@@ -1453,7 +1804,7 @@ async def test_workflow_run_failed_event():
 
             return _stream()
 
-    events = [
+    events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {"messages": [{"role": "user", "content": "go"}]}, cast(Any, FailingWorkflow())
@@ -1482,7 +1833,7 @@ async def test_workflow_run_status_enum_state():
 
             return _stream()
 
-    events = [
+    events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {"messages": [{"role": "user", "content": "go"}]}, cast(Any, StatusWorkflow())
@@ -1507,7 +1858,7 @@ async def test_workflow_run_executor_invoked_drains_text():
 
             return _stream()
 
-    events = [
+    events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {"messages": [{"role": "user", "content": "go"}]}, cast(Any, ExecutorWorkflow())
@@ -1535,7 +1886,7 @@ async def test_workflow_run_executor_failed_event():
 
             return _stream()
 
-    events = [
+    events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {"messages": [{"role": "user", "content": "go"}]}, cast(Any, ExecutorFailWorkflow())
@@ -1565,7 +1916,7 @@ async def test_workflow_run_list_base_event_output():
 
             return _stream()
 
-    events = [
+    events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {"messages": [{"role": "user", "content": "go"}]}, cast(Any, ListEventWorkflow())
@@ -1589,7 +1940,7 @@ async def test_workflow_run_late_run_started():
 
             return _stream()
 
-    events = [
+    events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {"messages": [{"role": "user", "content": "go"}]}, cast(Any, EmptyWorkflow())
@@ -1612,7 +1963,7 @@ async def test_workflow_run_last_assistant_text_update():
 
             return _stream()
 
-    events = [
+    events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {"messages": [{"role": "user", "content": "go"}]}, cast(Any, DualTextWorkflow())
@@ -1636,7 +1987,7 @@ async def test_workflow_run_superstep_events():
 
             return _stream()
 
-    events = [
+    events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {"messages": [{"role": "user", "content": "go"}]}, cast(Any, SuperstepWorkflow())
@@ -1662,7 +2013,7 @@ async def test_workflow_run_non_terminal_status_emits_custom():
 
             return _stream()
 
-    events = [
+    events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {"messages": [{"role": "user", "content": "go"}]}, cast(Any, StatusWorkflow())
@@ -1690,7 +2041,7 @@ async def test_workflow_run_passes_forwarded_props_as_function_invocation_kwargs
             return _stream()
 
     workflow = CapturingWorkflow()
-    events = [
+    events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {
@@ -1728,7 +2079,7 @@ async def test_workflow_run_omits_function_invocation_kwargs_when_no_forwarded_p
             return _stream()
 
     workflow = CapturingWorkflow()
-    events = [
+    events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {"messages": [{"role": "user", "content": "hello"}]},
@@ -1758,7 +2109,7 @@ async def test_workflow_run_accepts_camel_case_forwarded_props() -> None:
             return _stream()
 
     workflow = CapturingWorkflow()
-    events = [
+    events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {
@@ -1795,7 +2146,7 @@ async def test_workflow_run_passes_empty_dict_forwarded_props() -> None:
             return _stream()
 
     workflow = CapturingWorkflow()
-    events = [
+    events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {
@@ -1863,7 +2214,7 @@ async def test_workflow_run_drops_fwd_kwargs_when_run_lacks_param() -> None:
             return _stream()
 
     workflow = StrictWorkflow()
-    events = [
+    events: list[Any] = [
         event
         async for event in run_workflow_stream(
             {

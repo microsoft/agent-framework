@@ -6,6 +6,10 @@ on:
     branches: ["main"]
     paths:
       - "python/**"
+      - "!python/AGENTS.md"
+      - "!python/**/AGENTS.md"
+      - "!python/.github/skills/*"
+      - "!python/.github/skills/**"
 
 env:
   # Configure a constant location for the uv cache
@@ -42,7 +46,7 @@ jobs:
         with:
           path: ~/.cache/prek
           key: prek|${{ matrix.python-version }}|${{ hashFiles('python/.pre-commit-config.yaml') }}
-      - uses: j178/prek-action@0bb87d7f00b0c99306c8bcb8b8beba1eb581c037 # v1
+      - uses: j178/prek-action@bdca6f102f98e2b4c7029491a53dfd366469e33d # v2.0.4
         name: Run Pre-commit Hooks (excluding poe-check)
         env:
           SKIP: poe-check
@@ -109,8 +113,8 @@ jobs:
       - name: Run markdown code lint
         run: uv run poe markdown-code-lint
 
-  mypy:
-    name: Mypy Checks
+  test-typing:
+    name: Test Typing Checks
     if: "!cancelled()"
     strategy:
       fail-fast: false
@@ -135,7 +139,5 @@ jobs:
           os: ${{ runner.os }}
         env:
           UV_CACHE_DIR: /tmp/.uv-cache
-      - name: Run Mypy
-        env:
-          GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref || github.base_ref || 'main' }}
-        run: uv run python scripts/workspace_poe_tasks.py ci-mypy
+      - name: Run tests/samples type checkers (mypy, pyrefly, ty)
+        run: uv run python scripts/workspace_poe_tasks.py ci-test-typing
