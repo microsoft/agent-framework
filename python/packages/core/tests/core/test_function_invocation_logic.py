@@ -4786,3 +4786,161 @@ def test_progressive_tools_helpers_raise_without_live_tools():
 
 
 # endregion
+
+
+async def test_declaration_only_tool_streaming_no_argument_duplication(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Streaming a declaration-only tool must not duplicate arguments in the final response (fix #6973)."""
+    from agent_framework import FunctionTool
+
+    declaration_func = FunctionTool(
+        name="get_weather",
+        func=None,
+        description="Get the weather",
+        input_model={"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]},
+    )
+    assert declaration_func.declaration_only is True
+
+    # Stream arrives in two chunks, arguments split across them
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call1", name="get_weather", arguments='{"location":')],
+                role="assistant",
+            ),
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call1", name="get_weather", arguments='"Seattle"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+
+    updates = []
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "What's the weather in Seattle?",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [declaration_func]},  # type: ignore[arg-type]
+        stream=True,  # type: ignore[arg-type]
+    ):
+        updates.append(update)
+
+    # Collect arguments from all streamed function_call updates
+    all_args = ""
+    for update in updates:
+        for content in update.contents:
+            if content.type == "function_call" and content.call_id == "call1":
+                all_args += content.arguments or ""
+
+    # Arguments must appear exactly once - not duplicated
+    assert all_args == '{"location":"Seattle"}', f"Expected single copy of arguments, got: {all_args!r}"
+
+
+async def test_declaration_only_tool_streaming_single_chunk_no_duplication(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Single-chunk streaming of a declaration-only tool must not duplicate arguments (fix #6973)."""
+    from agent_framework import FunctionTool
+
+    declaration_func = FunctionTool(
+        name="get_weather",
+        func=None,
+        description="Get the weather",
+        input_model={"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]},
+    )
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(call_id="call1", name="get_weather", arguments='{"location":"Seattle"}')
+                ],
+                role="assistant",
+            ),
+        ],
+    ]
+
+    final_response = await chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "What's the weather in Seattle?",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [declaration_func]},  # type: ignore[arg-type]
+        stream=True,  # type: ignore[arg-type]
+    ).get_final_response()
+
+    function_calls = [
+        content
+        for msg in final_response.messages
+        for content in msg.contents
+        if content.type == "function_call" and content.call_id == "call1"
+    ]
+    assert len(function_calls) == 1, f"Expected exactly 1 function_call, got {len(function_calls)}"
+    assert function_calls[0].arguments == '{"location":"Seattle"}', (
+        f"Arguments duplicated: {function_calls[0].arguments!r}"
+    )
+
+
+async def test_declaration_only_tool_streaming_preserves_user_input_request_metadata(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Streaming a declaration-only tool must retain user_input_request/id metadata (fix #6973).
+
+    The inner stream yields raw argument chunks without the control metadata; the finalized
+    call gains ``user_input_request=True`` and ``id`` during post-processing. Streaming
+    consumers (e.g. AgentExecutor) rely on that signal to emit request_info and pause, so it
+    must reach the stream even though the duplicated arguments are suppressed.
+    """
+    from agent_framework import FunctionTool
+
+    declaration_func = FunctionTool(
+        name="get_weather",
+        func=None,
+        description="Get the weather",
+        input_model={"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]},
+    )
+    assert declaration_func.declaration_only is True
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call1", name="get_weather", arguments='{"location":')],
+                role="assistant",
+            ),
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call1", name="get_weather", arguments='"Seattle"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+
+    stream = chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "What's the weather in Seattle?",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [declaration_func]},  # type: ignore[arg-type]
+        stream=True,  # type: ignore[arg-type]
+    )
+
+    updates = []
+    async for update in stream:
+        updates.append(update)
+
+    # At least one streamed update must carry the user_input_request signal with the call id,
+    # so consumers can pause the workflow / emit request_info for the client-side tool.
+    signalled = [
+        content
+        for update in updates
+        for content in update.contents
+        if content.type == "function_call" and content.call_id == "call1" and content.user_input_request
+    ]
+    assert signalled, "Expected a streamed update carrying user_input_request metadata for the declaration-only call"
+    assert any(getattr(content, "id", None) == "call1" for content in signalled), (
+        "Expected the finalized declaration-only call to retain its id"
+    )
+
+    # The finalized aggregated response must also retain the signal without duplicated arguments.
+    final_response = await stream.get_final_response()
+    requests = [
+        content
+        for msg in final_response.messages
+        for content in msg.contents
+        if content.type == "function_call" and content.call_id == "call1" and content.user_input_request
+    ]
+    assert len(requests) == 1, f"Expected exactly one user input request, got {len(requests)}"
+    assert requests[0].user_input_request is True
+    assert requests[0].arguments == '{"location":"Seattle"}', f"Arguments duplicated or lost: {requests[0].arguments!r}"
