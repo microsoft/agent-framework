@@ -319,6 +319,7 @@ class _ContextAwareCheckpointStorage:
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         checkpoint_id = await self._inner.save(checkpoint)
         self._response_event_stream.internal_metadata[self.LATEST_CHECKPOINT_ID_KEY] = checkpoint_id
+        self._response_event_stream.checkpoint()
         return checkpoint_id
 
     async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
