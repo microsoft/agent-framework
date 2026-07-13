@@ -112,7 +112,6 @@ AIAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions
 // Host the agent as a Foundry Hosted Agent using the Responses API.
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
-builder.Services.AddDevTemporaryLocalContributorSetup(); // Local Docker debugging only - must not be used in production.
 
 var app = builder.Build();
 app.MapFoundryResponses();

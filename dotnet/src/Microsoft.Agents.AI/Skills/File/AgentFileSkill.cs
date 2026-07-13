@@ -1,11 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -13,7 +11,6 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// An <see cref="AgentSkill"/> discovered from a filesystem directory backed by a SKILL.md file.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentFileSkill : AgentSkill
 {
     private readonly IReadOnlyList<AgentSkillResource> _resources;

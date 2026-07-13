@@ -72,13 +72,12 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Register the agent and response handler
 builder.Services.AddFoundryResponses(agent);
-builder.Services.AddDevTemporaryLocalContributorSetup(); // Local Docker debugging only - must not be used in production.
 
 // Register Foundry Toolbox: connects to the MCP proxy at startup and makes tools available.
 // The toolbox name must match a toolbox registered in your Foundry project.
 // When FOUNDRY_PROJECT_ENDPOINT is absent (e.g., in local development without Foundry
 // infrastructure), startup succeeds without error and no toolbox tools are loaded.
-builder.Services.AddFoundryToolboxes(toolboxName);
+builder.Services.AddFoundryToolboxes(credential, toolboxName);
 
 var app = builder.Build();
 app.MapFoundryResponses();

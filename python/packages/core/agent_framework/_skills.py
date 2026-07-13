@@ -34,7 +34,8 @@ Skills can come from different sources:
   skills from arbitrary origins (REST APIs, databases, etc.).
 
 Multiple sources can be composed using :class:`AggregatingSkillsSource`,
-:class:`FilteringSkillsSource`, and :class:`DeduplicatingSkillsSource`.
+:class:`FilteringSkillsSource`, :class:`DeduplicatingSkillsSource`, and
+:class:`CachingSkillsSource`.
 
 **Security:** file-based skill metadata is XML-escaped before prompt injection, and
 file-based resource reads are guarded against path traversal and symlink escape.
@@ -50,15 +51,18 @@ import json
 import logging
 import os
 import re
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from datetime import timedelta
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeVar, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import ContextProvider
-from ._tools import FunctionTool
+from ._tools import ApprovalMode, FunctionTool
 
 if TYPE_CHECKING:
     from mcp.client.session import ClientSession
@@ -74,7 +78,24 @@ logger = logging.getLogger(__name__)
 # region Models
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
+SkillScriptArgumentParser: TypeAlias = Callable[[dict[str, Any] | list[str] | str | None], dict[str, Any] | None]
+"""Callable that converts raw script arguments before an inline script runs.
+
+The parser receives the raw ``args`` value supplied by the agent/LLM (a
+``dict`` of named arguments, a ``list[str]`` of positional arguments, a
+``str`` for backends that send arguments as an unparsed JSON string, or
+``None``) and returns the named keyword arguments to pass to the inline
+script callable: a ``dict`` (or ``None`` for no arguments).  Inline scripts
+bind arguments by keyword name, so the parser must normalize whatever shape
+it receives into a ``dict`` or ``None``.
+
+When no parser is configured, inline scripts use the raw value unchanged.
+This hook lets callers plug in their own argument conversion logic to support
+backends (for example, vLLM and some OpenAI-compatible servers) that encode
+tool-call arguments as a JSON string instead of a JSON object.
+"""
+
+
 class SkillResource(ABC):
     """Abstract base class for supplementary content attached to a skill.
 
@@ -118,7 +139,6 @@ class SkillResource(ABC):
         """
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class InlineSkillResource(SkillResource):
     """A code-defined skill resource backed by static content or a callable.
 
@@ -258,7 +278,6 @@ class _FileSkillResource(SkillResource):
         return await asyncio.to_thread(Path(self.full_path).read_text, encoding="utf-8")
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillScript(ABC):
     """Abstract base class for executable scripts attached to a skill.
 
@@ -312,7 +331,6 @@ class SkillScript(ABC):
         """
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class InlineSkillScript(SkillScript):
     """A code-defined skill script backed by a callable.
 
@@ -336,6 +354,7 @@ class InlineSkillScript(SkillScript):
         name: str,
         description: str | None = None,
         function: Callable[..., Any],
+        argument_parser: SkillScriptArgumentParser | None = None,
     ) -> None:
         """Initialize an InlineSkillScript.
 
@@ -343,10 +362,18 @@ class InlineSkillScript(SkillScript):
             name: Identifier for this script (e.g. ``"analyze"``).
             description: Optional human-readable summary.
             function: Callable (sync or async) that implements the script.
+            argument_parser: Optional callable that converts the raw
+                ``args`` value into the named arguments passed to
+                ``function`` before the script runs.  When ``None`` (the
+                default), the raw value is used unchanged, which expects a
+                ``dict`` (or ``None``).  Supply a parser to support
+                backends that send arguments in a non-conforming shape (for
+                example, vLLM-style JSON strings).
         """
         super().__init__(name=name, description=description)
 
         self.function = function
+        self.argument_parser = argument_parser
         self._parameters_schema: dict[str, Any] | None = None
         self._parameters_schema_resolved: bool = False
 
@@ -369,15 +396,22 @@ class InlineSkillScript(SkillScript):
             self._parameters_schema_resolved = True
         return self._parameters_schema
 
-    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | None = None, **kwargs: Any) -> Any:
+    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | str | None = None, **kwargs: Any) -> Any:
         """Run the script by invoking the callable in-process.
+
+        When an ``argument_parser`` is configured, it is applied to
+        ``args`` first to convert it into the named arguments for the
+        callable.  Otherwise ``args`` is used unchanged.
 
         Args:
             skill: The skill that owns this script.
             args: Optional keyword arguments for the script, provided by the
-                agent/LLM.  Must be a ``dict`` or ``None``; passing a
-                ``list`` raises :class:`TypeError` because inline scripts
-                bind arguments by keyword name.
+                agent/LLM.  May be a raw ``str`` when an
+                ``argument_parser`` is configured to convert it.  After
+                any configured ``argument_parser`` runs, the result must
+                be a ``dict`` or ``None``; a ``list`` raises
+                :class:`TypeError` because inline scripts bind arguments by
+                keyword name.
             **kwargs: Runtime keyword arguments forwarded only to script
                 functions that accept ``**kwargs``.
 
@@ -385,9 +419,19 @@ class InlineSkillScript(SkillScript):
             The script execution result.
 
         Raises:
-            TypeError: If ``args`` is a ``list`` (array-style arguments
-                are only supported for file-based scripts).
+            TypeError: If ``args`` (after parsing) is a ``str`` or a
+                ``list``.  A leftover ``str`` means no ``argument_parser``
+                converted it; a ``list`` is array-style and only supported
+                for file-based scripts.
         """
+        if self.argument_parser is not None:
+            args = self.argument_parser(args)
+        if isinstance(args, str):
+            raise TypeError(
+                f"Inline script '{self.name}' received string arguments that were not "
+                f"converted to a dict. Configure an 'argument_parser' to convert "
+                f"string-encoded arguments into named keyword arguments."
+            )
         if isinstance(args, list):
             raise TypeError(
                 f"Inline script '{self.name}' requires keyword arguments (dict), "
@@ -403,7 +447,6 @@ class InlineSkillScript(SkillScript):
         return result
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class FileSkillScript(SkillScript):
     """A file-path-backed skill script requiring an external runner.
 
@@ -489,7 +532,6 @@ class FileSkillScript(SkillScript):
         return result
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class Skill(ABC):
     """Abstract base class for all agent skills.
 
@@ -554,7 +596,6 @@ class Skill(ABC):
         return None
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillFrontmatter:
     """L1 discovery metadata for a :class:`Skill`.
 
@@ -769,7 +810,6 @@ def _build_available_scripts_block(scripts: Sequence[SkillScript] | None) -> str
     return f"<available_scripts>\n{script_lines}\n</available_scripts>"
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class InlineSkill(Skill):
     """A skill defined entirely in code with resources and scripts.
 
@@ -800,6 +840,7 @@ class InlineSkill(Skill):
         instructions: str,
         resources: Sequence[SkillResource] | None = None,
         scripts: Sequence[SkillScript] | None = None,
+        argument_parser: SkillScriptArgumentParser | None = None,
     ) -> None:
         """Initialize an InlineSkill.
 
@@ -810,10 +851,15 @@ class InlineSkill(Skill):
             instructions: The skill instructions text.
             resources: Pre-built resources to attach to this skill.
             scripts: Pre-built scripts to attach to this skill.
+            argument_parser: Optional default :data:`SkillScriptArgumentParser`
+                applied to scripts registered via the :meth:`script` decorator.
+                Pre-built ``scripts`` keep their own parser. When ``None``
+                (the default), scripts use the raw argument value unchanged.
         """
         self._frontmatter = frontmatter
 
         self.instructions = instructions
+        self._argument_parser = argument_parser
         self._resources: list[SkillResource] = list(resources) if resources is not None else []
         self._scripts: list[SkillScript] = list(scripts) if scripts is not None else []
         self._cached_content: str | None = None
@@ -987,6 +1033,7 @@ class InlineSkill(Skill):
                     name=script_name,
                     description=script_description,
                     function=f,
+                    argument_parser=self._argument_parser,
                 )
             )
             return f
@@ -1076,7 +1123,6 @@ def _discover_marked_members(cls: type, marker_attr: str) -> list[tuple[str, dic
     return results
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class ClassSkill(Skill, ABC):
     """Abstract base class for defining skills as reusable Python classes.
 
@@ -1153,6 +1199,7 @@ class ClassSkill(Skill, ABC):
         self,
         *,
         frontmatter: SkillFrontmatter,
+        argument_parser: SkillScriptArgumentParser | None = None,
     ) -> None:
         """Initialize a ClassSkill.
 
@@ -1160,8 +1207,13 @@ class ClassSkill(Skill, ABC):
             frontmatter: Skill specification metadata (name, description,
                 and optional spec fields). Construct a :class:`SkillFrontmatter`
                 with the desired fields.
+            argument_parser: Optional default :data:`SkillScriptArgumentParser`
+                applied to scripts discovered from :meth:`ClassSkill.script`-decorated
+                methods. When ``None`` (the default), discovered scripts use the
+                raw argument value unchanged.
         """
         self._frontmatter = frontmatter
+        self._argument_parser = argument_parser
         self._cached_content: str | None = None
         self._cached_resources: list[SkillResource] | None = None
         self._cached_scripts: list[SkillScript] | None = None
@@ -1390,6 +1442,7 @@ class ClassSkill(Skill, ABC):
                     name=script_name,
                     function=bound_method,
                     description=script_description,
+                    argument_parser=self._argument_parser,
                 )
             )
 
@@ -1447,7 +1500,6 @@ class ClassSkill(Skill, ABC):
         return next((s for s in self.scripts if s.name.lower() == name_lower), None)
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class FileSkill(Skill):
     """A :class:`Skill` discovered from a filesystem directory backed by a SKILL.md file.
 
@@ -1545,7 +1597,6 @@ class FileSkill(Skill):
 
 
 @runtime_checkable
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillScriptRunner(Protocol):
     """Protocol for skill script runners.
 
@@ -1752,7 +1803,7 @@ Only load what is needed, when it is needed."""
 
 RESOURCE_INSTRUCTIONS: Final[str] = (
     "- Use `read_skill_resource` to read any referenced resources, using the name exactly as listed\n"
-    '   (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ"` not `"FAQ.md"`).\n'
+    '   (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ.md"` not `"FAQ.md"`).\n'
 )
 
 SCRIPT_RUNNER_INSTRUCTIONS: Final[str] = (
@@ -1768,7 +1819,6 @@ SCRIPT_RUNNER_INSTRUCTIONS: Final[str] = (
 _TSkillsProvider = TypeVar("_TSkillsProvider", bound="SkillsProvider")
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillsProvider(ContextProvider):
     """Context provider that advertises skills and exposes skill tools.
 
@@ -1791,7 +1841,18 @@ class SkillsProvider(ContextProvider):
     and file-based resource reads are guarded against path traversal and
     symlink escape.  Only use skills from trusted sources.
 
-    **Tool approval:** every tool exposed by this provider
+    **Security considerations (external skill sources):** which skills are
+    available, and how much trust to place in them, is entirely determined by
+    the :class:`SkillsSource` instances this provider is configured with — see
+    :class:`SkillsSource` for source-level trust-boundary guidance (this
+    includes external sources such as skills discovered over MCP via
+    :class:`MCPSkillsSource`). Skill content (names, descriptions, and full
+    bodies loaded via ``load_skill``) is injected into the agent's context
+    as-is, so a compromised or adversarial source can attempt indirect prompt
+    injection, and the ``run_skill_script`` tool executes scripts supplied by
+    the source. Only enable script-capable or external sources you trust.
+
+    **Tool approval:** by default every tool exposed by this provider
     (``load_skill``, ``read_skill_resource``, and ``run_skill_script``) is
     registered with ``approval_mode="always_require"``, so each skill operation
     needs approval.  To run unattended, pass one of the static
@@ -1800,7 +1861,12 @@ class SkillsProvider(ContextProvider):
     :meth:`read_only_tools_auto_approval_rule` approves only the read-only tools
     (``load_skill`` and ``read_skill_resource``) while still prompting for
     ``run_skill_script``, and :meth:`all_tools_auto_approval_rule` approves every
-    skill tool including script execution.
+    skill tool including script execution.  Alternatively, for trusted skills,
+    set ``disable_load_skill_approval``, ``disable_read_skill_resource_approval``,
+    and/or ``disable_run_skill_script_approval`` to opt individual tools out of
+    approval entirely (those tools are registered with
+    ``approval_mode="never_require"`` and are not surfaced as approval requests;
+    the auto-approval rules only apply to tools that still require approval).
 
     Examples:
         File-based factory (recommended for single-source file skills):
@@ -1890,7 +1956,10 @@ class SkillsProvider(ContextProvider):
     def read_only_tools_auto_approval_rule(function_call: Content) -> bool:
         """Auto-approval rule that approves only the read-only skill tools.
 
-        The tools exposed by :class:`SkillsProvider` always require approval.
+        By default the tools exposed by :class:`SkillsProvider` require
+        approval. This rule only applies to tools that still require approval;
+        tools opted out via the ``disable_*_approval`` constructor arguments run
+        without approval regardless.
         Pass this rule to :class:`~agent_framework.ToolApprovalMiddleware` (via
         ``auto_approval_rules``) to automatically approve the tools that read
         skill content (``load_skill`` and ``read_skill_resource``), while still
@@ -1916,7 +1985,10 @@ class SkillsProvider(ContextProvider):
     def all_tools_auto_approval_rule(function_call: Content) -> bool:
         """Auto-approval rule that approves every skill tool.
 
-        The tools exposed by :class:`SkillsProvider` always require approval.
+        By default the tools exposed by :class:`SkillsProvider` require
+        approval. This rule only applies to tools that still require approval;
+        tools opted out via the ``disable_*_approval`` constructor arguments run
+        without approval regardless.
         Pass this rule to :class:`~agent_framework.ToolApprovalMiddleware` (via
         ``auto_approval_rules``) to automatically approve every skill tool,
         including the script execution tool (``run_skill_script``).
@@ -1942,13 +2014,26 @@ class SkillsProvider(ContextProvider):
         *,
         instruction_template: str | None = None,
         disable_caching: bool = False,
+        cache_refresh_interval: timedelta | None = None,
+        disable_load_skill_approval: bool = False,
+        disable_read_skill_resource_approval: bool = False,
+        disable_run_skill_script_approval: bool = False,
         source_id: str | None = None,
     ) -> None:
         """Initialize a SkillsProvider.
 
         Accepts a :class:`SkillsSource`, a single :class:`Skill`, or a
         sequence of :class:`Skill` instances.  When skills are passed
-        directly, they are automatically deduplicated.
+        directly, they are automatically deduplicated and cached.
+
+        A caller-supplied :class:`SkillsSource` is used as-is: it is **not**
+        automatically deduplicated or wrapped in a
+        :class:`CachingSkillsSource`. This keeps context-aware sources safe —
+        auto-caching a caller source in a single shared cache could replay one
+        agent's/tenant's skills for another. Compose
+        :class:`DeduplicatingSkillsSource` / :class:`CachingSkillsSource`
+        (optionally with a ``cache_isolation_key_selector``) yourself when you
+        need them.
 
         For file-based skills, use :meth:`from_paths` or compose sources
         directly using :class:`FileSkillsSource` and other source classes.
@@ -1967,17 +2052,49 @@ class SkillsProvider(ContextProvider):
                 When omitted, those instructions are simply not included in the
                 rendered prompt (the corresponding tools are still registered).
                 Uses a built-in template when ``None``.
-            disable_caching: When ``True``, rebuilds tools and instructions
-                from the source on every invocation instead of caching
-                after the first build.  Defaults to ``False``.
+            disable_caching: When ``True``, the built-in file/in-memory source
+                is not wrapped in a :class:`CachingSkillsSource`, so skills are
+                rebuilt on every invocation. This only affects the sources the
+                provider builds internally (from a :class:`Skill`, a sequence of
+                skills, or :meth:`from_paths`); a caller-supplied
+                :class:`SkillsSource` is never auto-cached regardless of this
+                flag. Defaults to ``False``.
+            cache_refresh_interval: Optional duration after which the built-in
+                cache is considered stale and skills are re-discovered on the
+                next invocation. Like ``disable_caching``, this only affects the
+                :class:`CachingSkillsSource` the provider builds internally
+                (from a :class:`Skill` or a sequence of skills); it has no
+                effect on a caller-supplied :class:`SkillsSource` (compose your
+                own :class:`CachingSkillsSource` with a ``refresh_interval`` for
+                those) and is ignored when ``disable_caching=True``. When
+                ``None`` (the default), the built-in cache never expires.
+            disable_load_skill_approval: When ``True``, the ``load_skill`` tool
+                is registered with ``approval_mode="never_require"`` so it runs
+                without approval.  Defaults to ``False`` (approval required).
+                Only enable this for skills from a trusted source.
+            disable_read_skill_resource_approval: When ``True``, the
+                ``read_skill_resource`` tool is registered with
+                ``approval_mode="never_require"`` so it runs without approval.
+                Defaults to ``False`` (approval required).  Only enable this for
+                skills from a trusted source.
+            disable_run_skill_script_approval: When ``True``, the
+                ``run_skill_script`` tool is registered with
+                ``approval_mode="never_require"`` so it runs without approval.
+                Defaults to ``False`` (approval required).  Only enable this for
+                skills and scripts from a trusted source.
             source_id: Unique identifier for this provider instance.
 
         .. note::
 
-            All skill tools require approval. To approve them
+            By default every skill tool requires approval. To approve them
             automatically, pass :meth:`read_only_tools_auto_approval_rule` or
             :meth:`all_tools_auto_approval_rule` to
-            :class:`~agent_framework.ToolApprovalMiddleware`. See
+            :class:`~agent_framework.ToolApprovalMiddleware`. Alternatively, for
+            trusted skills, set one or more of
+            ``disable_load_skill_approval``, ``disable_read_skill_resource_approval``,
+            and ``disable_run_skill_script_approval`` to opt individual tools out
+            of approval entirely (the auto-approval rules only apply to tools
+            that still require approval). See
             ``samples/02-agents/skills/skills_auto_approval/skills_auto_approval.py``
             for the auto-approval pattern and
             ``samples/02-agents/skills/script_approval/script_approval.py`` for
@@ -1992,18 +2109,36 @@ class SkillsProvider(ContextProvider):
             )
 
         if isinstance(source, Skill):
-            source = DeduplicatingSkillsSource(InMemorySkillsSource([source]))
+            leaf: SkillsSource = InMemorySkillsSource([source])
+            source = DeduplicatingSkillsSource(
+                leaf if disable_caching else CachingSkillsSource(leaf, refresh_interval=cache_refresh_interval)
+            )
         elif isinstance(source, SkillsSource):
+            # Caller-supplied source: the caller owns the whole pipeline, so it
+            # is used as-is with no automatic caching (or deduplication).
+            # Auto-wrapping a caller source in a single shared, unkeyed
+            # CachingSkillsSource would be unsafe: if the source is
+            # context-aware (e.g. filters skills per agent/tenant via the
+            # SkillsSourceContext), the first invocation's skills would be
+            # cached and replayed for every later context, leaking skills
+            # across agents/tenants. Callers who want caching should compose
+            # CachingSkillsSource themselves (optionally with a
+            # cache_isolation_key_selector). Only the built-in, context-
+            # independent leaf sources above/below are auto-cached.
             pass
         else:
-            source = DeduplicatingSkillsSource(InMemorySkillsSource(list(source)))
+            leaf = InMemorySkillsSource(list(source))
+            source = DeduplicatingSkillsSource(
+                leaf if disable_caching else CachingSkillsSource(leaf, refresh_interval=cache_refresh_interval)
+            )
 
         self._source = source
         self._instruction_template = instruction_template
         self._disable_caching = disable_caching
-
-        # Lazy-initialized via _get_or_create_context / _create_context
-        self._cached_context: tuple[Sequence[Skill], str | None, list[FunctionTool]] | None = None
+        self._cache_refresh_interval = cache_refresh_interval
+        self._disable_load_skill_approval = disable_load_skill_approval
+        self._disable_read_skill_resource_approval = disable_read_skill_resource_approval
+        self._disable_run_skill_script_approval = disable_run_skill_script_approval
 
     @classmethod
     def from_paths(
@@ -2018,6 +2153,10 @@ class SkillsProvider(ContextProvider):
         resource_filter: Callable[[str, str], bool] | None = None,
         instruction_template: str | None = None,
         disable_caching: bool = False,
+        cache_refresh_interval: timedelta | None = None,
+        disable_load_skill_approval: bool = False,
+        disable_read_skill_resource_approval: bool = False,
+        disable_run_skill_script_approval: bool = False,
         source_id: str | None = None,
     ) -> _TSkillsProvider:
         """Create a provider from one or more file-based skill directories.
@@ -2052,9 +2191,23 @@ class SkillsProvider(ContextProvider):
             instruction_template: Custom system-prompt template for
                 advertising skills.  Must contain a ``{skills}`` placeholder.
                 Uses a built-in template when ``None``.
-            disable_caching: When ``True``, rebuilds tools and instructions
-                from the source on every invocation instead of caching
-                after the first build.
+            disable_caching: When ``True``, the file-discovery source is not
+                wrapped in a :class:`CachingSkillsSource`, so skills are
+                re-discovered on every invocation. Defaults to ``False``.
+            cache_refresh_interval: Optional duration after which the file-
+                discovery cache is considered stale and skills are re-discovered
+                on the next invocation. When ``None`` (the default) the cache
+                never expires; ignored when ``disable_caching=True``.
+            disable_load_skill_approval: When ``True``, the ``load_skill`` tool
+                runs without approval.  Defaults to ``False``.  Only enable this
+                for skills from a trusted source.
+            disable_read_skill_resource_approval: When ``True``, the
+                ``read_skill_resource`` tool runs without approval.  Defaults to
+                ``False``.  Only enable this for skills from a trusted source.
+            disable_run_skill_script_approval: When ``True``, the
+                ``run_skill_script`` tool runs without approval.  Defaults to
+                ``False``.  Only enable this for skills and scripts from a
+                trusted source.
             source_id: Unique identifier for this provider instance.
 
         Returns:
@@ -2062,27 +2215,49 @@ class SkillsProvider(ContextProvider):
 
         .. note::
 
-            All skill tools require approval. To approve them
+            By default every skill tool requires approval. To approve them
             automatically, pass :meth:`read_only_tools_auto_approval_rule` or
             :meth:`all_tools_auto_approval_rule` to
-            :class:`~agent_framework.ToolApprovalMiddleware`.
+            :class:`~agent_framework.ToolApprovalMiddleware`. Alternatively, for
+            trusted skills, set one or more of ``disable_load_skill_approval``,
+            ``disable_read_skill_resource_approval``, and
+            ``disable_run_skill_script_approval`` to opt individual tools out of
+            approval entirely.
         """
-        source = DeduplicatingSkillsSource(
-            FileSkillsSource(
-                skill_paths,
-                script_runner=script_runner,
-                resource_extensions=resource_extensions,
-                script_extensions=script_extensions,
-                search_depth=search_depth,
-                script_filter=script_filter,
-                resource_filter=resource_filter,
-            )
+        file_source: SkillsSource = FileSkillsSource(
+            skill_paths,
+            script_runner=script_runner,
+            resource_extensions=resource_extensions,
+            script_extensions=script_extensions,
+            search_depth=search_depth,
+            script_filter=script_filter,
+            resource_filter=resource_filter,
         )
+        # Cache the (potentially expensive) file-discovery leaf directly, then
+        # deduplicate. The composed pipeline is handed to __init__ as a
+        # caller-supplied source, which is intentionally left un-wrapped, so
+        # caching is applied here. The file source is context-independent, so a
+        # single shared cache is safe.
+        source = DeduplicatingSkillsSource(
+            file_source
+            if disable_caching
+            else CachingSkillsSource(file_source, refresh_interval=cache_refresh_interval)
+        )
+        # Only forward the approval-disable kwargs when explicitly enabled, so a
+        # subclass with the previous __init__ signature keeps working.
+        forwarded_kwargs: dict[str, Any] = {}
+        if disable_load_skill_approval:
+            forwarded_kwargs["disable_load_skill_approval"] = True
+        if disable_read_skill_resource_approval:
+            forwarded_kwargs["disable_read_skill_resource_approval"] = True
+        if disable_run_skill_script_approval:
+            forwarded_kwargs["disable_run_skill_script_approval"] = True
         return cls(
             source,
             instruction_template=instruction_template,
             disable_caching=disable_caching,
             source_id=source_id,
+            **forwarded_kwargs,
         )
 
     @staticmethod
@@ -2153,16 +2328,25 @@ class SkillsProvider(ContextProvider):
             resource_instructions=resource_instructions or "",
         )
 
-    async def _create_context(self) -> tuple[Sequence[Skill], str | None, list[FunctionTool]]:
+    async def _create_context(
+        self, source_context: SkillsSourceContext
+    ) -> tuple[Sequence[Skill], str | None, list[FunctionTool]]:
         """Build skills, instructions, and tools from the source.
 
-        Always performs a fresh build by querying the source and
-        constructing the instruction prompt and tool definitions.
+        Queries the source for skills and constructs the instruction prompt
+        and tool definitions.  Caching of the skills list is handled by the
+        source pipeline (see :class:`CachingSkillsSource`), so this method
+        rebuilds instructions and tools from the (possibly cached) skills on
+        every call.
+
+        Args:
+            source_context: Contextual information about the agent and session
+                requesting skills, forwarded to the source pipeline.
 
         Returns:
             A tuple of ``(skills, instructions, tools)``.
         """
-        skills = await self._source.get_skills()
+        skills = await self._source.get_skills(source_context)
 
         if not skills:
             return skills, None, []
@@ -2176,28 +2360,6 @@ class SkillsProvider(ContextProvider):
 
         return skills, instructions, tools
 
-    async def _get_or_create_context(self) -> tuple[Sequence[Skill], str | None, list[FunctionTool]]:
-        """Return the cached context, building it on first call.
-
-        On the first call, delegates to :meth:`_create_context` and caches
-        the result.  Subsequent calls return the cached result immediately.
-        If the first build fails, the cache is reset so the next call
-        retries.
-
-        Returns:
-            A tuple of ``(skills, instructions, tools)``.
-        """
-        if self._cached_context is not None:
-            return self._cached_context
-
-        try:
-            result = await self._create_context()
-            self._cached_context = result
-            return result
-        except Exception:
-            self._cached_context = None
-            raise
-
     async def before_run(
         self,
         *,
@@ -2208,11 +2370,13 @@ class SkillsProvider(ContextProvider):
     ) -> None:
         """Inject skill instructions and tools into the session context.
 
-        Called by the framework before the agent runs.  On the first call,
-        loads skills from the configured source asynchronously and builds
-        the instruction prompt and tool definitions.  When at least one
-        skill is registered, appends the skill-list system prompt and the
-        ``load_skill`` / ``read_skill_resource`` tools to *context*.
+        Called by the framework before the agent runs.  Loads skills from the
+        configured source (built-in file/in-memory sources are cached by the
+        source pipeline unless ``disable_caching=True``; a caller-supplied
+        source is queried as its own pipeline dictates) and builds the
+        instruction prompt and tool definitions.  When at least one skill is
+        registered, appends the skill-list system prompt and the ``load_skill``
+        / ``read_skill_resource`` tools to *context*.
 
         When any registered skill defines one or more scripts (file-based or
         code-based), the system prompt also includes script-runner
@@ -2225,16 +2389,27 @@ class SkillsProvider(ContextProvider):
             context: Session context to extend with instructions and tools.
             state: Mutable per-run state dictionary (unused by this provider).
         """
-        if self._disable_caching:
-            skills, instructions, tools = await self._create_context()
-        else:
-            skills, instructions, tools = await self._get_or_create_context()
+        source_context = SkillsSourceContext(agent=agent, session=session)
+        skills, instructions, tools = await self._create_context(source_context)
 
         if not skills:
             return
 
         context.extend_instructions(self.source_id, instructions)  # type: ignore[arg-type]
         context.extend_tools(self.source_id, tools)
+
+    @staticmethod
+    def _approval_mode(approval_disabled: bool) -> ApprovalMode:
+        """Return the ``approval_mode`` for a tool given its disable flag.
+
+        Args:
+            approval_disabled: When ``True``, the tool runs without approval.
+
+        Returns:
+            ``"never_require"`` when approval is disabled, otherwise
+            ``"always_require"``.
+        """
+        return "never_require" if approval_disabled else "always_require"
 
     def _create_tools(
         self,
@@ -2243,12 +2418,17 @@ class SkillsProvider(ContextProvider):
         """Create the tool definitions for skill interaction.
 
         Always includes ``load_skill``, ``read_skill_resource``, and
-        ``run_skill_script``.  Every tool is registered with
+        ``run_skill_script``.  By default every tool is registered with
         ``approval_mode="always_require"`` so each skill operation needs
         approval; use :meth:`read_only_tools_auto_approval_rule` or
         :meth:`all_tools_auto_approval_rule` with
         :class:`~agent_framework.ToolApprovalMiddleware` to approve them
-        automatically.
+        automatically.  For trusted skills, individual tools can be opted out of
+        approval entirely via the ``disable_load_skill_approval``,
+        ``disable_read_skill_resource_approval``, and
+        ``disable_run_skill_script_approval`` constructor arguments, in which
+        case the corresponding tool is registered with
+        ``approval_mode="never_require"``.
 
         Args:
             skills: The skills to bind to tool handlers.
@@ -2273,7 +2453,7 @@ class SkillsProvider(ContextProvider):
                 name=self.LOAD_SKILL_TOOL_NAME,
                 description="Loads the full instructions for a specific skill.",
                 func=_load,
-                approval_mode="always_require",
+                approval_mode=self._approval_mode(self._disable_load_skill_approval),
                 input_model={
                     "type": "object",
                     "properties": {
@@ -2286,7 +2466,7 @@ class SkillsProvider(ContextProvider):
                 name=self.READ_SKILL_RESOURCE_TOOL_NAME,
                 description=("Reads a resource associated with a skill, such as references, assets, or dynamic data."),
                 func=_read_resource,
-                approval_mode="always_require",
+                approval_mode=self._approval_mode(self._disable_read_skill_resource_approval),
                 input_model={
                     "type": "object",
                     "properties": {
@@ -2303,7 +2483,7 @@ class SkillsProvider(ContextProvider):
                 name=self.RUN_SKILL_SCRIPT_TOOL_NAME,
                 description="Runs a script associated with a skill.",
                 func=_run_script,
-                approval_mode="always_require",
+                approval_mode=self._approval_mode(self._disable_run_skill_script_approval),
                 input_model={
                     "type": "object",
                     "properties": {
@@ -2515,7 +2695,27 @@ def _create_script_element(script: SkillScript) -> str:
 # region Skill Sources
 
 
-@experimental(feature_id=ExperimentalFeature.SKILLS)
+@dataclass(frozen=True)
+class SkillsSourceContext:
+    """Contextual information passed to a :class:`SkillsSource` when retrieving skills.
+
+    Exposes the invoking *agent* and, when available, the current *session* so
+    that skill sources and decorators can make context-aware decisions such as
+    per-agent filtering (see :class:`FilteringSkillsSource`) or per-key cache
+    isolation (see :class:`CachingSkillsSource`).
+
+    The context is constructed by :class:`SkillsProvider` from the invoking
+    agent run and flows through every source and decorator in the pipeline.
+
+    Attributes:
+        agent: The agent requesting skills.
+        session: The session associated with the agent invocation, if any.
+    """
+
+    agent: SupportsAgentRun
+    session: AgentSession | None = None
+
+
 class SkillsSource(ABC):
     """Abstract base class for skill sources.
 
@@ -2525,11 +2725,29 @@ class SkillsSource(ABC):
     are discovered (filesystem, memory, network, etc.).
 
     Subclass this to create custom skill sources.
+
+    Security considerations:
+        A skill source is a trust boundary. The skills it returns — their
+        names, descriptions, instructions, and any scripts or resources — are
+        injected into the agent's context and tool surface, and may be
+        executed (for sources that support script execution). Skills only
+        reach the agent when a source is explicitly registered, so this is
+        opt-in. Sources that read from a remote or third-party origin (e.g. a
+        remote MCP server via :class:`MCPSkillsSource`, a shared filesystem, or
+        a database) can be compromised or adversarial, and may return skill
+        content designed to manipulate the agent (indirect prompt injection) or
+        to exfiltrate data through instructions or scripts the agent is induced
+        to run. Only register skill sources for origins you trust, and evaluate
+        the content they can return before enabling them in production.
     """
 
     @abstractmethod
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         """Discover and return all skills from this source.
+
+        Args:
+            context: Contextual information about the agent and session
+                requesting skills.
 
         Returns:
             A list of :class:`Skill` instances discovered by this source.
@@ -2559,7 +2777,9 @@ class FileSkillsSource(SkillsSource):
         .. code-block:: python
 
             source = FileSkillsSource(skill_paths="./skills")
-            skills = await source.get_skills()
+            # `context` is normally supplied by SkillsProvider at runtime.
+            context = SkillsSourceContext(agent=agent)
+            skills = await source.get_skills(context)
 
         With a script runner and filter predicates:
 
@@ -2633,12 +2853,17 @@ class FileSkillsSource(SkillsSource):
         self._script_filter = script_filter
         self._resource_filter = resource_filter
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         """Discover and return all file-based skills from configured paths.
 
         Scans directories for ``SKILL.md`` files, parses their frontmatter,
         discovers resource and script files, and returns populated
         :class:`Skill` instances.
+
+        Args:
+            context: Contextual information about the agent and session
+                requesting skills. Accepted for the source contract; this
+                source discovers the same skills regardless of context.
 
         Returns:
             A list of discovered file-based skills.
@@ -2895,13 +3120,12 @@ class FileSkillsSource(SkillsSource):
 
             resources.append(rel_path)
 
-        # Recurse into subdirectories if within depth limit
+        # Recurse into subdirectories if within depth limit.
+        # Subdirectories that contain their own SKILL.md are NOT skipped: a nested
+        # SKILL.md is not an independent skill (see _discover_skill_directories), so
+        # its contents belong to this skill.
         if current_depth < self._search_depth:
             for subdir in subdirectories:
-                # Skip subdirectories that contain their own SKILL.md — they are
-                # separate skills and their files should not be attached to this one.
-                if (subdir / SKILL_FILE_NAME).is_file():
-                    continue
                 self._scan_directory_for_resources(
                     target_dir=subdir,
                     skill_dir=skill_dir,
@@ -3046,13 +3270,12 @@ class FileSkillsSource(SkillsSource):
 
             scripts.append(rel_path)
 
-        # Recurse into subdirectories if within depth limit
+        # Recurse into subdirectories if within depth limit.
+        # Subdirectories that contain their own SKILL.md are NOT skipped: a nested
+        # SKILL.md is not an independent skill (see _discover_skill_directories), so
+        # its contents belong to this skill.
         if current_depth < self._search_depth:
             for subdir in subdirectories:
-                # Skip subdirectories that contain their own SKILL.md — they are
-                # separate skills and their files should not be attached to this one.
-                if (subdir / SKILL_FILE_NAME).is_file():
-                    continue
                 self._scan_directory_for_scripts(
                     target_dir=subdir,
                     skill_dir=skill_dir,
@@ -3269,7 +3492,10 @@ class FileSkillsSource(SkillsSource):
     def _discover_skill_directories(skill_paths: Sequence[str]) -> list[str]:
         """Return absolute paths of all directories that contain a ``SKILL.md`` file.
 
-        Recursively searches each root path up to :data:`MAX_SEARCH_DEPTH`.
+        Recursively searches each root path up to :data:`MAX_SEARCH_DEPTH`. Once a
+        ``SKILL.md`` is found in a directory, that directory is the skill root and the
+        search does not descend into its subdirectories: everything beneath a skill
+        boundary is part of that skill, not an independent skill root.
 
         Args:
             skill_paths: Root directory paths to search.
@@ -3282,7 +3508,10 @@ class FileSkillsSource(SkillsSource):
         def _search(directory: str, current_depth: int) -> None:
             dir_path = Path(directory)
             if (dir_path / SKILL_FILE_NAME).is_file():
+                # This directory is a skill root. Subdirectories are part of this
+                # skill and must not be treated as independent skill roots.
                 discovered.append(str(dir_path.absolute()))
+                return
 
             if current_depth >= MAX_SEARCH_DEPTH:
                 return
@@ -3320,7 +3549,9 @@ class InMemorySkillsSource(SkillsSource):
                 instructions="Instructions here...",
             )
             source = InMemorySkillsSource([skill])
-            skills = await source.get_skills()
+            # `context` is normally supplied by SkillsProvider at runtime.
+            context = SkillsSourceContext(agent=agent)
+            skills = await source.get_skills(context)
     """
 
     def __init__(self, skills: Sequence[Skill]) -> None:
@@ -3331,8 +3562,13 @@ class InMemorySkillsSource(SkillsSource):
         """
         self._skills = list(skills)
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         """Return the stored skills.
+
+        Args:
+            context: Contextual information about the agent and session
+                requesting skills. Accepted for the source contract; this
+                source returns the same stored skills regardless of context.
 
         Returns:
             A list of :class:`Skill` instances.
@@ -3364,15 +3600,19 @@ class DelegatingSkillsSource(SkillsSource, ABC):
         """The wrapped inner skill source."""
         return self._inner_source
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         """Delegate to the inner source.
 
         Subclasses should override this to intercept the results.
 
+        Args:
+            context: Contextual information about the agent and session
+                requesting skills, forwarded to the inner source.
+
         Returns:
             Skills from the inner source.
         """
-        return await self._inner_source.get_skills()
+        return await self._inner_source.get_skills(context)
 
 
 class DeduplicatingSkillsSource(DelegatingSkillsSource):
@@ -3389,7 +3629,9 @@ class DeduplicatingSkillsSource(DelegatingSkillsSource):
         .. code-block:: python
 
             deduped = DeduplicatingSkillsSource(inner_source)
-            skills = await deduped.get_skills()
+            # `context` is normally supplied by SkillsProvider at runtime.
+            context = SkillsSourceContext(agent=agent)
+            skills = await deduped.get_skills(context)
     """
 
     def __init__(self, inner_source: SkillsSource) -> None:
@@ -3400,13 +3642,17 @@ class DeduplicatingSkillsSource(DelegatingSkillsSource):
         """
         super().__init__(inner_source)
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         """Return deduplicated skills (first-one-wins by name).
+
+        Args:
+            context: Contextual information about the agent and session
+                requesting skills, forwarded to the inner source.
 
         Returns:
             A list of :class:`Skill` instances with duplicate names removed.
         """
-        skills = await self._inner_source.get_skills()
+        skills = await self._inner_source.get_skills(context)
         seen: dict[str, Skill] = {}
         result: list[Skill] = []
 
@@ -3429,42 +3675,228 @@ class FilteringSkillsSource(DelegatingSkillsSource):
     """Decorator that filters skills from an inner source by predicate.
 
     Only skills for which *predicate* returns ``True`` are included in the
-    result.  The predicate receives each :class:`Skill` and should return
-    a boolean.
+    result.  The predicate receives each :class:`Skill` together with the
+    :class:`SkillsSourceContext` for the current invocation, enabling
+    context-aware filtering (for example, per-agent skill selection).
 
     Examples:
         .. code-block:: python
 
             filtered = FilteringSkillsSource(
                 inner_source=my_source,
-                predicate=lambda s: s.frontmatter.name != "internal",
+                predicate=lambda skill, context: skill.frontmatter.name != "internal",
             )
-            skills = await filtered.get_skills()
+            # `source_context` is normally supplied by SkillsProvider at runtime.
+            source_context = SkillsSourceContext(agent=agent)
+            skills = await filtered.get_skills(source_context)
     """
 
     def __init__(
         self,
         inner_source: SkillsSource,
-        predicate: Callable[[Skill], bool],
+        predicate: Callable[[Skill, SkillsSourceContext], bool],
     ) -> None:
         """Initialize a FilteringSkillsSource.
 
         Args:
             inner_source: The source to filter.
-            predicate: A callable that receives a :class:`Skill` and returns
-                ``True`` to keep it or ``False`` to exclude it.
+            predicate: A callable that receives a :class:`Skill` and the
+                :class:`SkillsSourceContext` and returns ``True`` to keep the
+                skill or ``False`` to exclude it.
         """
         super().__init__(inner_source)
         self._predicate = predicate
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         """Return only skills that match the predicate.
+
+        Args:
+            context: Contextual information about the agent and session
+                requesting skills, forwarded to the inner source and passed to
+                the predicate.
 
         Returns:
             A filtered list of :class:`Skill` instances.
         """
-        skills = await self._inner_source.get_skills()
-        return [s for s in skills if self._predicate(s)]
+        skills = await self._inner_source.get_skills(context)
+        return [s for s in skills if self._predicate(s, context)]
+
+
+class CachingSkillsSource(DelegatingSkillsSource):
+    """Decorator that caches the skills list returned by an inner source.
+
+    The first call to :meth:`get_skills` queries the inner source and caches
+    the resulting list; subsequent calls return the cached list without
+    re-querying the inner source.  This makes caching a composable layer in
+    the skills-source pipeline rather than logic baked into a provider.
+
+    Caching is useful when the inner source is expensive to query — for
+    example, a :class:`FileSkillsSource` that walks the filesystem on every
+    call, or an :class:`MCPSkillsSource` that makes network requests.  Skills
+    are typically static discovery metadata, so querying once and reusing the
+    result is a pure performance win.
+
+    Concurrency: concurrent callers for the same cache key share a single
+    in-flight fetch, so the inner source is queried at most once per key even
+    under concurrent access.  If a fetch fails (or is cancelled), the cache is
+    not updated, so the next call retries: an initial failure leaves the cache
+    empty, and a refresh failure (see below) keeps the previously cached list.
+
+    Refresh interval: by default a cached list never expires and the inner
+    source is queried only once per key. Pass a *refresh_interval* to treat a
+    cached list as stale once it is older than the interval; the next call for
+    that key then re-queries the inner source and replaces the cached list.
+    This is useful for inner sources whose skills can change over the process
+    lifetime — for example an :class:`MCPSkillsSource` whose remote server
+    updates its advertised skills. A ``timedelta`` of zero or a negative
+    duration makes every cached list immediately stale, effectively disabling
+    caching (the inner source is queried on every call). A failed refresh
+    leaves the previous cached list in place and keeps retrying on subsequent
+    calls until one succeeds.
+
+    Cache isolation: by default all callers share a single cache bucket. Pass
+    a *cache_isolation_key_selector* to derive a cache key from the
+    :class:`SkillsSourceContext`, so context-aware inner sources (which may
+    return different skills per agent) are cached separately per key. The key
+    should be low-cardinality and stable (for example, an agent name or tenant
+    id); high-cardinality keys such as per-session ids can cause the cache to
+    grow without bound. Returning ``None`` from the selector (or leaving it
+    ``None``) uses the shared bucket.
+
+    Examples:
+        .. code-block:: python
+
+            cached = CachingSkillsSource(expensive_source)
+            # `context` is normally supplied by SkillsProvider at runtime.
+            context = SkillsSourceContext(agent=agent)
+            skills = await cached.get_skills(context)  # queries the inner source
+            skills = await cached.get_skills(context)  # returns the cached list
+
+        Isolating the cache per agent:
+
+        .. code-block:: python
+
+            cached = CachingSkillsSource(
+                expensive_source,
+                cache_isolation_key_selector=lambda context: context.agent.name,
+            )
+
+        Refreshing the cache periodically:
+
+        .. code-block:: python
+
+            from datetime import timedelta
+
+            cached = CachingSkillsSource(
+                expensive_source,
+                refresh_interval=timedelta(minutes=5),
+            )
+    """
+
+    _SHARED_CACHE_KEY: Final[str] = "__caching_skills_source_shared__"
+
+    def __init__(
+        self,
+        inner_source: SkillsSource,
+        *,
+        cache_isolation_key_selector: Callable[[SkillsSourceContext], str | None] | None = None,
+        refresh_interval: timedelta | None = None,
+    ) -> None:
+        """Initialize a CachingSkillsSource.
+
+        Args:
+            inner_source: The source whose results will be cached.
+
+        Keyword Args:
+            cache_isolation_key_selector: Optional callable that derives a cache
+                key from the :class:`SkillsSourceContext`. When ``None`` (the
+                default), or when the callable returns ``None``, skills are
+                stored in a single shared bucket. Otherwise skills are cached
+                under the returned key. Keys should be low-cardinality and
+                stable to keep the cache bounded.
+            refresh_interval: Optional duration after which a cached skills list
+                is considered stale and re-fetched from the inner source on the
+                next request. When ``None`` (the default), cached results never
+                expire and the inner source is queried only once per cache key.
+                A zero or negative ``timedelta`` makes every cached result
+                immediately stale, effectively disabling caching.
+        """
+        super().__init__(inner_source)
+        self._cache_isolation_key_selector = cache_isolation_key_selector
+        self._refresh_interval = refresh_interval
+        self._locks_guard = asyncio.Lock()
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._cached_skills: dict[str, list[Skill]] = {}
+        self._cache_timestamps: dict[str, float] = {}
+
+    def _resolve_cache_key(self, context: SkillsSourceContext) -> str:
+        """Resolve the cache bucket key for *context*."""
+        if self._cache_isolation_key_selector is not None:
+            selected = self._cache_isolation_key_selector(context)
+            if selected is not None:
+                return selected
+        return self._SHARED_CACHE_KEY
+
+    def _get_fresh_cached(self, key: str) -> list[Skill] | None:
+        """Return the cached skills for *key* when present and still fresh.
+
+        Returns ``None`` when nothing is cached for *key*, or when a
+        *refresh_interval* is configured and the cached list is older than the
+        interval (so the caller re-queries the inner source).
+        """
+        cached = self._cached_skills.get(key)
+        if cached is None:
+            return None
+        if self._refresh_interval is not None:
+            age = time.monotonic() - self._cache_timestamps.get(key, 0.0)
+            if age >= self._refresh_interval.total_seconds():
+                return None
+        return cached
+
+    async def _get_lock(self, key: str) -> asyncio.Lock:
+        """Return the per-key lock, creating it under a guard if needed."""
+        async with self._locks_guard:
+            lock = self._locks.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._locks[key] = lock
+            return lock
+
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
+        """Return the inner source's skills, caching them per key on first call.
+
+        Args:
+            context: Contextual information about the agent and session
+                requesting skills. Used to resolve the cache key (via
+                *cache_isolation_key_selector*) and forwarded to the inner
+                source.
+
+        Returns:
+            The cached list of :class:`Skill` instances for the resolved cache
+            key.  On the first call for a key (or the first call after the
+            configured *refresh_interval* has elapsed) the inner source is
+            queried; otherwise the cached list is returned.  If the query
+            fails, the cache is not updated and the next call retries.
+        """
+        key = self._resolve_cache_key(context)
+
+        cached = self._get_fresh_cached(key)
+        if cached is not None:
+            return cached
+
+        lock = await self._get_lock(key)
+        async with lock:
+            # Another coroutine may have populated (or refreshed) the cache
+            # while we awaited the lock; re-check before querying the inner
+            # source.
+            cached = self._get_fresh_cached(key)
+            if cached is not None:
+                return cached
+
+            skills = await self._inner_source.get_skills(context)
+            self._cached_skills[key] = skills
+            self._cache_timestamps[key] = time.monotonic()
+            return skills
 
 
 class AggregatingSkillsSource(SkillsSource):
@@ -3473,10 +3905,10 @@ class AggregatingSkillsSource(SkillsSource):
     def __init__(self, sources: Sequence[SkillsSource]) -> None:
         self._sources = list(sources)
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         result: list[Skill] = []
         for source in self._sources:
-            skills = await source.get_skills()
+            skills = await source.get_skills(context)
             result.extend(skills)
         return result
 
@@ -3799,13 +4231,28 @@ class MCPSkillsSource(SkillsSource):
     If ``skill://index.json`` is absent, unreadable, empty, or fails to
     parse, this source returns an empty list.
 
+    Security considerations:
+        Discovering skills over MCP means an *external* MCP server controls
+        what skill content (including instructions and, for script-capable
+        skills, the scripts the agent may run) reaches the agent. This source
+        is never enabled by default; it is only used when the caller connects
+        it to a server explicitly. A compromised, malicious, or simply
+        untrustworthy server can return adversarial skill content designed to
+        manipulate the agent through indirect prompt injection, or
+        instructions/scripts designed to exfiltrate data once loaded and, for
+        script-capable skills, executed. Only connect this source to MCP
+        servers you have vetted and trust, and treat their responses as
+        untrusted input.
+
     Examples:
         .. code-block:: python
 
             from mcp.client.session import ClientSession
 
             source = MCPSkillsSource(client=session)
-            skills = await source.get_skills()
+            # `context` is normally supplied by SkillsProvider at runtime.
+            context = SkillsSourceContext(agent=agent)
+            skills = await source.get_skills(context)
     """
 
     _INDEX_URI: Final[str] = "skill://index.json"
@@ -3820,11 +4267,17 @@ class MCPSkillsSource(SkillsSource):
         """
         self._client = client
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         """Discover and return skills from the MCP server.
 
         Reads ``skill://index.json``, parses it, and creates an
         :class:`MCPSkill` for each valid ``skill-md`` entry.
+
+        Args:
+            context: Contextual information about the agent and session
+                requesting skills. Accepted for the source contract; this
+                source returns the same server-provided skills regardless of
+                context.
 
         Returns:
             A list of discovered :class:`MCPSkill` instances.

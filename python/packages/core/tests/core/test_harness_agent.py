@@ -25,6 +25,7 @@ from agent_framework import (
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
+    ServiceSessionId,
     SkillsProvider,
     TodoProvider,
     create_harness_agent,
@@ -169,6 +170,21 @@ def test_create_harness_agent_uses_custom_file_stores() -> None:
     access_provider = next(p for p in agent.context_providers if isinstance(p, FileAccessProvider))
     assert memory_provider.store is memory_store
     assert access_provider.store is access_store
+
+
+def test_create_harness_agent_file_access_approval_opt_outs() -> None:
+    """The file_access_ approval flags should reach the FileAccessProvider."""
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        file_access_disable_readonly_tool_approval=True,
+        file_access_disable_write_tool_approval=True,
+    )
+
+    access_provider = next(p for p in agent.context_providers if isinstance(p, FileAccessProvider))
+    assert access_provider.disable_readonly_tool_approval is True
+    assert access_provider.disable_write_tool_approval is True
 
 
 def test_create_harness_agent_default_file_stores_are_filesystem(
@@ -545,7 +561,12 @@ class _FakeBackgroundAgent:
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+    def get_session(
+        self,
+        service_session_id: str | ServiceSessionId,
+        *,
+        session_id: str | None = None,
+    ) -> AgentSession:
         return AgentSession(service_session_id=service_session_id, session_id=session_id)
 
     async def run(self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any) -> Any:
@@ -822,6 +843,18 @@ def test_create_harness_agent_passes_auto_approval_rules() -> None:
     assert _rule in middleware.auto_approval_rules
 
 
+def test_create_harness_agent_adds_message_injection_by_default() -> None:
+    """Message injection middleware should be wired in by default (like .NET UseMessageInjection)."""
+    from agent_framework import MessageInjectionMiddleware
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+    )
+    assert any(isinstance(mw, MessageInjectionMiddleware) for mw in agent.middleware or [])
+
+
 def test_create_harness_agent_tool_approval_outermost_with_user_middleware() -> None:
     """Tool approval middleware should be placed first (outermost) ahead of user middleware."""
     from agent_framework import AgentMiddleware, ToolApprovalMiddleware
@@ -844,8 +877,8 @@ def test_create_harness_agent_tool_approval_outermost_with_user_middleware() -> 
 
 
 def test_create_harness_agent_disable_tool_auto_approval_preserves_user_middleware() -> None:
-    """When tool approval is disabled, only user-supplied middleware should remain."""
-    from agent_framework import AgentMiddleware
+    """When tool approval is disabled, message injection plus user-supplied middleware remain."""
+    from agent_framework import AgentMiddleware, MessageInjectionMiddleware
 
     class _CustomMiddleware(AgentMiddleware):
         async def process(self, context: Any, call_next: Any) -> None:
@@ -859,18 +892,25 @@ def test_create_harness_agent_disable_tool_auto_approval_preserves_user_middlewa
         disable_tool_auto_approval=True,
         middleware=[custom],
     )
-    assert agent.middleware == [custom]
+    # Message injection is always wired in (before user middleware); tool approval is omitted.
+    assert agent.middleware is not None
+    assert custom in agent.middleware
+    assert any(isinstance(mw, MessageInjectionMiddleware) for mw in agent.middleware)
+    assert [type(mw) for mw in agent.middleware] == [MessageInjectionMiddleware, _CustomMiddleware]
 
 
 def test_create_harness_agent_no_middleware_when_tool_approval_disabled_and_none() -> None:
-    """No middleware should be installed when tool approval is disabled and none is supplied."""
+    """Only the always-on message injection middleware remains when tool approval is disabled."""
+    from agent_framework import MessageInjectionMiddleware
+
     agent = create_harness_agent(
         client=_FakeChatClient(),  # type: ignore[arg-type]
         max_context_window_tokens=128_000,
         max_output_tokens=16_384,
         disable_tool_auto_approval=True,
     )
-    assert agent.middleware is None
+    assert agent.middleware is not None
+    assert [type(mw) for mw in agent.middleware] == [MessageInjectionMiddleware]
 
 
 # --- Loop Wiring Tests ---

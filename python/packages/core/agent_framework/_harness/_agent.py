@@ -11,16 +11,18 @@ context providers (todo, mode, memory, skills).
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from .._agents import Agent, SupportsAgentRun
 from .._clients import SupportsShellTool, SupportsWebSearchTool
 from .._compaction import CompactionProvider, ContextWindowCompactionStrategy, ToolResultCompactionStrategy
 from .._feature_stage import ExperimentalFeature, experimental
-from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider
+from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider, MessageInjectionMiddleware
 from .._skills import SkillsProvider
+from .._types import ChatOptions
 from ._background_agents import BackgroundAgentsProvider
 from ._file_access import AgentFileStore, FileAccessProvider, FileSystemAgentFileStore
 from ._file_memory import FileMemoryProvider
@@ -28,6 +30,11 @@ from ._loop import DEFAULT_MAX_ITERATIONS, AgentLoopMiddleware
 from ._mode import AgentModeProvider
 from ._todo import TodoProvider
 from ._tool_approval import ToolApprovalMiddleware
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # pragma: no cover
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -134,6 +141,9 @@ def _assemble_context_providers(
     file_memory_store: AgentFileStore | None,
     disable_file_access: bool,
     file_access_store: AgentFileStore | None,
+    file_access_disable_write_tools: bool,
+    file_access_disable_readonly_tool_approval: bool,
+    file_access_disable_write_tool_approval: bool,
     skills_provider: SkillsProvider | None,
     skills_paths: str | Path | Sequence[str | Path] | None,
     background_agents: Sequence[SupportsAgentRun] | None,
@@ -167,7 +177,14 @@ def _assemble_context_providers(
     # Shared file access (on by default). Default store is rooted at ``{cwd}/working``.
     if not disable_file_access:
         access_store = file_access_store or FileSystemAgentFileStore(Path.cwd() / "working")
-        providers.append(FileAccessProvider(access_store))
+        providers.append(
+            FileAccessProvider(
+                access_store,
+                disable_write_tools=file_access_disable_write_tools,
+                disable_readonly_tool_approval=file_access_disable_readonly_tool_approval,
+                disable_write_tool_approval=file_access_disable_write_tool_approval,
+            )
+        )
 
     # Skills are opt-in: only added when skills_provider or skills_paths is provided.
     if skills_provider:
@@ -236,10 +253,16 @@ def _assemble_shell(
 
 HARNESS_AGENT_PROVIDER_NAME = "microsoft.agent_framework.harness"
 
+OptionsCoT = TypeVar(
+    "OptionsCoT",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="ChatOptions[None]",
+)
+
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 def create_harness_agent(
-    client: SupportsChatGetResponse[Any],
+    client: SupportsChatGetResponse[OptionsCoT],
     *,
     id: str | None = None,
     name: str | None = None,
@@ -262,6 +285,9 @@ def create_harness_agent(
     file_memory_store: AgentFileStore | None = None,
     disable_file_access: bool = False,
     file_access_store: AgentFileStore | None = None,
+    file_access_disable_write_tools: bool = False,
+    file_access_disable_readonly_tool_approval: bool = False,
+    file_access_disable_write_tool_approval: bool = False,
     skills_provider: SkillsProvider | None = None,
     skills_paths: str | Path | Sequence[str | Path] | None = None,
     background_agents: Sequence[SupportsAgentRun] | None = None,
@@ -278,7 +304,7 @@ def create_harness_agent(
     context_providers: Sequence[ContextProvider] | None = None,
     middleware: Sequence[MiddlewareTypes] | None = None,
     default_options: Mapping[str, Any] | None = None,
-) -> Agent[Any]:
+) -> Agent[OptionsCoT]:
     """Create a pre-configured agent with batteries included.
 
     Assembles an :class:`~agent_framework.Agent` from a chat client, automatically wiring:
@@ -374,8 +400,23 @@ def create_harness_agent(
         file_access_store: Custom AgentFileStore backing the FileAccessProvider. When None
             (and disable_file_access is False), a FileSystemAgentFileStore rooted at
             ``{cwd}/working`` is created. Ignored when disable_file_access is True.
+        file_access_disable_write_tools: When True, the FileAccessProvider advertises only its
+            read-only tools (read, ls, grep); the write tools (write, delete, replace,
+            replace_lines) are hidden. When False (default), all tools are advertised. Ignored
+            when disable_file_access is True.
+        file_access_disable_readonly_tool_approval: When True, the FileAccessProvider's read-only
+            tools (read, ls, grep) are registered with ``approval_mode="never_require"`` so they
+            run without host approval. When False (default), they require approval. Ignored when
+            disable_file_access is True.
+        file_access_disable_write_tool_approval: When True, the FileAccessProvider's write tools
+            (write, delete, replace, replace_lines) are registered with
+            ``approval_mode="never_require"`` so they run without host approval. When False
+            (default), they require approval. Ignored when disable_file_access is True.
         skills_provider: Custom SkillsProvider instance for code-defined skills.
             Can be combined with ``skills_paths`` to aggregate file and code-based skills.
+            **Security:** if the provider is configured with an external skill source (e.g.
+            :class:`~agent_framework.MCPSkillsSource`), the skill content it loads is untrusted input
+            — only enable sources you trust; see :class:`~agent_framework.SkillsSource`.
         skills_paths: Paths for file-based skill discovery (looks for SKILL.md files).
             Accepts a single ``str`` or :class:`~pathlib.Path`, or a sequence of
             ``str | Path``. Can be combined with ``skills_provider``. When neither
@@ -385,6 +426,10 @@ def create_harness_agent(
             When provided, a ``BackgroundAgentsProvider`` is automatically included,
             enabling the agent to start, monitor, and retrieve results from background tasks.
             Each agent must have a non-empty, unique name (case-insensitive).
+            **Security:** supplied agents receive text input from this agent and their output is fed
+            back into its context, so only supply agents you have vetted and trust — see
+            :class:`~agent_framework.BackgroundAgentsProvider` for the exfiltration and
+            prompt-injection risks of untrusted agents.
         background_agents_instructions: Optional instruction override for the
             ``BackgroundAgentsProvider``. May include ``{background_agents}`` placeholder
             which will be replaced with the agent listing.
@@ -481,6 +526,9 @@ def create_harness_agent(
         file_memory_store=file_memory_store,
         disable_file_access=disable_file_access,
         file_access_store=file_access_store,
+        file_access_disable_write_tools=file_access_disable_write_tools,
+        file_access_disable_readonly_tool_approval=file_access_disable_readonly_tool_approval,
+        file_access_disable_write_tool_approval=file_access_disable_write_tool_approval,
         skills_provider=skills_provider,
         skills_paths=skills_paths,
         background_agents=background_agents,
@@ -536,6 +584,9 @@ def create_harness_agent(
                 next_message=loop_next_message,
             ),
         )
+    # Message injection is always on. It is a no-op when no messages are queued for the session,
+    # so there is no opt-out.
+    assembled_middleware.append(MessageInjectionMiddleware())
     if middleware:
         assembled_middleware.extend(middleware)
 
