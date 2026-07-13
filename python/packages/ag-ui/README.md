@@ -370,11 +370,12 @@ It is not an authentication, tenant authorization, or distributed durability mec
 responsible for endpoint authentication, tenant authorization, and deployment/storage architecture that matches their
 availability and worker topology requirements.
 
-Snapshot storage is trusted, integrity-protected server storage because private continuation is eligible for typed
-core restoration. Snapshots also have confidentiality impact: they may contain sensitive user text, model output,
-tool results, function arguments, UI payloads, Shared State, interrupt data, and private provider working state. The
-built-in `InMemoryAGUIThreadSnapshotStore` is in-memory only, process-local, bounded, latest-only, and not durable
-production storage. It is cleared on process restart and is not shared across workers.
+Snapshot storage is treated as trusted server-side storage because private continuation is eligible for typed core
+restoration; applications are responsible for providing its integrity protection. Snapshots also have confidentiality
+impact: they may contain sensitive user text, model output, tool results, function arguments, UI payloads, Shared State,
+interrupt data, and private provider working state. The built-in `InMemoryAGUIThreadSnapshotStore` is in-memory only,
+process-local, bounded, latest-only, and not durable production storage. It is cleared on process restart and is not
+shared across workers.
 
 No file-backed AG-UI snapshot store is provided by the package. Applications that need durable persistence should
 provide an app-owned implementation of the `AGUIThreadSnapshotStore` protocol and own storage hardening, including

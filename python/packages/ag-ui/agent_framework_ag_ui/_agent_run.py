@@ -1918,7 +1918,11 @@ async def run_agent_stream(
     _restore_session_continuation_state(session, stored_snapshot)
     protected_session_state_keys = _request_state_protected_keys(agent)
     session.state.update(
-        {key: value for key, value in flow.current_state.items() if key not in protected_session_state_keys}
+        {
+            key: copy.deepcopy(value)
+            for key, value in flow.current_state.items()
+            if key not in protected_session_state_keys
+        }
     )
     _restore_tool_approval_state(session, approval_state_store, approval_thread_id)
 

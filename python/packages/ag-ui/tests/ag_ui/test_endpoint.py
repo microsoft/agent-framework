@@ -418,6 +418,62 @@ async def test_endpoint_bridges_request_state_to_context_provider_without_snapsh
     assert text_deltas == [expected]
 
 
+async def test_endpoint_provider_mutation_does_not_change_shared_state_snapshot(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """Provider mutations through the session view do not alter replayable Shared State."""
+
+    class MutatingProvider(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, context, state
+            identity = session.state["identity"]
+            assert isinstance(identity, dict)
+            identity["type"] = "provider-mutated"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Completed")])
+
+    agent = Agent(
+        name="test",
+        instructions=None,
+        client=streaming_chat_client_stub(stream_fn),
+        context_providers=[MutatingProvider("mutating")],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/isolated-request-state",
+        state_schema={"identity": {"type": "object"}},
+        keepalive_seconds=None,
+    )
+
+    response = TestClient(app).post(
+        "/isolated-request-state",
+        json={
+            "messages": [{"role": "user", "content": "Run"}],
+            "state": {"identity": {"type": "request"}},
+        },
+    )
+
+    state_snapshots = [
+        event["snapshot"] for event in _decode_sse_events(response) if event.get("type") == "STATE_SNAPSHOT"
+    ]
+    assert state_snapshots == [{"identity": {"type": "request"}}]
+
+
 async def test_endpoint_restores_context_provider_state_across_scoped_runs(streaming_chat_client_stub):
     """Server-produced provider state survives sequential runs in one scoped thread."""
 
