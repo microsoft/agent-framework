@@ -839,11 +839,12 @@ class DevServer:
                 # Route to local Agent Framework executor (original behavior)
                 # Get entity_id from metadata
                 entity_id = request.get_entity_id()
-                logger.info(f"Extracted entity_id: {entity_id}")
 
                 if not entity_id:
                     error = OpenAIError.create("Missing entity_id in metadata. Provide metadata.entity_id in request.")
                     return JSONResponse(status_code=400, content=error.to_dict())
+
+                logger.info("Extracted entity_id: %s", entity_id)
 
                 # Get executor and validate entity exists
                 executor = await self._ensure_executor()
@@ -940,7 +941,6 @@ class DevServer:
 
                     try:
                         metadata = request_data.get("metadata")
-                        logger.debug(f"Creating OpenAI conversation with metadata: {metadata}")
                         conversation = await client.conversations.create(metadata=metadata)
                         logger.info(f"Created OpenAI conversation: {conversation.id}")
                         return conversation.model_dump()
