@@ -14,17 +14,17 @@ on:
         type: string
     secrets:
       AZURE_CLIENT_ID:
-        required: false
+        required: true
       AZURE_TENANT_ID:
-        required: false
+        required: true
       AZURE_SUBSCRIPTION_ID:
-        required: false
+        required: true
       AZUREAI__ENDPOINT:
-        required: false
+        required: true
       COPILOT_GITHUB_TOKEN:
-        required: false
+        required: true
       OPENAI__APIKEY:
-        required: false
+        required: true
 
 permissions:
   contents: read

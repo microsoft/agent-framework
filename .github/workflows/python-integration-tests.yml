@@ -18,19 +18,19 @@ on:
         type: string
     secrets:
       ANTHROPIC_API_KEY:
-        required: false
+        required: true
       AZURE_CLIENT_ID:
-        required: false
+        required: true
       AZURE_TENANT_ID:
-        required: false
+        required: true
       AZURE_SUBSCRIPTION_ID:
-        required: false
+        required: true
       COPILOT_GITHUB_TOKEN:
-        required: false
+        required: true
       FOUNDRY_MODELS_API_KEY:
         required: false
       OPENAI__APIKEY:
-        required: false
+        required: true
 
 permissions:
   contents: read
