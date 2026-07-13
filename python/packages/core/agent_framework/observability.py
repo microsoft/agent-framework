@@ -2325,10 +2325,6 @@ def _get_instructions_from_options(options: Any) -> str | list[str] | None:
 _TOOL_OTEL_JSON_CACHE: weakref.WeakKeyDictionary[Any, str | None] = weakref.WeakKeyDictionary()
 # Sentinel distinguishing "not cached" from a cached ``None`` (unparseable tool).
 _CACHE_MISS: Final = object()
-# Tool-spec fields that can carry secrets (e.g. an OAuth access token on an MCP
-# tool, or injected auth headers) and must never be copied into emitted telemetry.
-# Matched by field name so any MCP tool spec is covered, not just a specific class.
-_SENSITIVE_TOOL_DEFINITION_KEYS: Final[frozenset[str]] = frozenset({"authorization", "headers"})
 
 
 def _serialize_tool_definitions(tools: Any) -> str | None:
@@ -2468,6 +2464,10 @@ def _build_tool_otel_definition(tool_item: Any) -> dict[str, Any] | None:
 def _otel_definition_from_mapping(raw: Mapping[str, Any]) -> dict[str, Any] | None:
     """Reshape a tool spec mapping into an OTel GenAI tool-definition dict.
 
+    Only the OTel-relevant fields are emitted (``type``, ``name``, and, when
+    available, ``description`` and ``parameters``). Any other properties on the
+    source spec are intentionally dropped so no extra data (e.g. an MCP tool's
+    ``authorization`` token or auth ``headers``) is copied into telemetry.
     Handles the nested OpenAI Chat Completions function shape
     (``{"type": "function", "function": {...}}``) by flattening it into the
     OTel shape.
@@ -2480,24 +2480,7 @@ def _otel_definition_from_mapping(raw: Mapping[str, Any]) -> dict[str, Any] | No
         if not isinstance(name, str) or not name:
             logger.warning("Can't parse tool to OpenTelemetry tool definition: missing 'name'.")
             return None
-        definition: dict[str, Any] = {"type": "function", "name": name}
-        description = nested.get("description")
-        if description:
-            definition["description"] = description
-        parameters = nested.get("parameters")
-        if parameters:
-            definition["parameters"] = parameters
-        # Forward extra properties from both layers, preferring the inner spec.
-        # Sensitive fields (e.g. auth tokens/headers) are dropped so telemetry
-        # never carries secrets.
-        for source in (nested, raw):
-            for key, value in source.items():
-                if key in {"type", "function", "name", "description", "parameters"}:
-                    continue
-                if key in _SENSITIVE_TOOL_DEFINITION_KEYS:
-                    continue
-                definition.setdefault(key, value)
-        return definition
+        return _otel_tool_definition("function", name, nested)
 
     type_value = raw.get("type")
     if not isinstance(type_value, str) or not type_value:
@@ -2510,32 +2493,23 @@ def _otel_definition_from_mapping(raw: Mapping[str, Any]) -> dict[str, Any] | No
         # fall back to the type so the OTel definition stays valid.
         name_value = type_value
 
-    if type_value == "function":
-        definition = {"type": "function", "name": name_value}
-        description = raw.get("description")
-        if description:
-            definition["description"] = description
-        parameters = raw.get("parameters")
-        if parameters:
-            definition["parameters"] = parameters
-        for key, value in raw.items():
-            if key in {"type", "name", "description", "parameters"}:
-                continue
-            if key in _SENSITIVE_TOOL_DEFINITION_KEYS:
-                continue
-            definition.setdefault(key, value)
-        return definition
+    return _otel_tool_definition(type_value, name_value, raw)
 
-    # Generic (non-function) tool definition, e.g. an MCP tool. Sensitive fields
-    # (e.g. an OAuth ``authorization`` token or auth ``headers``) are dropped so
-    # telemetry never carries secrets.
-    definition = {"type": type_value, "name": name_value}
-    for key, value in raw.items():
-        if key in {"type", "name"}:
-            continue
-        if key in _SENSITIVE_TOOL_DEFINITION_KEYS:
-            continue
-        definition[key] = value
+
+def _otel_tool_definition(type_value: str, name_value: str, source: Mapping[str, Any]) -> dict[str, Any]:
+    """Build an OTel tool-definition dict containing only the relevant fields.
+
+    Always emits ``type`` and ``name``, and adds ``description``/``parameters``
+    when present on ``source``. All other properties are dropped so no extra
+    data (e.g. secrets) is copied into telemetry.
+    """
+    definition: dict[str, Any] = {"type": type_value, "name": name_value}
+    description = source.get("description")
+    if description:
+        definition["description"] = description
+    parameters = source.get("parameters")
+    if parameters:
+        definition["parameters"] = parameters
     return definition
 
 

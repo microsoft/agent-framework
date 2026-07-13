@@ -3213,7 +3213,7 @@ def test_get_span_attributes_skips_and_names_unserializable_tool(caplog: pytest.
             model="gpt-4",
             tools=[
                 {"type": "web_search", "name": "good_tool"},
-                {"type": "code_interpreter", "name": "bad_tool", "container": _Unserializable()},
+                {"type": "code_interpreter", "name": "bad_tool", "parameters": _Unserializable()},
             ],
         )
 
@@ -3237,7 +3237,7 @@ def test_get_span_attributes_omits_tool_definitions_when_all_unserializable(
         attrs = _get_span_attributes(
             operation_name="chat",
             provider_name="openai",
-            tools=[{"type": "code_interpreter", "name": "bad_tool", "container": _Unserializable()}],
+            tools=[{"type": "code_interpreter", "name": "bad_tool", "parameters": _Unserializable()}],
         )
 
     assert OtelAttr.TOOL_DEFINITIONS not in attrs
@@ -3258,7 +3258,8 @@ def test_build_tool_otel_definition_supports_pydantic_tool_models() -> None:
 
     result = _build_tool_otel_definition(ProviderTool(type="web_search", name="web_search"))
 
-    assert result == {"type": "web_search", "name": "web_search", "enabled": True}
+    # Only OTel-relevant fields are kept; extras such as ``enabled`` are dropped.
+    assert result == {"type": "web_search", "name": "web_search"}
 
 
 def test_serialize_tool_definitions_returns_none_for_empty_input() -> None:
@@ -3310,6 +3311,7 @@ def test_build_tool_otel_definition_flattens_openai_chat_completions_function_sp
 
     result = _build_tool_otel_definition(openai_spec)
 
+    # Only OTel-relevant fields are kept; extras such as ``strict`` are dropped.
     assert result == {
         "type": "function",
         "name": "lookup_user",
@@ -3319,17 +3321,16 @@ def test_build_tool_otel_definition_flattens_openai_chat_completions_function_sp
             "properties": {"user_id": {"type": "string"}},
             "required": ["user_id"],
         },
-        "strict": True,
     }
 
 
-def test_build_tool_otel_definition_passes_through_hosted_tool_dicts() -> None:
-    """Hosted-tool dicts pass through with the OTel required keys preserved."""
+def test_build_tool_otel_definition_keeps_only_relevant_fields_for_hosted_tool_dicts() -> None:
+    """Hosted-tool dicts keep only OTel-relevant fields; extras are dropped."""
     from agent_framework.observability import _build_tool_otel_definition
 
     result = _build_tool_otel_definition({"type": "web_search", "name": "web_search", "max_results": 5})
 
-    assert result == {"type": "web_search", "name": "web_search", "max_results": 5}
+    assert result == {"type": "web_search", "name": "web_search"}
 
 
 def test_build_tool_otel_definition_falls_back_to_type_when_name_missing() -> None:
@@ -3342,12 +3343,13 @@ def test_build_tool_otel_definition_falls_back_to_type_when_name_missing() -> No
 
 
 def test_build_tool_otel_definition_omits_secrets_from_mcp_tool_spec() -> None:
-    """Generic MCP tool specs must not leak secret fields (e.g. auth token/headers)."""
+    """Generic MCP tool specs keep only relevant fields; secrets/extras are dropped."""
     from agent_framework.observability import _build_tool_otel_definition
 
     mcp_spec = {
         "type": "mcp",
         "name": "github_mcp",
+        "description": "GitHub MCP server",
         "server_url": "https://mcp.example.com",
         "authorization": "super-secret-oauth-token",
         "headers": {"Authorization": "Bearer super-secret-oauth-token"},
@@ -3355,17 +3357,12 @@ def test_build_tool_otel_definition_omits_secrets_from_mcp_tool_spec() -> None:
 
     result = _build_tool_otel_definition(mcp_spec)
 
-    assert result is not None
-    assert result["type"] == "mcp"
-    assert result["name"] == "github_mcp"
-    assert result["server_url"] == "https://mcp.example.com"
-    # Secrets are dropped.
-    assert "authorization" not in result
-    assert "headers" not in result
+    # Only type/name/description are kept; server_url and secrets are dropped.
+    assert result == {"type": "mcp", "name": "github_mcp", "description": "GitHub MCP server"}
 
 
 def test_build_tool_otel_definition_omits_secrets_from_mcp_tool_mapping() -> None:
-    """MCP tool objects exposing a mapping (e.g. Azure SDK models) also drop secrets."""
+    """MCP tool objects exposing a mapping (e.g. Azure SDK models) also drop secrets/extras."""
     from collections.abc import Mapping
 
     from agent_framework.observability import _build_tool_otel_definition
@@ -3396,13 +3393,8 @@ def test_build_tool_otel_definition_omits_secrets_from_mcp_tool_mapping() -> Non
 
     result = _build_tool_otel_definition(_AzureLikeMcpTool())
 
-    assert result is not None
-    assert result["type"] == "mcp"
-    assert result["name"] == "azure_mcp"
-    assert result["server_label"] == "azure_mcp"
-    # Secrets are dropped.
-    assert "authorization" not in result
-    assert "headers" not in result
+    # Only type/name are kept; server_label and secrets are dropped.
+    assert result == {"type": "mcp", "name": "azure_mcp"}
 
 
 def test_build_tool_otel_definition_warns_when_type_missing(caplog: pytest.LogCaptureFixture) -> None:
