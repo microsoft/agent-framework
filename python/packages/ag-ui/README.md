@@ -338,8 +338,10 @@ the store is already set on a pre-wrapped `AgentFrameworkAgent` or `AgentFramewo
 the application-defined Snapshot Scope used with the AG-UI Thread id as the storage key.
 
 For hosted agents, request Shared State is also available through `AgentSession.state` during that run, whether or
-not snapshot persistence is configured. Request values are untrusted per-run context: they overlay restored values,
-are not passed through typed session restoration, and are excluded from private Session Continuation State.
+not snapshot persistence is configured. Request values are untrusted per-run context: they overlay ordinary restored
+values, are not passed through typed session restoration, and are excluded from private Session Continuation State.
+Keys owned by configured context providers or reserved for approval and message-injection middleware are not copied
+into `AgentSession.state`; their server-owned values take precedence over client Shared State.
 
 When scoped snapshots are configured, each category has one State Authority:
 
@@ -354,6 +356,8 @@ Session Continuation State is stored atomically in the optional `AGUIThreadSnaps
 through the core `AgentSession` typed serialization contract. It is never accepted from an AG-UI request or emitted
 during hydration. Deleting a scoped thread snapshot resets its replayable and private state together, and clearing a
 Snapshot Scope removes all such records in that scope. Missing or empty request Shared State is not a reset command.
+If private continuation cannot be restored or serialized, the endpoint logs the failure and continues without that
+continuation so stale or unsupported provider state cannot permanently block the thread or suppress `RUN_FINISHED`.
 
 AG-UI Thread ids identify AG-UI Threads; they do not authorize snapshot access. Do not treat a thread id as a bearer
 credential or tenant boundary. Production applications must authenticate and authorize every AG-UI endpoint request
