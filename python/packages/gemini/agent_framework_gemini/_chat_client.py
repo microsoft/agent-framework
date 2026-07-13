@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import sys
@@ -692,8 +693,9 @@ class RawGeminiChatClient(
                         args=content.parse_arguments() or {},
                     )
                     # Echo back Gemini 3's opaque thought_signature (required on every replay of a
-                    # functionCall part) even when the original raw_representation Part was dropped.
-                    thought_signature = content.additional_properties.get("thought_signature")
+                    # functionCall part), decoding it from the base64 form stored in additional_properties.
+                    encoded_signature = content.additional_properties.get("thought_signature")
+                    thought_signature = base64.b64decode(encoded_signature) if encoded_signature else None
                     if isinstance(raw_part, types.Part) and raw_part.function_call is not None:
                         replayed_part = raw_part.model_copy(update={"function_call": function_call}, deep=True)
                         if replayed_part.thought_signature is None and thought_signature is not None:
@@ -1128,9 +1130,12 @@ class RawGeminiChatClient(
                 else:
                     call_id = self._generate_tool_call_id()
                     logger.debug("function_call missing id; generated fallback call_id=%r", call_id)
-                # Capture Gemini 3's thought_signature
+                # Capture Gemini 3's thought_signature (on the Part, not the FunctionCall) as a base64
+                # string so it stays JSON-serializable when messages are persisted and can be replayed.
                 additional_properties = (
-                    {"thought_signature": part.thought_signature} if part.thought_signature is not None else None
+                    {"thought_signature": base64.b64encode(part.thought_signature).decode("utf-8")}
+                    if part.thought_signature is not None
+                    else None
                 )
                 contents.append(
                     Content.from_function_call(

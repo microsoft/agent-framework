@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import datetime
+import json
 import logging
 import os
 from typing import Any, cast
@@ -745,7 +747,7 @@ def test_function_call_part_preserves_thought_signature_from_raw_part() -> None:
 
 
 def test_function_call_part_captures_thought_signature_on_parse() -> None:
-    """Parsing a functionCall part stores its thought_signature in additional_properties."""
+    """Parsing a functionCall part stores its thought_signature as a base64 string."""
     client, _ = _make_gemini_client()
 
     contents = client._parse_parts([
@@ -754,7 +756,22 @@ def test_function_call_part_captures_thought_signature_on_parse() -> None:
 
     assert len(contents) == 1
     assert contents[0].type == "function_call"
-    assert contents[0].additional_properties["thought_signature"] == b"sig-123"
+    assert contents[0].additional_properties["thought_signature"] == base64.b64encode(b"sig-123").decode("utf-8")
+
+
+def test_captured_thought_signature_is_json_serializable() -> None:
+    """The captured signature must survive json.dumps(message.to_dict()) used by history providers."""
+    client, _ = _make_gemini_client()
+    contents = client._parse_parts([
+        _make_part(function_call=("call-1", "get_weather", {"location": "Paris"}), thought_signature=b"sig-123")
+    ])
+    message = Message(role="assistant", contents=contents)
+
+    serialized = json.dumps(message.to_dict())
+
+    restored = Message.from_dict(json.loads(serialized))
+    parts = client._convert_message_contents(restored.contents, {})
+    assert parts[0].thought_signature == b"sig-123"
 
 
 def test_function_call_part_without_thought_signature_stores_nothing() -> None:
@@ -774,7 +791,7 @@ def test_reconstructed_function_call_replays_thought_signature_from_additional_p
         call_id="call-1",
         name="get_weather",
         arguments={"location": "Paris"},
-        additional_properties={"thought_signature": b"sig-123"},
+        additional_properties={"thought_signature": base64.b64encode(b"sig-123").decode("utf-8")},
     )
 
     parts = client._convert_message_contents([content], {})
@@ -803,12 +820,15 @@ def test_reconstructed_function_call_signature_survives_round_trip() -> None:
     parsed = client._parse_parts([
         _make_part(function_call=("call-1", "get_weather", {"location": "Paris"}), thought_signature=b"sig-123")
     ])
+    fc = parsed[0]
+    assert fc.call_id is not None
+    assert fc.name is not None
     # Simulate a layer that reconstructs the call from call_id/name/arguments, dropping raw_representation.
     rebuilt = Content.from_function_call(
-        call_id=parsed[0].call_id,
-        name=parsed[0].name,
-        arguments=parsed[0].arguments,
-        additional_properties=dict(parsed[0].additional_properties),
+        call_id=fc.call_id,
+        name=fc.name,
+        arguments=fc.arguments,
+        additional_properties=dict(fc.additional_properties),
     )
 
     parts = client._convert_message_contents([rebuilt], {})
