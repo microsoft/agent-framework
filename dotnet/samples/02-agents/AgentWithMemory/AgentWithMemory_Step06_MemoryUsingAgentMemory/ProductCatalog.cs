@@ -6,7 +6,7 @@ using Microsoft.Extensions.AI;
 using AgentMemory.Neo4j.Infrastructure;
 using Neo4j.Driver;
 
-namespace Neo4jShoppingAssistant;
+namespace AgentMemoryShoppingAssistant;
 
 /// <summary>
 /// A small retail product graph plus the shopping tools that query it — the .NET counterpart of the

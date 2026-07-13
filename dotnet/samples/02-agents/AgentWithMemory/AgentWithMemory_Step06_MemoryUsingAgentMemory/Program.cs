@@ -1,13 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// Neo4j Agent Memory — Shopping Assistant (Microsoft Agent Framework, .NET)
+// Agent Memory — Shopping Assistant (Microsoft Agent Framework, .NET)
 //
-// The .NET port of the official Neo4j Agent Memory "retail assistant" example
+// A .NET port of the Neo4j Labs "agent-memory" retail-assistant example
 // (https://github.com/neo4j-labs/agent-memory/tree/main/examples/microsoft_agent_retail_assistant,
 // referenced from https://learn.microsoft.com/en-us/agent-framework/integrations/neo4j-memory).
 //
 // A shopping assistant that LEARNS a customer's preferences and RECOMMENDS products via graph
-// traversal, backed by DURABLE Neo4j memory. It uses the AgentMemory library's Microsoft Agent
+// traversal, backed by DURABLE memory in Neo4j. It uses the AgentMemory library — a .NET port of the
+// Python memory provider, not an officially recognized Neo4j integration — and its Microsoft Agent
 // Framework adapter:
 //   • Neo4jMemoryContextProvider  (an AIContextProvider)  — recalls memory before each run, persists after
 //   • MemoryToolFactory.CreateAIFunctions()               — memory tools (search/remember/recall)
@@ -40,7 +41,7 @@ using AgentMemory.AgentFramework.Tools;
 using AgentMemory.Core;
 using AgentMemory.Core.Stubs;
 using AgentMemory.Neo4j.Infrastructure;
-using Neo4jShoppingAssistant;
+using AgentMemoryShoppingAssistant;
 
 // ── Model + credentials (Azure OpenAI / Foundry, via env vars) ───────────────────────────────────
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")

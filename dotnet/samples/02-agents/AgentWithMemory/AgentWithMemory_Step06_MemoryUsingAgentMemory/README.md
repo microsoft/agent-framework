@@ -1,13 +1,14 @@
-# Neo4j Agent Memory — Shopping Assistant (Microsoft Agent Framework, .NET)
+# Agent with Memory Using AgentMemory — Shopping Assistant
 
-The **.NET port of the official Neo4j Agent Memory "retail assistant"** example
+A **.NET port of the Neo4j Labs "agent-memory" retail assistant** example
 ([`microsoft_agent_retail_assistant`](https://github.com/neo4j-labs/agent-memory/tree/main/examples/microsoft_agent_retail_assistant),
 referenced from the [Learn integration page](https://learn.microsoft.com/en-us/agent-framework/integrations/neo4j-memory)).
 A shopping assistant that **learns a customer's preferences** and **recommends products via graph
-traversal**, backed by durable Neo4j memory.
+traversal**, backed by durable memory in Neo4j.
 
-It uses the [`AgentMemory`](https://www.nuget.org/packages/AgentMemory) library — the .NET equivalent
-of the (Python-only) official Neo4j memory provider — through its Microsoft Agent Framework adapter.
+It uses the [`AgentMemory`](https://www.nuget.org/packages/AgentMemory) library — a .NET port of the
+(Python-only) Neo4j Labs memory provider, **not an officially recognized Neo4j integration** — through
+its Microsoft Agent Framework adapter.
 
 ## Features Demonstrated
 
