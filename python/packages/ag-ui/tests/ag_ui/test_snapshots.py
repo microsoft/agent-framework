@@ -10,6 +10,7 @@ from agent_framework_ag_ui import AGUIThreadSnapshot, AGUIThreadSnapshotStore, I
 def test_thread_snapshot_model_contains_replayable_and_private_snapshot_fields() -> None:
     """The public snapshot model carries replayable data and optional private continuation."""
     assert [field.name for field in fields(AGUIThreadSnapshot)] == ["messages", "state", "interrupt", "session_state"]
+    assert AGUIThreadSnapshot().session_state is None
 
 
 def test_in_memory_snapshot_store_satisfies_snapshot_store_protocol() -> None:
@@ -24,12 +25,20 @@ async def test_in_memory_snapshot_store_replaces_latest_snapshot() -> None:
     await store.save(
         scope="tenant-a",
         thread_id="thread-1",
-        snapshot=AGUIThreadSnapshot(messages=[{"id": "first"}], state={"count": 1}),
+        snapshot=AGUIThreadSnapshot(
+            messages=[{"id": "first"}],
+            state={"count": 1},
+            session_state={"provider": {"count": 1}},
+        ),
     )
     await store.save(
         scope="tenant-a",
         thread_id="thread-1",
-        snapshot=AGUIThreadSnapshot(messages=[{"id": "second"}], state={"count": 2}),
+        snapshot=AGUIThreadSnapshot(
+            messages=[{"id": "second"}],
+            state={"count": 2},
+            session_state={"provider": {"count": 2}},
+        ),
     )
 
     snapshot = await store.get(scope="tenant-a", thread_id="thread-1")
@@ -37,6 +46,7 @@ async def test_in_memory_snapshot_store_replaces_latest_snapshot() -> None:
     assert snapshot is not None
     assert snapshot.messages == [{"id": "second"}]
     assert snapshot.state == {"count": 2}
+    assert snapshot.session_state == {"provider": {"count": 2}}
 
 
 async def test_in_memory_snapshot_store_defensively_copies_private_continuation() -> None:
@@ -87,19 +97,35 @@ async def test_in_memory_snapshot_store_deletes_and_clears_snapshots() -> None:
     """Delete removes one scoped thread key, while clear can remove a scope or the whole store."""
     store = InMemoryAGUIThreadSnapshotStore()
 
-    await store.save(scope="tenant-a", thread_id="thread-1", snapshot=AGUIThreadSnapshot(messages=[{"id": "a1"}]))
-    await store.save(scope="tenant-a", thread_id="thread-2", snapshot=AGUIThreadSnapshot(messages=[{"id": "a2"}]))
-    await store.save(scope="tenant-b", thread_id="thread-1", snapshot=AGUIThreadSnapshot(messages=[{"id": "b1"}]))
+    await store.save(
+        scope="tenant-a",
+        thread_id="thread-1",
+        snapshot=AGUIThreadSnapshot(messages=[{"id": "a1"}], session_state={"private": "a1"}),
+    )
+    await store.save(
+        scope="tenant-a",
+        thread_id="thread-2",
+        snapshot=AGUIThreadSnapshot(messages=[{"id": "a2"}], session_state={"private": "a2"}),
+    )
+    await store.save(
+        scope="tenant-b",
+        thread_id="thread-1",
+        snapshot=AGUIThreadSnapshot(messages=[{"id": "b1"}], session_state={"private": "b1"}),
+    )
 
     assert await store.delete(scope="tenant-a", thread_id="thread-1") is True
     assert await store.delete(scope="tenant-a", thread_id="thread-1") is False
     assert await store.get(scope="tenant-a", thread_id="thread-1") is None
-    assert await store.get(scope="tenant-a", thread_id="thread-2") is not None
+    tenant_a_thread_2 = await store.get(scope="tenant-a", thread_id="thread-2")
+    assert tenant_a_thread_2 is not None
+    assert tenant_a_thread_2.session_state == {"private": "a2"}
 
     await store.clear(scope="tenant-a")
 
     assert await store.get(scope="tenant-a", thread_id="thread-2") is None
-    assert await store.get(scope="tenant-b", thread_id="thread-1") is not None
+    tenant_b_thread_1 = await store.get(scope="tenant-b", thread_id="thread-1")
+    assert tenant_b_thread_1 is not None
+    assert tenant_b_thread_1.session_state == {"private": "b1"}
 
     await store.clear()
 

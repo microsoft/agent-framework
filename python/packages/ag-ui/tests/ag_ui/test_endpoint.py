@@ -484,6 +484,85 @@ async def test_endpoint_restores_context_provider_state_across_scoped_runs(strea
     assert observed == [["count=0"], ["count=1"]]
 
 
+async def test_endpoint_continuation_is_scoped_without_request_state_reset(streaming_chat_client_stub):
+    """Missing or empty request state preserves continuation without crossing scope or thread boundaries."""
+
+    class CountingProvider(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session
+            context.extend_messages(self, [Message(role="system", contents=[f"count={state.get('count', 0)}"])])
+
+        async def after_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session, context
+            state["count"] = state.get("count", 0) + 1
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        provider_result = next(message.text for message in messages if message.role == "system")
+        yield ChatResponseUpdate(contents=[Content.from_text(text=provider_result)])
+
+    agent = Agent(
+        name="test",
+        instructions=None,
+        client=streaming_chat_client_stub(stream_fn),
+        context_providers=[CountingProvider("counter")],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/isolated-continuity",
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        snapshot_scope_resolver=lambda request: cast("dict[str, Any]", request.forwarded_props)["scope"],
+        keepalive_seconds=None,
+    )
+    client = TestClient(app)
+
+    request_keys: list[tuple[str, str, dict[str, Any] | None]] = [
+        ("tenant-a", "thread-1", None),
+        ("tenant-a", "thread-1", {}),
+        ("tenant-b", "thread-1", None),
+        ("tenant-a", "thread-2", None),
+        ("tenant-a", "thread-1", None),
+    ]
+    responses = []
+    for index, (scope, thread_id, request_state) in enumerate(request_keys):
+        request: dict[str, Any] = {
+            "thread_id": thread_id,
+            "messages": [{"role": "user", "content": f"Turn {index}"}],
+            "forwardedProps": {"scope": scope},
+        }
+        if request_state is not None:
+            request["state"] = request_state
+        responses.append(client.post("/isolated-continuity", json=request))
+
+    observed = [
+        event["delta"]
+        for response in responses
+        for event in _decode_sse_events(response)
+        if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    ]
+    assert observed == ["count=0", "count=1", "count=0", "count=0", "count=2"]
+
+
 async def test_endpoint_keeps_client_state_out_of_approval_state_store(streaming_chat_client_stub):
     """Client Shared State cannot create the server-owned tool-approval bucket."""
 
@@ -3243,13 +3322,30 @@ async def test_agent_endpoint_hydrates_stored_thread_snapshot_without_invoking_a
     app = FastAPI()
     call_count = 0
 
+    class PrivateStateProvider(ContextProvider):
+        async def after_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session, context
+            state["private_secret"] = "must-not-be-replayed"
+
     async def stream_fn(messages: Any, options: Any, **kwargs: Any):
         nonlocal call_count
         del messages, options, kwargs
         call_count += 1
         yield ChatResponseUpdate(contents=[Content.from_text(text="Stored reply")])
 
-    agent = Agent(name="test", instructions="Test agent", client=streaming_chat_client_stub(stream_fn))
+    agent = Agent(
+        name="test",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+        context_providers=[PrivateStateProvider("private")],
+    )
     store = InMemoryAGUIThreadSnapshotStore()
     add_agent_framework_fastapi_endpoint(
         app,
@@ -3285,6 +3381,7 @@ async def test_agent_endpoint_hydrates_stored_thread_snapshot_without_invoking_a
         message.get("role") == "assistant" and message.get("content") == "Stored reply"
         for message in events[2]["messages"]
     )
+    assert b"must-not-be-replayed" not in hydrate_response.content
 
 
 async def test_agent_endpoint_hydrates_snapshots_by_scope_and_thread(streaming_chat_client_stub):
@@ -4578,6 +4675,18 @@ class _FailingSaveStore(InMemoryAGUIThreadSnapshotStore):
         raise RuntimeError("store down")
 
 
+class _FailNextSaveStore(InMemoryAGUIThreadSnapshotStore):
+    """Store that can fail one save without replacing its previous snapshot."""
+
+    fail_next_save = False
+
+    async def save(self, *, scope: str, thread_id: str, snapshot: Any) -> None:
+        if self.fail_next_save:
+            self.fail_next_save = False
+            raise RuntimeError("store down")
+        await super().save(scope=scope, thread_id=thread_id, snapshot=snapshot)
+
+
 async def test_agent_endpoint_snapshot_save_failure_does_not_fail_run(streaming_chat_client_stub):
     """A failing snapshot save must not turn a completed agent run into RUN_ERROR."""
     app = FastAPI()
@@ -4605,6 +4714,87 @@ async def test_agent_endpoint_snapshot_save_failure_does_not_fail_run(streaming_
     event_types = [event.get("type") for event in _decode_sse_events(response)]
     assert "RUN_FINISHED" in event_types
     assert "RUN_ERROR" not in event_types
+
+
+async def test_agent_endpoint_snapshot_save_failure_keeps_previous_continuation(
+    streaming_chat_client_stub,
+    caplog,
+):
+    """A failed snapshot save is logged and leaves the previous completed continuation authoritative."""
+
+    class CountingProvider(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session
+            context.extend_messages(self, [Message(role="system", contents=[f"count={state.get('count', 0)}"])])
+
+        async def after_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session, context
+            state["count"] = state.get("count", 0) + 1
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        provider_result = next(message.text for message in messages if message.role == "system")
+        yield ChatResponseUpdate(contents=[Content.from_text(text=provider_result)])
+
+    store = _FailNextSaveStore()
+    agent = Agent(
+        name="test",
+        instructions=None,
+        client=streaming_chat_client_stub(stream_fn),
+        context_providers=[CountingProvider("counter")],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/snapshot-failure",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+        keepalive_seconds=None,
+    )
+    client = TestClient(app)
+
+    first_response = client.post(
+        "/snapshot-failure",
+        json={"thread_id": "thread-1", "messages": [{"role": "user", "content": "First"}]},
+    )
+    store.fail_next_save = True
+    failed_save_response = client.post(
+        "/snapshot-failure",
+        json={"thread_id": "thread-1", "messages": [{"role": "user", "content": "Second"}]},
+    )
+    third_response = client.post(
+        "/snapshot-failure",
+        json={"thread_id": "thread-1", "messages": [{"role": "user", "content": "Third"}]},
+    )
+
+    observed = [
+        event["delta"]
+        for response in (first_response, failed_save_response, third_response)
+        for event in _decode_sse_events(response)
+        if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    ]
+    assert observed == ["count=0", "count=1", "count=1"]
+    assert "RUN_ERROR" not in [event.get("type") for event in _decode_sse_events(failed_save_response)]
+    assert "Failed to save AG-UI Thread Snapshot" in caplog.text
 
 
 async def test_workflow_endpoint_snapshot_save_failure_does_not_emit_run_error():
