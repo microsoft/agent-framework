@@ -115,6 +115,18 @@ class CapturingRunnerContext(RunnerContext):
         """Checkpointing not supported in activity context."""
         raise NotImplementedError("Checkpointing is not supported in Azure Functions activity context")
 
+    async def create_checkpoint_object(
+        self,
+        workflow_name: str,
+        graph_signature_hash: str,
+        state: State,
+        previous_checkpoint_id: str | None,
+        iteration_count: int,
+        metadata: dict[str, Any] | None = None,
+    ) -> WorkflowCheckpoint:
+        """Checkpointing not supported in activity context."""
+        raise NotImplementedError("Checkpointing is not supported in Azure Functions activity context")
+
     async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
         """Checkpointing not supported in activity context."""
         raise NotImplementedError("Checkpointing is not supported in Azure Functions activity context")

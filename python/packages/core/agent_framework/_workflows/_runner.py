@@ -343,37 +343,27 @@ class RunnerImpl:
     async def capture_checkpoint_object(self) -> WorkflowCheckpoint:
         """Capture the current runner state as an in-memory ``WorkflowCheckpoint``.
 
-        Builds a checkpoint from committed shared state, executor snapshots, and any
-        pending request_info events, without writing to a storage backend. The caller
-        owns the returned object - for example, a parent ``WorkflowExecutor`` embedding
-        a child workflow's checkpoint in its own checkpoint payload.
+        Builds a checkpoint from committed shared state, executor snapshots, any in-flight
+        messages, and any pending request_info events, without writing to a storage backend.
+        The caller owns the returned object - for example, a parent ``WorkflowExecutor``
+        embedding a child workflow's checkpoint in its own checkpoint payload.
 
-        This is only valid when the runner is quiescent (no in-flight executor
-        messages). That holds at a checkpoint boundary because a sub-workflow runs to
-        idle within a single parent superstep before the parent checkpoints.
+        Like any checkpoint, the snapshot is only internally consistent when captured at a
+        stable point (e.g. a superstep boundary) while no iteration is concurrently mutating
+        the runner. This mirrors the normal per-superstep checkpoint path and makes no
+        assumption about which caller is taking the checkpoint.
 
         Returns:
             A ``WorkflowCheckpoint`` snapshot of the current runner state.
-
-        Raises:
-            WorkflowCheckpointException: If in-flight executor messages are present.
         """
-        if await self._ctx.has_messages():
-            raise WorkflowCheckpointException(
-                "Cannot capture a checkpoint object while in-flight executor messages are present."
-            )
-
         # Persist executor snapshots into committed shared state before exporting it.
         await self._prepare_checkpoint_state()
-        pending_request_info_events = await self._ctx.get_pending_request_info_events()
-        return WorkflowCheckpoint(
-            workflow_name=self._workflow_name,
-            graph_signature_hash=self._graph_signature_hash,
-            previous_checkpoint_id=None,
-            messages={},
-            state=self._state.export_state(),
-            pending_request_info_events=pending_request_info_events,
-            iteration_count=self._iteration,
+        return await self._ctx.create_checkpoint_object(
+            self._workflow_name,
+            self._graph_signature_hash,
+            self._state,
+            None,
+            self._iteration,
         )
 
     async def restore_from_checkpoint_object(self, checkpoint: WorkflowCheckpoint) -> None:
