@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -248,7 +247,7 @@ internal sealed class WorkflowSession : AgentSession
                         hasMatchedResponseForStartExecutor |= string.Equals(responseExecutorId, this._workflow.StartExecutorId, StringComparison.Ordinal);
                     }
 
-                    object normalizedResponseContent = NormalizeResponseContentForDelivery(content, pendingRequest);
+                    object normalizedResponseContent = this.NormalizeResponseContentForDelivery(content, pendingRequest);
                     externalResponses.Add((pendingRequest.CreateResponse(normalizedResponseContent), pendingRequest.RequestId));
                     (matchedContentIds ??= new(StringComparer.Ordinal)).Add(contentId);
                 }
@@ -288,24 +287,19 @@ internal sealed class WorkflowSession : AgentSession
             hasMatchedResponseForStartExecutor);
     }
 
-    /// <summary>
-    /// Resolves the concrete request payload type from <see cref="RequestPortInfo.RequestType"/>
-    /// and returns it as an <see cref="IExternalRequestEnvelope"/> if the type implements that
-    /// abstraction. Resolving via the concrete <see cref="TypeId"/> (rather than asking the
-    /// PortableValue to deserialize directly to <see cref="IExternalRequestEnvelope"/>) is
-    /// required because checkpointed payloads round-trip as JSON which cannot be deserialized
-    /// to an interface; the concrete type populates the deserialization cache so subsequent
-    /// interface assignment succeeds.
-    /// </summary>
-    [UnconditionalSuppressMessage("Trimming", "IL2057:Unrecognized value passed to the parameter of method", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2073:Members annotated with 'DynamicallyAccessedMembersAttribute' require dynamic access", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
-    private static bool TryGetRequestEnvelope(ExternalRequest request, [NotNullWhen(true)] out IExternalRequestEnvelope? envelope)
+    // Resolves the request payload as an envelope using the request types declared by the
+    // workflow's request ports.
+    private bool TryGetRequestEnvelope(ExternalRequest request, [NotNullWhen(true)] out IExternalRequestEnvelope? envelope)
+        => TryGetRequestEnvelope(request, this._workflow.Ports, out envelope);
+
+    // Returns true and the envelope when the request's port declares a type that implements the
+    // envelope contract and the payload deserializes to it; otherwise returns false so the
+    // request is delivered as ordinary content.
+    internal static bool TryGetRequestEnvelope(ExternalRequest request, IReadOnlyDictionary<string, RequestPort> ports, [NotNullWhen(true)] out IExternalRequestEnvelope? envelope)
     {
         envelope = null;
 
-        TypeId requestType = request.PortInfo.RequestType;
-        Type? concreteType = ResolveTypeLenient(requestType);
+        Type? concreteType = ResolveEnvelopeType(request.PortInfo, ports);
         if (concreteType is null || !typeof(IExternalRequestEnvelope).IsAssignableFrom(concreteType))
         {
             return false;
@@ -320,28 +314,27 @@ internal sealed class WorkflowSession : AgentSession
         return true;
     }
 
-    /// <summary>Caches <see cref="ResolveTypeLenient"/> results keyed by <see cref="TypeId"/>.</summary>
-    private static readonly ConcurrentDictionary<TypeId, Type?> s_envelopeTypeCache = new();
+    // Returns the request type declared by the port that owns the request when it matches the
+    // type recorded on the request; otherwise returns null.
+    internal static Type? ResolveEnvelopeType(RequestPortInfo portInfo, IReadOnlyDictionary<string, RequestPort> ports)
+    {
+        if (ports.TryGetValue(portInfo.PortId, out RequestPort? port)
+            && portInfo.RequestType.IsMatch(port.Request))
+        {
+            return port.Request;
+        }
 
-    /// <summary>
-    /// Resolves a <see cref="TypeId"/> to a loaded <see cref="Type"/> using partial-name binding,
-    /// which matches any loaded assembly with the same simple name regardless of version. Results
-    /// are cached.
-    /// </summary>
-    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2057:Unrecognized value passed to the parameter of method", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
-    internal static Type? ResolveTypeLenient(TypeId typeId)
-        => s_envelopeTypeCache.GetOrAdd(typeId, static id =>
-            Type.GetType($"{id.NormalizedTypeName}, {id.SimpleAssemblyName}", throwOnError: false));
+        return null;
+    }
 
     /// <summary>
     /// Creates the workflow-facing request content surfaced in response updates.
     /// </summary>
-    private static AIContent CreateRequestContentForDelivery(ExternalRequest request)
+    private AIContent CreateRequestContentForDelivery(ExternalRequest request)
     {
         // If the request payload is a higher-layer envelope (e.g., a declarative
         // ExternalInputRequest), surface its inner FCC/TARC to the host on the wire.
-        if (TryGetRequestEnvelope(request, out IExternalRequestEnvelope? envelope))
+        if (this.TryGetRequestEnvelope(request, out IExternalRequestEnvelope? envelope))
         {
             AIContent? inner = envelope.GetInnerRequestContent();
             if (inner is ToolApprovalRequestContent toolApprovalRequest)
@@ -368,12 +361,12 @@ internal sealed class WorkflowSession : AgentSession
     /// <summary>
     /// Rewrites workflow-facing response content back to the original agent-owned content ID.
     /// </summary>
-    private static object NormalizeResponseContentForDelivery(AIContent content, ExternalRequest request)
+    private object NormalizeResponseContentForDelivery(AIContent content, ExternalRequest request)
     {
         // If the request payload is a higher-layer envelope, recover the original
         // CallId/RequestId from the inner content and ask the envelope to wrap the
         // response back into its paired response type for delivery to the request port.
-        if (TryGetRequestEnvelope(request, out IExternalRequestEnvelope? envelope))
+        if (this.TryGetRequestEnvelope(request, out IExternalRequestEnvelope? envelope))
         {
             AIContent? inner = envelope.GetInnerRequestContent();
             AIContent payload = (content, inner) switch
@@ -484,7 +477,7 @@ internal sealed class WorkflowSession : AgentSession
                     break;
 
                 case RequestInfoEvent requestInfo:
-                    AIContent requestContent = CreateRequestContentForDelivery(requestInfo.Request);
+                    AIContent requestContent = this.CreateRequestContentForDelivery(requestInfo.Request);
 
                     // Track the pending request so we can convert incoming responses back to ExternalResponse.
                     // External callers respond using the workflow-facing request ID, which is always RequestId.

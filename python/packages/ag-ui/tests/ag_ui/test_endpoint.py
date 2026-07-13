@@ -2,9 +2,13 @@
 
 """Tests for FastAPI endpoint creation (_endpoint.py)."""
 
+import asyncio
 import json
+import subprocess
+import sys
 from collections import Counter
 from collections.abc import AsyncIterator
+from inspect import signature
 from typing import Any, cast
 
 import pytest
@@ -134,6 +138,184 @@ async def test_add_endpoint_with_workflow_protocol():
     assert "RUN_STARTED" in event_types
     assert "TEXT_MESSAGE_CONTENT" in event_types
     assert "RUN_FINISHED" in event_types
+
+
+async def test_add_endpoint_accepts_keepalive_option_for_supported_runners(build_chat_client):
+    """Keepalive configuration is accepted at the endpoint seam for every supported runner shape."""
+
+    @executor(id="start")
+    async def start(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
+        await ctx.yield_output("Workflow response")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
+
+    workflow = WorkflowBuilder(start_executor=start, output_from="all").build()
+    app = FastAPI()
+    raw_agent = Agent(name="raw", instructions="Test agent", client=build_chat_client())
+    wrapped_agent = AgentFrameworkAgent(
+        agent=Agent(name="wrapped", instructions="Test agent", client=build_chat_client()),
+        name="wrapped",
+    )
+
+    add_agent_framework_fastapi_endpoint(app, raw_agent, path="/raw-agent", keepalive_seconds=0.5)
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/wrapped-agent", keepalive_seconds=None)
+    add_agent_framework_fastapi_endpoint(app, workflow, path="/raw-workflow", keepalive_seconds=1.0)
+    add_agent_framework_fastapi_endpoint(
+        app,
+        AgentFrameworkWorkflow(workflow=workflow),
+        path="/wrapped-workflow",
+        keepalive_seconds=None,
+    )
+
+    client = TestClient(app)
+
+    for path in ("/raw-agent", "/wrapped-agent", "/raw-workflow", "/wrapped-workflow"):
+        response = client.post(path, json={"messages": [{"role": "user", "content": "Hello"}]})
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+
+
+def test_add_endpoint_keepalive_default_is_enabled() -> None:
+    """Keepalive defaults to the endpoint-owned enabled interval."""
+    parameter = signature(add_agent_framework_fastapi_endpoint).parameters["keepalive_seconds"]
+
+    assert parameter.default == 15
+
+
+def test_add_endpoint_docstring_describes_keepalive_transport_behavior() -> None:
+    """The public endpoint docs describe keepalive as transport comments, not AG-UI events."""
+    docstring = add_agent_framework_fastapi_endpoint.__doc__
+
+    assert docstring is not None
+    normalized_docstring = " ".join(docstring.split())
+    assert "keepalive_seconds" in normalized_docstring
+    assert "Defaults to 15" in normalized_docstring
+    assert "None disables" in normalized_docstring
+    assert "SSE comments" in normalized_docstring
+    assert "do not change AG-UI events" in normalized_docstring
+
+
+def test_keepalive_option_is_endpoint_owned() -> None:
+    """Keepalive is endpoint transport configuration, not runner configuration."""
+    assert "keepalive_seconds" not in signature(AgentFrameworkAgent).parameters
+    assert "keepalive_seconds" not in signature(AgentFrameworkWorkflow).parameters
+
+
+def test_endpoint_module_import_does_not_import_sse_transport() -> None:
+    """Importing endpoint helpers does not trigger sse-starlette's process-global transport hooks."""
+    import_check = (
+        "import sys; import agent_framework_ag_ui._endpoint; raise SystemExit('sse_starlette.sse' in sys.modules)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", import_check],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+async def test_endpoint_keepalive_enabled_emits_static_comment_during_silent_gap(streaming_chat_client_stub):
+    """Enabled keepalive sends static SSE comments without changing AG-UI data frames."""
+    app = FastAPI()
+
+    async def stream_fn(messages: Any, options: Any, **kwargs: Any):
+        del messages, options, kwargs
+        await asyncio.sleep(0.05)
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done")])
+
+    agent = Agent(name="test", instructions="Test agent", client=streaming_chat_client_stub(stream_fn))
+
+    add_agent_framework_fastapi_endpoint(app, agent, path="/keepalive", keepalive_seconds=0.01)
+
+    client = TestClient(app)
+    response = client.post("/keepalive", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["connection"] == "keep-alive"
+    assert response.headers["x-accel-buffering"] == "no"
+
+    content = response.content.decode("utf-8")
+    comments = [line for line in content.splitlines() if line.startswith(":")]
+    assert comments
+    assert set(comments) == {": keepalive"}
+    assert "data: data:" not in content
+
+    event_types = [event.get("type") for event in _decode_sse_events(response)]
+    assert "RUN_STARTED" in event_types
+    assert "TEXT_MESSAGE_CONTENT" in event_types
+    assert "RUN_FINISHED" in event_types
+
+
+async def test_endpoint_keepalive_disabled_preserves_streaming_response_shape(streaming_chat_client_stub):
+    """Disabled keepalive keeps the original SSE data frames without transport comments."""
+    app = FastAPI()
+
+    async def stream_fn(messages: Any, options: Any, **kwargs: Any):
+        del messages, options, kwargs
+        await asyncio.sleep(0.05)
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done")])
+
+    agent = Agent(name="test", instructions="Test agent", client=streaming_chat_client_stub(stream_fn))
+
+    add_agent_framework_fastapi_endpoint(app, agent, path="/no-keepalive", keepalive_seconds=None)
+
+    client = TestClient(app)
+    response = client.post("/no-keepalive", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["connection"] == "keep-alive"
+    assert response.headers["x-accel-buffering"] == "no"
+
+    content = response.content.decode("utf-8")
+    assert ": keepalive" not in content
+    assert "data: data:" not in content
+
+    event_types = [event.get("type") for event in _decode_sse_events(response)]
+    assert "RUN_STARTED" in event_types
+    assert "TEXT_MESSAGE_CONTENT" in event_types
+    assert "RUN_FINISHED" in event_types
+
+
+async def test_endpoint_keepalive_disabled_does_not_import_sse_transport(build_chat_client) -> None:
+    """Disabled keepalive avoids importing sse-starlette's transport module."""
+    saved_sse_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "sse_starlette" or name.startswith("sse_starlette.")
+    }
+    for name in saved_sse_modules:
+        sys.modules.pop(name, None)
+
+    try:
+        app = FastAPI()
+        agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+
+        add_agent_framework_fastapi_endpoint(app, agent, path="/no-keepalive-import", keepalive_seconds=None)
+
+        client = TestClient(app)
+        response = client.post("/no-keepalive-import", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+        assert response.status_code == 200
+        assert "sse_starlette.sse" not in sys.modules
+    finally:
+        for name in list(sys.modules):
+            if name == "sse_starlette" or name.startswith("sse_starlette."):
+                sys.modules.pop(name, None)
+        sys.modules.update(saved_sse_modules)
+
+
+@pytest.mark.parametrize("keepalive_seconds", [0, -1, -0.5])
+def test_add_endpoint_rejects_non_positive_keepalive_interval(build_chat_client, keepalive_seconds: float) -> None:
+    """Invalid keepalive intervals fail immediately during endpoint registration."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+
+    with pytest.raises(ValueError, match="keepalive_seconds must be positive"):
+        add_agent_framework_fastapi_endpoint(app, agent, path="/invalid", keepalive_seconds=keepalive_seconds)
 
 
 async def test_endpoint_with_state_schema(build_chat_client):

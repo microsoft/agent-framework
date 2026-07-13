@@ -703,7 +703,9 @@ class BedrockChatClient(
                 contents.append(Content.from_text(text=text_value, raw_representation=block))
                 continue
             if (json_value := block.get("json")) is not None:
-                contents.append(Content.from_text(text=json.dumps(json_value), raw_representation=block))
+                contents.append(
+                    Content.from_text(text=json.dumps(json_value, ensure_ascii=False), raw_representation=block)
+                )
                 continue
             tool_use_value = block.get("toolUse")
             tool_use = (

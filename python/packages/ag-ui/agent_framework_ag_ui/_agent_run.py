@@ -8,6 +8,7 @@ import copy
 import json
 import logging
 import uuid
+from collections import OrderedDict
 from collections.abc import AsyncIterable, Awaitable, Mapping
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
@@ -853,12 +854,62 @@ def _pending_approval_alias_keys(
     return {_pending_approval_key(thread_id, alias) for alias in aliases}
 
 
+def _remove_pending_approval(registry: dict[PendingApprovalKey, PendingApprovalEntry], key: PendingApprovalKey) -> None:
+    """Remove one pending approval and every alias that references the same entry."""
+    entry = registry.pop(key, None)
+    if entry is None or isinstance(entry, str):
+        return
+
+    for alias_key, alias_entry in list(registry.items()):
+        if alias_entry is entry:
+            registry.pop(alias_key, None)
+
+
+def _register_pending_approval(
+    registry: dict[PendingApprovalKey, PendingApprovalEntry],
+    thread_ids: list[str],
+    name: str,
+    arguments: str | None,
+    *,
+    request_id: str,
+    interrupt_id: str | None,
+    already_approved_requests: list[dict[str, Any]] | None = None,
+) -> None:
+    """Register one pending approval under each distinct thread identity."""
+    keys = list(
+        dict.fromkeys(
+            _pending_approval_key(thread_id, approval_id)
+            for thread_id in thread_ids
+            for approval_id in (request_id, interrupt_id)
+            if approval_id
+        )
+    )
+    for key in keys:
+        _remove_pending_approval(registry, key)
+
+    entry = _make_pending_approval_entry(
+        name,
+        arguments,
+        request_id=request_id,
+        interrupt_id=interrupt_id,
+        already_approved_requests=already_approved_requests,
+    )
+    for key in keys:
+        registry[key] = entry
+
+
 def _consume_pending_approval_entry(
     pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry],
     thread_id: str,
     entry: PendingApprovalEntry,
     *ids: str | None,
 ) -> None:
+    if not isinstance(entry, str):
+        for key, candidate in list(pending_approvals.items()):
+            if candidate is entry:
+                pending_approvals.pop(key, None)
+        return
+
     for alias_key in _pending_approval_alias_keys(thread_id, entry, *ids):
         pending_approvals.pop(alias_key, None)
 
@@ -1138,13 +1189,11 @@ def _evict_oldest_approvals(registry: dict[PendingApprovalKey, PendingApprovalEn
     Only effective when *registry* is an ``OrderedDict``;  plain dicts are
     left untouched because insertion-order eviction is unreliable for them.
     """
-    if len(registry) <= max_size:
+    if len(registry) <= max_size or not isinstance(registry, OrderedDict):
         return
-    try:
-        while len(registry) > max_size:
-            registry.popitem(last=False)  # type: ignore[call-arg]
-    except (TypeError, KeyError):
-        pass
+    while len(registry) > max_size:
+        oldest_key = next(iter(registry))
+        _remove_pending_approval(registry, oldest_key)
 
 
 async def _resolve_approval_responses(
@@ -1913,7 +1962,10 @@ async def run_agent_stream(
             if content_type == "function_approval_request" and pending_approvals is not None:
                 if content.id and content.function_call and content.function_call.name:
                     canonical_interrupt_id = content.function_call.call_id or content.id
-                    pending_entry = _make_pending_approval_entry(
+                    provider_approval_thread_id = approval_state_thread_id(scope=approval_scope, thread_id=thread_id)
+                    _register_pending_approval(
+                        pending_approvals,
+                        [approval_thread_id, provider_approval_thread_id],
                         content.function_call.name,
                         canonical_function_arguments(content.function_call),
                         request_id=str(content.id),
@@ -1923,13 +1975,6 @@ async def run_agent_stream(
                             str(content.id),
                             str(canonical_interrupt_id) if canonical_interrupt_id else None,
                         ),
-                    )
-                    _register_pending_approval_entry(
-                        pending_approvals,
-                        approval_thread_id,
-                        pending_entry,
-                        str(content.id),
-                        str(canonical_interrupt_id) if canonical_interrupt_id else None,
                     )
                     # Evict oldest entries if the registry exceeds a safe bound (LRU)
                     _evict_oldest_approvals(pending_approvals, max_size=10_000)

@@ -918,6 +918,20 @@ def test_prepare_message_with_text_reasoning_content(
     assert prepared[0]["content"] == "The answer is 42."
 
 
+def test_prepare_message_with_unprotected_text_reasoning_content(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    message = Message(
+        role="assistant",
+        contents=[Content.from_text_reasoning(id="rs_abc123", text="Foundry summary")],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert prepared == [{"role": "assistant", "content": "Foundry summary"}]
+
+
 def test_prepare_message_with_only_text_reasoning_content(
     openai_unit_test_env: dict[str, str],
 ) -> None:

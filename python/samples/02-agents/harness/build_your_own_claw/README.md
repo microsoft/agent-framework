@@ -7,6 +7,7 @@ directory.
 
 - **Part 1 — `claw_step01_meet_your_claw.py`** — the minimal harness.
 - **Part 2 — `claw_step02_working_with_data.py`** — file access, approvals, and durable memory.
+- **Part 3 — `claw_step03_scaling_capabilities.py`** — skills, shell, CodeAct, and background agents.
 
 ## Prerequisites
 
@@ -116,3 +117,61 @@ watchlist) lives on disk keyed by session id, so `/session-export` before you qu
 `/session-import` after relaunching to re-link the relaunched session to its files, then ask
 *"What's on my watchlist?"* or *"What do you know about me?"*.
 
+## Part 3 — Scaling its capabilities
+
+Makes the assistant *more capable* along four axes.
+
+### What this sample demonstrates
+
+- **Skills** — finance know-how (`valuation`, `risk-scoring`) is packaged as discoverable
+  `SKILL.md` files under `skills/`, which the agent loads on demand. The sample builds a
+  `FileSkillsSource(..., script_runner=subprocess_script_runner)` so the skills' Python
+  scripts can run. Optionally folds in centrally-managed **Foundry skills** served from a
+  Foundry Toolbox MCP endpoint via `MCPSkillsSource` (opt-in; see below).
+- **Shell** — a `LocalShellTool` confined to the trade-confirmation vault
+  (`working/confirmations/`) lets the agent tidy the accumulated confirmation files (reorganize into
+  `year/month`, rename to `YYYY-MM-DD_TICKER_BUY|SELL.txt`). Guarded by a `ShellPolicy` deny-list
+  **and** a confined working directory; left at the default
+  `approval_mode="always_require"` so each command is surfaced for approval.
+- **CodeAct** — a `MontyCodeActProvider` gives the agent a sandboxed, cross-platform Python
+  interpreter to crunch portfolio numbers by writing and running code.
+- **Background agents** — a lean, web-search-only `TickerResearchAgent` is registered via
+  `create_harness_agent(background_agents=[...])`, so the main agent can fan out per-ticker research
+  concurrently and aggregate the findings.
+
+### Additional environment variables (optional)
+
+```bash
+# Enable centrally-managed Foundry skills (Foundry Toolbox MCP endpoint URL):
+export FOUNDRY_TOOLBOX_MCP_SERVER_URL="https://<your-project>.services.ai.azure.com/.../toolboxes/<toolbox>/mcp?api-version=v1"
+```
+
+When this is not set, the sample runs with the local file skills only, and prints a note.
+
+### Running
+
+```bash
+uv run python/samples/02-agents/harness/build_your_own_claw/claw_step03_scaling_capabilities.py
+```
+
+### What to expect
+
+Try these in order (the sample starts in **execute** mode — quick lookups don't need a plan):
+
+1. `Value MSFT for me.` — the agent loads the `valuation` skill and follows its instructions
+   (reading references and running its script).
+2. `Score the risk of my portfolio.` — the agent reads `portfolio.csv` and loads the `risk-scoring`
+   skill.
+3. `/mode plan`, then `Tidy up my trade confirmations.` — switching to plan mode first makes the
+   agent inspect `working/confirmations/` and propose a reorganization plan before touching anything;
+   once you approve it switches to execute and uses the shell to reorganize and rename the files,
+   **prompting you to approve** each command.
+4. `Work out the total value of my portfolio.` — the agent writes and runs Python via CodeAct.
+5. `Research MSFT, NVDA and SPY and summarize the latest news.` — the agent fans the tickers out to
+   the background research agent and aggregates the results.
+6. `What's the capital of France?` — with a `financial-agent-rules` skill published to your Foundry
+   toolbox and Foundry skills enabled (`FOUNDRY_TOOLBOX_MCP_SERVER_URL`), the agent loads it,
+   recognizes the question is off-topic, and politely declines, steering you back to finance.
+
+See the [Part 3 blog post](https://devblogs.microsoft.com/agent-framework/agent-harness-scaling-the-claw-or-harness-capabilities/)
+for more on the `financial-agent-rules` skill — including the SKILL.md to publish to your Foundry toolbox.

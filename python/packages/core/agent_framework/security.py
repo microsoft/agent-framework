@@ -25,7 +25,7 @@ from collections.abc import Awaitable, Callable, MutableMapping
 from copy import deepcopy
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, cast
 
 from pydantic import BaseModel, Field
 
@@ -1621,6 +1621,24 @@ def get_current_middleware() -> LabelTrackingFunctionMiddleware | None:
     return getattr(_current_middleware, "instance", None)
 
 
+class _PendingPolicyApproval(NamedTuple):
+    """Immutable binding record for a pending policy-violation approval.
+
+    Captures every dimension a granted approval is bound to so a reused ``call_id`` cannot
+    re-authorize a call that differs in any of them. ``body_signature`` covers the function name and
+    arguments; ``label_key`` the security label (integrity/confidentiality) shown for review;
+    ``session_key`` the session the approval was requested in (the isolation boundary at this layer;
+    there is no separate user identity here); ``disclosed_violations`` the canonical set of violation
+    types disclosed in the approval request, so an approval granted for one set of risks cannot wave
+    a different (e.g. larger) set that a replay computes after the tool's policy metadata changes.
+    """
+
+    body_signature: str
+    label_key: str
+    session_key: str
+    disclosed_violations: tuple[str, ...]
+
+
 @experimental(feature_id=ExperimentalFeature.FIDES)
 class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
     """Middleware that enforces security policies on tool invocations.
@@ -1678,51 +1696,178 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         self.block_on_violation = block_on_violation if not approval_on_violation else False
         self.enable_audit_log = enable_audit_log
         self.audit_log: list[dict[str, Any]] = []
-        # Track approved violations by call_id (after user approves)
-        self._approved_violations: set[str] = set()
-        # Track call_ids for secure-policy approvals so replay can be identified
-        # without coupling the main tool loop to security-specific metadata.
-        self._pending_policy_approvals: set[str] = set()
+        # Track call_ids awaiting approval, each mapped to a binding record capturing the exact
+        # invocation the approval was requested for: the function name + arguments, the security
+        # label (integrity/confidentiality) shown for review, and the session. Combined with the
+        # call_id key and consume-on-use, an approval cannot re-authorize a repeated call, a
+        # different function, changed arguments, a different security label, or a different session.
+        self._pending_policy_approvals: dict[str, _PendingPolicyApproval] = {}
 
     def _get_call_id(self, context: FunctionInvocationContext) -> str:
         """Get the tool call id for this invocation context."""
         call_id = context.metadata.get("call_id", "")
         return call_id if isinstance(call_id, str) else ""
 
-    def _build_function_call_content(self, context: FunctionInvocationContext) -> Content:
-        """Reconstruct the current function call as Content for approval requests."""
+    def _current_arguments(self, context: FunctionInvocationContext) -> dict[str, Any]:
+        """Resolve the current call arguments, preferring unexpanded ([var_xxx]) originals."""
         # Use original unexpanded arguments if available (preserves [var_xxx] placeholders)
         original_args = context.metadata.get("original_arguments_for_messages")
         if original_args is not None:
             if isinstance(original_args, BaseModel):
-                arguments = original_args.model_dump()
-            elif isinstance(original_args, dict):
-                arguments = cast(dict[str, Any], original_args)
-            else:
-                arguments = dict(original_args)
-        elif isinstance(context.arguments, BaseModel):
-            arguments: dict[str, Any] = context.arguments.model_dump()
-        else:
-            arguments = dict(context.arguments)
+                return original_args.model_dump()
+            if isinstance(original_args, dict):
+                return dict(cast(dict[str, Any], original_args))
+            return dict(original_args)
+        if isinstance(context.arguments, BaseModel):
+            return context.arguments.model_dump()
+        return dict(context.arguments)
+
+    def _build_function_call_content(self, context: FunctionInvocationContext) -> Content:
+        """Reconstruct the current function call as Content for approval requests."""
         return Content.from_function_call(
             call_id=self._get_call_id(context),
             name=context.function.name,
-            arguments=arguments,
+            arguments=self._current_arguments(context),
         )
 
-    def _is_policy_violation_approved(self, context: FunctionInvocationContext) -> bool:
-        """Return whether this policy violation has already been approved."""
-        call_id = self._get_call_id(context)
-        approval_response = context.metadata.get("approval_response")
-        return bool(
-            call_id in self._approved_violations
-            or (
-                isinstance(approval_response, Content)
-                and approval_response.type == "function_approval_response"
-                and approval_response.approved
-                and call_id in self._pending_policy_approvals
-            )
+    def _signature_from_parts(self, name: str | None, arguments: dict[str, Any]) -> str:
+        """Canonicalize a (function name, arguments) pair into a stable comparison signature."""
+        try:
+            arguments_repr = json.dumps(arguments, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            arguments_repr = repr(sorted(arguments.items()))
+        return f"{name or ''}\x00{arguments_repr}"
+
+    def _call_body_signature(self, context: FunctionInvocationContext) -> str:
+        """Compute the (function name, arguments) signature for the current invocation.
+
+        This is the part of the binding that the approval *response*'s embedded ``function_call``
+        can also reproduce, so it is used both to validate the response body and to check that the
+        invocation about to execute matches the one that was approved.
+        """
+        return self._signature_from_parts(context.function.name, self._current_arguments(context))
+
+    def _context_label_key(self, context: FunctionInvocationContext) -> str:
+        """Canonicalize the current security label (integrity/confidentiality) for binding.
+
+        Accepts a ``ContentLabel`` or its dict form from ``context.metadata['context_label']`` and
+        reduces it to the security-relevant dimensions used for policy decisions, so an approval
+        granted under one label cannot authorize the same call under a different (e.g. more
+        sensitive) label.
+        """
+        label_data = context.metadata.get("context_label")
+        if isinstance(label_data, ContentLabel):
+            return f"{label_data.integrity.value}/{label_data.confidentiality.value}"
+        if isinstance(label_data, dict):
+            label_dict = cast(dict[str, Any], label_data)
+            return f"{label_dict.get('integrity', '')}/{label_dict.get('confidentiality', '')}"
+        return "/"
+
+    def _session_key(self, context: FunctionInvocationContext) -> str:
+        """Return the session id for binding, or empty string when there is no session."""
+        session = context.session
+        return session.session_id if session is not None else ""
+
+    def _violation_set_key(self, violations: list[dict[str, Any]]) -> tuple[str, ...]:
+        """Canonicalize the disclosed violations into a stable, order-independent key.
+
+        Each entry pairs the violation type with its canonical policy reason, so a replay that
+        trips the *same* violation type but a materially *different* risk (e.g. the tool's
+        ``max_allowed_confidentiality`` destination changed, keeping the type but changing the
+        reason) no longer matches and must re-request approval. The approval is thus bound to
+        exactly the risks disclosed to the user, not merely to their category names.
+        """
+        return tuple(sorted(f"{v['violation_type']}\x00{v['audit']['reason']}" for v in violations))
+
+    def _pending_record(
+        self,
+        context: FunctionInvocationContext,
+        violations: list[dict[str, Any]],
+    ) -> _PendingPolicyApproval:
+        """Build the binding record for the current invocation and disclosed violation set."""
+        return _PendingPolicyApproval(
+            body_signature=self._call_body_signature(context),
+            label_key=self._context_label_key(context),
+            session_key=self._session_key(context),
+            disclosed_violations=self._violation_set_key(violations),
         )
+
+    def _signature_from_function_call(self, function_call: Any) -> str | None:
+        """Compute the body signature for a ``function_call`` Content, or None if it is not one."""
+        if not (isinstance(function_call, Content) and function_call.type == "function_call"):
+            return None
+        arguments = function_call.parse_arguments() or {}
+        return self._signature_from_parts(function_call.name, dict(arguments))
+
+    def _response_matches_pending(
+        self,
+        approval_response: Content,
+        call_id: str,
+        body_signature: str,
+    ) -> bool:
+        """Validate that the approval response itself corresponds to the pending request.
+
+        The response must carry the request id that was shown for review and embed the exact
+        function call (name + arguments) that was requested. Both the response id and the embedded
+        function-call id are **required** to be present and equal to the pending ``call_id`` — a
+        crafted response that omits either identifier (``id=None`` / ``function_call.call_id=None``)
+        is rejected rather than allowed to skip the binding.
+        """
+        embedded = getattr(approval_response, "function_call", None)
+        if self._signature_from_function_call(embedded) != body_signature:
+            return False
+        # Both identifiers must be present and name the pending request (no None bypass).
+        response_id = getattr(approval_response, "id", None)
+        embedded_call_id = getattr(embedded, "call_id", None)
+        return response_id == call_id and embedded_call_id == call_id
+
+    def _matches_pending_approval(
+        self,
+        context: FunctionInvocationContext,
+        current_violations: list[dict[str, Any]],
+    ) -> bool:
+        """Return whether an approved, call-bound approval matches this exact invocation.
+
+        True only when an approved ``function_approval_response`` is present, the call_id is still
+        awaiting approval, the response itself (its id and embedded ``function_call``) matches the
+        pending request, and the current invocation matches every bound dimension recorded when
+        approval was requested: function + arguments, the security label, the session, and the
+        exact set of violation types disclosed to the user. If the invocation now trips a different
+        set of violations than was disclosed, this returns False so the caller re-requests approval
+        for the new set. Does not mutate state; consumption is done separately via
+        :meth:`_consume_pending_approval` once the approval actually waves the detected violations.
+        """
+        call_id = self._get_call_id(context)
+        if not call_id:
+            return False
+        pending = self._pending_policy_approvals.get(call_id)
+        if pending is None:
+            return False
+        approval_response = context.metadata.get("approval_response")
+        if not (
+            isinstance(approval_response, Content)
+            and approval_response.type == "function_approval_response"
+            and approval_response.approved is True
+        ):
+            return False
+        # The approval response must itself match the pending request (id + embedded function_call),
+        # and the invocation about to execute must match every recorded binding dimension, including
+        # the exact set of violations that was disclosed for review.
+        return (
+            self._response_matches_pending(approval_response, call_id, pending.body_signature)
+            and self._call_body_signature(context) == pending.body_signature
+            and self._context_label_key(context) == pending.label_key
+            and self._session_key(context) == pending.session_key
+            and self._violation_set_key(current_violations) == pending.disclosed_violations
+        )
+
+    def _consume_pending_approval(self, context: FunctionInvocationContext) -> None:
+        """Remove the pending approval for this call so it authorizes exactly one invocation.
+
+        Idempotent: safe to call for both the integrity and confidentiality checks of a single
+        invocation.
+        """
+        self._pending_policy_approvals.pop(self._get_call_id(context), None)
 
     def _mark_policy_violation_approved(
         self,
@@ -1730,12 +1875,8 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         *,
         warning_message: str,
     ) -> None:
-        """Record and annotate an approved policy violation."""
+        """Annotate an approved policy violation (approval already consumed for this call)."""
         logger.warning(warning_message)
-        call_id = self._get_call_id(context)
-        if call_id:
-            self._approved_violations.add(call_id)
-            self._pending_policy_approvals.discard(call_id)
         context.metadata["user_approved_violation"] = True
 
     def _request_policy_violation_approval(
@@ -1743,24 +1884,42 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         context: FunctionInvocationContext,
         *,
         context_label: ContentLabel,
-        violation_type: str,
-        reason: str,
-        log_message: str,
+        violations: list[dict[str, Any]],
     ) -> None:
-        """Create a policy-violation approval request and stop execution."""
-        logger.info(log_message)
+        """Create a single policy-violation approval request disclosing every detected violation.
+
+        Bundling all detected violations into one request (rather than surfacing them one at a
+        time) ensures the user reviews the complete risk before approving, so a granted approval
+        cannot silently wave a second, undisclosed violation when the call is replayed.
+        """
+        primary = violations[0]
+        disclosed = ", ".join(v["violation_type"] for v in violations)
+        logger.info(
+            f"APPROVAL REQUESTED: Tool '{context.function.name}' requires user approval "
+            f"due to policy violation(s): {disclosed}."
+        )
         call_id = self._get_call_id(context)
         if call_id:
-            self._pending_policy_approvals.add(call_id)
+            self._pending_policy_approvals[call_id] = self._pending_record(context, violations)
+        additional_properties: dict[str, Any] = {
+            "policy_violation": True,
+            "violation_type": primary["violation_type"],
+            "reason": (
+                primary["approval_reason"]
+                if len(violations) == 1
+                else " ".join(v["approval_reason"] for v in violations)
+            ),
+            "context_label": context_label.to_dict(),
+        }
+        if len(violations) > 1:
+            # Expose the full set so callers/UI can render every risk, not just the primary one.
+            additional_properties["violations"] = [
+                {"violation_type": v["violation_type"], "reason": v["approval_reason"]} for v in violations
+            ]
         context.result = Content.from_function_approval_request(
             id=call_id,
             function_call=self._build_function_call_content(context),
-            additional_properties={
-                "policy_violation": True,
-                "violation_type": violation_type,
-                "reason": reason,
-                "context_label": context_label.to_dict(),
-            },
+            additional_properties=additional_properties,
         )
         raise MiddlewareTermination("Policy approval required")
 
@@ -1768,18 +1927,20 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         self,
         context: FunctionInvocationContext,
         *,
-        error_message: str,
         context_label: ContentLabel,
-        violation_type: str | None = None,
+        violations: list[dict[str, Any]],
     ) -> None:
-        """Block the tool call and surface a policy violation error."""
+        """Block the tool call and surface the detected policy violation(s)."""
+        primary = violations[0]
         result: dict[str, Any] = {
-            "error": error_message,
+            "error": primary["block_error"],
             "function": context.function.name,
             "context_label": context_label.to_dict(),
         }
-        if violation_type is not None:
-            result["violation_type"] = violation_type
+        if primary["block_violation_type"] is not None:
+            result["violation_type"] = primary["block_violation_type"]
+        if len(violations) > 1:
+            result["violations"] = [v["violation_type"] for v in violations]
         context.result = result
         raise MiddlewareTermination("Policy violation blocked tool execution")
 
@@ -1830,114 +1991,107 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         )
         function_props = _get_additional_properties(context.function)
 
-        # Check integrity policy based on context label
-        # If context is UNTRUSTED (tainted), check if tool allows untrusted context
-        if context_label.integrity == IntegrityLabel.UNTRUSTED and function_name not in self.allow_untrusted_tools:
-            # Also check if tool explicitly accepts untrusted via additional_properties
-            accepts_untrusted = function_props.get("accepts_untrusted", False)
+        # Detect every applicable policy violation up front so a single approval decision can
+        # disclose all of them together. Evaluating both the integrity and confidentiality checks
+        # before acting prevents an approval that was requested (and granted) for one violation
+        # from silently waving a second, undisclosed violation when the call is replayed.
+        violations: list[dict[str, Any]] = []
 
-            if not accepts_untrusted:
-                violation = {
+        # Integrity policy: an UNTRUSTED (tainted) context may not drive a tool that has not
+        # opted in to untrusted input.
+        if (
+            context_label.integrity == IntegrityLabel.UNTRUSTED
+            and function_name not in self.allow_untrusted_tools
+            and not function_props.get("accepts_untrusted", False)
+        ):
+            violations.append({
+                "violation_type": "untrusted_context",
+                "approval_reason": (
+                    f"Tool '{function_name}' is being called in an UNTRUSTED context. "
+                    "The conversation contains data from untrusted sources which could "
+                    "influence this operation. Approve to proceed anyway (the agent will "
+                    "continue with a warning about untrusted context)."
+                ),
+                "block_error": "Policy violation: Tool cannot be called in untrusted context",
+                "block_violation_type": None,
+                "audit": {
                     "type": "untrusted_context",
                     "function": function_name,
                     "context_label": context_label.to_dict(),
                     "turn": context.metadata.get("turn_number", -1),
                     "reason": "Context is UNTRUSTED and tool is not allowed to execute in an untrusted context",
-                }
+                },
+            })
 
-                self._log_violation(violation)
-
-                if self._is_policy_violation_approved(context):
-                    self._mark_policy_violation_approved(
-                        context,
-                        warning_message=(
-                            f"APPROVED BY USER: Tool '{function_name}' executing in UNTRUSTED context. "
-                            "User acknowledged the security risk and approved execution."
-                        ),
-                    )
-                elif self.approval_on_violation:
-                    self._request_policy_violation_approval(
-                        context,
-                        context_label=context_label,
-                        violation_type="untrusted_context",
-                        reason=(
-                            f"Tool '{function_name}' is being called in an UNTRUSTED context. "
-                            "The conversation contains data from untrusted sources which could "
-                            "influence this operation. Approve to proceed anyway (the agent will "
-                            "continue with a warning about untrusted context)."
-                        ),
-                        log_message=(
-                            f"APPROVAL REQUESTED: Tool '{function_name}' requires user approval "
-                            "due to UNTRUSTED context."
-                        ),
-                    )
-                    return
-                elif self.block_on_violation:
-                    logger.warning(
-                        f"BLOCKED: Tool '{function_name}' called in UNTRUSTED context. "
-                        f"Context became untrusted due to previous tool results. "
-                        f"Add to allow_untrusted_tools or set accepts_untrusted=True to permit."
-                    )
-                    self._block_policy_violation(
-                        context,
-                        error_message="Policy violation: Tool cannot be called in untrusted context",
-                        context_label=context_label,
-                    )
-                    return
-                else:
-                    logger.warning(f"WARNING: Tool '{function_name}' called in UNTRUSTED context (allowed)")
-
-        # Check confidentiality policy based on context label
+        # Confidentiality policy: block writing higher-confidentiality data to a lower
+        # confidentiality destination (data exfiltration).
         conf_result = self._check_confidentiality_policy_detailed(context, context_label)
         if not conf_result["passed"]:
-            violation = {
-                "type": "confidentiality_violation",
-                "subtype": conf_result["failure_type"],
-                "function": function_name,
-                "context_label": context_label.to_dict(),
-                "reason": conf_result["reason"],
-                "turn": context.metadata.get("turn_number", -1),
-            }
+            violations.append({
+                "violation_type": conf_result["failure_type"],
+                "approval_reason": (
+                    f"Tool '{function_name}' violates confidentiality policy: "
+                    f"{conf_result['reason']}. Approve to proceed anyway."
+                ),
+                "block_error": f"Policy violation: {conf_result['reason']}",
+                "block_violation_type": conf_result["failure_type"],
+                "audit": {
+                    "type": "confidentiality_violation",
+                    "subtype": conf_result["failure_type"],
+                    "function": function_name,
+                    "context_label": context_label.to_dict(),
+                    "reason": conf_result["reason"],
+                    "turn": context.metadata.get("turn_number", -1),
+                },
+            })
 
-            self._log_violation(violation)
+        if not violations:
+            # Policy check passed, continue execution
+            logger.debug(f"Policy check passed for tool '{function_name}'")
+            await call_next()
+            return
 
-            if self._is_policy_violation_approved(context):
-                self._mark_policy_violation_approved(
-                    context,
-                    warning_message=(
-                        f"APPROVED BY USER: Tool '{function_name}' executing despite confidentiality "
-                        "violation. User acknowledged the security risk and approved execution."
-                    ),
-                )
-            elif self.approval_on_violation:
-                self._request_policy_violation_approval(
-                    context,
-                    context_label=context_label,
-                    violation_type=conf_result["failure_type"],
-                    reason=(
-                        f"Tool '{function_name}' violates confidentiality policy: "
-                        f"{conf_result['reason']}. Approve to proceed anyway."
-                    ),
-                    log_message=(
-                        f"APPROVAL REQUESTED: Tool '{function_name}' requires user approval "
-                        "due to confidentiality policy violation."
-                    ),
-                )
-                return
-            elif self.block_on_violation:
-                logger.warning(
-                    f"BLOCKED: Tool '{function_name}' violates confidentiality policy: {conf_result['reason']}"
-                )
-                self._block_policy_violation(
-                    context,
-                    error_message=f"Policy violation: {conf_result['reason']}",
-                    context_label=context_label,
-                    violation_type=conf_result["failure_type"],
-                )
-                return
+        for violation in violations:
+            self._log_violation(violation["audit"])
 
-        # Policy check passed, continue execution
-        logger.debug(f"Policy check passed for tool '{function_name}'")
+        # Resolve the approval decision against the exact violation set now detected. A pending
+        # approval only counts if it was granted for this same set; a replay that trips a
+        # different set (e.g. after the tool's policy metadata changed) falls through and
+        # re-requests approval for the new set.
+        approved = self._matches_pending_approval(context, violations)
+
+        disclosed = ", ".join(v["violation_type"] for v in violations)
+
+        if approved:
+            # A single approval waves every violation it disclosed for this exact invocation;
+            # consume it once so it cannot authorize a repeated or different call.
+            self._consume_pending_approval(context)
+            self._mark_policy_violation_approved(
+                context,
+                warning_message=(
+                    f"APPROVED BY USER: Tool '{function_name}' executing despite policy "
+                    f"violation(s) [{disclosed}]. User acknowledged the security risk and "
+                    "approved execution."
+                ),
+            )
+        elif self.approval_on_violation:
+            self._request_policy_violation_approval(
+                context,
+                context_label=context_label,
+                violations=violations,
+            )
+            return
+        elif self.block_on_violation:
+            logger.warning(f"BLOCKED: Tool '{function_name}' policy violation(s): {disclosed}")
+            self._block_policy_violation(
+                context,
+                context_label=context_label,
+                violations=violations,
+            )
+            return
+        else:
+            logger.warning(f"WARNING: Tool '{function_name}' policy violation(s) [{disclosed}] (allowed)")
+
         await call_next()
 
     def _check_confidentiality_policy(
