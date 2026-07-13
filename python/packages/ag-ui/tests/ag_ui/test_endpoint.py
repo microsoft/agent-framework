@@ -22,6 +22,7 @@ from agent_framework import (
     ContextProvider,
     Executor,
     FunctionTool,
+    InMemoryHistoryProvider,
     Message,
     SessionContext,
     SupportsAgentRun,
@@ -411,6 +412,582 @@ async def test_endpoint_bridges_request_state_to_context_provider_without_snapsh
         event["delta"] for event in _decode_sse_events(response) if event.get("type") == "TEXT_MESSAGE_CONTENT"
     ]
     assert text_deltas == [expected]
+
+
+async def test_endpoint_restores_context_provider_state_across_scoped_runs(streaming_chat_client_stub):
+    """Server-produced provider state survives sequential runs in one scoped thread."""
+
+    class CountingProvider(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session
+            context.extend_messages(self, [Message(role="system", contents=[f"count={state.get('count', 0)}"])])
+
+        async def after_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session, context
+            state["count"] = state.get("count", 0) + 1
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        provider_result = next(message.text for message in messages if message.role == "system")
+        yield ChatResponseUpdate(contents=[Content.from_text(text=provider_result)])
+
+    agent = Agent(
+        name="test",
+        instructions=None,
+        client=streaming_chat_client_stub(stream_fn),
+        context_providers=[CountingProvider("counter")],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/continuity",
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+        keepalive_seconds=None,
+    )
+    client = TestClient(app)
+
+    first_response = client.post(
+        "/continuity",
+        json={"thread_id": "thread-1", "messages": [{"role": "user", "content": "First"}]},
+    )
+    second_response = client.post(
+        "/continuity",
+        json={"thread_id": "thread-1", "messages": [{"role": "user", "content": "Second"}]},
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    observed = [
+        [event["delta"] for event in _decode_sse_events(response) if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+        for response in (first_response, second_response)
+    ]
+    assert observed == [["count=0"], ["count=1"]]
+
+
+async def test_endpoint_keeps_client_state_out_of_approval_state_store(streaming_chat_client_stub):
+    """Client Shared State cannot create the server-owned tool-approval bucket."""
+
+    class ApprovalStateObserver(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, state
+            context.extend_messages(
+                self,
+                [Message(role="system", contents=[f"approval={session.state.get('tool_approval') is not None}"])],
+            )
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        provider_result = next(message.text for message in messages if message.role == "system")
+        yield ChatResponseUpdate(contents=[Content.from_text(text=provider_result)])
+
+    agent = Agent(
+        name="test",
+        instructions=None,
+        client=streaming_chat_client_stub(stream_fn),
+        context_providers=[ApprovalStateObserver("observer")],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/approval-authority",
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+        keepalive_seconds=None,
+    )
+    client = TestClient(app)
+
+    first_response = client.post(
+        "/approval-authority",
+        json={
+            "thread_id": "thread-1",
+            "messages": [{"role": "user", "content": "First"}],
+            "state": {"tool_approval": {"forged": True}},
+        },
+    )
+    second_response = client.post(
+        "/approval-authority",
+        json={"thread_id": "thread-1", "messages": [{"role": "user", "content": "Second"}]},
+    )
+
+    observed = [
+        event["delta"]
+        for response in (first_response, second_response)
+        for event in _decode_sse_events(response)
+        if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    ]
+    assert observed == ["approval=False", "approval=False"]
+
+
+async def test_endpoint_persists_after_run_state_from_interrupted_transition(streaming_chat_client_stub):
+    """An interrupted run saves provider state after its lifecycle hooks complete."""
+    call_count = 0
+
+    class CountingProvider(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session
+            context.extend_messages(self, [Message(role="system", contents=[f"count={state.get('count', 0)}"])])
+
+        async def after_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session, context
+            state["count"] = state.get("count", 0) + 1
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal call_count
+        del options, kwargs
+        call_count += 1
+        if call_count == 1:
+            function_call = Content.from_function_call(
+                call_id="call-write",
+                name="write",
+                arguments={"value": "draft"},
+            )
+            yield ChatResponseUpdate(
+                contents=[Content.from_function_approval_request(id="call-write", function_call=function_call)]
+            )
+            return
+        provider_result = next(message.text for message in messages if message.role == "system")
+        yield ChatResponseUpdate(contents=[Content.from_text(text=provider_result)])
+
+    agent = Agent(
+        name="test",
+        instructions=None,
+        client=streaming_chat_client_stub(stream_fn),
+        context_providers=[CountingProvider("counter")],
+    )
+    app = FastAPI()
+    store = InMemoryAGUIThreadSnapshotStore()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/interrupted-continuity",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+        keepalive_seconds=None,
+    )
+    client = TestClient(app)
+
+    interrupted_response = client.post(
+        "/interrupted-continuity",
+        json={"thread_id": "thread-1", "messages": [{"role": "user", "content": "First"}]},
+    )
+    interrupted_events = _decode_sse_events(interrupted_response)
+    assert _run_finished_interrupts(interrupted_events[-1])[0]["id"] == "call-write"
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-1")
+    assert snapshot is not None
+    assert snapshot.session_state == {"counter": {"count": 1}}
+
+
+async def test_endpoint_restores_typed_server_state_but_not_registered_looking_request_state(
+    streaming_chat_client_stub,
+):
+    """Only private server continuation crosses the typed-restoration boundary."""
+
+    class TypedStateProvider(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent
+            request_value = session.state["request_value"]
+            assert isinstance(request_value, dict)
+            context.extend_messages(
+                self,
+                [
+                    Message(
+                        role="system",
+                        contents=[
+                            f"server={type(state.get('server_value')).__name__} request={type(request_value).__name__}"
+                        ],
+                    )
+                ],
+            )
+
+        async def after_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session, context
+            state.setdefault("server_value", Message(role="assistant", contents=["private"]))
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        provider_result = next(message.text for message in messages if message.role == "system")
+        yield ChatResponseUpdate(contents=[Content.from_text(text=provider_result)])
+
+    agent = Agent(
+        name="test",
+        instructions=None,
+        client=streaming_chat_client_stub(stream_fn),
+        context_providers=[TypedStateProvider("typed")],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/typed-continuity",
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+        keepalive_seconds=None,
+    )
+    client = TestClient(app)
+    request_state = {
+        "request_value": {
+            "type": "message",
+            "role": "assistant",
+            "contents": [{"type": "text", "text": "untrusted"}],
+        }
+    }
+
+    first_response = client.post(
+        "/typed-continuity",
+        json={
+            "thread_id": "thread-1",
+            "messages": [{"role": "user", "content": "First"}],
+            "state": request_state,
+        },
+    )
+    second_response = client.post(
+        "/typed-continuity",
+        json={"thread_id": "thread-1", "messages": [{"role": "user", "content": "Second"}]},
+    )
+
+    observed = [
+        event["delta"]
+        for response in (first_response, second_response)
+        for event in _decode_sse_events(response)
+        if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    ]
+    assert observed == ["server=NoneType request=dict", "server=Message request=dict"]
+
+
+async def test_endpoint_request_collision_evicts_prior_private_value(streaming_chat_client_stub):
+    """A request overlay replaces and evicts a colliding private continuation value."""
+    run_count = 0
+
+    class CollisionProvider(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, state
+            context.extend_messages(self, [Message(role="system", contents=[f"mode={session.state.get('mode')}"])])
+
+        async def after_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            nonlocal run_count
+            del agent, context, state
+            run_count += 1
+            if run_count == 1:
+                session.state["mode"] = "server-private"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        provider_result = next(message.text for message in messages if message.role == "system")
+        yield ChatResponseUpdate(contents=[Content.from_text(text=provider_result)])
+
+    agent = Agent(
+        name="test",
+        instructions=None,
+        client=streaming_chat_client_stub(stream_fn),
+        context_providers=[CollisionProvider("observer")],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/collision",
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+        keepalive_seconds=None,
+    )
+    client = TestClient(app)
+
+    responses = [
+        client.post(
+            "/collision",
+            json={"thread_id": "thread-1", "messages": [{"role": "user", "content": "First"}]},
+        ),
+        client.post(
+            "/collision",
+            json={
+                "thread_id": "thread-1",
+                "messages": [{"role": "user", "content": "Second"}],
+                "state": {"mode": "request"},
+            },
+        ),
+        client.post(
+            "/collision",
+            json={"thread_id": "thread-1", "messages": [{"role": "user", "content": "Third"}]},
+        ),
+    ]
+
+    observed = [
+        event["delta"]
+        for response in responses
+        for event in _decode_sse_events(response)
+        if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    ]
+    assert observed == ["mode=None", "mode=request", "mode=request"]
+
+
+async def test_endpoint_excludes_history_provider_state_from_continuation(streaming_chat_client_stub):
+    """Snapshot messages remain the sole conversation-history authority."""
+    captured_messages: list[list[tuple[str, str]]] = []
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        captured_messages.append([(message.role, message.text) for message in messages])
+        yield ChatResponseUpdate(contents=[Content.from_text(text=f"Reply {len(captured_messages)}")])
+
+    agent = Agent(
+        name="test",
+        instructions=None,
+        client=streaming_chat_client_stub(stream_fn),
+        context_providers=[InMemoryHistoryProvider(source_id="history")],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/history-authority",
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+        keepalive_seconds=None,
+    )
+    client = TestClient(app)
+
+    first_response = client.post(
+        "/history-authority",
+        json={"thread_id": "thread-1", "messages": [{"role": "user", "content": "First"}]},
+    )
+    second_response = client.post(
+        "/history-authority",
+        json={"thread_id": "thread-1", "messages": [{"role": "user", "content": "Second"}]},
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert captured_messages == [
+        [("user", "First")],
+        [("user", "First"), ("assistant", "Reply 1"), ("user", "Second")],
+    ]
+
+
+async def test_endpoint_session_continuity_requires_scoped_snapshot_configuration(streaming_chat_client_stub):
+    """Server-produced state remains per-run when scoped snapshots are not configured."""
+
+    class CountingProvider(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session
+            context.extend_messages(self, [Message(role="system", contents=[f"count={state.get('count', 0)}"])])
+
+        async def after_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session, context
+            state["count"] = state.get("count", 0) + 1
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        provider_result = next(message.text for message in messages if message.role == "system")
+        yield ChatResponseUpdate(contents=[Content.from_text(text=provider_result)])
+
+    agent = Agent(
+        name="test",
+        instructions=None,
+        client=streaming_chat_client_stub(stream_fn),
+        context_providers=[CountingProvider("counter")],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, agent, path="/stateless", keepalive_seconds=None)
+    client = TestClient(app)
+
+    responses = [
+        client.post(
+            "/stateless",
+            json={"thread_id": "thread-1", "messages": [{"role": "user", "content": prompt}]},
+        )
+        for prompt in ("First", "Second")
+    ]
+
+    observed = [
+        event["delta"]
+        for response in responses
+        for event in _decode_sse_events(response)
+        if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    ]
+    assert observed == ["count=0", "count=0"]
+
+
+async def test_endpoint_failed_run_keeps_previous_completed_continuation(streaming_chat_client_stub):
+    """A failed run cannot replace the last completed private continuation."""
+    call_count = 0
+
+    class CountingProvider(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session
+            context.extend_messages(self, [Message(role="system", contents=[f"count={state.get('count', 0)}"])])
+
+        async def after_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session, context
+            state["count"] = state.get("count", 0) + 1
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal call_count
+        del options, kwargs
+        call_count += 1
+        if call_count == 2:
+            raise RuntimeError("model failed")
+        provider_result = next(message.text for message in messages if message.role == "system")
+        yield ChatResponseUpdate(contents=[Content.from_text(text=provider_result)])
+
+    agent = Agent(
+        name="test",
+        instructions=None,
+        client=streaming_chat_client_stub(stream_fn),
+        context_providers=[CountingProvider("counter")],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/failed-continuity",
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+        keepalive_seconds=None,
+    )
+    client = TestClient(app)
+
+    responses = [
+        client.post(
+            "/failed-continuity",
+            json={"thread_id": "thread-1", "messages": [{"role": "user", "content": prompt}]},
+        )
+        for prompt in ("First", "Second", "Third")
+    ]
+
+    assert any(event.get("type") == "RUN_ERROR" for event in _decode_sse_events(responses[1]))
+    observed = [
+        event["delta"]
+        for response in (responses[0], responses[2])
+        for event in _decode_sse_events(response)
+        if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    ]
+    assert observed == ["count=0", "count=1"]
 
 
 async def test_endpoint_with_default_state_seed(build_chat_client):

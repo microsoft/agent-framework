@@ -7,9 +7,9 @@ from dataclasses import fields
 from agent_framework_ag_ui import AGUIThreadSnapshot, AGUIThreadSnapshotStore, InMemoryAGUIThreadSnapshotStore
 
 
-def test_thread_snapshot_model_contains_only_replayable_snapshot_fields() -> None:
-    """The public snapshot model is limited to messages, Shared State, and interruption state."""
-    assert [field.name for field in fields(AGUIThreadSnapshot)] == ["messages", "state", "interrupt"]
+def test_thread_snapshot_model_contains_replayable_and_private_snapshot_fields() -> None:
+    """The public snapshot model carries replayable data and optional private continuation."""
+    assert [field.name for field in fields(AGUIThreadSnapshot)] == ["messages", "state", "interrupt", "session_state"]
 
 
 def test_in_memory_snapshot_store_satisfies_snapshot_store_protocol() -> None:
@@ -37,6 +37,26 @@ async def test_in_memory_snapshot_store_replaces_latest_snapshot() -> None:
     assert snapshot is not None
     assert snapshot.messages == [{"id": "second"}]
     assert snapshot.state == {"count": 2}
+
+
+async def test_in_memory_snapshot_store_defensively_copies_private_continuation() -> None:
+    """Private continuation cannot be mutated through saved or returned references."""
+    store = InMemoryAGUIThreadSnapshotStore()
+    session_state = {"provider": {"count": 1}}
+    snapshot = AGUIThreadSnapshot(session_state=session_state)
+
+    await store.save(scope="tenant-a", thread_id="thread-1", snapshot=snapshot)
+    session_state["provider"]["count"] = 2
+    stored = await store.get(scope="tenant-a", thread_id="thread-1")
+
+    assert stored is not None
+    assert stored.session_state is not None
+    assert stored.session_state == {"provider": {"count": 1}}
+    stored.session_state["provider"]["count"] = 3
+
+    reread = await store.get(scope="tenant-a", thread_id="thread-1")
+    assert reread is not None
+    assert reread.session_state == {"provider": {"count": 1}}
 
 
 async def test_in_memory_snapshot_store_keeps_scopes_separate() -> None:
