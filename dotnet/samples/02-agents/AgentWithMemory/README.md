@@ -11,4 +11,6 @@ These samples show how to create an agent with the Agent Framework that uses Mem
 |[Bounded Chat History with Overflow](./AgentWithMemory_Step05_BoundedChatHistory/)|This sample demonstrates how to create a bounded chat history provider that overflows older messages to a vector store and recalls them as memories.|
 
 > **See also**: [Memory Search with Foundry Agents](../AgentProviders/foundry/Agent_Step22_MemorySearch/) - demonstrates using the built-in Memory Search tool with Microsoft Foundry agents.
+>
+> **See also**: [Neo4j Shopping Assistant](../../../../neo4j-shopping-assistant-sample/) - a retail assistant that uses [`AgentMemory`](https://www.nuget.org/packages/AgentMemory), the .NET Neo4j memory provider, via its `Neo4jMemoryContextProvider` (`AIContextProvider`). Ships as a **standalone** sample consuming the published NuGet packages (targets `Microsoft.Agents.AI` 1.9.0), so it lives outside this build/CPM tree rather than as a project reference here.
 

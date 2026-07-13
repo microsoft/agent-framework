@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Standalone sample: it consumes the *published* AgentMemory NuGet packages (which target
+    Microsoft.Agents.AI 1.9.0), so it is intentionally self-contained and does NOT integrate into the
+    agent-framework repo's .NET 10 / Central-Package-Management / source-reference build (see the local
+    Directory.Build.props). Run it with `dotnet run` from this folder.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <RootNamespace>Neo4jShoppingAssistant</RootNamespace>
+    <!-- OPENAI001: the OpenAIClient(AuthenticationPolicy, options) ctor used for keyless Azure auth is
+         marked experimental in the OpenAI SDK (the MAF Foundry samples use the same pattern). -->
+    <NoWarn>$(NoWarn);OPENAI001</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- AgentMemory (published) — the .NET Neo4j agent-memory library + its Microsoft Agent Framework adapter. -->
+    <PackageReference Include="AgentMemory" Version="1.0.1" />
+    <PackageReference Include="AgentMemory.AgentFramework" Version="1.0.1" />
+    <!-- Microsoft Agent Framework (matches AgentMemory's target) + the OpenAI/Foundry chat & embedding clients. -->
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.9.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.5.1" />
+    <PackageReference Include="Azure.Identity" Version="1.21.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.17" />
+  </ItemGroup>
+
+</Project>
