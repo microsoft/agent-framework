@@ -666,8 +666,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     break
                 if cancellation_signal.is_set():
                     # Cooperative exit on cancellation (steering pressure or client cancel).
-                    for event in tracker.close():
-                        yield event
+                    try:
+                        for event in tracker.close():
+                            yield event
+                    except Exception:
+                        logger.debug("Error closing tracker on cancellation", exc_info=True)
                     logger.debug(
                         "Workflow response handler exiting early: %s",
                         "client cancelled" if context.client_cancelled else "steering pressure",
