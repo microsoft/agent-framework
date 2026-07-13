@@ -837,10 +837,6 @@ class DevServer:
                     return await openai_executor.execute_sync(request)
 
                 # Route to local Agent Framework executor (original behavior)
-                raw_body = await raw_request.body()
-                logger.info(f"Raw request body: {raw_body.decode()}")
-                logger.info(f"Parsed request: metadata={request.metadata}")
-
                 # Get entity_id from metadata
                 entity_id = request.get_entity_id()
                 logger.info(f"Extracted entity_id: {entity_id}")
