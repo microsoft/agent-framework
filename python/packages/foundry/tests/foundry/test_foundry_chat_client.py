@@ -978,7 +978,6 @@ def test_code_interpreter_tool_serializes_to_otel_tool_definitions() -> None:
         {
             "type": "code_interpreter",
             "name": "code_interpreter",
-            "container": {"type": "auto", "file_ids": ["assistant-abc123"]},
         }
     ]
 
