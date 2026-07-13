@@ -16,11 +16,15 @@ from ag_ui.core import MessagesSnapshotEvent, RunStartedEvent, StateSnapshotEven
 from agent_framework import (
     Agent,
     AgentResponseUpdate,
+    AgentSession,
     ChatResponseUpdate,
     Content,
+    ContextProvider,
     Executor,
     FunctionTool,
     Message,
+    SessionContext,
+    SupportsAgentRun,
     ToolApprovalMiddleware,
     WorkflowBuilder,
     WorkflowContext,
@@ -332,6 +336,81 @@ async def test_endpoint_with_state_schema(build_chat_client):
     )
 
     assert response.status_code == 200
+
+
+async def test_endpoint_bridges_request_state_to_context_provider_without_snapshots(streaming_chat_client_stub):
+    """Request Shared State is ordinary per-run context available to context providers."""
+
+    class RequestContextProvider(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, state
+            identity = session.state["identity"]
+            assert isinstance(identity, dict)
+            context.extend_messages(
+                self,
+                [
+                    Message(
+                        role="system",
+                        contents=[
+                            Content.from_text(
+                                text=(
+                                    f"agent={session.state['agent_id']} "
+                                    f"user={session.state['user_id']} "
+                                    f"tenant={session.state['tenant_id']} "
+                                    f"type={identity['type']}"
+                                )
+                            )
+                        ],
+                    )
+                ],
+            )
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del kwargs
+        assert options.get("metadata") is None
+        provider_result = next(message.text for message in messages if message.role == "system")
+        yield ChatResponseUpdate(contents=[Content.from_text(text=provider_result)])
+
+    expected = "agent=agent-123 user=user-456 tenant=tenant-789 type=message"
+    provider = RequestContextProvider("request-context")
+    agent = Agent(
+        name="test",
+        instructions=None,
+        client=streaming_chat_client_stub(stream_fn),
+        context_providers=[provider],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, agent, path="/request-context", keepalive_seconds=None)
+
+    response = TestClient(app).post(
+        "/request-context",
+        json={
+            "messages": [{"role": "user", "content": "Who am I?"}],
+            "state": {
+                "agent_id": "agent-123",
+                "user_id": "user-456",
+                "tenant_id": "tenant-789",
+                "identity": {"type": "message"},
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    text_deltas = [
+        event["delta"] for event in _decode_sse_events(response) if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    ]
+    assert text_deltas == [expected]
 
 
 async def test_endpoint_with_default_state_seed(build_chat_client):

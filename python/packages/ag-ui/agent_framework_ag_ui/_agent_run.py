@@ -1821,6 +1821,7 @@ async def run_agent_stream(
         session = AgentSession(session_id=thread_id, service_session_id=supplied_thread_id)
     else:
         session = AgentSession(session_id=thread_id)
+    session.state.update(flow.current_state)
     _restore_tool_approval_state(session, approval_state_store, approval_thread_id)
 
     # Inject metadata for AG-UI orchestration (Feature #2: Azure-safe truncation)
