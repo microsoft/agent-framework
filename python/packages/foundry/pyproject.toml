@@ -27,7 +27,7 @@ dependencies = [
     "agent-framework-openai>=1.10.0,<2",
     "aiohttp>=3.9,<4",
     "azure-ai-inference>=1.0.0b9,<1.0.0b10",
-    "azure-ai-projects>=2.2.0,<3.0",
+    "azure-ai-projects>=2.2.0,<2.3.0",
 ]
 
 [tool.uv]
