@@ -813,6 +813,31 @@ def test_function_call_without_thought_signature_replays_without_one() -> None:
     assert parts[0].thought_signature is None
 
 
+def test_malformed_thought_signature_is_ignored_gracefully(caplog: pytest.LogCaptureFixture) -> None:
+    """A corrupted or non-string signature degrades to no signature instead of crashing the tool loop."""
+    client, _ = _make_gemini_client()
+    corrupted = Content.from_function_call(
+        call_id="call-1",
+        name="get_weather",
+        arguments={"location": "Paris"},
+        additional_properties={"thought_signature": "not valid base64!!!"},
+    )
+    non_string = Content.from_function_call(
+        call_id="call-2",
+        name="get_weather",
+        arguments={"location": "Paris"},
+        additional_properties={"thought_signature": 123},
+    )
+
+    with caplog.at_level(logging.WARNING):
+        parts = client._convert_message_contents([corrupted, non_string], {})
+
+    assert len(parts) == 2
+    assert parts[0].thought_signature is None
+    assert parts[1].thought_signature is None
+    assert "malformed thought_signature" in caplog.text
+
+
 def test_reconstructed_function_call_signature_survives_round_trip() -> None:
     """Parse captures the signature and a rebuilt call (raw Part dropped) replays it end to end."""
     client, _ = _make_gemini_client()

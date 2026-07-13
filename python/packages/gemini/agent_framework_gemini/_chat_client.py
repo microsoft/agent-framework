@@ -694,8 +694,15 @@ class RawGeminiChatClient(
                     )
                     # Echo back Gemini 3's opaque thought_signature (required on every replay of a
                     # functionCall part), decoding it from the base64 form stored in additional_properties.
+                    # Guard the untyped value and degrade gracefully on corrupted history rather than
+                    # crashing the tool loop.
                     encoded_signature = content.additional_properties.get("thought_signature")
-                    thought_signature = base64.b64decode(encoded_signature) if encoded_signature else None
+                    thought_signature: bytes | None = None
+                    if isinstance(encoded_signature, str) and encoded_signature:
+                        try:
+                            thought_signature = base64.b64decode(encoded_signature, validate=True)
+                        except ValueError:  # binascii.Error subclasses ValueError
+                            logger.warning("Ignoring malformed thought_signature on function_call content")
                     if isinstance(raw_part, types.Part) and raw_part.function_call is not None:
                         replayed_part = raw_part.model_copy(update={"function_call": function_call}, deep=True)
                         if replayed_part.thought_signature is None and thought_signature is not None:
