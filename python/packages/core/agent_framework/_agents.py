@@ -631,10 +631,22 @@ class BaseAgent(SerializationMixin):
                 ctx: the function invocation context used
                 **kwargs: only used to dynamically load the argument that is defined for this tool.
             """
+            session = ctx.session if propagate_session else None
+
+            # Create a child session that shares the parent's state dict but has
+            # an isolated service_session_id. This avoids mutating the parent
+            # session in-place, which would race under concurrent asyncio.gather
+            # tool invocations sharing the same session.
+            if session is not None:
+                child_session = AgentSession(session_id=session.session_id)
+                child_session.state = session.state  # shared by reference
+                child_session.service_session_id = None
+                session = child_session
+
             stream = self.run(
                 str(kwargs.get(arg_name, "")),
                 stream=True,
-                session=ctx.session if propagate_session else None,
+                session=session,
                 function_invocation_kwargs=dict(ctx.kwargs),
             )
             if stream_callback is not None:
@@ -1410,6 +1422,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         if active_session is not None:
             effective_client_kwargs["session"] = active_session
+        per_service_call_history_middleware: PerServiceCallHistoryPersistingMiddleware | None = None
         if per_service_call_history_providers and active_session is not None:
             per_service_call_history_middleware = PerServiceCallHistoryPersistingMiddleware(
                 agent=self,
@@ -1417,16 +1430,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 providers=per_service_call_history_providers,
                 service_stores_history=service_stores_history,
             )
-            existing_middleware = effective_client_kwargs.get("middleware")
-            if isinstance(existing_middleware, Sequence) and not isinstance(existing_middleware, (str, bytes)):
-                effective_client_kwargs["middleware"] = [per_service_call_history_middleware, *existing_middleware]
-            elif existing_middleware is not None:
-                effective_client_kwargs["middleware"] = [
-                    per_service_call_history_middleware,
-                    cast(MiddlewareTypes, existing_middleware),
-                ]
-            else:
-                effective_client_kwargs["middleware"] = [per_service_call_history_middleware]
         provider_middleware = session_context.get_middleware()
         if provider_middleware:
             middleware_list = categorize_middleware(provider_middleware)
@@ -1448,6 +1451,18 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                     ]
                 else:
                     effective_client_kwargs["middleware"] = provider_function_chat_middleware
+
+        if per_service_call_history_middleware is not None:
+            existing_middleware = effective_client_kwargs.get("middleware")
+            if isinstance(existing_middleware, Sequence) and not isinstance(existing_middleware, (str, bytes)):
+                effective_client_kwargs["middleware"] = [*existing_middleware, per_service_call_history_middleware]
+            elif existing_middleware is not None:
+                effective_client_kwargs["middleware"] = [
+                    cast(MiddlewareTypes, existing_middleware),
+                    per_service_call_history_middleware,
+                ]
+            else:
+                effective_client_kwargs["middleware"] = [per_service_call_history_middleware]
 
         return {
             "session": active_session,

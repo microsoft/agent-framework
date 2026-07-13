@@ -20,7 +20,7 @@ from .._agents import Agent, SupportsAgentRun
 from .._clients import SupportsShellTool, SupportsWebSearchTool
 from .._compaction import CompactionProvider, ContextWindowCompactionStrategy, ToolResultCompactionStrategy
 from .._feature_stage import ExperimentalFeature, experimental
-from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider
+from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider, MessageInjectionMiddleware
 from .._skills import SkillsProvider
 from .._types import ChatOptions
 from ._background_agents import BackgroundAgentsProvider
@@ -584,6 +584,9 @@ def create_harness_agent(
                 next_message=loop_next_message,
             ),
         )
+    # Message injection is always on. It is a no-op when no messages are queued for the session,
+    # so there is no opt-out.
+    assembled_middleware.append(MessageInjectionMiddleware())
     if middleware:
         assembled_middleware.extend(middleware)
 

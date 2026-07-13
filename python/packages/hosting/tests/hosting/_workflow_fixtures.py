@@ -32,6 +32,11 @@ def build_echo_workflow() -> Workflow:
     return WorkflowBuilder(start_executor=_EchoExecutor(id="echo")).build()
 
 
+def echo_workflow_builder() -> WorkflowBuilder:
+    """Return an *unbuilt* echo ``WorkflowBuilder``, for testing builder-shaped targets."""
+    return WorkflowBuilder(start_executor=_EchoExecutor(id="echo"))
+
+
 class _MultiChunkExecutor(Executor):
     """Yields three separate ``output`` events so streaming has something to chew on."""
 

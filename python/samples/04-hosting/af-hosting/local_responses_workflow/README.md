@@ -1,34 +1,34 @@
-# local_responses_workflow — workflow target with run-hook prep + checkpoints
+# local_responses_workflow — Responses helpers with a workflow target
 
-A `Workflow` (writer → legal reviewer → formatter) hosted
-behind the **Responses API**, with the host configured to
-**persist per-conversation checkpoints**. Mirrors
-[`../../foundry-hosted-agents/responses/05_workflows/`](../../foundry-hosted-agents/responses/05_workflows/)
-but uses the `agent-framework-hosting` stack instead of the
-Foundry-Hosted-Agents runtime. The `run_hook` prepares the writer prompt
-before the workflow starts.
+This sample shows the helper-first hosting shape for a local workflow:
 
-## What's interesting
+- `responses_to_run(...)` parses the Responses request body.
+- `WorkflowState` resolves the workflow target.
+- FastAPI owns the route and response construction.
+- The app owns file-based checkpoint storage and the
+  `response_id -> checkpoint_id` cursor used to continue from a previous
+  response.
+- Continuation is intentionally limited to `previous_response_id`; this sample
+  rejects `conversation_id` continuity with HTTP 400.
 
-- `AgentFrameworkHost(target=workflow, …)` — the host detects a
-  `Workflow` target and dispatches to `workflow.run(...)` (no
-  `Agent.create_session(...)`).
-- `ResponsesChannel` is mounted at `/responses` with a `prepare_writer_prompt`
-  run hook that **adapts the channel-native input into the workflow start
-  executor's input**. Responses delivers a `list[Message]`; the hook normalises
-  it to text and prepares the prompt the writer agent receives.
-- The hook parses the inbound text as JSON
-  (`{"topic": ..., "style": ..., "audience": ...}`); if parsing fails
-  it uses the whole text as `topic` with defaults.
-- The workflow starts directly at the writer `AgentExecutor`; no extra intake
-  executor is needed because the hook performs the one preparation step.
-- `checkpoint_location=storage/checkpoints/` — the host scopes a
-  `FileCheckpointStorage` per conversation (Responses keys it on
-  `previous_response_id` / `conversation_id`) and **restores from the
-  latest checkpoint at the start of every turn** before applying the new
-  input. Without an isolation key the host skips checkpointing for that request.
-- No `HistoryProvider` — the workflow owns its own state via the
-  checkpoint store.
+The workflow writes a slogan with one Foundry-backed writer agent and a small
+deterministic formatter executor. That keeps the sample focused on native
+FastAPI routing, Responses helpers, `WorkflowState`, and app-owned checkpoint
+cursor storage. Both workflow checkpoints and the checkpoint cursor file are
+stored under the sample's local `storage/` root. Checkpoints are scoped into
+per-continuation buckets so a "latest checkpoint" lookup cannot cross
+conversations.
+
+## Production readiness
+
+This is not a full-fledged production deployment. Before exposing this pattern
+to callers, add authentication and authorization at the infrastructure layer,
+the FastAPI app layer, or inside the route body.
+
+Session continuation deserves particular care: treat `previous_response_id` as
+an untrusted request value, authorize the caller before restoring or storing a
+checkpoint cursor for that id, and partition durable checkpoint/cursor storage
+by tenant/user as appropriate for your application.
 
 ## Run
 
@@ -49,35 +49,17 @@ uv run python app.py
 
 ## Call locally
 
-Two clients are provided next to `app.py`:
-
-- **`call_server.py`** — Python client using the OpenAI SDK (Responses
-  API only).
-- **`call_server.rest`** — raw REST examples for the Responses endpoint
-  (open in VS Code with the REST Client extension or any compatible HTTP-file
-  runner).
-
 ```bash
 uv sync --group dev
-
-# Structured brief via the OpenAI SDK (Responses API):
-uv run python call_server.py \
-    '{"topic": "electric SUV", "style": "playful", "audience": "young families"}'
-
-# The client intentionally omits `model`; the host chooses the backing
-# deployment from FOUNDRY_MODEL.
-
-# Plain topic (style/audience default to "modern" / "general"):
-uv run python call_server.py "electric SUV"
-
-# Continue an existing conversation by its `response.id`:
-uv run python call_server.py --previous-response-id <response-id> \
-    '{"topic": "electric SUV", "style": "retro", "audience": "boomers"}'
+uv run python call_server.py '{"topic": "electric SUV", "style": "playful", "audience": "young families"}'
 ```
 
-After a few turns, inspect `storage/checkpoints/<isolation_key>/` —
-each conversation has its own subdirectory of checkpoint files written
-by the host.
+The script sends a follow-up using the first response id as
+`previous_response_id`, so the workflow restores the prior checkpoint before
+running the next turn. It deliberately does not send `conversation_id`, because
+this sample rejects `conversation_id` continuation.
 
-> This sample is **local-only** — no Dockerfile, no Foundry packaging.
-> A Foundry-Hosted-Agents-compatible packaging sample will be added separately.
+> This sample uses local file storage under `storage/` for both workflow
+> checkpoints and checkpoint cursors. The checkpoint bucket names are hashed
+> from the continuation id before they are used as directory names. Replace this
+> with production-grade durable storage for multi-replica or transient hosting.

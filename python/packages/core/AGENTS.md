@@ -69,6 +69,7 @@ agent_framework/
 - **`ChatMiddleware`** - Intercepts chat client `get_response()` calls
 - **`FunctionMiddleware`** - Intercepts function/tool invocations
 - **`AgentContext`** / **`ChatContext`** / **`FunctionInvocationContext`** - Context objects passed through middleware. A tool can declare a `FunctionInvocationContext` parameter to receive it; `context.tools` is the live, mutable tools list for the run, and `context.add_tools(...)` / `context.remove_tools(...)` enable progressive tool exposure (changes apply on the next function-calling iteration).
+- **`MessageInjectionMiddleware`** - Session-scoped chat middleware that lets tools or other code enqueue messages for the next model call in the current `AgentSession`; it drains queued messages into the next call and loops only when no function calls need to be handled by the function invocation layer.
 
 ### Sessions (`_sessions.py`)
 
@@ -124,7 +125,7 @@ agent_framework/
 - **Scoping** - Memories are isolated per session by default: each session writes under a working folder derived from `context.session_id`. Pass an explicit `scope` (e.g. a user id) to group memories across sessions, mirroring `FoundryMemoryProvider`'s `scope` arg.
 - **Descriptions & index** - `file_memory_write` accepts an optional `description`, stored in a companion `<stem>_description.md` sidecar. After each write/delete the provider rebuilds a capped (50-entry) `memories.md` index, and `before_run` injects that index as a `user` context message so the model knows what memories exist. Sidecars and the index are internal files hidden from `file_memory_ls`/`file_memory_grep` and rejected as write targets.
 - **`DEFAULT_FILE_MEMORY_SOURCE_ID`** / **`DEFAULT_FILE_MEMORY_INSTRUCTIONS`** - Public defaults for the provider's source id and instruction banner.
-- **Harness wiring** - `create_harness_agent` includes both `FileMemoryProvider` and `FileAccessProvider` by default. Disable via `disable_file_memory` / `disable_file_access`; override the backing store via `file_memory_store` / `file_access_store`. When no store is supplied, defaults are `FileSystemAgentFileStore` rooted at `{cwd}/agent-file-memory` (memory) and `{cwd}/working` (access), mirroring the .NET `HarnessAgent`.
+- **Harness wiring** - `create_harness_agent` includes both `FileMemoryProvider` and `FileAccessProvider` by default. Disable via `disable_file_memory` / `disable_file_access`; override the backing store via `file_memory_store` / `file_access_store`. When no store is supplied, defaults are `FileSystemAgentFileStore` rooted at `{cwd}/agent-file-memory` (memory) and `{cwd}/working` (access), mirroring the .NET `HarnessAgent`. `create_harness_agent` also wires in `MessageInjectionMiddleware` by default (mirroring the .NET harness's `UseMessageInjection`); it is always on with no opt-out because it is a no-op when no messages are queued for the session.
 
 ### Tool Approval Harness (`_harness/_tool_approval.py`)
 

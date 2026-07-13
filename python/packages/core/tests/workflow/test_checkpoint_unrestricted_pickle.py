@@ -336,7 +336,7 @@ def test_restricted_decode_allows_openai_response_types():
         input_tokens=10,
         output_tokens=20,
         total_tokens=30,
-        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        input_tokens_details=InputTokensDetails(cached_tokens=0, cache_write_tokens=0),
         output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
     )
     encoded = encode_checkpoint_value(usage)
