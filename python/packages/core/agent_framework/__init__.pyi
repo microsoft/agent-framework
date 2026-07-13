@@ -108,7 +108,6 @@ from ._harness._mode import DEFAULT_MODE_SOURCE_ID, AgentModeProvider, get_agent
 from ._harness._todo import (
     DEFAULT_TODO_SOURCE_ID,
     TodoFileStore,
-    TodoInput,
     TodoItem,
     TodoProvider,
     TodoSessionStore,
@@ -513,7 +512,6 @@ __all__ = [
     "SwitchCaseEdgeGroupDefault",
     "TextSpanRegion",
     "TodoFileStore",
-    "TodoInput",
     "TodoItem",
     "TodoProvider",
     "TodoSessionStore",

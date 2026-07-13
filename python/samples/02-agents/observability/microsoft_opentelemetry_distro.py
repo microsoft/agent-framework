@@ -2,17 +2,15 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "agent-framework-foundry",
-#     "azure-monitor-opentelemetry",
+#     "microsoft-opentelemetry",
 # ]
 # ///
 # Run with any PEP 723 compatible runner, e.g.:
-#   uv run python/samples/02-agents/observability/foundry_tracing.py
+#   uv run python/samples/02-agents/observability/microsoft_opentelemetry_distro.py
 
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import logging
-import os
 from random import randint
 from typing import Annotated
 
@@ -21,30 +19,15 @@ from agent_framework.foundry import FoundryChatClient
 from agent_framework.observability import get_tracer
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+from microsoft.opentelemetry import use_microsoft_opentelemetry
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
 
-"""
-This sample shows how to setup telemetry in Microsoft Foundry for a custom agent
-using ``FoundryChatClient.configure_azure_monitor()``.
-
-First ensure you have a Foundry workspace with Application Insights enabled.
-And use the Operate tab to Register an Agent.
-Set the OpenTelemetry agent ID to the value used below in the Agent creation: ``weather-agent``
-(or change both).
-
-Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT — Microsoft Foundry project endpoint
-    FOUNDRY_MODEL            — Model deployment name (e.g. gpt-4o)
-"""
-
+# Load environment variables from .env file
 load_dotenv()
 
-logger = logging.getLogger(__name__)
 
-
-# NOTE: approval_mode="never_require" is for sample brevity.
 @tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -56,28 +39,29 @@ async def get_weather(
 
 
 async def main():
-    client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["FOUNDRY_MODEL"],
-        credential=AzureCliCredential(),
-    )
+    # Set up Azure monitor exporters for telemetry
+    # This will automatically enable instrumentation for Agent Framework
+    # Install the Microsoft OpenTelemetry Distro package to enable this functionality:
+    # pip install microsoft-opentelemetry
+    # Requires the following environment variables to be set:
+    # OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+    # APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey...
+    use_microsoft_opentelemetry(enable_azure_monitor=True)
 
-    # configure_azure_monitor() retrieves the Application Insights connection string
-    # from the project client and sets up tracing automatically.
-    await client.configure_azure_monitor(
-        enable_sensitive_data=True,
-        enable_live_metrics=True,
-    )
-    print("Observability is set up. Starting Weather Agent...")
+    questions = [
+        "What's the weather in Amsterdam?",
+        "and in Paris, and which is better?",
+        "Why is the sky blue?",
+    ]
 
-    questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]
-
-    with get_tracer().start_as_current_span("Weather Agent Chat", kind=SpanKind.CLIENT) as current_span:
+    with get_tracer().start_as_current_span(
+        "Scenario: Agent Chat", kind=SpanKind.CLIENT
+    ) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
         agent = Agent(
-            client=client,
-            tools=[get_weather],
+            client=FoundryChatClient(credential=AzureCliCredential()),
+            tools=get_weather,
             name="WeatherAgent",
             instructions="You are a weather assistant.",
             id="weather-agent",

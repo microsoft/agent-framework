@@ -149,7 +149,6 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
     "._harness._todo": (
         "DEFAULT_TODO_SOURCE_ID",
         "TodoFileStore",
-        "TodoInput",
         "TodoItem",
         "TodoProvider",
         "TodoSessionStore",
@@ -546,7 +545,6 @@ __all__ = [
     "SwitchCaseEdgeGroupDefault",
     "TextSpanRegion",
     "TodoFileStore",
-    "TodoInput",
     "TodoItem",
     "TodoProvider",
     "TodoSessionStore",
