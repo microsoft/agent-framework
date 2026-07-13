@@ -46,6 +46,7 @@ def _make_part(
     text: str | None = None,
     thought: bool = False,
     function_call: tuple[str | None, str, dict[str, Any]] | None = None,
+    thought_signature: bytes | None = None,
     tool_call: tuple[str | None, types.ToolType, dict[str, Any]] | None = None,
     tool_response: tuple[str | None, types.ToolType, dict[str, Any]] | None = None,
     executable_code: str | None = None,
@@ -57,6 +58,7 @@ def _make_part(
         text: Text content of the part.
         thought: Whether this is a thinking/reasoning part.
         function_call: Tuple of (id, name, args) if this is a function call part.
+        thought_signature: Opaque Gemini 3 thought signature attached to the part, if any.
         tool_call: Tuple of (id, tool_type, args) if this is a server-side tool call part.
         tool_response: Tuple of (id, tool_type, response) if this is a server-side tool response part.
         executable_code: Source code string for a code execution part.
@@ -65,6 +67,7 @@ def _make_part(
     part = MagicMock()
     part.text = text
     part.thought = thought
+    part.thought_signature = thought_signature
     part.function_response = None
     part.tool_call = None
     part.tool_response = None
@@ -739,6 +742,78 @@ def test_function_call_part_preserves_thought_signature_from_raw_part() -> None:
     assert parts[0].function_call.id == "call-1"
     assert parts[0].function_call.name == "get_weather"
     assert parts[0].function_call.args == {"location": "Paris"}
+
+
+def test_function_call_part_captures_thought_signature_on_parse() -> None:
+    """Parsing a functionCall part stores its thought_signature in additional_properties."""
+    client, _ = _make_gemini_client()
+
+    contents = client._parse_parts([
+        _make_part(function_call=("call-1", "get_weather", {"location": "Paris"}), thought_signature=b"sig-123")
+    ])
+
+    assert len(contents) == 1
+    assert contents[0].type == "function_call"
+    assert contents[0].additional_properties["thought_signature"] == b"sig-123"
+
+
+def test_function_call_part_without_thought_signature_stores_nothing() -> None:
+    """A functionCall part without a signature leaves additional_properties empty."""
+    client, _ = _make_gemini_client()
+
+    contents = client._parse_parts([_make_part(function_call=("call-1", "get_weather", {"location": "Paris"}))])
+
+    assert len(contents) == 1
+    assert "thought_signature" not in contents[0].additional_properties
+
+
+def test_reconstructed_function_call_replays_thought_signature_from_additional_properties() -> None:
+    """A function call rebuilt without its raw Part still replays the signature (harness approval path)."""
+    client, _ = _make_gemini_client()
+    content = Content.from_function_call(
+        call_id="call-1",
+        name="get_weather",
+        arguments={"location": "Paris"},
+        additional_properties={"thought_signature": b"sig-123"},
+    )
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].thought_signature == b"sig-123"
+    assert parts[0].function_call is not None
+    assert parts[0].function_call.id == "call-1"
+
+
+def test_function_call_without_thought_signature_replays_without_one() -> None:
+    """A function call lacking any signature produces a part with no thought_signature."""
+    client, _ = _make_gemini_client()
+    content = Content.from_function_call(call_id="call-1", name="get_weather", arguments={"location": "Paris"})
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].thought_signature is None
+
+
+def test_reconstructed_function_call_signature_survives_round_trip() -> None:
+    """Parse captures the signature and a rebuilt call (raw Part dropped) replays it end to end."""
+    client, _ = _make_gemini_client()
+
+    parsed = client._parse_parts([
+        _make_part(function_call=("call-1", "get_weather", {"location": "Paris"}), thought_signature=b"sig-123")
+    ])
+    # Simulate a layer that reconstructs the call from call_id/name/arguments, dropping raw_representation.
+    rebuilt = Content.from_function_call(
+        call_id=parsed[0].call_id,
+        name=parsed[0].name,
+        arguments=parsed[0].arguments,
+        additional_properties=dict(parsed[0].additional_properties),
+    )
+
+    parts = client._convert_message_contents([rebuilt], {})
+
+    assert parts[0].thought_signature == b"sig-123"
 
 
 def test_server_side_tool_call_part_is_informational_only() -> None:

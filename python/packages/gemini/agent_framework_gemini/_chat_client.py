@@ -691,10 +691,16 @@ class RawGeminiChatClient(
                         name=content.name or "",
                         args=content.parse_arguments() or {},
                     )
+                    # Echo back Gemini 3's opaque thought_signature (required on every replay of a
+                    # functionCall part) even when the original raw_representation Part was dropped.
+                    thought_signature = content.additional_properties.get("thought_signature")
                     if isinstance(raw_part, types.Part) and raw_part.function_call is not None:
-                        parts.append(raw_part.model_copy(update={"function_call": function_call}, deep=True))
+                        replayed_part = raw_part.model_copy(update={"function_call": function_call}, deep=True)
+                        if replayed_part.thought_signature is None and thought_signature is not None:
+                            replayed_part.thought_signature = thought_signature
+                        parts.append(replayed_part)
                     else:
-                        parts.append(types.Part(function_call=function_call))
+                        parts.append(types.Part(function_call=function_call, thought_signature=thought_signature))
                 case "function_result":
                     raw_part = content.raw_representation
                     if isinstance(raw_part, types.Part) and raw_part.tool_response is not None:
@@ -1122,11 +1128,16 @@ class RawGeminiChatClient(
                 else:
                     call_id = self._generate_tool_call_id()
                     logger.debug("function_call missing id; generated fallback call_id=%r", call_id)
+                # Capture Gemini 3's thought_signature
+                additional_properties = (
+                    {"thought_signature": part.thought_signature} if part.thought_signature is not None else None
+                )
                 contents.append(
                     Content.from_function_call(
                         call_id=call_id,
                         name=function_call.name or "",
                         arguments=function_call.args or {},
+                        additional_properties=additional_properties,
                         raw_representation=part,
                     )
                 )
