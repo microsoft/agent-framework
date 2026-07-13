@@ -421,6 +421,100 @@ async def test_workflow_run_resume_content_response_after_checkpoint_restore() -
     assert any("approved" in delta for delta in text_deltas)
 
 
+async def test_workflow_run_resume_restores_checkpoint_exactly_once() -> None:
+    """A checkpointed AG-UI resume must restore -- and run on_checkpoint_restore -- once.
+
+    Custom ``on_checkpoint_restore`` hooks are not required to be idempotent. Coercing the
+    resume responses against the checkpoint's pending requests must therefore read the
+    persisted pending set without a second restore. This asserts the resumed executor's
+    restore hook fires exactly once (it would fire twice under a pre-restore-then-run
+    approach that hydrates pending requests by restoring the whole checkpoint first).
+    """
+
+    class CountingApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+            self.restore_count = 0
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345", "amount": "$89.99"},
+            )
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+            del original_request
+            status = "approved" if bool(response.approved) else "rejected"
+            await ctx.yield_output(f"Refund tool call {status}.")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+        async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+            self.restore_count += 1
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=CountingApprovalExecutor(), checkpoint_storage=storage).build()
+
+    # First run: hit the approval interrupt and let core checkpoint the pending state.
+    first_events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "go"}]},
+            workflow,
+            checkpoint_storage=storage,
+        )
+    ]
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(first_finished)
+    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
+
+    checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name=workflow.name),
+        key=lambda checkpoint: checkpoint.timestamp,
+    )
+    assert checkpoints, "expected the interrupted run to create a checkpoint"
+    resume_checkpoint_id = checkpoints[-1].checkpoint_id
+
+    # Resume on a FRESH workflow instance (cold restore, as after a process restart) so the
+    # restore hook count starts at zero and reflects only restores performed by this resume.
+    resumed_executor = CountingApprovalExecutor()
+    resumed_workflow = WorkflowBuilder(start_executor=resumed_executor).build()
+    resumed_events: list[Any] = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [],
+                "resume": {
+                    "interrupts": [
+                        {
+                            "id": "approval-1",
+                            "value": {
+                                "type": "function_approval_response",
+                                "approved": True,
+                                "id": interrupt_value.get("id", "approval-1"),
+                                "function_call": interrupt_value.get("function_call"),
+                            },
+                        }
+                    ]
+                },
+            },
+            resumed_workflow,
+            checkpoint_id=resume_checkpoint_id,
+            checkpoint_storage=storage,
+        )
+    ]
+
+    assert "RUN_ERROR" not in [event.type for event in resumed_events]
+    assert resumed_executor.restore_count == 1, (
+        f"expected exactly one checkpoint restore per resume, got {resumed_executor.restore_count}"
+    )
+
+
 async def test_workflow_run_resume_message_list_from_json_payload() -> None:
     """Resume payloads should coerce AG-UI message dictionaries into list[Message] responses."""
 
