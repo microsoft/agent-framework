@@ -478,6 +478,12 @@ class WorkflowExecutor(Executor):
                 execution_id: execution_context for execution_id, execution_context in self._execution_contexts.items()
             },
             "request_to_execution": dict(self._request_to_execution),
+            # Embed the sub-workflow's own checkpoint so its full state (shared state,
+            # executor snapshots, and pending request_info events) is restored faithfully
+            # on resume, instead of rehydrating only the pending requests. The sub-workflow
+            # is quiescent here: it ran to idle within this parent superstep before the
+            # parent checkpoints.
+            "sub_workflow_checkpoint": await self.workflow._runner.capture_checkpoint_object(),  # pyright: ignore[reportPrivateUsage]
         }
 
     @override
@@ -517,13 +523,18 @@ class WorkflowExecutor(Executor):
         self._execution_contexts = execution_contexts
         self._request_to_execution = request_to_execution
 
-        # Add the `request_info_event`s back to the sub workflow.
-        # This is only a temporary solution to rehydrate the sub workflow with the requests.
-        # The proper way would be to rehydrate the workflow from a checkpoint on a Workflow
-        # API instead of the '_runner_context' object that should be hidden. And the sub workflow
-        # should be rehydrated from a checkpoint object instead of from a subset of the state.
-        # TODO(@taochen): Issue #1614 - how to handle the case when the parent workflow has checkpointing
-        # set up but not the sub workflow?
+        # Rehydrate the sub-workflow from its embedded checkpoint so its full state is
+        # restored (shared state, executor snapshots, in-flight messages, and pending
+        # request_info events) - not just the pending requests.
+        sub_workflow_checkpoint = state.get("sub_workflow_checkpoint")
+        if sub_workflow_checkpoint is not None:
+            sub_workflow_checkpoint = decode_checkpoint_value(sub_workflow_checkpoint)
+            await self.workflow._runner.restore_from_checkpoint_object(sub_workflow_checkpoint)  # pyright: ignore[reportPrivateUsage]
+            return
+
+        # Backward-compatibility fallback for checkpoints saved before the sub-workflow
+        # checkpoint was embedded: re-add only the pending request_info events. Such
+        # checkpoints cannot restore the sub-workflow's deeper executor state.
         request_info_events = [
             request_info_event
             for execution_context in self._execution_contexts.values()

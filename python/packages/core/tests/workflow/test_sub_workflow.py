@@ -15,6 +15,7 @@ from agent_framework import (
     WorkflowContext,
     WorkflowEvent,
     WorkflowExecutor,
+    WorkflowRunState,
     handler,
     response_handler,
 )
@@ -617,6 +618,59 @@ async def test_sub_workflow_checkpoint_restore_no_duplicate_requests() -> None:
     # Key assertion: Only the second request should be received, not a duplicate of the first
     assert len(request_events) == 1
     assert request_events[0].data.prompt == "Second request"
+
+
+async def test_sub_workflow_checkpoint_restore_preserves_sub_workflow_state() -> None:
+    """Resuming a sub-workflow mid-progress must restore its internal executor state.
+
+    Regression guard for the issue where only the WorkflowExecutor's bookkeeping (pending
+    requests) was checkpointed, so a sub-workflow executor that accumulates state across
+    multiple request/response cycles (here ``TwoStepSubWorkflowExecutor._responses``) lost
+    that state on resume. With the sub-workflow's own checkpoint embedded in the parent
+    checkpoint, the second response now completes the two-step flow instead of triggering a
+    spurious third request.
+    """
+    storage = InMemoryCheckpointStorage()
+
+    # Step 1: run until the first request.
+    workflow1 = _build_checkpoint_test_workflow(storage)
+    first_request_id: str | None = None
+    async for event in workflow1.run("test_value", stream=True):
+        if event.type == "request_info":
+            first_request_id = event.request_id
+    assert first_request_id is not None
+
+    # Step 2: answer the first request so the sub-workflow accumulates internal state
+    # (``_responses == ["first_answer"]``) and emits the second request. This mid-progress
+    # point is what we checkpoint and resume from - the case the no-duplicate test (which
+    # checkpoints at the first request, before any state accrues) does not cover.
+    second_request_id: str | None = None
+    async for event in workflow1.run(stream=True, responses={first_request_id: "first_answer"}):
+        if event.type == "request_info":
+            second_request_id = event.request_id
+    assert second_request_id is not None
+
+    # Resume from the latest checkpoint (captured after the second request was made).
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow1.name)
+    checkpoint_id = max(checkpoints, key=lambda cp: cp.iteration_count).checkpoint_id
+
+    workflow2 = _build_checkpoint_test_workflow(storage)
+    resumed_second_request_id: str | None = None
+    async for event in workflow2.run(checkpoint_id=checkpoint_id, stream=True):
+        if event.type == "request_info":
+            resumed_second_request_id = event.request_id
+    assert resumed_second_request_id is not None
+    assert resumed_second_request_id == second_request_id
+
+    # Step 3: answer the second request. With the sub-workflow's state restored, the two-step
+    # executor completes instead of emitting a spurious third request. If the internal state
+    # were lost, the second answer would be treated as a first answer and a third request
+    # ("Second request") would be emitted.
+    result = await workflow2.run(responses={resumed_second_request_id: "second_answer"})
+    assert result.get_request_info_events() == [], (
+        "Sub-workflow internal state was lost on resume: a spurious extra request was emitted"
+    )
+    assert result.get_final_state() == WorkflowRunState.IDLE
 
 
 async def test_sub_workflow_intermediate_outputs_propagate_to_parent() -> None:

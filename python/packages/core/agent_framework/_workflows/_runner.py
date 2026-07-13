@@ -340,6 +340,73 @@ class RunnerImpl:
             logger.error(f"Failed to restore from checkpoint {checkpoint_id}: {e}")
             raise WorkflowCheckpointException(f"Failed to restore from checkpoint {checkpoint_id}") from e
 
+    async def capture_checkpoint_object(self) -> WorkflowCheckpoint:
+        """Capture the current runner state as an in-memory ``WorkflowCheckpoint``.
+
+        Builds a checkpoint from committed shared state, executor snapshots, and any
+        pending request_info events, without writing to a storage backend. The caller
+        owns the returned object - for example, a parent ``WorkflowExecutor`` embedding
+        a child workflow's checkpoint in its own checkpoint payload.
+
+        This is only valid when the runner is quiescent (no in-flight executor
+        messages). That holds at a checkpoint boundary because a sub-workflow runs to
+        idle within a single parent superstep before the parent checkpoints.
+
+        Returns:
+            A ``WorkflowCheckpoint`` snapshot of the current runner state.
+
+        Raises:
+            WorkflowCheckpointException: If in-flight executor messages are present.
+        """
+        if await self._ctx.has_messages():
+            raise WorkflowCheckpointException(
+                "Cannot capture a checkpoint object while in-flight executor messages are present."
+            )
+
+        # Persist executor snapshots into committed shared state before exporting it.
+        await self._prepare_checkpoint_state()
+        pending_request_info_events = await self._ctx.get_pending_request_info_events()
+        return WorkflowCheckpoint(
+            workflow_name=self._workflow_name,
+            graph_signature_hash=self._graph_signature_hash,
+            previous_checkpoint_id=None,
+            messages={},
+            state=self._state.export_state(),
+            pending_request_info_events=pending_request_info_events,
+            iteration_count=self._iteration,
+        )
+
+    async def restore_from_checkpoint_object(self, checkpoint: WorkflowCheckpoint) -> None:
+        """Restore runner state from an in-memory ``WorkflowCheckpoint`` object.
+
+        Unlike :meth:`restore_from_checkpoint`, this does not load from a storage
+        backend; it applies a checkpoint the caller already holds - for example, a
+        child workflow checkpoint embedded in a parent ``WorkflowExecutor``'s state.
+
+        Restores shared state, executor snapshots, in-flight messages, and pending
+        request_info events, then marks the runner as resumed.
+
+        Args:
+            checkpoint: The checkpoint whose state should be restored.
+
+        Raises:
+            WorkflowCheckpointException: If the checkpoint's graph signature does not
+                match this runner's workflow.
+        """
+        if self._graph_signature_hash != checkpoint.graph_signature_hash:
+            raise WorkflowCheckpointException(
+                "Workflow graph has changed since the checkpoint was created. "
+                "Please rebuild the original workflow before resuming."
+            )
+
+        # Clear first so import_state (which merges) does not leak stale keys from a
+        # prior run on this Workflow instance.
+        self._state.clear()
+        self._state.import_state(checkpoint.state)
+        await self._restore_executor_states()
+        await self._ctx.apply_checkpoint(checkpoint)
+        self._mark_resumed(checkpoint)
+
     async def _save_executor_states(self) -> None:
         """Populate executor state by calling checkpoint hooks on executors."""
         for exec_id, executor in self._executors.items():
