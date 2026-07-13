@@ -315,7 +315,7 @@ class TestDurableResponseStreamSeeding:
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
             patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
         ):
-            async for event in server._handle_inner_agent(request, context, cancellation_signal):  # pyright: ignore[reportPrivateUsage]
+            async for event in server._handle_response(request, context, cancellation_signal):  # pyright: ignore[reportPrivateUsage]
                 events.append(event)
 
         event_types = [getattr(e, "type", e.get("type") if isinstance(e, dict) else None) for e in events]
@@ -3184,7 +3184,7 @@ class TestCheckpointContextPathValidation:
         input_item = ItemMessage({"type": "message", "role": "user", "content": "next turn"})
 
         with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[input_item])):
-            async for _ in server._handle_inner_workflow(request, context):  # pyright: ignore[reportPrivateUsage]
+            async for _ in server._handle_response(request, context, asyncio.Event()):  # pyright: ignore[reportPrivateUsage]
                 pass
 
         assert agent.run.call_count == 2
@@ -3378,7 +3378,7 @@ class TestCheckpointContextPathValidation:
             # terminal ``response.failed`` event whose error message names
             # the rejected context id, so the SSE / non-streaming consumer
             # observes a well-formed failure rather than a raw exception.
-            events = [event async for event in server._handle_inner_workflow(request, context)]  # pyright: ignore[reportPrivateUsage]
+            events = [event async for event in server._handle_response(request, context, asyncio.Event())]  # pyright: ignore[reportPrivateUsage]
             after = sorted(p.name for p in tmp_path.iterdir())
 
         failed = [e for e in events if getattr(e, "type", None) == "response.failed"]
