@@ -151,6 +151,33 @@ async def test_tool_decorator_with_json_schema_invoke_missing_required():
         await search.invoke(arguments={})
 
 
+async def test_invoke_preserves_explicit_null_argument():
+    """A required nullable argument the model sets to null must reach the function.
+
+    Regression for #5934: exclude_none dropped the explicit null, so the required
+    ``unit`` went missing and the invocation failed.
+    """
+
+    @tool
+    def get_weather(location: str, unit: Literal["C", "F"] | None) -> str:
+        return f"{location}:{unit}"
+
+    result = await get_weather.invoke(arguments={"location": "Seattle", "unit": None})
+    assert isinstance(result, list)
+    assert result[0].text == "Seattle:None"
+
+
+async def test_invoke_omitted_optional_uses_function_default():
+    """An omitted optional argument still falls back to the function's own default."""
+
+    @tool
+    def get_weather(location: str, unit: str = "C") -> str:
+        return f"{location}:{unit}"
+
+    result = await get_weather.invoke(arguments={"location": "Seattle"})
+    assert result[0].text == "Seattle:C"
+
+
 async def test_tool_decorator_with_json_schema_invoke_invalid_type():
     """Test schema type checks run for mapping arguments."""
 
