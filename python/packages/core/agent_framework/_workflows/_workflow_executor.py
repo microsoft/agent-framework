@@ -7,6 +7,8 @@ import types
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from ..exceptions import WorkflowCheckpointException
+
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
@@ -231,6 +233,10 @@ class WorkflowExecutor(Executor):
                     # Forward to external handler
                     await ctx.request_info(request.source_event, response_type=request.source_event.response_type)
 
+    ## Checkpointing
+    The provided sub workflow may not have its own checkpoint storage. The sub workflow checkpointed states will
+    be managed by the parent workflow.
+
     ## Implementation Notes
     - Sub-workflows run to completion (or to idle-with-pending-requests) before their results are processed
     - Event processing is ordered - outputs are forwarded before requests
@@ -272,6 +278,12 @@ class WorkflowExecutor(Executor):
         self.workflow = workflow
         self.allow_direct_output = allow_direct_output
         self._propagate_request = propagate_request
+
+        if self.workflow._runner_context.has_checkpointing():  # type: ignore
+            raise WorkflowCheckpointException(
+                "The wrapped sub workflow must not have checkpointing enabled. "
+                "Sub workflow checkpointing is managed by the parent workflow."
+            )
 
     @property
     def input_types(self) -> list[type[Any] | types.UnionType]:
@@ -444,7 +456,7 @@ class WorkflowExecutor(Executor):
             # WorkflowExecutor keeps no separate request/response bookkeeping of its own. The
             # sub-workflow is quiescent here: it ran to idle within this parent superstep before
             # the parent checkpoints.
-            "sub_workflow_checkpoint": await self.workflow._runner.capture_checkpoint_object(),  # pyright: ignore[reportPrivateUsage]
+            "sub_workflow_checkpoint": await self.workflow._runner.create_checkpoint_object(),  # pyright: ignore[reportPrivateUsage]
         }
 
     @override

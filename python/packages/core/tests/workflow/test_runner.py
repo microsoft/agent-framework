@@ -513,7 +513,7 @@ async def test_runner_reset_iteration_count():
 
 
 async def test_runner_capture_and_restore_checkpoint_object_roundtrip():
-    """capture_checkpoint_object() then restore_from_checkpoint_object() must roundtrip.
+    """create_checkpoint_object() then restore_from_checkpoint_object() must roundtrip.
 
     Shared state and executor snapshots are captured into an in-memory ``WorkflowCheckpoint``
     and restored from it without any storage backend (the path the parent WorkflowExecutor
@@ -545,7 +545,7 @@ async def test_runner_capture_and_restore_checkpoint_object_roundtrip():
     state.set("shared_key", "shared_value")
     state.commit()
 
-    checkpoint = await runner.capture_checkpoint_object()
+    checkpoint = await runner.create_checkpoint_object()
     assert checkpoint.graph_signature_hash == "test_hash"
 
     # Mutate after capture; restoring must roll back to the captured snapshot.
@@ -560,8 +560,8 @@ async def test_runner_capture_and_restore_checkpoint_object_roundtrip():
     assert runner._resumed_from_checkpoint is True  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_runner_capture_checkpoint_object_includes_in_flight_messages():
-    """capture_checkpoint_object() must snapshot in-flight messages non-destructively."""
+async def test_runner_create_checkpoint_object_includes_in_flight_messages():
+    """create_checkpoint_object() must snapshot in-flight messages non-destructively."""
     executor = MockExecutor(id="executor_a")
     state = State()
     ctx = InProcRunnerContext()
@@ -569,7 +569,7 @@ async def test_runner_capture_checkpoint_object_includes_in_flight_messages():
 
     await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="START"))
 
-    checkpoint = await runner.capture_checkpoint_object()
+    checkpoint = await runner.create_checkpoint_object()
 
     # The in-flight message is captured in the snapshot ...
     assert list(checkpoint.messages.keys()) == ["START"]
@@ -578,8 +578,8 @@ async def test_runner_capture_checkpoint_object_includes_in_flight_messages():
     assert await ctx.has_messages() is True
 
 
-async def test_runner_capture_checkpoint_object_advances_previous_checkpoint_id():
-    """capture_checkpoint_object() must advance _previous_checkpoint_id so a later capture chains to it."""
+async def test_runner_create_checkpoint_object_advances_previous_checkpoint_id():
+    """create_checkpoint_object() must advance _previous_checkpoint_id so a later capture chains to it."""
     executor = MockExecutor(id="executor_a")
     state = State()
     ctx = InProcRunnerContext()
@@ -588,14 +588,14 @@ async def test_runner_capture_checkpoint_object_advances_previous_checkpoint_id(
     # Pre-condition: nothing captured yet, so there is no parent to chain back to.
     assert runner._previous_checkpoint_id is None  # pyright: ignore[reportPrivateUsage]
 
-    first = await runner.capture_checkpoint_object()
+    first = await runner.create_checkpoint_object()
 
     # Capturing advances the tracked checkpoint id to the newly-created checkpoint ...
     assert runner._previous_checkpoint_id == first.checkpoint_id  # pyright: ignore[reportPrivateUsage]
     # ... and a fresh capture begins a new lineage with no parent.
     assert first.previous_checkpoint_id is None
 
-    second = await runner.capture_checkpoint_object()
+    second = await runner.create_checkpoint_object()
 
     # The tracked id advances again ...
     assert runner._previous_checkpoint_id == second.checkpoint_id  # pyright: ignore[reportPrivateUsage]

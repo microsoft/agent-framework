@@ -245,7 +245,13 @@ class RunnerImpl:
         self._state.commit()
 
     async def create_checkpoint_if_enabled(self) -> None:
-        """Create a checkpoint if checkpointing is enabled and attach a label and metadata."""
+        """Create a checkpoint and save the checkpoint to the configured storage if one is configured.
+
+        Note:
+            1. This method has no effect if checkpointing is not enabled in the context.
+            2. Do not use this method with ``create_checkpoint_object`` as both methods advance the
+               ``previous_checkpoint_id`` and may result in unexpected checkpoint lineage.
+        """
         if not self._ctx.has_checkpointing():
             return
 
@@ -340,21 +346,15 @@ class RunnerImpl:
             logger.error(f"Failed to restore from checkpoint {checkpoint_id}: {e}")
             raise WorkflowCheckpointException(f"Failed to restore from checkpoint {checkpoint_id}") from e
 
-    async def capture_checkpoint_object(self) -> WorkflowCheckpoint:
-        """Capture the current runner state as an in-memory ``WorkflowCheckpoint``.
+    async def create_checkpoint_object(self) -> WorkflowCheckpoint:
+        """Create a checkpoint object.
 
-        Builds a checkpoint from committed shared state, executor snapshots, any in-flight
-        messages, and any pending request_info events, without writing to a storage backend.
-        The caller owns the returned object - for example, a parent ``WorkflowExecutor``
-        embedding a child workflow's checkpoint in its own checkpoint payload.
-
-        Like any checkpoint, the snapshot is only internally consistent when captured at a
-        stable point (e.g. a superstep boundary) while no iteration is concurrently mutating
-        the runner. This mirrors the normal per-superstep checkpoint path and makes no
-        assumption about which caller is taking the checkpoint.
+        Note:
+            1. Do not use this method with ``create_checkpoint_if_enabled`` as both methods advance the
+               ``previous_checkpoint_id`` and may result in unexpected checkpoint lineage.
 
         Returns:
-            A ``WorkflowCheckpoint`` snapshot of the current runner state.
+            A ``WorkflowCheckpoint``.
         """
         # Persist executor snapshots into committed shared state before exporting it.
         await self._prepare_checkpoint_state()
@@ -383,7 +383,7 @@ class RunnerImpl:
 
         Raises:
             WorkflowCheckpointException: If the checkpoint's graph signature does not
-                match this runner's workflow.
+                match this runner's workflow, or if restoration otherwise fails.
         """
         if self._graph_signature_hash != checkpoint.graph_signature_hash:
             raise WorkflowCheckpointException(
@@ -391,13 +391,17 @@ class RunnerImpl:
                 "Please rebuild the original workflow before resuming."
             )
 
-        # Clear first so import_state (which merges) does not leak stale keys from a
-        # prior run on this Workflow instance.
-        self._state.clear()
-        self._state.import_state(checkpoint.state)
-        await self._restore_executor_states()
-        await self._ctx.apply_checkpoint(checkpoint)
-        self._mark_resumed(checkpoint)
+        try:
+            # Clear first so import_state (which merges) does not leak stale keys from a
+            # prior run on this Workflow instance.
+            self._state.clear()
+            self._state.import_state(checkpoint.state)
+            await self._restore_executor_states()
+            await self._ctx.apply_checkpoint(checkpoint)
+            self._mark_resumed(checkpoint)
+        except Exception as e:
+            logger.error(f"Failed to restore from checkpoint {checkpoint.checkpoint_id}: {e}")
+            raise WorkflowCheckpointException(f"Failed to restore from checkpoint {checkpoint.checkpoint_id}") from e
 
     async def _save_executor_states(self) -> None:
         """Populate executor state by calling checkpoint hooks on executors."""
