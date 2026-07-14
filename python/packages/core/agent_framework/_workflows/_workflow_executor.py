@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
-from ._checkpoint_encoding import decode_checkpoint_value
 from ._const import GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._events import (
     WorkflowEvent,
@@ -451,12 +450,12 @@ class WorkflowExecutor(Executor):
     @override
     async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
         """Restore the WorkflowExecutor state from a checkpoint snapshot."""
-        # Preferred path: rehydrate the sub-workflow from its embedded checkpoint so its full
-        # state is restored (shared state, executor snapshots, in-flight messages, and pending
-        # request_info events).
+        # The storage backend fully materializes the checkpoint on load (FileCheckpointStorage
+        # decodes recursively; InMemoryCheckpointStorage deep-copies without encoding), so nested
+        # executor state - including this embedded checkpoint - already arrives as a live object,
+        # exactly as every other executor consumes its already-decoded on_checkpoint_restore state.
         sub_workflow_checkpoint = state.get("sub_workflow_checkpoint")
         if sub_workflow_checkpoint is not None:
-            sub_workflow_checkpoint = decode_checkpoint_value(sub_workflow_checkpoint)
             await self.workflow._runner.restore_from_checkpoint_object(sub_workflow_checkpoint)  # pyright: ignore[reportPrivateUsage]
             return
 
@@ -468,8 +467,7 @@ class WorkflowExecutor(Executor):
         if not legacy_execution_contexts:
             return
         request_info_events: list[WorkflowEvent[Any]] = []
-        for encoded_context in legacy_execution_contexts.values():
-            execution_context = decode_checkpoint_value(encoded_context)
+        for execution_context in legacy_execution_contexts.values():
             if isinstance(execution_context, ExecutionContext):
                 request_info_events.extend(execution_context.pending_requests.values())
         await asyncio.gather(*[
