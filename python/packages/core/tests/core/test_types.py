@@ -332,6 +332,7 @@ def test_mcp_server_tool_call_and_result():
     call = Content.from_mcp_server_tool_call(call_id="c-1", tool_name="tool", server_name="server", arguments={"x": 1})
     assert call.type == "mcp_server_tool_call"
     assert call.arguments == {"x": 1}
+    assert call.informational_only is True
 
     result = Content.from_mcp_server_tool_result(call_id="c-1", output=[{"type": "text", "text": "done"}])
     assert result.type == "mcp_server_tool_result"
@@ -340,6 +341,17 @@ def test_mcp_server_tool_call_and_result():
     # Empty call_id is allowed, validation happens elsewhere
     call2 = Content.from_mcp_server_tool_call(call_id="", tool_name="tool", server_name="server")
     assert call2.call_id == ""
+
+
+def test_mcp_server_tool_call_is_always_informational_only():
+    direct = Content("mcp_server_tool_call", call_id="c-1", tool_name="tool", informational_only=False)
+    assert direct.informational_only is True
+
+    serialized = direct.to_dict()
+    assert "informational_only" not in serialized
+
+    restored = Content.from_dict({**serialized, "informational_only": False})
+    assert restored.informational_only is True
 
 
 # region: Shell tool content
@@ -496,9 +508,25 @@ def test_function_call_content():
     assert content.type == "function_call"
     assert content.name == "example_function"
     assert content.arguments == {"param1": "value1"}
+    assert content.informational_only is False
 
     # Ensure the instance is of type BaseContent
     assert isinstance(content, Content)
+
+
+def test_function_call_content_informational_only_serialization():
+    content = Content.from_function_call(
+        call_id="1",
+        name="example_function",
+        arguments={"param1": "value1"},
+        informational_only=True,
+    )
+
+    assert content.informational_only is True
+    assert content.to_dict()["informational_only"] is True
+    assert Content.from_dict(content.to_dict()).informational_only is True
+    assert "informational_only" not in Content.from_function_call(call_id="1", name="f").to_dict()
+    assert "informational_only" not in Content.from_text("hello").to_dict(exclude_none=False)
 
 
 def test_function_call_content_parse_arguments():
@@ -523,6 +551,12 @@ def test_function_call_content_add_merging_and_errors():
     c = a + b
     assert c.arguments == {"x": 1, "y": 2}
 
+    # informational_only is preserved across streamed chunks
+    a = Content.from_function_call(call_id="1", name="f", arguments='{"x":', informational_only=True)
+    b = Content.from_function_call(call_id="1", name="f", arguments="1}")
+    c = a + b
+    assert c.informational_only is True
+
     # incompatible argument types
     a = Content.from_function_call(call_id="1", name="f", arguments="abc")
     b = Content.from_function_call(call_id="1", name="f", arguments={"y": 2})
@@ -535,6 +569,21 @@ def test_function_call_content_add_merging_and_errors():
 
     with raises(ContentError):
         _ = a + b
+
+    # name merging: when the first chunk has no name (e.g. a streaming delta where
+    # the function name arrives later), the merged content must keep the name from
+    # whichever side provides it, regardless of order.
+    # A nameless delta is constructed via Content(...) directly (the factory
+    # from_function_call requires name: str); this mirrors how a streaming
+    # function-call delta with no name yet is represented.
+    a = Content("function_call", call_id="1", name=None, arguments='{"a":')
+    b = Content.from_function_call(call_id="1", name="get_weather", arguments="1}")
+    assert (a + b).name == "get_weather"
+    assert (b + a).name == "get_weather"
+    # both sides missing a name stays None
+    a = Content("function_call", call_id="1", name=None, arguments="")
+    b = Content("function_call", call_id="1", name=None, arguments="")
+    assert (a + b).name is None
 
 
 # region FunctionResultContent
@@ -691,6 +740,7 @@ def test_function_approval_accepts_mcp_call():
 
     assert isinstance(req.function_call, Content)
     assert req.function_call.call_id == "c-mcp"
+    assert req.function_call.informational_only is True
 
 
 # region BaseContent Serialization
@@ -845,6 +895,21 @@ def test_chat_response_value_parses_split_structured_text_without_changing_messa
     assert response.value.response == "Hello"
 
 
+def test_chat_response_value_parses_final_message_with_response_format() -> None:
+    """ChatResponse.value should ignore intermediate messages when parsing structured output."""
+    response = ChatResponse(
+        messages=[
+            Message(role="assistant", contents=['{"skill_name": "building-permit-compliance"}']),
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+        ],
+        response_format=OutputModel,
+    )
+
+    assert response.text == '{"skill_name": "building-permit-compliance"}\n{"response": "Hello"}'
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
 def test_agent_response_value_parses_split_structured_text_without_changing_message_text() -> None:
     """AgentResponse.value should not use Message.text spacing between structured output chunks."""
     message = Message(role="assistant", contents=[Content.from_text('{"response": "Hel'), Content.from_text('lo"}')])
@@ -856,12 +921,70 @@ def test_agent_response_value_parses_split_structured_text_without_changing_mess
     assert response.value.response == "Hello"
 
 
+def test_agent_response_value_parses_final_message_with_response_format() -> None:
+    """AgentResponse.value should ignore intermediate messages when parsing structured output."""
+    response = AgentResponse(
+        messages=[
+            Message(role="assistant", contents=['{"skill_name": "building-permit-compliance"}']),
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+        ],
+        response_format=OutputModel,
+    )
+
+    assert response.text == '{"skill_name": "building-permit-compliance"}{"response": "Hello"}'
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
 def test_chat_response_value_handles_text_content_without_text() -> None:
     """ChatResponse.value should ignore text content with no text value."""
     message = Message(role="assistant", contents=[Content.from_dict({"type": "text"})])
     response = ChatResponse(messages=message, response_format=OutputModel)
 
     assert response.value is None
+
+
+def test_agent_response_mapping_value_parses_final_message() -> None:
+    """AgentResponse.value should parse the final message for JSON schema mappings."""
+    response = AgentResponse(
+        messages=[
+            Message(role="assistant", contents=['{"skill_name": "building-permit-compliance"}']),
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+        ],
+        response_format={"type": "object", "properties": {"response": {"type": "string"}}},
+    )
+
+    assert response.value is not None
+    assert isinstance(response.value, dict)
+    assert response.value["response"] == "Hello"
+
+
+def test_chat_response_value_ignores_trailing_non_assistant_message() -> None:
+    """ChatResponse.value should parse the final assistant message when later tool output exists."""
+    response = ChatResponse(
+        messages=[
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+            Message(role="tool", contents=["tool output is not structured JSON"]),
+        ],
+        response_format=OutputModel,
+    )
+
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_agent_response_value_ignores_trailing_non_assistant_message() -> None:
+    """AgentResponse.value should parse the final assistant message when later tool output exists."""
+    response = AgentResponse(
+        messages=[
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+            Message(role="tool", contents=["tool output is not structured JSON"]),
+        ],
+        response_format=OutputModel,
+    )
+
+    assert response.value is not None
+    assert response.value.response == "Hello"
 
 
 def test_parse_structured_response_value_empty_text_with_pydantic_model() -> None:
@@ -1108,6 +1231,37 @@ async def test_chat_response_from_async_generator_mapping_response_format() -> N
     assert resp.value is not None
     assert isinstance(resp.value, dict)
     assert resp.value["response"] == "Hello"
+
+
+def test_chat_response_from_streaming_updates_parses_final_assistant_message() -> None:
+    """Combined streaming updates should parse the final assistant message, not trailing tool output."""
+    updates = [
+        ChatResponseUpdate(
+            role="assistant",
+            message_id="skill-message",
+            contents=[Content.from_text('{"skill_name": "building-permit-compliance"}')],
+        ),
+        ChatResponseUpdate(
+            role="assistant",
+            message_id="final-message",
+            contents=[Content.from_text('{"respon')],
+        ),
+        ChatResponseUpdate(
+            message_id="final-message",
+            contents=[Content.from_text('se": "Hello"}')],
+        ),
+        ChatResponseUpdate(
+            role="tool",
+            message_id="tool-message",
+            contents=[Content.from_text("tool output is not structured JSON")],
+        ),
+    ]
+
+    response = ChatResponse.from_updates(updates, output_format_type=OutputModel)
+
+    assert [message.role for message in response.messages] == ["assistant", "assistant", "tool"]
+    assert response.value is not None
+    assert response.value.response == "Hello"
 
 
 # region ToolMode

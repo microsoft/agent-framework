@@ -1,6 +1,6 @@
 # Foundry Evals Integration Samples
 
-These samples demonstrate evaluating agent-framework agents using Azure AI Foundry's built-in evaluators.
+These samples demonstrate evaluating agent-framework agents using Microsoft Foundry's built-in evaluators.
 
 ## Available Evaluators
 

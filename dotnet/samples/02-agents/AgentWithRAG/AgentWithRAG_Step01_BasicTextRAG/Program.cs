@@ -24,7 +24,7 @@ AIProjectClient aiProjectClient = new(
     new Uri(endpoint),
     new DefaultAzureCredential());
 
-// Create an In-Memory vector store that uses the Azure AI Foundry embedding model to generate embeddings.
+// Create an In-Memory vector store that uses the Microsoft Foundry embedding model to generate embeddings.
 VectorStore vectorStore = new InMemoryVectorStore(new()
 {
     EmbeddingGenerator = aiProjectClient.GetProjectOpenAIClient().GetEmbeddingClient(embeddingDeploymentName).AsIEmbeddingGenerator()

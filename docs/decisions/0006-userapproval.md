@@ -25,7 +25,7 @@ See various features that would need to be supported via this type of mechanism,
 - Also see [the openai human-in-the-loop guide](https://openai.github.io/openai-agents-js/guides/human-in-the-loop/#approval-requests).
 - Also see [the openai MCP guide](https://openai.github.io/openai-agents-js/guides/mcp/#optional-approval-flow).
 - Also see [MCP Approval Requests from OpenAI](https://platform.openai.com/docs/guides/tools-remote-mcp#approvals).
-- Also see [Azure AI Foundry MCP Approvals](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/model-context-protocol-samples?pivots=rest#submit-your-approval).
+- Also see [Microsoft Foundry MCP Approvals](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/model-context-protocol-samples?pivots=rest#submit-your-approval).
 - Also see [MCP Elicitation requests](https://modelcontextprotocol.io/specification/draft/client/elicitation)
 
 ## Decision Drivers

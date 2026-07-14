@@ -44,7 +44,7 @@ on that type.
 - Use ctx.yield_output() to provide workflow results - the workflow completes when idle with no pending work.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - Familiarity with WorkflowBuilder, executors, edges, and events.
 - Understanding of switch-case edge groups and how Case and Default are evaluated in order.
 - Working Azure OpenAI configuration for FoundryChatClient, with Azure CLI login and required environment variables.

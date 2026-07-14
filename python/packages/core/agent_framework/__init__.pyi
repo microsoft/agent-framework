@@ -108,7 +108,6 @@ from ._harness._mode import DEFAULT_MODE_SOURCE_ID, AgentModeProvider, get_agent
 from ._harness._todo import (
     DEFAULT_TODO_SOURCE_ID,
     TodoFileStore,
-    TodoInput,
     TodoItem,
     TodoProvider,
     TodoSessionStore,
@@ -151,13 +150,16 @@ from ._middleware import (
     function_middleware,
 )
 from ._sessions import (
+    MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
     AgentSession,
     ContextProvider,
     FileHistoryProvider,
     HistoryProvider,
     InMemoryHistoryProvider,
+    MessageInjectionMiddleware,
     ServiceSessionId,
     SessionContext,
+    enqueue_messages,
     register_state_type,
 )
 from ._settings import SecretString, load_settings
@@ -334,6 +336,7 @@ __all__ = [
     "GROUP_INDEX_KEY",
     "GROUP_KIND_KEY",
     "GROUP_TOKEN_COUNT_KEY",
+    "MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY",
     "SKIP_PARSING",
     "SUMMARIZED_BY_SUMMARY_ID_KEY",
     "SUMMARY_OF_GROUP_IDS_KEY",
@@ -459,6 +462,7 @@ __all__ = [
     "MemoryStore",
     "MemoryTopicRecord",
     "Message",
+    "MessageInjectionMiddleware",
     "MiddlewareException",
     "MiddlewareTermination",
     "MiddlewareType",
@@ -508,7 +512,6 @@ __all__ = [
     "SwitchCaseEdgeGroupDefault",
     "TextSpanRegion",
     "TodoFileStore",
-    "TodoInput",
     "TodoItem",
     "TodoProvider",
     "TodoSessionStore",
@@ -560,6 +563,7 @@ __all__ = [
     "create_edge_runner",
     "create_harness_agent",
     "detect_media_type_from_base64",
+    "enqueue_messages",
     "evaluate_agent",
     "evaluate_workflow",
     "evaluator",

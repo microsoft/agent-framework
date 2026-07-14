@@ -78,6 +78,16 @@ configure_otel_providers(exporters=exporters)
 
 Many third-party OTel packages ship their own setup helpers (for example, Azure Monitor's `configure_azure_monitor()`). You can use those directly — Agent Framework instrumentation is on by default, so no extra wiring is needed. To also capture sensitive data, call `enable_sensitive_telemetry()` from `agent_framework.observability`.
 
+The [Microsoft OpenTelemetry Distro](https://pypi.org/project/microsoft-opentelemetry/) bundles this pattern into a single call. Install it with `pip install microsoft-opentelemetry`, then call `use_microsoft_opentelemetry()`, which wires up the OpenTelemetry providers/exporters (optionally including Azure Monitor) and enables Agent Framework instrumentation:
+
+```python
+from microsoft.opentelemetry import use_microsoft_opentelemetry
+
+# Sets up OpenTelemetry providers/exporters and enables Agent Framework instrumentation.
+# Pass enable_azure_monitor=True to also configure the Azure Monitor exporter.
+use_microsoft_opentelemetry(enable_azure_monitor=True)
+```
+
 ```python
 from azure.monitor.opentelemetry import configure_azure_monitor
 from agent_framework.observability import create_resource, enable_sensitive_telemetry
@@ -334,6 +344,7 @@ This folder contains different samples demonstrating how to use telemetry in var
 | [configure_otel_providers_with_parameters.py](./configure_otel_providers_with_parameters.py) | Create custom exporters with specific configuration and pass them to `configure_otel_providers()`. |
 | [agent_observability.py](./agent_observability.py) | Telemetry collection for an agentic application with tool calls. |
 | [foundry_tracing.py](./foundry_tracing.py) | Azure Monitor integration with Microsoft Foundry. |
+| [microsoft_opentelemetry_distro.py](./microsoft_opentelemetry_distro.py) | One-call setup with the Microsoft OpenTelemetry Distro (`use_microsoft_opentelemetry()`), optionally enabling Azure Monitor. |
 | [workflow_observability.py](./workflow_observability.py) | Telemetry collection for a workflow with multiple executors and message passing. |
 | [advanced_manual_setup_console_output.py](./advanced_manual_setup_console_output.py) | Advanced: manual setup of exporters and providers with console output — useful for understanding how observability works under the hood. |
 | [advanced_zero_code.py](./advanced_zero_code.py) | Advanced: zero-code provider/exporter setup using the `opentelemetry-instrument` CLI wrapper. |

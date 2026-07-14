@@ -14,7 +14,7 @@ Highlights
 
 ```bash
 pip install agent-framework-core
-# Optional: Add Azure AI Foundry integration
+# Optional: Add Microsoft Foundry integration
 pip install agent-framework-foundry
 # Optional: Add OpenAI integration
 pip install agent-framework-openai

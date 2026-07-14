@@ -91,6 +91,10 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
     /// });
     /// </code>
     /// </para>
+    /// <para>
+    /// <b>Security note:</b> this rule is name-agnostic and approves <b>every</b> tool call regardless
+    /// of the tool name (<see cref="FunctionCallContent.Name"/>) or arguments. Only use this rule in a fully trusted context.
+    /// </para>
     /// </remarks>
     public static Func<FunctionCallContent, ValueTask<bool>> AllToolsAutoApprovalRule { get; } =
         _ => new ValueTask<bool>(true);

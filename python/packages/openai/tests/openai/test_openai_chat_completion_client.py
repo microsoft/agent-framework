@@ -3,6 +3,7 @@
 import inspect
 import json
 import os
+import re
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -28,6 +29,9 @@ from pydantic import BaseModel
 from pytest import param
 
 from agent_framework_openai import OpenAIChatCompletionClient, RawOpenAIChatCompletionClient
+from agent_framework_openai._chat_completion_client import (
+    _AZURE_WEB_SEARCH_UNSUPPORTED_MSG,
+)
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
@@ -914,6 +918,20 @@ def test_prepare_message_with_text_reasoning_content(
     assert prepared[0]["content"] == "The answer is 42."
 
 
+def test_prepare_message_with_unprotected_text_reasoning_content(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    message = Message(
+        role="assistant",
+        contents=[Content.from_text_reasoning(id="rs_abc123", text="Foundry summary")],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert prepared == [{"role": "assistant", "content": "Foundry summary"}]
+
+
 def test_prepare_message_with_only_text_reasoning_content(
     openai_unit_test_env: dict[str, str],
 ) -> None:
@@ -1250,6 +1268,39 @@ def test_prepare_tools_with_web_search_no_location(
     # Should have empty web_search_options (no location)
     assert "web_search_options" in result
     assert result["web_search_options"] == {}
+
+
+def test_prepare_tools_with_web_search_on_azure_raises(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that web search raises ValueError when configured with Azure endpoint."""
+    client = OpenAIChatCompletionClient(
+        azure_endpoint="https://test.openai.azure.com",
+        model="gpt-4o-mini",
+        api_key="test-key",
+    )
+
+    web_search_tool = OpenAIChatCompletionClient.get_web_search_tool()
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(_AZURE_WEB_SEARCH_UNSUPPORTED_MSG),
+    ):
+        client._prepare_tools_for_openai([web_search_tool])
+
+
+def test_prepare_tools_with_web_search_on_openai_allowed(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that web search works normally on non-Azure client."""
+    client = OpenAIChatCompletionClient()
+
+    web_search_tool = OpenAIChatCompletionClient.get_web_search_tool()
+
+    result = client._prepare_tools_for_openai([web_search_tool])
+
+    # Non-Azure client should include web_search_options
+    assert "web_search_options" in result
 
 
 def test_prepare_options_with_instructions(

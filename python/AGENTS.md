@@ -13,8 +13,8 @@ Instructions for AI coding agents working in the Python codebase.
 - `python-code-quality` — linting, formatting, type checking, prek hooks, CI workflow
 - `python-feature-lifecycle` — package vs feature lifecycle stages, decorators, enums, and promotion guidance
 - `python-package-management` — monorepo structure, lazy loading, versioning, new packages
-- `python-samples` — sample file structure, PEP 723, documentation guidelines
 - `pull-requests` — writing PR descriptions (template) and handling/resolving PR review comments
+- `agent-framework-py-release` — Python release PR workflow, CHANGELOG-driven package bumps, lifecycle version rules, and dependency-floor validation
 
 ## Maintaining Documentation
 
@@ -82,7 +82,7 @@ python/
 - [anthropic](packages/anthropic/AGENTS.md) - Anthropic Claude API
 - [bedrock](packages/bedrock/AGENTS.md) - AWS Bedrock
 - [claude](packages/claude/AGENTS.md) - Claude Agent SDK
-- [foundry_local](packages/foundry_local/AGENTS.md) - Azure AI Foundry Local
+- [foundry_local](packages/foundry_local/AGENTS.md) - Microsoft Foundry Local
 - [ollama](packages/ollama/AGENTS.md) - Local Ollama inference
 
 ### Azure Integrations

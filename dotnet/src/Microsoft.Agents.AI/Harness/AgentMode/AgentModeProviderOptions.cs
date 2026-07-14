@@ -2,8 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -11,7 +9,6 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Options controlling the behavior of <see cref="AgentModeProvider"/>.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentModeProviderOptions
 {
     /// <summary>
@@ -46,22 +43,21 @@ public sealed class AgentModeProviderOptions
     public string? DefaultMode { get; set; }
 
     /// <summary>
-    /// Represents an agent operating mode with a name and description.
+    /// Represents an agent operating mode with a name and instructions.
     /// </summary>
-    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public sealed class AgentMode
     {
         /// <summary>
         /// Initializes a new instance of the <see cref="AgentMode"/> class.
         /// </summary>
         /// <param name="name">The name of the mode.</param>
-        /// <param name="description">A description of when and how to use this mode.</param>
-        /// <exception cref="ArgumentNullException"><paramref name="name"/> or <paramref name="description"/> is <see langword="null"/>.</exception>
-        /// <exception cref="ArgumentException"><paramref name="name"/> or <paramref name="description"/> is empty or whitespace.</exception>
-        public AgentMode(string name, string description)
+        /// <param name="instructions">Instructions for the agent describing when and how to operate in this mode.</param>
+        /// <exception cref="ArgumentNullException"><paramref name="name"/> or <paramref name="instructions"/> is <see langword="null"/>.</exception>
+        /// <exception cref="ArgumentException"><paramref name="name"/> or <paramref name="instructions"/> is empty or whitespace.</exception>
+        public AgentMode(string name, string instructions)
         {
             this.Name = Throw.IfNullOrWhitespace(name);
-            this.Description = Throw.IfNullOrWhitespace(description);
+            this.Instructions = Throw.IfNullOrWhitespace(instructions);
         }
 
         /// <summary>
@@ -70,8 +66,8 @@ public sealed class AgentModeProviderOptions
         public string Name { get; }
 
         /// <summary>
-        /// Gets a description of when and how to use this mode.
+        /// Gets the instructions for the agent describing when and how to operate in this mode.
         /// </summary>
-        public string Description { get; }
+        public string Instructions { get; }
     }
 }
