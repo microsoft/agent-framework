@@ -1014,7 +1014,9 @@ async def run_workflow_stream(
                 if contents:
                     output_text = _text_from_contents(contents)
                     if output_text and output_text == last_assistant_text:
-                        continue
+                        contents = [content for content in contents if content.type != "text"]
+                        if not contents:
+                            continue
                     for content in contents:
                         for out_event in _emit_content(content, flow, predictive_handler=None, skip_text=False):
                             yield out_event
