@@ -50,6 +50,7 @@ import base64
 import io
 import logging
 import pickle  # nosec  # noqa: S403
+from enum import EnumMeta
 from typing import Any, cast
 
 from ..exceptions import WorkflowCheckpointException
@@ -124,18 +125,11 @@ _BUILTIN_ALLOWED_TYPE_KEYS: frozenset[str] = frozenset({
     "collections:deque",
 })
 
-
-def _restricted_getattr(obj: Any, name: str) -> type:
-    """Resolve type-valued attributes needed for legitimate pickle reconstruction."""
-    if not isinstance(obj, type) or not isinstance(name, str):
-        raise pickle.UnpicklingError("Checkpoint deserialization blocked for unsafe attribute traversal.")
-
-    resolved = getattr(obj, name)
-    if not isinstance(resolved, type):
-        raise pickle.UnpicklingError(
-            f"Checkpoint deserialization blocked for non-type attribute '{obj.__module__}:{obj.__qualname__}.{name}'."
-        )
-    return resolved
+_GETATTR_GLOBAL_KEYS: frozenset[str] = frozenset({
+    "builtins:getattr",
+    # Protocol 2 pickles use Python 2's module name for the same global.
+    "__builtin__:getattr",
+})
 
 
 class _RestrictedUnpickler(pickle.Unpickler):  # noqa: S301
@@ -151,14 +145,48 @@ class _RestrictedUnpickler(pickle.Unpickler):  # noqa: S301
         super().__init__(io.BytesIO(data))
         self._allowed_types = allowed_types
 
+    def _is_allowed_type(self, resolved: type) -> bool:
+        type_key = _type_to_key(resolved)
+        return (
+            type_key in _BUILTIN_ALLOWED_TYPE_KEYS
+            or type_key in self._allowed_types
+            or resolved.__module__.startswith(_FRAMEWORK_MODULE_PREFIX)
+            or resolved.__module__.startswith(_OPENAI_MODULE_PREFIX)
+        )
+
+    def _restricted_getattr(self, obj: Any, name: str) -> Any:
+        """Resolve an allowlisted nested type or named enum member."""
+        if not isinstance(obj, type) or not isinstance(name, str):
+            raise pickle.UnpicklingError("Checkpoint deserialization blocked for unsafe attribute traversal.")
+
+        resolved = getattr(obj, name)
+        if isinstance(resolved, type):
+            if not self._is_allowed_type(resolved):
+                type_key = _type_to_key(resolved)
+                raise pickle.UnpicklingError(
+                    f"Checkpoint deserialization blocked for nested type '{type_key}'. "
+                    f"Include the nested type in 'allowed_types' before loading the checkpoint."
+                )
+            return resolved
+
+        # enum.pickle_by_enum_name reconstructs a member with getattr(EnumClass, member_name).
+        if isinstance(obj, EnumMeta) and self._is_allowed_type(obj):
+            members = obj.__members__
+            if name in members and members[name] is resolved:
+                return resolved
+
+        raise pickle.UnpicklingError(
+            f"Checkpoint deserialization blocked for non-type attribute '{obj.__module__}:{obj.__qualname__}.{name}'."
+        )
+
     def find_class(self, module: str, name: str) -> Any:
         type_key = f"{module}:{name}"
 
         if type_key in _BLOCKED_FRAMEWORK_GLOBAL_KEYS:
             raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for type '{type_key}'.")
 
-        if type_key == "builtins:getattr":
-            return _restricted_getattr
+        if type_key in _GETATTR_GLOBAL_KEYS:
+            return self._restricted_getattr
 
         if type_key in _BUILTIN_ALLOWED_TYPE_KEYS:
             return super().find_class(module, name)  # nosec
