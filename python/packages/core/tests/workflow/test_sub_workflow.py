@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
+import pytest
 from typing_extensions import Never
 
 from agent_framework import (
@@ -464,6 +466,62 @@ async def test_concurrent_sub_workflow_execution() -> None:
 
     # Verify that concurrent executions were properly isolated
     # (This is implicitly tested by the fact that we got correct results for all emails)
+
+
+async def test_sub_workflow_warns_on_overlapping_execution(caplog: pytest.LogCaptureFixture) -> None:
+    """A new input while a prior sub-workflow execution is awaiting responses logs a warning.
+
+    Overlapping executions share one sub-workflow instance and its state, so WorkflowExecutor
+    allows the new execution but warns that it is only safe when the wrapped workflow is stateless.
+    """
+
+    class TwoInputParent(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="two_input_parent")
+            self._pending: dict[str, SubWorkflowRequestMessage] = {}
+
+        @handler
+        async def start(self, emails: list[str], ctx: WorkflowContext[EmailValidationRequest]) -> None:
+            for email in emails:
+                await ctx.send_message(EmailValidationRequest(email=email))
+
+        @handler
+        async def handle_domain_request(
+            self,
+            sub_workflow_request: SubWorkflowRequestMessage,
+            ctx: WorkflowContext[SubWorkflowResponseMessage],
+        ) -> None:
+            domain_request = sub_workflow_request.source_event.data
+            assert isinstance(domain_request, DomainCheckRequest)
+            self._pending[domain_request.id] = sub_workflow_request
+            await ctx.request_info(domain_request, bool)
+
+        @handler
+        async def collect(self, result: ValidationResult, ctx: WorkflowContext) -> None: ...
+
+    parent = TwoInputParent()
+    workflow_executor = WorkflowExecutor(create_email_validation_workflow(), "email_workflow")
+    main_workflow = (
+        WorkflowBuilder(start_executor=parent)
+        .add_edge(parent, workflow_executor)
+        .add_edge(workflow_executor, parent)
+        .build()
+    )
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework._workflows._workflow_executor"):
+        result = await main_workflow.run(["a@domain1.com", "b@domain2.com"])
+
+    # Two inputs are delivered to the same WorkflowExecutor in one superstep: the second execution
+    # starts while the sub-workflow still has a pending request, producing exactly one overlap
+    # warning from the WorkflowExecutor. (The substring is unique to the WorkflowExecutor warning so
+    # it is not confused with the core Workflow.run pending-request warning.)
+    assert len(result.get_request_info_events()) == 2
+    overlap_warnings = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "new input message while its sub-workflow" in record.getMessage()
+    ]
+    assert len(overlap_warnings) == 1
 
 
 # region Checkpoint-related message types and executors for sub-workflow tests
