@@ -863,6 +863,45 @@ class TestMCPSkillsSourceArchive:
         assert skills == []
 
     @pytest.mark.asyncio
+    async def test_archive_download_internal_error_propagates(self, tmp_path: Path) -> None:
+        # A non-"not found" MCP error while downloading an archive must propagate,
+        # not silently drop the skill (which would corrupt a CachingSkillsSource refresh).
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+
+        async def _read_resource(uri: AnyUrl) -> ReadResourceResult:
+            uri_str = str(uri)
+            if uri_str == "skill://index.json":
+                return _make_text_result(index, uri="skill://index.json")
+            raise McpError(error=ErrorData(code=-32603, message="Internal error"))
+
+        client = AsyncMock()
+        client.read_resource = AsyncMock(side_effect=_read_resource)
+
+        source = MCPSkillsSource(client=client, archive_skills_directory=tmp_path)
+        with pytest.raises(McpError):
+            await source.get_skills(_SOURCE_CTX)
+
+    @pytest.mark.asyncio
+    async def test_archive_download_connection_error_propagates(self, tmp_path: Path) -> None:
+        # A plain ConnectionError while downloading an archive must propagate.
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+
+        async def _read_resource(uri: AnyUrl) -> ReadResourceResult:
+            uri_str = str(uri)
+            if uri_str == "skill://index.json":
+                return _make_text_result(index, uri="skill://index.json")
+            raise ConnectionError("connection lost")
+
+        client = AsyncMock()
+        client.read_resource = AsyncMock(side_effect=_read_resource)
+
+        source = MCPSkillsSource(client=client, archive_skills_directory=tmp_path)
+        with pytest.raises(ConnectionError):
+            await source.get_skills(_SOURCE_CTX)
+
+    @pytest.mark.asyncio
     async def test_mixed_skill_md_and_archive_entries(self, tmp_path: Path) -> None:
         archive_url = "skill://archives/packaged-skill.zip"
         index = json.dumps({

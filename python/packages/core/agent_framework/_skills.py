@@ -4578,18 +4578,28 @@ class _ArchiveEntryLoader:
     async def _download(self, entry: _McpSkillIndexEntry) -> tuple[bytes, str | None] | None:
         """Download and decode the binary content of a skill's archive resource.
 
+        Only "resource not found" MCP errors are swallowed (the skill is skipped);
+        every other exception (auth failure, ``INTERNAL_ERROR``, connection drop,
+        timeout, etc.) propagates so a transient transport failure is not silently
+        turned into a missing skill — which, under :class:`CachingSkillsSource`,
+        would otherwise overwrite a previously cached list with a partial result.
+
         Returns:
-            A ``(data, mime_type)`` tuple, or ``None`` when the resource cannot be read,
+            A ``(data, mime_type)`` tuple, or ``None`` when the resource is not found,
             contains no binary content, is empty, or exceeds the configured size limit.
+
+        Raises:
+            Exception: Any error other than a "resource not found" MCP error raised
+                while reading the archive resource is re-raised.
         """
         try:
             result = await self._client.read_resource(_mcp_any_url(cast(str, entry.url)))
         except Exception as ex:
             if _is_mcp_resource_not_found(ex):
                 logger.debug("Archive resource '%s' for skill '%s' not available: %s", entry.url, entry.name, ex)
-            else:
-                logger.warning("Failed to read archive resource for skill '%s'.", entry.name, exc_info=True)
-            return None
+                return None
+            logger.warning("Failed to read archive resource for skill '%s'.", entry.name, exc_info=True)
+            raise
 
         blob = _mcp_first_blob(result)
         if blob is None:
