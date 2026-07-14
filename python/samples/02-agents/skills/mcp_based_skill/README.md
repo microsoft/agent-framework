@@ -9,6 +9,13 @@ This sample demonstrates how to discover **Agent Skills served over MCP** with a
 - Building a `SkillsProvider` from an `MCPSkillsSource`, which reads
   `skill://index.json` (SEP-2640 canonical discovery) and constructs skills from
   the index entries.
+- Both discovery entry types: `skill-md` (the `SKILL.md` body and sibling
+  resources are fetched on demand from the server) and `archive` (a single ZIP /
+  TAR / gzip-TAR resource that is downloaded and safely unpacked to a local
+  directory, then served like a file-based skill). Archive extraction is hardened
+  against path-traversal, link-based escapes, and decompression bombs, and
+  scripts bundled in an archive are never exposed as runnable — MCP-delivered
+  scripts are always treated as read-only content.
 - The progressive disclosure pattern across MCP: advertise → load → read
   resources, exactly as for filesystem-backed skills.
 
@@ -42,7 +49,8 @@ python mcp_based_skill.py
 
 This sample is a **consumer**: it does not host an MCP server itself. To try
 it end-to-end you need an MCP server that exposes the SEP-2640 skill
-resources (`skill://index.json` plus per-skill `SKILL.md`).
+resources (`skill://index.json` plus per-skill `SKILL.md` for `skill-md`
+entries and/or a downloadable archive resource for `archive` entries).
 
 - See [`samples/02-agents/mcp/agent_as_mcp_server.py`](../../mcp/agent_as_mcp_server.py)
   for an example of hosting an MCP server via the Agent Framework.
