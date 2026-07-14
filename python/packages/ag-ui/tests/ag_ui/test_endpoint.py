@@ -5160,3 +5160,208 @@ def test_workflow_factory_cache_is_scoped_by_snapshot_scope():
 
     runner.clear_thread_workflow("thread-1")
     assert runner._resolve_workflow("thread-1", "tenant-b") is not workflow_b
+
+
+async def test_endpoint_agent_approval_defers_provider_injected_tools() -> None:
+    """Approving provider-injected tools should not produce rejection errors.
+
+    When approval responses include tools not in the static tool map,
+    they should be deferred (not executed by transport) rather than
+    producing "Tool call invocation was rejected" errors.
+
+    This prevents the scenario where approval mode loops with tool invocation failures.
+    Fixes issue #7043.
+    """
+    executed_tools: list[str] = []
+
+    def static_tool() -> str:
+        executed_tools.append("static")
+        return "static result"
+
+    # Create approval responses: one for static tool, one for provider tool (not in static list)
+    static_approval = Content.from_function_approval_response(
+        id="static_id",
+        approved=True,
+        function_call=Content.from_function_call(
+            call_id="call_static",
+            name="static_tool",
+            arguments="{}",
+        ),
+    )
+    provider_approval = Content.from_function_approval_response(
+        id="provider_id",
+        approved=True,
+        function_call=Content.from_function_call(
+            call_id="call_provider",
+            name="provider_file_access",  # Not in agent's tool list
+            arguments="{}",
+        ),
+    )
+
+    # User message containing both approval responses
+    message = Message(
+        role="user",
+        contents=[static_approval, provider_approval],
+    )
+
+    # Stub agent that returns the approval responses embedded in a message
+    agent = StubAgent(
+        updates=[
+            AgentResponseUpdate(contents=[static_approval, provider_approval], role="user"),
+        ]
+    )
+
+    app = FastAPI()
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/approval")
+    client = TestClient(app)
+
+    # Submit approval responses (static and provider-injected)
+    response = client.post(
+        "/approval",
+        json={
+            "runId": "run-approval",
+            "threadId": "thread-approval",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "function_approval_response",
+                            "id": "static_id",
+                            "approved": True,
+                            "function_call": {
+                                "call_id": "call_static",
+                                "name": "static_tool",
+                                "arguments": "{}",
+                            },
+                        },
+                        {
+                            "type": "function_approval_response",
+                            "id": "provider_id",
+                            "approved": True,
+                            "function_call": {
+                                "call_id": "call_provider",
+                                "name": "provider_file_access",
+                                "arguments": "{}",
+                            },
+                        },
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    response_text = json.dumps(events)
+
+    # Verify no rejection error for provider tool
+    assert "Tool call invocation was rejected" not in response_text, (
+        "Deferred provider tool should not produce rejection error"
+    )
+
+
+async def test_endpoint_agent_approval_deferred_provider_tool_executes(streaming_chat_client_stub) -> None:
+    """A provider-injected tool approved via AG-UI executes in-run instead of being rejected.
+
+    Regression for #7043. A tool registered by a context provider during ``before_run`` is
+    absent from the transport's static tool map, so ``_resolve_approval_responses`` must defer
+    it (not execute or reject it) and leave it for the in-run ``ToolApprovalMiddleware`` to run.
+    This drives the full pause -> approve -> resume flow with a real provider-injected tool and
+    asserts the approved side effect actually happens without any rejection/failure result.
+
+    Note: the deferred tool executes inside ``agent.run`` and its ``function_result`` is consumed
+    there, so (unlike a statically executed approval) no ``TOOL_CALL_RESULT`` event is streamed
+    for it. Surfacing that result to the client is tracked separately in #7241.
+    """
+    side_effects: list[str] = []
+    state = {"phase": "pause"}
+
+    def provider_write() -> str:
+        side_effects.append("wrote")
+        return "wrote to disk"
+
+    provider_tool = FunctionTool(
+        name="provider_write",
+        description="Write to disk (provider-injected)",
+        func=provider_write,
+        approval_mode="always_require",
+    )
+
+    class ToolInjectingProvider(ContextProvider):
+        """Registers a tool during before_run, mimicking FileAccessProvider/CodeInterpreterProvider."""
+
+        async def before_run(self, *, agent, session, context, state) -> None:  # type: ignore[override]  # pyrefly: ignore  # ty: ignore
+            del agent, session, state
+            context.extend_tools(self.source_id, [provider_tool])
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        if state["phase"] == "pause":
+            yield ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_provider", name="provider_write", arguments="{}")],
+                role="assistant",
+            )
+            return
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")
+
+    # provider_write is intentionally NOT in the static tools list -- it is only injected via before_run.
+    agent = Agent(
+        name="test_agent",
+        instructions="Test",
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[],
+        middleware=[ToolApprovalMiddleware()],
+        context_providers=[ToolInjectingProvider(source_id="tool_injector")],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        AgentFrameworkAgent(agent=agent, require_confirmation=False),
+        path="/approval",
+    )
+    client = TestClient(app)
+
+    # Pause: the harness surfaces the provider-injected tool for approval, nothing executes yet.
+    pause_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": "thread-provider",
+            "messages": [{"role": "user", "content": "Write something"}],
+        },
+    )
+    assert pause_response.status_code == 200
+    pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
+    assert [interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])] == ["call_provider"]
+    assert side_effects == []
+
+    # Resume with approval: the deferred provider tool runs during agent.run.
+    state["phase"] = "resume"
+    resume_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-resume",
+            "threadId": "thread-provider",
+            "messages": [],
+            "resume": [{"interruptId": "call_provider", "status": "resolved", "payload": {"accepted": True}}],
+        },
+    )
+    assert resume_response.status_code == 200
+    resume_events = _decode_sse_events(resume_response)
+    resume_text = json.dumps(resume_events)
+
+    # The approved provider tool actually executed -- its side effect fired.
+    assert side_effects == ["wrote"]
+    # And it was neither rejected nor reported as a transport failure (the #7043 bug).
+    assert "Tool call invocation was rejected" not in resume_text
+    assert "Tool call invocation failed" not in resume_text
+    assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
+
+
+
