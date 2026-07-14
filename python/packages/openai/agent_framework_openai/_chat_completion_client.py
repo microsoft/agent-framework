@@ -784,12 +784,11 @@ class RawOpenAIChatCompletionClient(
             # Some OpenAI-compatible providers (e.g. OpenRouter) expose plaintext reasoning
             # via a top-level "reasoning" or "reasoning_content" field instead of (or in
             # addition to) "reasoning_details".  Surface it when no reasoning was already parsed.
-            elif reasoning_str := (
+            elif (reasoning_str := (
                 getattr(choice.message, "reasoning", None)
                 or getattr(choice.message, "reasoning_content", None)
-            ):
-                if isinstance(reasoning_str, str) and reasoning_str:
-                    contents.append(Content.from_text_reasoning(text=reasoning_str))
+            )) and isinstance(reasoning_str, str) and reasoning_str:
+                contents.append(Content.from_text_reasoning(text=reasoning_str))
             messages.append(Message(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
@@ -836,12 +835,11 @@ class RawOpenAIChatCompletionClient(
                     text=_extract_reasoning_text(reasoning_details),
                     protected_data=json.dumps(reasoning_details),
                 ))
-            elif reasoning_str := (
+            elif (reasoning_str := (
                 getattr(choice.delta, "reasoning", None)
                 or getattr(choice.delta, "reasoning_content", None)
-            ):
-                if isinstance(reasoning_str, str) and reasoning_str:
-                    contents.append(Content.from_text_reasoning(text=reasoning_str))
+            )) and isinstance(reasoning_str, str) and reasoning_str:
+                contents.append(Content.from_text_reasoning(text=reasoning_str))
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
@@ -1021,7 +1019,7 @@ class RawOpenAIChatCompletionClient(
 
         all_messages: list[dict[str, Any]] = []
         pending_reasoning: Any = None
-        _skip_structured_siblings = False
+        skip_structured_siblings = False
         for content in message.contents:
             # Skip approval content - it's internal framework state, not for the LLM
             if content.type in ("function_approval_request", "function_approval_response"):
@@ -1029,11 +1027,11 @@ class RawOpenAIChatCompletionClient(
 
             # Skip sibling content items that were part of a structured content list
             # already emitted (e.g. the text portion following a Mistral thinking chunk).
-            if _skip_structured_siblings and "_source_content_list" not in content.additional_properties:
+            if skip_structured_siblings and "_source_content_list" not in content.additional_properties:
                 if content.type in ("text", "text_reasoning"):
                     continue
                 # Non-text items (function calls etc.) are NOT skipped.
-                _skip_structured_siblings = False
+                skip_structured_siblings = False
 
             args: dict[str, Any] = {
                 "role": message.role,
@@ -1073,7 +1071,7 @@ class RawOpenAIChatCompletionClient(
                     source_list: list[Any] = content.additional_properties["_source_content_list"]
                     args["content"] = source_list
                     # Mark that subsequent content items from the same chunked source should be skipped
-                    _skip_structured_siblings = True
+                    skip_structured_siblings = True
                 case "text_reasoning" if (protected_data := content.protected_data) is not None:
                     # Buffer reasoning to attach to the next message with content/tool_calls
                     pending_reasoning = json.loads(protected_data)
