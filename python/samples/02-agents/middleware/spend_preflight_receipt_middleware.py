@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import math
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -72,6 +73,18 @@ class SpendEnvelope:
             "expires_at": self.expires_at,
         }
 
+    def authorization_dict(self) -> dict[str, str]:
+        """Return the stable fields that an authorization decision binds to."""
+        return {
+            "function_name": self.function_name,
+            "call_id": self.call_id,
+            "args_hash": self.args_hash,
+            "amount_usd": self.amount_usd,
+            "payee": self.payee,
+            "resource": self.resource,
+            "policy_version": self.policy_version,
+        }
+
 
 def canonical_json(value: Mapping[str, Any]) -> str:
     """Serialize a mapping deterministically for hashing."""
@@ -104,7 +117,7 @@ def build_spend_envelope(context: FunctionInvocationContext) -> tuple[SpendEnvel
         policy_version=POLICY_VERSION,
         expires_at=(issued_at + timedelta(minutes=5)).isoformat(),
     )
-    return envelope, sha256(canonical_json(envelope.to_dict()))
+    return envelope, sha256(canonical_json(envelope.authorization_dict()))
 
 
 def authorize_spend(envelope: SpendEnvelope, envelope_hash: str) -> dict[str, str]:
@@ -115,8 +128,15 @@ def authorize_spend(envelope: SpendEnvelope, envelope_hash: str) -> dict[str, st
     - amounts over 50 USD require human approval;
     - smaller spends are approved.
     """
-    amount = float(envelope.amount_usd)
-    if amount > 100:
+    try:
+        amount = float(envelope.amount_usd)
+    except ValueError:
+        amount = math.nan
+
+    if not math.isfinite(amount) or amount < 0:
+        verdict = "denied"
+        reason = "amount must be finite and non-negative"
+    elif amount > 100:
         verdict = "denied"
         reason = "amount exceeds the sample hard limit"
     elif amount > 50:
@@ -253,7 +273,14 @@ class SpendPreflightReceiptMiddleware(FunctionMiddleware):
 def buy_dataset_access(
     dataset_name: Annotated[str, Field(description="The dataset to purchase access for.")],
     payee: Annotated[str, Field(description="The provider receiving payment.")],
-    amount_usd: Annotated[float, Field(description="The spend amount in USD.")],
+    amount_usd: Annotated[
+        float,
+        Field(
+            ge=0,
+            allow_inf_nan=False,
+            description="The non-negative finite spend amount in USD.",
+        ),
+    ],
 ) -> str:
     """Purchase short-lived dataset access."""
     return f"Purchased access to {dataset_name} from {payee} for ${amount_usd:.2f}."
