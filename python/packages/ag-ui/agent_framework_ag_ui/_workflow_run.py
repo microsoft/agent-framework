@@ -1013,12 +1013,9 @@ async def run_workflow_stream(
                 contents = _workflow_payload_to_contents(output_payload)
                 if contents:
                     output_text = _text_from_contents(contents)
-                    if output_text and output_text == last_assistant_text:
-                        contents = [content for content in contents if content.type != "text"]
-                        if not contents:
-                            continue
+                    skip_text = bool(output_text and output_text == last_assistant_text)
                     for content in contents:
-                        for out_event in _emit_content(content, flow, predictive_handler=None, skip_text=False):
+                        for out_event in _emit_content(content, flow, predictive_handler=None, skip_text=skip_text):
                             yield out_event
                     if flow.message_id and flow.accumulated_text:
                         last_assistant_text = flow.accumulated_text.strip() or last_assistant_text
