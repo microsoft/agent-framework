@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from agent_framework_azurefunctions import WorkflowHitlContext
-from agent_framework_azurefunctions._hitl_context import WEBSITE_HOSTNAME_ENV
+from agent_framework_azurefunctions._hitl_context import WEBSITE_HOSTNAME_ENV, _is_loopback
 
 
 def _ctx(metadata: Any) -> SimpleNamespace:
@@ -199,3 +199,33 @@ class TestPendingRequestId:
         # A runner context that doesn't track request-info events degrades to None.
         ctx = _ctx_with_pending(None, has_getter=False)
         assert await WorkflowHitlContext.pending_request_id(ctx) is None
+
+
+class TestLoopback:
+    """Loopback detection covers the addresses ``func start`` can bind, not just localhost."""
+
+    @pytest.mark.parametrize(
+        ("host", "expected"),
+        [
+            ("localhost", True),
+            ("localhost:7071", True),
+            ("127.0.0.1", True),
+            ("127.0.0.1:7071", True),
+            ("127.5.9.9", True),
+            ("0.0.0.0", True),
+            ("0.0.0.0:7071", True),
+            ("::1", True),
+            ("[::1]:7071", True),
+            ("myapp.azurewebsites.net", False),
+            ("contoso.example.com:443", False),
+        ],
+    )
+    def test_is_loopback(self, host: str, expected: bool) -> None:
+        assert _is_loopback(host) is expected
+
+    def test_ipv6_loopback_base_url_gets_http(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # WEBSITE_HOSTNAME may report a bracketed IPv6 loopback locally; it must resolve to http.
+        monkeypatch.setenv(WEBSITE_HOSTNAME_ENV, "[::1]:7071")
+        hitl = WorkflowHitlContext.from_context(_ctx({"instance_id": "i", "workflow_name": "wf"}))
+        assert hitl is not None
+        assert hitl.base_url == "http://[::1]:7071"

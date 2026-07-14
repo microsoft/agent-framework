@@ -56,6 +56,11 @@ from .naming import (
     workflow_orchestrator_name,
     workflow_scoped_executor_id,
 )
+from .runner_context import (
+    HOST_METADATA_INSTANCE_ID,
+    HOST_METADATA_REQUEST_PATH_PREFIX,
+    HOST_METADATA_WORKFLOW_NAME,
+)
 from .serialization import (
     SUBWORKFLOW_ADDRESS_KEY,
     SUBWORKFLOW_INPUT_KEY,
@@ -287,9 +292,9 @@ def _prepare_activity_task(
         # root down to this workflow level. For a top-level workflow the prefix is empty,
         # so this reduces to addressing the instance directly.
         "host_context": {
-            "instance_id": address["root_instance_id"],
-            "workflow_name": address["root_workflow_name"],
-            "request_path_prefix": address["request_path_prefix"],
+            HOST_METADATA_INSTANCE_ID: address["root_instance_id"],
+            HOST_METADATA_WORKFLOW_NAME: address["root_workflow_name"],
+            HOST_METADATA_REQUEST_PATH_PREFIX: address["request_path_prefix"],
         },
     }
     activity_input_json = json.dumps(activity_input)

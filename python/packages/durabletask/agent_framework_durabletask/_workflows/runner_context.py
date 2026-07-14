@@ -23,6 +23,16 @@ from agent_framework import (
 from agent_framework._workflows._runner_context import YieldOutputClassifier, YieldOutputEventType
 from agent_framework._workflows._state import State
 
+# Keys of the host-metadata mapping the durable host attaches to each executor (as the
+# activity's ``host_context`` input, surfaced here via ``set_host_metadata``). These form
+# a cross-package contract: the orchestrator writes them and
+# ``WorkflowHitlContext.from_context`` in agent-framework-azurefunctions reads them back by
+# the same names, so they live here as shared constants to keep producer and consumer from
+# drifting silently (a rename would just make HITL URLs stop being built, with no error).
+HOST_METADATA_INSTANCE_ID = "instance_id"
+HOST_METADATA_WORKFLOW_NAME = "workflow_name"
+HOST_METADATA_REQUEST_PATH_PREFIX = "request_path_prefix"
+
 
 class CapturingRunnerContext(RunnerContext):
     """A RunnerContext that captures messages and events for durable activities.
