@@ -501,6 +501,50 @@ async def test_workflow_stream_reconciles_result_from_final_response() -> None:
     assert tool_results[0].content == "Sunny in Seattle"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
+async def test_workflow_stream_does_not_repeat_finalized_result_from_latest_assistant_message() -> None:
+    """A finalized assistant result should complete its exposed call exactly once."""
+    function_call = Content.from_function_call(
+        call_id="weather-call",
+        name="get_weather",
+        arguments={"city": "Seattle"},
+    )
+    function_result = Content.from_function_result(call_id="weather-call", result="Sunny in Seattle")
+
+    @executor(id="participant")
+    async def participant(message: Any, ctx: WorkflowContext[Any, AgentResponse | AgentResponseUpdate]) -> None:
+        del message
+        await ctx.yield_output(AgentResponseUpdate(contents=[function_call], role=None))
+        await ctx.yield_output(
+            AgentResponse(
+                messages=[
+                    Message(role="assistant", contents=[function_call]),
+                    Message(
+                        role="assistant",
+                        contents=[function_result, Content.from_text("The weather is sunny.")],
+                    ),
+                ]
+            )
+        )
+
+    workflow = WorkflowBuilder(start_executor=participant, output_from="all").build()
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "What is the weather in Seattle?"}]},
+            workflow,
+        )
+    ]
+
+    tool_ends = [event for event in events if event.type == "TOOL_CALL_END"]
+    assert [event.tool_call_id for event in tool_ends] == ["weather-call"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    tool_results = [event for event in events if event.type == "TOOL_CALL_RESULT"]
+    assert [event.tool_call_id for event in tool_results] == ["weather-call"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert tool_results[0].content == "Sunny in Seattle"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert [event.delta for event in events if event.type == "TEXT_MESSAGE_CONTENT"] == [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        "The weather is sunny."
+    ]
+
+
 async def test_workflow_stream_keeps_unexposed_finalized_results_private() -> None:
     """Finalized results must not publish calls that were never exposed during the run."""
     private_call = Content.from_function_call(

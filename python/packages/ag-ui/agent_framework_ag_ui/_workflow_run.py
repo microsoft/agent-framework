@@ -655,6 +655,11 @@ def _unemitted_exposed_function_results(response: AgentResponse, flow: FlowState
     emitted_call_ids = {
         str(result["toolCallId"]) for result in flow.tool_results if isinstance(result.get("toolCallId"), str)
     }
+    latest_assistant_result_ids = {
+        str(content.call_id)
+        for content in _latest_assistant_contents(list(response.messages or [])) or []
+        if content.type == "function_result" and content.call_id
+    }
     results: list[Content] = []
     for message in response.messages or []:
         for content in message.contents or []:
@@ -664,6 +669,7 @@ def _unemitted_exposed_function_results(response: AgentResponse, flow: FlowState
                 or not call_id
                 or call_id not in exposed_call_ids
                 or call_id in emitted_call_ids
+                or call_id in latest_assistant_result_ids
             ):
                 continue
             results.append(content)
