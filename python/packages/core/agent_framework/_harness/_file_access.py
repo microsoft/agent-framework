@@ -1360,6 +1360,15 @@ class FileAccessProvider(ContextProvider):
         auto-approved, even when their name matches a file-access tool, so the
         rule stays scoped to this provider's local tools.
 
+        .. warning::
+            **Security — avoid tool-name collisions.** This rule approves local
+            tool calls by tool name only (``file_access_read``,
+            ``file_access_ls``, and ``file_access_grep``). Any other local tool
+            registered under one of these names — for example a tool with a
+            caller-configurable name such as the shell tool — may also be
+            auto-approved, bypassing the human approval boundary. Ensure no other
+            tool collides with these reserved names.
+
         Args:
             function_call: The pending ``function_call`` content.
 
@@ -1386,6 +1395,17 @@ class FileAccessProvider(ContextProvider):
         Hosted-tool calls (those carrying a ``server_label``) are never
         auto-approved, even when their name matches a file-access tool, so the
         rule stays scoped to this provider's local tools.
+
+        .. warning::
+            **Security — avoid tool-name collisions.** This rule approves local
+            tool calls by tool name only (``file_access_write``,
+            ``file_access_read``, ``file_access_delete``, ``file_access_ls``,
+            ``file_access_grep``, ``file_access_replace``, and
+            ``file_access_replace_lines``). Any other local tool registered under
+            one of these names — for example a tool with a caller-configurable
+            name such as the shell tool — may also be auto-approved, bypassing
+            the human approval boundary. Ensure no other tool collides with these
+            reserved names.
 
         Args:
             function_call: The pending ``function_call`` content.

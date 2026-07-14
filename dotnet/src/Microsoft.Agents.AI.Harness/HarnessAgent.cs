@@ -43,13 +43,13 @@ namespace Microsoft.Agents.AI;
 /// <item><description><see cref="TodoProvider"/> — persistent todo list that the agent uses to track multi-step plans. Disable with <see cref="HarnessAgentOptions.DisableTodoProvider"/>.</description></item>
 /// <item><description><see cref="AgentModeProvider"/> — mode tracking (e.g., "plan" vs "execute") that the agent uses to structure its work. Disable with <see cref="HarnessAgentOptions.DisableAgentModeProvider"/>.</description></item>
 /// <item><description><see cref="FileMemoryProvider"/> — file-based session memory allowing the agent to persist notes and artifacts across turns. Disable with <see cref="HarnessAgentOptions.DisableFileMemory"/>.</description></item>
-/// <item><description><see cref="FileAccessProvider"/> — shared file access providing read/write tools for a working directory. Disable with <see cref="HarnessAgentOptions.DisableFileAccess"/>.</description></item>
 /// <item><description><see cref="AgentSkillsProvider"/> — discovers and loads skill definitions from the file system, enabling dynamic tool sets. Disable with <see cref="HarnessAgentOptions.DisableAgentSkillsProvider"/>.</description></item>
 /// </list>
 /// </para>
 /// <para>
 /// <strong>Optional context providers (enabled via <see cref="HarnessAgentOptions"/>):</strong>
 /// <list type="bullet">
+/// <item><description><see cref="FileAccessProvider"/> — shared file access providing read/write tools for a working directory. Enable by setting <see cref="HarnessAgentOptions.FileAccessStore"/>; configure via <see cref="HarnessAgentOptions.FileAccessProviderOptions"/>.</description></item>
 /// <item><description><see cref="BackgroundAgentsProvider"/> — enables delegation to background agents for parallel work. Enable by setting <see cref="HarnessAgentOptions.BackgroundAgents"/>.</description></item>
 /// <item><description><c>ShellEnvironmentProvider</c> — injects OS/shell/CWD information and a shell execution tool. Enable by setting <c>HarnessAgentOptions.ShellExecutor</c> (.NET only).</description></item>
 /// </list>
@@ -320,13 +320,9 @@ public sealed class HarnessAgent : DelegatingAIAgent
                 }));
         }
 
-        if (options?.DisableFileAccess is not true)
+        if (options?.FileAccessStore is AgentFileStore fileAccessStore)
         {
-            AgentFileStore fileAccessStore = options?.FileAccessStore
-                ?? new FileSystemAgentFileStore(
-                    Path.Combine(Directory.GetCurrentDirectory(), "working"));
-
-            providers.Add(new FileAccessProvider(fileAccessStore));
+            providers.Add(new FileAccessProvider(fileAccessStore, options.FileAccessProviderOptions));
         }
 
         if (options?.DisableAgentSkillsProvider is not true)

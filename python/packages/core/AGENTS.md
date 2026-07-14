@@ -129,7 +129,7 @@ agent_framework/
 
 ### Tool Approval Harness (`_harness/_tool_approval.py`)
 
-- **`ToolApprovalMiddleware`** - Experimental opt-in agent middleware that coordinates session-backed approval
+- **`ToolApprovalMiddleware`** - Opt-in agent middleware that coordinates session-backed approval
   rules, heuristic `auto_approval_rules`, queued approval requests, collected approval responses, and
   streaming/non-streaming approval prompts. Heuristic callbacks receive the underlying `function_call` content.
 - **`ToolApprovalRule`** / **`ToolApprovalState`** - Serializable state models for standing approvals and queued
@@ -174,7 +174,7 @@ agent_framework/
 
 ### Foundry (`foundry/`)
 
-- **`FoundryChatClient`** - Chat client for Azure AI Foundry project endpoints
+- **`FoundryChatClient`** - Chat client for Microsoft Foundry project endpoints
 
 ## Key Patterns
 

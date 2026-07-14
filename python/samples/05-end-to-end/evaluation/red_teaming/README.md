@@ -2,7 +2,7 @@
 
 This directory contains samples demonstrating how to use Azure AI's evaluation and red teaming capabilities with Agent Framework agents.
 
-For more details on the Red Team setup see [the Azure AI Foundry docs](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/develop/run-scans-ai-red-teaming-agent)
+For more details on the Red Team setup see [the Microsoft Foundry docs](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/develop/run-scans-ai-red-teaming-agent)
 
 ## Samples
 

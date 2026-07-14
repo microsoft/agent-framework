@@ -75,6 +75,14 @@ Teaches the assistant to work with *your* data safely.
   deleting still pause for approval. The `place_trade` tool is marked
   `approval_mode="always_require"`, so the harness asks you to approve or deny before any trade
   runs. The trade is simulated.
+
+  > ⚠️ **Security — avoid tool-name collisions:** `read_only_tools_auto_approval_rule`
+  > approves local file-access tools by tool name only (`file_access_read`,
+  > `file_access_ls`, `file_access_grep`). Auto-approval rules may match by name,
+  > so any other local tool registered under one of these names — for example a
+  > tool with a caller-configurable name such as the shell tool — may also be
+  > auto-approved, bypassing the human approval boundary. Ensure no other tool
+  > collides with these reserved names.
 - **Durable memory, two ways:**
   - **File memory** (coarse-grained, explicit) — the agent reads/writes files such as
     `watchlist.md`. File memory is on by default; its files live on disk under
