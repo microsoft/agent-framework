@@ -22,8 +22,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- AgentMemory (published) — a .NET port of the Neo4j Labs agent-memory library, not an officially
-         recognized Neo4j integration, + its Microsoft Agent Framework adapter. -->
+    <!-- AgentMemory (published) — an unofficial .NET port of the Neo4j Labs agent-memory library + its
+         Microsoft Agent Framework adapter. -->
     <PackageReference Include="AgentMemory" Version="1.0.1" />
     <PackageReference Include="AgentMemory.AgentFramework" Version="1.0.1" />
     <!-- Microsoft Agent Framework (matches AgentMemory's target) + the OpenAI/Foundry chat & embedding clients. -->
