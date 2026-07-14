@@ -664,7 +664,22 @@ class RawGeminiChatClient(
             A list of Gemini Part objects representing the message contents.
         """
         parts: list[types.Part] = []
+        pending_signature: bytes | None = None
         for content in message_contents:
+            if content.type == "text_reasoning":
+                # Gemini 3's thought_signature travels as base64 protected_data on reasoning content;
+                # hold it for the function call it precedes (reasoning is not sent back as a Part).
+                pending_signature = None
+                encoded_signature = content.protected_data
+                if isinstance(encoded_signature, str) and encoded_signature:
+                    try:
+                        pending_signature = base64.b64decode(encoded_signature, validate=True)
+                    except ValueError:
+                        logger.warning("Ignoring malformed thought_signature on reasoning content")
+                continue
+            # A signature applies only to a function call immediately following its reasoning content.
+            thought_signature = pending_signature
+            pending_signature = None
             match content.type:
                 case "text":
                     parts.append(types.Part(text=content.text or ""))
@@ -692,17 +707,8 @@ class RawGeminiChatClient(
                         name=content.name or "",
                         args=content.parse_arguments() or {},
                     )
-                    # Echo back Gemini 3's opaque thought_signature (required on every replay of a
-                    # functionCall part), decoding it from the base64 form stored in additional_properties.
-                    # Guard the untyped value and degrade gracefully on corrupted history rather than
-                    # crashing the tool loop.
-                    encoded_signature = content.additional_properties.get("thought_signature")
-                    thought_signature: bytes | None = None
-                    if isinstance(encoded_signature, str) and encoded_signature:
-                        try:
-                            thought_signature = base64.b64decode(encoded_signature, validate=True)
-                        except ValueError:  # binascii.Error subclasses ValueError
-                            logger.warning("Ignoring malformed thought_signature on function_call content")
+                    # Echo the signature from the preceding reasoning content, backfilling only when
+                    # the raw Part lacks one.
                     if isinstance(raw_part, types.Part) and raw_part.function_call is not None:
                         replayed_part = raw_part.model_copy(update={"function_call": function_call}, deep=True)
                         if replayed_part.thought_signature is None and thought_signature is not None:
@@ -1137,19 +1143,19 @@ class RawGeminiChatClient(
                 else:
                     call_id = self._generate_tool_call_id()
                     logger.debug("function_call missing id; generated fallback call_id=%r", call_id)
-                # Capture Gemini 3's thought_signature (on the Part, not the FunctionCall) as a base64
-                # string so it stays JSON-serializable when messages are persisted and can be replayed.
-                additional_properties = (
-                    {"thought_signature": base64.b64encode(part.thought_signature).decode("utf-8")}
-                    if part.thought_signature is not None
-                    else None
-                )
+                # Surface Gemini 3's thought_signature as reasoning content preceding the call so it
+                # survives when the call is later reconstructed without its raw Part.
+                if part.thought_signature is not None:
+                    contents.append(
+                        Content.from_text_reasoning(
+                            protected_data=base64.b64encode(part.thought_signature).decode("utf-8")
+                        )
+                    )
                 contents.append(
                     Content.from_function_call(
                         call_id=call_id,
                         name=function_call.name or "",
                         arguments=function_call.args or {},
-                        additional_properties=additional_properties,
                         raw_representation=part,
                     )
                 )

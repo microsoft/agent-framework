@@ -746,17 +746,19 @@ def test_function_call_part_preserves_thought_signature_from_raw_part() -> None:
     assert parts[0].function_call.args == {"location": "Paris"}
 
 
-def test_function_call_part_captures_thought_signature_on_parse() -> None:
-    """Parsing a functionCall part stores its thought_signature as a base64 string."""
+def test_function_call_part_captures_thought_signature_as_reasoning_content() -> None:
+    """Parsing a functionCall part surfaces its thought_signature as preceding reasoning content."""
     client, _ = _make_gemini_client()
 
     contents = client._parse_parts([
         _make_part(function_call=("call-1", "get_weather", {"location": "Paris"}), thought_signature=b"sig-123")
     ])
 
-    assert len(contents) == 1
-    assert contents[0].type == "function_call"
-    assert contents[0].additional_properties["thought_signature"] == base64.b64encode(b"sig-123").decode("utf-8")
+    assert len(contents) == 2
+    assert contents[0].type == "text_reasoning"
+    assert contents[0].protected_data == base64.b64encode(b"sig-123").decode("utf-8")
+    assert contents[1].type == "function_call"
+    assert contents[1].call_id == "call-1"
 
 
 def test_captured_thought_signature_is_json_serializable() -> None:
@@ -771,30 +773,28 @@ def test_captured_thought_signature_is_json_serializable() -> None:
 
     restored = Message.from_dict(json.loads(serialized))
     parts = client._convert_message_contents(restored.contents, {})
+    # Reasoning content is not sent back as a part; only the function call is, carrying the signature.
+    assert len(parts) == 1
     assert parts[0].thought_signature == b"sig-123"
 
 
-def test_function_call_part_without_thought_signature_stores_nothing() -> None:
-    """A functionCall part without a signature leaves additional_properties empty."""
+def test_function_call_part_without_thought_signature_emits_no_reasoning_content() -> None:
+    """A functionCall part without a signature produces only the function_call content."""
     client, _ = _make_gemini_client()
 
     contents = client._parse_parts([_make_part(function_call=("call-1", "get_weather", {"location": "Paris"}))])
 
     assert len(contents) == 1
-    assert "thought_signature" not in contents[0].additional_properties
+    assert contents[0].type == "function_call"
 
 
-def test_reconstructed_function_call_replays_thought_signature_from_additional_properties() -> None:
-    """A function call rebuilt without its raw Part still replays the signature (harness approval path)."""
+def test_reconstructed_function_call_replays_thought_signature_from_reasoning_content() -> None:
+    """A function call rebuilt without its raw Part still replays the signature from reasoning content."""
     client, _ = _make_gemini_client()
-    content = Content.from_function_call(
-        call_id="call-1",
-        name="get_weather",
-        arguments={"location": "Paris"},
-        additional_properties={"thought_signature": base64.b64encode(b"sig-123").decode("utf-8")},
-    )
+    reasoning = Content.from_text_reasoning(protected_data=base64.b64encode(b"sig-123").decode("utf-8"))
+    call = Content.from_function_call(call_id="call-1", name="get_weather", arguments={"location": "Paris"})
 
-    parts = client._convert_message_contents([content], {})
+    parts = client._convert_message_contents([reasoning, call], {})
 
     assert len(parts) == 1
     assert parts[0].thought_signature == b"sig-123"
@@ -814,23 +814,15 @@ def test_function_call_without_thought_signature_replays_without_one() -> None:
 
 
 def test_malformed_thought_signature_is_ignored_gracefully(caplog: pytest.LogCaptureFixture) -> None:
-    """A corrupted or non-string signature degrades to no signature instead of crashing the tool loop."""
+    """A corrupted or non-string reasoning signature degrades to no signature instead of crashing."""
     client, _ = _make_gemini_client()
-    corrupted = Content.from_function_call(
-        call_id="call-1",
-        name="get_weather",
-        arguments={"location": "Paris"},
-        additional_properties={"thought_signature": "not valid base64!!!"},
-    )
-    non_string = Content.from_function_call(
-        call_id="call-2",
-        name="get_weather",
-        arguments={"location": "Paris"},
-        additional_properties={"thought_signature": 123},
-    )
+    corrupted = Content.from_text_reasoning(protected_data="not valid base64!!!")
+    call1 = Content.from_function_call(call_id="call-1", name="get_weather", arguments={"location": "Paris"})
+    non_string = Content("text_reasoning", protected_data=cast(Any, 123))
+    call2 = Content.from_function_call(call_id="call-2", name="get_weather", arguments={"location": "Paris"})
 
     with caplog.at_level(logging.WARNING):
-        parts = client._convert_message_contents([corrupted, non_string], {})
+        parts = client._convert_message_contents([corrupted, call1, non_string, call2], {})
 
     assert len(parts) == 2
     assert parts[0].thought_signature is None
@@ -839,26 +831,23 @@ def test_malformed_thought_signature_is_ignored_gracefully(caplog: pytest.LogCap
 
 
 def test_reconstructed_function_call_signature_survives_round_trip() -> None:
-    """Parse captures the signature and a rebuilt call (raw Part dropped) replays it end to end."""
+    """Parse yields reasoning+call; a rebuilt call (raw Part dropped) still replays the signature."""
     client, _ = _make_gemini_client()
 
     parsed = client._parse_parts([
         _make_part(function_call=("call-1", "get_weather", {"location": "Paris"}), thought_signature=b"sig-123")
     ])
-    fc = parsed[0]
+    reasoning = parsed[0]
+    fc = parsed[1]
     assert fc.call_id is not None
     assert fc.name is not None
-    # Simulate a layer that reconstructs the call from call_id/name/arguments, dropping raw_representation.
-    rebuilt = Content.from_function_call(
-        call_id=fc.call_id,
-        name=fc.name,
-        arguments=fc.arguments,
-        additional_properties=dict(fc.additional_properties),
-    )
+    # Simulate a layer that reconstructs the call from call_id/name/arguments, dropping raw_representation,
+    # while the sibling reasoning content is preserved in history.
+    rebuilt_call = Content.from_function_call(call_id=fc.call_id, name=fc.name, arguments=fc.arguments)
 
-    parts = client._convert_message_contents([rebuilt], {})
+    parts = client._convert_message_contents([reasoning, rebuilt_call], {})
 
-    assert parts[0].thought_signature == b"sig-123"
+    assert parts[-1].thought_signature == b"sig-123"
 
 
 def test_server_side_tool_call_part_is_informational_only() -> None:
