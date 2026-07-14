@@ -28,6 +28,7 @@ from agent_framework import (
     Content,
     FileCheckpointStorage,
     HistoryProvider,
+    InMemoryCheckpointStorage,
     Message,
     RawAgent,
     ResponseStream,
@@ -41,7 +42,8 @@ from agent_framework import (
     WorkflowMessage,
     executor,
 )
-from azure.ai.agentserver.responses import InMemoryResponseProvider
+from azure.ai.agentserver.responses import InMemoryResponseProvider, ResponseContext, ResponseEventStream
+from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
 from mcp.types import ErrorData
 from typing_extensions import Any
@@ -53,8 +55,11 @@ from agent_framework_foundry_hosting._responses import (
     ConsentError,
     FileBasedFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     InMemoryFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
+    _ContextAwareCheckpointStorage,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
+    _WorkflowCheckpointExecution,  # pyright: ignore[reportPrivateUsage]
+    _WorkflowCheckpointSynchronizer,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
 )
 
@@ -271,6 +276,221 @@ class TestResponsesHostServerInit:
 
 
 class TestDurableResponseStreamSeeding:
+    async def test_workflow_checkpoint_save_waits_for_response_checkpoint_acknowledgement(self) -> None:
+        stream = ResponseEventStream(response_id="resp_sync", model="test-model")
+        synchronizer = _WorkflowCheckpointSynchronizer(stream)
+        storage = _ContextAwareCheckpointStorage(
+            InMemoryCheckpointStorage(),
+            synchronizer,
+            "resp_sync",
+            "current",
+        )
+        checkpoint = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="hash")
+
+        save_task = asyncio.create_task(storage.save(checkpoint))
+        pending = await asyncio.wait_for(synchronizer.next_pending(), timeout=1)
+
+        assert not save_task.done()
+        assert isinstance(pending.event, ResponseCheckpointEvent)
+        assert stream.internal_metadata["workflow_checkpoint"] == {
+            "checkpoint_id": checkpoint.checkpoint_id,
+            "context_id": "resp_sync",
+            "kind": "current",
+        }
+
+        synchronizer.acknowledge(pending)
+        assert await save_task == checkpoint.checkpoint_id
+
+    async def test_current_turn_recovery_forwards_resumed_workflow_outputs(self) -> None:
+        workflow_event = MagicMock()
+        update = AgentResponseUpdate(contents=[Content.from_text("resumed output")], role="assistant")
+
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+
+        async def _workflow_events() -> AsyncIterator[Any]:
+            yield workflow_event
+
+        agent.workflow.run = MagicMock(return_value=_workflow_events())
+        agent._convert_workflow_event_to_agent_response_updates = MagicMock(return_value=[update])
+        server = object.__new__(ResponsesHostServer)
+        server._agent = agent  # pyright: ignore[reportPrivateUsage]
+        stream = ResponseEventStream(response_id="resp_recovery", model="test-model")
+        synchronizer = _WorkflowCheckpointSynchronizer(stream)
+        storage = _ContextAwareCheckpointStorage(
+            InMemoryCheckpointStorage(),
+            synchronizer,
+            "resp_recovery",
+            "current",
+        )
+        execution = _WorkflowCheckpointExecution(
+            restore_storage=storage,
+            restore_checkpoint_id="checkpoint-current",
+            write_storage=storage,
+            resume_current_turn=True,
+            synchronizer=synchronizer,
+        )
+
+        updates = [
+            item
+            async for item in server._resume_workflow_with_updates(  # pyright: ignore[reportPrivateUsage]
+                "resp_recovery",
+                execution,
+            )
+        ]
+
+        assert updates == [update]
+        agent.workflow.run.assert_called_once_with(
+            stream=True,
+            checkpoint_id="checkpoint-current",
+            checkpoint_storage=storage,
+        )
+        agent._convert_workflow_event_to_agent_response_updates.assert_called_once_with(
+            "resp_recovery",
+            workflow_event,
+        )
+
+    async def test_recovery_uses_exact_persisted_checkpoint_context(self, tmp_path: Any) -> None:
+        from azure.ai.agentserver.responses.models import CreateResponse
+
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+        agent.workflow.name = "wf"
+        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        root = tmp_path / "checkpoints"
+        root.mkdir()
+        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
+
+        response_id = "resp_current"
+        stream = ResponseEventStream(response_id=response_id, model="test-model")
+        stream.internal_metadata["workflow_checkpoint"] = {
+            "checkpoint_id": "checkpoint-durable",
+            "context_id": response_id,
+            "kind": "current",
+        }
+        request = CreateResponse(model="test-model", input="hello")
+        context = ResponseContext(response_id=response_id, mode_flags=MagicMock())
+        context.is_recovery = True
+
+        execution = await server._prepare_workflow_checkpoint_execution(  # pyright: ignore[reportPrivateUsage]
+            request,
+            context,
+            stream,
+        )
+
+        assert execution.resume_current_turn is True
+        assert execution.restore_checkpoint_id == "checkpoint-durable"
+        assert execution.restore_storage is not None
+        assert execution.restore_storage._inner.storage_path == (root / response_id).resolve()  # pyright: ignore[reportPrivateUsage]
+
+    async def test_recovery_ignores_newer_unsynchronized_checkpoint(self, tmp_path: Any) -> None:
+        from azure.ai.agentserver.responses.models import CreateResponse
+
+        from agent_framework_foundry_hosting._responses import (  # pyright: ignore[reportPrivateUsage]
+            _checkpoint_storage_for_context,
+        )
+
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+        agent.workflow.name = "wf"
+        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+
+        response_id = "resp_current"
+        root = tmp_path / "checkpoints"
+        root.mkdir()
+        storage = _checkpoint_storage_for_context(str(root), response_id)
+        durable = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="hash")
+        orphan = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="hash")
+        await storage.save(durable)
+        await storage.save(orphan)
+        assert (await storage.get_latest(workflow_name="wf")).checkpoint_id == orphan.checkpoint_id  # type: ignore[union-attr]
+
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
+        stream = ResponseEventStream(response_id=response_id, model="test-model")
+        stream.internal_metadata["workflow_checkpoint"] = {
+            "checkpoint_id": durable.checkpoint_id,
+            "context_id": response_id,
+            "kind": "current",
+        }
+        request = CreateResponse(model="test-model", input="hello")
+        context = ResponseContext(response_id=response_id, mode_flags=MagicMock())
+        context.is_recovery = True
+
+        execution = await server._prepare_workflow_checkpoint_execution(  # pyright: ignore[reportPrivateUsage]
+            request,
+            context,
+            stream,
+        )
+
+        assert execution.restore_checkpoint_id == durable.checkpoint_id
+
+    async def test_normal_turn_seeds_base_checkpoint_before_response_created(self, tmp_path: Any) -> None:
+        from azure.ai.agentserver.responses.models import CreateResponse
+
+        from agent_framework_foundry_hosting._responses import (  # pyright: ignore[reportPrivateUsage]
+            _checkpoint_storage_for_context,
+        )
+
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+        agent.workflow.name = "wf"
+        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+
+        previous_response_id = "resp_previous"
+        response_id = "resp_current"
+        root = tmp_path / "checkpoints"
+        root.mkdir()
+        checkpoint_storage = _checkpoint_storage_for_context(str(root), previous_response_id)
+        old_checkpoint = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="hash")
+        checkpoint = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="hash")
+        await checkpoint_storage.save(old_checkpoint)
+        await checkpoint_storage.save(checkpoint)
+
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
+        stream = ResponseEventStream(response_id=response_id, model="test-model")
+        request = CreateResponse(model="test-model", input="hello", previous_response_id=previous_response_id)
+        context = ResponseContext(
+            response_id=response_id,
+            previous_response_id=previous_response_id,
+            mode_flags=MagicMock(),
+        )
+
+        execution = await server._prepare_workflow_checkpoint_execution(  # pyright: ignore[reportPrivateUsage]
+            request,
+            context,
+            stream,
+        )
+
+        assert execution.resume_current_turn is False
+        assert execution.restore_checkpoint_id == checkpoint.checkpoint_id
+        assert stream.internal_metadata["workflow_checkpoint"] == {
+            "checkpoint_id": checkpoint.checkpoint_id,
+            "context_id": previous_response_id,
+            "kind": "base",
+        }
+        remaining = await checkpoint_storage.list_checkpoint_ids(workflow_name="wf")
+        assert remaining == [checkpoint.checkpoint_id]
+
     async def test_cancellation_signal_emits_completed_for_streaming(self) -> None:
         """On steering pressure or client cancel the streaming handler emits response.completed."""
         from azure.ai.agentserver.responses import ResponseContext
@@ -3184,10 +3404,18 @@ class TestCheckpointContextPathValidation:
         input_item = ItemMessage({"type": "message", "role": "user", "content": "next turn"})
 
         with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[input_item])):
-            async for _ in server._handle_response(request, context, asyncio.Event()):  # pyright: ignore[reportPrivateUsage]
-                pass
+            events = [
+                event
+                async for event in server._handle_response(  # pyright: ignore[reportPrivateUsage]
+                    request,
+                    context,
+                    asyncio.Event(),
+                )
+            ]
 
         assert agent.run.call_count == 2
+        assert isinstance(events[2], ResponseCheckpointEvent)
+        assert events[2].response.internal_metadata["workflow_checkpoint"]["kind"] == "base"
         restore_call = agent.run.call_args_list[0]
         assert restore_call.kwargs["checkpoint_id"] == checkpoint.checkpoint_id
         assert restore_call.kwargs["checkpoint_storage"]._inner.storage_path == (root / previous_response_id).resolve()
@@ -4148,6 +4376,56 @@ class TestWorkflowAgentHosting:
             for part in item.get("content", [])
         )
         assert text_found, f"Expected workflow output text in {body['output']}"
+
+    async def test_handler_yields_response_checkpoint_for_workflow_supersteps(self) -> None:
+        from azure.ai.agentserver.responses.models import CreateResponse, ItemMessage
+
+        workflow_agent = _build_text_workflow_agent("checkpointed output")
+        server = _make_server(workflow_agent)
+        request = CreateResponse(model="test-model", input="hi")
+        context = ResponseContext(response_id="resp_checkpoint_events", mode_flags=MagicMock())
+        input_item = ItemMessage({"type": "message", "role": "user", "content": "hi"})
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[input_item])):
+            events = [
+                event
+                async for event in server._handle_response(  # pyright: ignore[reportPrivateUsage]
+                    request,
+                    context,
+                    asyncio.Event(),
+                )
+            ]
+
+        checkpoint_events = [event for event in events if isinstance(event, ResponseCheckpointEvent)]
+        assert len(checkpoint_events) >= 2
+
+    async def test_workflow_approval_output_uses_resolved_user_storage(self) -> None:
+        from azure.ai.agentserver.responses.models import CreateResponse, ItemMessage
+
+        workflow_agent, _ = _build_approval_workflow_agent(approval_request_id="apr_user_scoped")
+        server = _make_server(workflow_agent)
+        user_storage = MagicMock()
+        user_storage.save_approval_request = AsyncMock()
+        user_storage.load_approval_request = AsyncMock()
+        request = CreateResponse(model="test-model", input="hi")
+        context = ResponseContext(response_id="resp_user_scoped", mode_flags=MagicMock())
+        context.platform_context.user_id_key = "user-A"
+        input_item = ItemMessage({"type": "message", "role": "user", "content": "hi"})
+
+        with (
+            patch.object(server, "_approval_storage_for_user", return_value=user_storage),
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[input_item])),
+        ):
+            _ = [
+                event
+                async for event in server._handle_response(  # pyright: ignore[reportPrivateUsage]
+                    request,
+                    context,
+                    asyncio.Event(),
+                )
+            ]
+
+        user_storage.save_approval_request.assert_awaited_once()
 
     async def test_basic_text_response_streaming(self) -> None:
         workflow_agent = _build_text_workflow_agent("hello stream")

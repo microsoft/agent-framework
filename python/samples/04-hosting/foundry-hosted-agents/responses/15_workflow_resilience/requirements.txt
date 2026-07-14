@@ -1,2 +1,8 @@
-agent-framework-foundry
+# This sample makes no external model calls, so agent-framework-foundry
+# (FoundryChatClient) is not needed -- only the hosting layer is.
 agent-framework-foundry-hosting
+
+# demo.py's HTTP client. (Previously pulled in transitively via
+# agent-framework-foundry -> agent-framework-openai -> openai; declared
+# explicitly here since that transitive path no longer exists.)
+httpx

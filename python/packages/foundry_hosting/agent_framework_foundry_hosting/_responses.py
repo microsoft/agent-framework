@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Literal, Protocol, cast
 
 from agent_framework import (
+    AgentResponseUpdate,
     ChatOptions,
     CheckpointID,
     CheckpointStorage,
@@ -300,26 +301,25 @@ class _ContextAwareCheckpointStorage:
     ``ResponseEventStream``. Every other operation delegates unchanged to the
     inner storage.
 
-    Created **per request** so it can hold the request's response stream while
-    the wrapped inner storage stays cached/persistent across turns.
-
-    Note:
-        The post-save logic runs inside the workflow's ``run()`` call stack, so
-        it cannot yield events onto the response stream; it may only read or
-        mutate the stream.
+    Created **per request** so the synchronizer can rendezvous with the response
+    handler while the wrapped inner storage stays cached/persistent across turns.
     """
 
-    # Reserved key for storing the most recent checkpoint ID for crash recovery
-    LATEST_CHECKPOINT_ID_KEY = "last_checkpoint_id"
-
-    def __init__(self, inner: CheckpointStorage, response_event_stream: ResponseEventStream) -> None:
+    def __init__(
+        self,
+        inner: CheckpointStorage,
+        synchronizer: _WorkflowCheckpointSynchronizer,
+        context_id: str,
+        reference_kind: Literal["base", "current"],
+    ) -> None:
         self._inner = inner
-        self._response_event_stream = response_event_stream
+        self._synchronizer = synchronizer
+        self._context_id = context_id
+        self._reference_kind: Literal["base", "current"] = reference_kind
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         checkpoint_id = await self._inner.save(checkpoint)
-        self._response_event_stream.internal_metadata[self.LATEST_CHECKPOINT_ID_KEY] = checkpoint_id
-        self._response_event_stream.checkpoint()
+        await self._synchronizer.synchronize(checkpoint_id, self._context_id, self._reference_kind)
         return checkpoint_id
 
     async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
@@ -336,6 +336,147 @@ class _ContextAwareCheckpointStorage:
 
     async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
         return await self._inner.list_checkpoint_ids(workflow_name=workflow_name)
+
+
+@dataclass(frozen=True)
+class _WorkflowCheckpointReference:
+    """A response-persisted pointer to an exact workflow checkpoint."""
+
+    checkpoint_id: CheckpointID
+    context_id: str
+    kind: Literal["base", "current"]
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "checkpoint_id": self.checkpoint_id,
+            "context_id": self.context_id,
+            "kind": self.kind,
+        }
+
+    @classmethod
+    def from_value(cls, value: Any) -> _WorkflowCheckpointReference | None:
+        if not isinstance(value, Mapping):
+            return None
+        value_mapping = cast(Mapping[str, Any], value)
+        checkpoint_id = value_mapping.get("checkpoint_id")
+        context_id = value_mapping.get("context_id")
+        kind = value_mapping.get("kind")
+        if not isinstance(checkpoint_id, str) or not isinstance(context_id, str) or kind not in {"base", "current"}:
+            return None
+        return cls(checkpoint_id=checkpoint_id, context_id=context_id, kind=cast(Literal["base", "current"], kind))
+
+
+@dataclass
+class _PendingResponseCheckpoint:
+    """A response checkpoint event waiting for the handler to yield it."""
+
+    event: Any
+    acknowledged: asyncio.Future[None]
+
+
+class _WorkflowCheckpointSynchronizer:
+    """Synchronize workflow checkpoint saves with durable response snapshots."""
+
+    CHECKPOINT_REFERENCE_KEY = "workflow_checkpoint"
+    LEGACY_CHECKPOINT_ID_KEY = "last_checkpoint_id"
+
+    def __init__(self, response_event_stream: ResponseEventStream) -> None:
+        self._response_event_stream = response_event_stream
+        self._pending: asyncio.Queue[_PendingResponseCheckpoint] = asyncio.Queue()
+        self._waiters: set[asyncio.Future[None]] = set()
+        self._closed_error: BaseException | None = None
+
+    def seed(self, reference: _WorkflowCheckpointReference | None) -> None:
+        metadata = self._response_event_stream.internal_metadata
+        if reference is None:
+            metadata.pop(self.CHECKPOINT_REFERENCE_KEY, None)
+            metadata.pop(self.LEGACY_CHECKPOINT_ID_KEY, None)
+            return
+        metadata[self.CHECKPOINT_REFERENCE_KEY] = reference.to_dict()
+        metadata[self.LEGACY_CHECKPOINT_ID_KEY] = reference.checkpoint_id
+
+    def get_persisted_reference(
+        self,
+        *,
+        fallback_context_id: str | None,
+    ) -> _WorkflowCheckpointReference | None:
+        metadata = self._response_event_stream.internal_metadata
+        reference = _WorkflowCheckpointReference.from_value(metadata.get(self.CHECKPOINT_REFERENCE_KEY))
+        if reference is not None:
+            return reference
+
+        legacy_checkpoint_id = metadata.get(self.LEGACY_CHECKPOINT_ID_KEY)
+        if isinstance(legacy_checkpoint_id, str) and fallback_context_id is not None:
+            return _WorkflowCheckpointReference(
+                checkpoint_id=legacy_checkpoint_id,
+                context_id=fallback_context_id,
+                kind="current",
+            )
+        return None
+
+    async def synchronize(
+        self,
+        checkpoint_id: CheckpointID,
+        context_id: str,
+        kind: Literal["base", "current"],
+    ) -> None:
+        if self._closed_error is not None:
+            raise RuntimeError("Workflow checkpoint synchronizer is closed.") from self._closed_error
+
+        self.seed(
+            _WorkflowCheckpointReference(
+                checkpoint_id=checkpoint_id,
+                context_id=context_id,
+                kind=kind,
+            )
+        )
+        acknowledged = asyncio.get_running_loop().create_future()
+        self._waiters.add(acknowledged)
+        acknowledged.add_done_callback(self._waiters.discard)
+        acknowledged.add_done_callback(self._consume_future_exception)
+        await self._pending.put(
+            _PendingResponseCheckpoint(
+                event=self._response_event_stream.checkpoint(),
+                acknowledged=acknowledged,
+            )
+        )
+        await acknowledged
+
+    async def next_pending(self) -> _PendingResponseCheckpoint:
+        return await self._pending.get()
+
+    def acknowledge(self, pending: _PendingResponseCheckpoint) -> None:
+        if not pending.acknowledged.done():
+            pending.acknowledged.set_result(None)
+
+    @staticmethod
+    def _consume_future_exception(future: asyncio.Future[None]) -> None:
+        if not future.cancelled():
+            future.exception()
+
+    def close(self, error: BaseException) -> None:
+        self._closed_error = error
+        for acknowledged in list(self._waiters):
+            if not acknowledged.done():
+                acknowledged.set_exception(error)
+        while True:
+            try:
+                pending = self._pending.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if not pending.acknowledged.done():
+                pending.acknowledged.set_exception(error)
+
+
+@dataclass(frozen=True)
+class _WorkflowCheckpointExecution:
+    """Checkpoint storages and recovery mode for one hosted workflow request."""
+
+    restore_storage: CheckpointStorage | None
+    restore_checkpoint_id: CheckpointID | None
+    write_storage: CheckpointStorage
+    resume_current_turn: bool
+    synchronizer: _WorkflowCheckpointSynchronizer
 
 
 def _approval_storage_path_for_user(base_path: str, user_id: str) -> str:
@@ -639,14 +780,42 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # also drains the tracker so the SSE stream stays well-formed).
         response_event_stream = self._create_response_event_stream(request, context)
         tracker = _OutputItemTracker(response_event_stream)
+        workflow_checkpoint_execution: _WorkflowCheckpointExecution | None = None
+        workflow_preparation_error: Exception | None = None
+        if self._is_workflow_agent:
+            try:
+                workflow_checkpoint_execution = await self._prepare_workflow_checkpoint_execution(
+                    request,
+                    context,
+                    response_event_stream,
+                )
+            except Exception as ex:
+                workflow_preparation_error = ex
+
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
         try:
+            if workflow_preparation_error is not None:
+                raise workflow_preparation_error
+
             if self._is_workflow_agent:
                 # Workflow agents are handled differently because they require checkpoint restoration
+                if workflow_checkpoint_execution is None:
+                    raise RuntimeError("Workflow checkpoint execution was not prepared.")
+                if not context.is_recovery and workflow_checkpoint_execution.restore_checkpoint_id is not None:
+                    # ``response.created`` strips framework-internal metadata
+                    # from its wire payload. Explicitly checkpoint the live
+                    # response before executing the new turn so a crash before
+                    # its first superstep can restore the prior durable state.
+                    yield cast(ResponseStreamEvent, response_event_stream.checkpoint())
                 inner = self._handle_inner_workflow(
-                    request, context, response_event_stream, tracker, cancellation_signal
+                    request,
+                    context,
+                    response_event_stream,
+                    tracker,
+                    cancellation_signal,
+                    workflow_checkpoint_execution,
                 )
             else:
                 if context.is_recovery:
@@ -783,6 +952,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         response_event_stream: ResponseEventStream,
         tracker: _OutputItemTracker,
         cancellation_signal: asyncio.Event,
+        checkpoint_execution: _WorkflowCheckpointExecution,
     ) -> AsyncIterable[ResponseStreamEvent]:
         """Handle the creation of a response for a workflow agent.
 
@@ -799,31 +969,19 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         user_id = context.platform_context.user_id_key
         approval_storage = self._approval_storage_for_user(user_id)
 
-        if request.previous_response_id is not None and context.conversation_id is not None:
-            raise RuntimeError("Previous response ID cannot be used in conjunction with conversation ID.")
-        context_id = request.previous_response_id or context.conversation_id
-
         # Workflow agents are not async context managers in any built-in path,
         # but call _ensure_agent_ready for symmetry with the regular path so
         # any future async resources owned by the workflow are entered here.
         await self._ensure_agent_ready()
 
-        restore_storage, latest_checkpoint_id, write_storage = await self._resolve_checkpoint_storages(
-            context, context_id, user_id, response_event_stream
-        )
-
         # Select the workflow run to drive this turn. Recovery resumes from
         # the last persisted checkpoint; a normal turn optionally restores a
         # prior checkpoint first (consumed internally) and then delivers the
         # new user input. Both paths feed the same event-processing loop below.
-        if context.is_recovery:
-            # Upon recovery, the restore and write storages are the same.
-            run_stream = self._agent.run(
-                stream=True,
-                checkpoint_id=response_event_stream.internal_metadata.get(
-                    _ContextAwareCheckpointStorage.LATEST_CHECKPOINT_ID_KEY
-                ),
-                checkpoint_storage=restore_storage,
+        if context.is_recovery and checkpoint_execution.resume_current_turn:
+            run_stream = self._resume_workflow_with_updates(
+                context.response_id,
+                checkpoint_execution,
             )
         else:
             input_items = await context.get_input_items()
@@ -849,38 +1007,139 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # ``run(input_messages, ...)`` call may contain ``function_call_output``
             # items (carried as FunctionResult/FunctionApprovalResponse content)
             # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
-            if latest_checkpoint_id is not None:
-                async for _ in self._agent.run(
+            if checkpoint_execution.restore_checkpoint_id is not None:
+                restore_stream = self._agent.run(
                     stream=True,
-                    checkpoint_id=latest_checkpoint_id,
-                    checkpoint_storage=restore_storage,
+                    checkpoint_id=checkpoint_execution.restore_checkpoint_id,
+                    checkpoint_storage=checkpoint_execution.restore_storage,
+                )
+                async for event in self._drive_workflow_stream(
+                    restore_stream,
+                    checkpoint_execution.synchronizer,
+                    response_event_stream,
+                    tracker,
+                    approval_storage,
+                    forward_updates=False,
+                    close_synchronizer_on_completion=False,
                 ):
-                    pass
+                    yield event
 
             run_stream = self._agent.run(
                 input_messages,
                 stream=True,
-                checkpoint_storage=write_storage,
+                checkpoint_storage=checkpoint_execution.write_storage,
             )
 
-        async for update in run_stream:
-            for content in update.contents:
-                for event in tracker.handle(content):
-                    yield event
-                if tracker.needs_async:
-                    async for item in _to_outputs(
-                        response_event_stream,
-                        content,
-                        approval_storage=self._approval_storage,
-                    ):
-                        yield item
-                    tracker.needs_async = False
+        async for event in self._drive_workflow_stream(
+            run_stream,
+            checkpoint_execution.synchronizer,
+            response_event_stream,
+            tracker,
+            approval_storage,
+        ):
+            yield event
 
-        await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
-        yield cast(ResponseStreamEvent, response_event_stream.checkpoint())
+    async def _resume_workflow_with_updates(
+        self,
+        response_id: str,
+        checkpoint_execution: _WorkflowCheckpointExecution,
+    ) -> AsyncIterable[AgentResponseUpdate]:
+        """Resume current-turn workflow work without discarding its output events."""
+        if not isinstance(self._agent, WorkflowAgent):
+            raise RuntimeError("Agent is not a workflow agent.")
+        if checkpoint_execution.restore_checkpoint_id is None or checkpoint_execution.restore_storage is None:
+            raise RuntimeError("Current-turn recovery requires an exact workflow checkpoint reference.")
+
+        async for workflow_event in self._agent.workflow.run(
+            stream=True,
+            checkpoint_id=checkpoint_execution.restore_checkpoint_id,
+            checkpoint_storage=checkpoint_execution.restore_storage,
+        ):
+            for update in self._agent._convert_workflow_event_to_agent_response_updates(  # pyright: ignore[reportPrivateUsage]
+                response_id,
+                workflow_event,
+            ):
+                yield update
+
+    async def _drive_workflow_stream(
+        self,
+        run_stream: AsyncIterable[AgentResponseUpdate],
+        synchronizer: _WorkflowCheckpointSynchronizer,
+        response_event_stream: ResponseEventStream,
+        tracker: _OutputItemTracker,
+        approval_storage: ApprovalStorage,
+        *,
+        forward_updates: bool = True,
+        close_synchronizer_on_completion: bool = True,
+    ) -> AsyncIterable[ResponseStreamEvent]:
+        """Drive workflow updates while yielding checkpoint control events with backpressure."""
+        iterator = run_stream.__aiter__()
+
+        async def _next_update() -> AgentResponseUpdate:
+            return await anext(iterator)
+
+        update_task: asyncio.Task[AgentResponseUpdate] = asyncio.create_task(_next_update())
+        checkpoint_task: asyncio.Task[_PendingResponseCheckpoint] = asyncio.create_task(synchronizer.next_pending())
+        completed = False
+
+        try:
+            while True:
+                wait_tasks: set[asyncio.Task[Any]] = {
+                    cast(asyncio.Task[Any], update_task),
+                    cast(asyncio.Task[Any], checkpoint_task),
+                }
+                done, _ = await asyncio.wait(
+                    wait_tasks,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                # A completed workflow checkpoint must be persisted before the
+                # workflow is allowed to advance into the next superstep.
+                if checkpoint_task in done:
+                    pending = checkpoint_task.result()
+                    yield cast(ResponseStreamEvent, pending.event)
+                    synchronizer.acknowledge(pending)
+                    checkpoint_task = asyncio.create_task(synchronizer.next_pending())
+                    continue
+
+                try:
+                    update = update_task.result()
+                except StopAsyncIteration:
+                    completed = True
+                    break
+
+                if forward_updates:
+                    for content in update.contents:
+                        for event in tracker.handle(content):
+                            yield event
+                        if tracker.needs_async:
+                            async for item in _to_outputs(
+                                response_event_stream,
+                                content,
+                                approval_storage=approval_storage,
+                            ):
+                                yield item
+                            tracker.needs_async = False
+
+                update_task = asyncio.create_task(_next_update())
+        finally:
+            if close_synchronizer_on_completion or not completed:
+                cancellation_error = RuntimeError("Workflow response stream stopped before checkpoint acknowledgement.")
+                synchronizer.close(cancellation_error)
+            for task in (update_task, checkpoint_task):
+                if not task.done():
+                    task.cancel()
+            for task in (update_task, checkpoint_task):
+                with suppress(asyncio.CancelledError, StopAsyncIteration):
+                    await task
 
     def _get_checkpoint_storage(
-        self, context_id: str, user_id: str | None, response_event_stream: ResponseEventStream
+        self,
+        context_id: str,
+        user_id: str | None,
+        synchronizer: _WorkflowCheckpointSynchronizer,
+        *,
+        reference_kind: Literal["base", "current"],
     ) -> CheckpointStorage:
         """Return the checkpoint storage for ``context_id``, file-based when durable else in-memory.
 
@@ -910,16 +1169,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 cached = InMemoryCheckpointStorage()
                 self._checkpoint_storages_by_key[key] = cached
             inner = cached
-        return _ContextAwareCheckpointStorage(inner, response_event_stream)
+        return _ContextAwareCheckpointStorage(inner, synchronizer, context_id, reference_kind)
 
-    async def _resolve_checkpoint_storages(
+    async def _prepare_workflow_checkpoint_execution(
         self,
+        request: CreateResponse,
         context: ResponseContext,
-        context_id: str | None,
-        user_id: str | None,
         response_event_stream: ResponseEventStream,
-    ) -> tuple[CheckpointStorage | None, str | None, CheckpointStorage]:
-        """Resolve the restore/write checkpoint storages for this workflow turn.
+    ) -> _WorkflowCheckpointExecution:
+        """Prepare exact restore/write checkpoint state before response creation.
 
         Per-user checkpoint isolation for multi-tenant hosting (container
         protocol v2): the per-user partition key (``x-agent-user-id``) scopes
@@ -949,38 +1207,122 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         supplied, the restore storage points at the *prior* response's directory
         and the write storage points at the *current* response's.
 
-        Returns:
-            A tuple of ``(restore_storage, latest_checkpoint_id, write_storage)``,
-            where ``restore_storage`` and ``latest_checkpoint_id`` are ``None``
-            when there is no inbound context id / no prior checkpoint.
+        The initial response snapshot is seeded with the prior checkpoint
+        reference before ``response.created`` is emitted. Recovery then restores
+        only the exact reference carried by the persisted response, never a
+        potentially newer orphan returned by ``get_latest()``.
         """
         if not isinstance(self._agent, WorkflowAgent):
             raise RuntimeError("Agent is not a workflow agent.")
 
-        latest_checkpoint_id: str | None = None
+        if request.previous_response_id is not None and context.conversation_id is not None:
+            raise RuntimeError("Previous response ID cannot be used in conjunction with conversation ID.")
+
+        user_id = context.platform_context.user_id_key
+        # A conversation keeps one stable checkpoint context. A response-linked
+        # chain reads the prior response's context but writes this turn under
+        # the current response so the next turn can reference it.
+        prior_context_id = request.previous_response_id or context.conversation_id
+        write_context_id = context.conversation_id or context.response_id
+        synchronizer = _WorkflowCheckpointSynchronizer(response_event_stream)
+
+        persisted_reference: _WorkflowCheckpointReference | None = None
+        if context.is_recovery:
+            # Crash recovery must use the checkpoint named by the persisted
+            # response snapshot, not whichever checkpoint happens to be newest.
+            persisted_reference = synchronizer.get_persisted_reference(
+                fallback_context_id=write_context_id,
+            )
+
+        restore_checkpoint_id: CheckpointID | None = None
         restore_storage: CheckpointStorage | None = None
-        if context_id is not None:
-            restore_storage = self._get_checkpoint_storage(context_id, user_id, response_event_stream)
+        resume_current_turn = False
+
+        if persisted_reference is not None:
+            # Recovery has an exact durable boundary. "current" resumes work
+            # already started by this request; "base" restores prior state and
+            # allows the request input to be delivered again.
+            restore_checkpoint_id = persisted_reference.checkpoint_id
+            restore_storage = self._get_checkpoint_storage(
+                persisted_reference.context_id,
+                user_id,
+                synchronizer,
+                reference_kind=persisted_reference.kind,
+            )
+            resume_current_turn = persisted_reference.kind == "current"
+        elif not context.is_recovery and prior_context_id is not None:
+            # Normal multi-turn request: restore the prior turn's durable head,
+            # then run the new input as a continuation of that workflow.
+            restore_storage = self._get_checkpoint_storage(
+                prior_context_id,
+                user_id,
+                synchronizer,
+                reference_kind="base",
+            )
             latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
             if latest_checkpoint is not None:
-                latest_checkpoint_id = latest_checkpoint.checkpoint_id
+                restore_checkpoint_id = latest_checkpoint.checkpoint_id
+                persisted_reference = _WorkflowCheckpointReference(
+                    checkpoint_id=latest_checkpoint.checkpoint_id,
+                    context_id=prior_context_id,
+                    kind="base",
+                )
+                await self._delete_checkpoints_except(
+                    restore_storage,
+                    self._agent.workflow.name,
+                    latest_checkpoint.checkpoint_id,
+                )
+        elif context.is_recovery and request.previous_response_id is not None:
+            # Legacy recovery: older response snapshots did not carry a
+            # structured baseline reference, so recover the prior turn's latest
+            # checkpoint. This cannot select a current-turn orphan because those
+            # checkpoints live under the current response id.
+            restore_storage = self._get_checkpoint_storage(
+                request.previous_response_id,
+                user_id,
+                synchronizer,
+                reference_kind="base",
+            )
+            latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
+            if latest_checkpoint is not None:
+                restore_checkpoint_id = latest_checkpoint.checkpoint_id
+                persisted_reference = _WorkflowCheckpointReference(
+                    checkpoint_id=latest_checkpoint.checkpoint_id,
+                    context_id=request.previous_response_id,
+                    kind="base",
+                )
 
-        write_context_id = context.conversation_id or context.response_id
-        write_storage = self._get_checkpoint_storage(write_context_id, user_id, response_event_stream)
-        return restore_storage, latest_checkpoint_id, write_storage
+        if not context.is_recovery:
+            # Persist the selected prior boundary in the initial response
+            # snapshot, covering a crash before this turn writes a checkpoint.
+            synchronizer.seed(persisted_reference)
+
+        # Every checkpoint created after this request starts is a current-turn
+        # boundary and must be written where this response can recover it.
+        write_storage = self._get_checkpoint_storage(
+            write_context_id,
+            user_id,
+            synchronizer,
+            reference_kind="current",
+        )
+        return _WorkflowCheckpointExecution(
+            restore_storage=restore_storage,
+            restore_checkpoint_id=restore_checkpoint_id,
+            write_storage=write_storage,
+            resume_current_turn=resume_current_turn,
+            synchronizer=synchronizer,
+        )
 
     @staticmethod
-    async def _delete_not_latest_checkpoints(checkpoint_storage: CheckpointStorage, workflow_name: str) -> None:
-        """Delete all checkpoints except the latest one.
-
-        We only need the last checkpoint for each invocation.
-        """
-        latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=workflow_name)
-        if latest_checkpoint is not None:
-            all_checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow_name)
-            for checkpoint in all_checkpoints:
-                if checkpoint.checkpoint_id != latest_checkpoint.checkpoint_id:
-                    await checkpoint_storage.delete(checkpoint.checkpoint_id)
+    async def _delete_checkpoints_except(
+        checkpoint_storage: CheckpointStorage,
+        workflow_name: str,
+        checkpoint_id: CheckpointID,
+    ) -> None:
+        """Prune a prior turn only after a later request selects its durable head."""
+        for candidate in await checkpoint_storage.list_checkpoints(workflow_name=workflow_name):
+            if candidate.checkpoint_id != checkpoint_id:
+                await checkpoint_storage.delete(candidate.checkpoint_id)
 
     @staticmethod
     def _drain_tracker(tracker: _OutputItemTracker | None) -> Generator[ResponseStreamEvent]:

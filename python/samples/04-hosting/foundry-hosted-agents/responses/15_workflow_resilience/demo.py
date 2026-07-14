@@ -1,54 +1,57 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Automated crash-recovery demonstration.
+"""Demonstrate that a long-running workflow survives host interruptions.
 
-Starts main.py as a subprocess, sends a background request, kills the server
-to simulate a crash, restarts it, and watches the response recover and
-complete — all without any manual timing.
+The demo submits one background request to a four-stage pipeline, stops the
+host twice while work is in progress, and starts a replacement host each time.
+It then verifies that:
+
+- the original request still completes,
+- completed stages are not repeated,
+- interrupted work continues automatically, and
+- the final response output is preserved.
+
+Server and telemetry output is written to an isolated diagnostic log instead
+of the console. The temporary state is removed after a successful run.
 
 Usage:
     uv run python demo.py
 
-Prerequisites: fill in .env with FOUNDRY_PROJECT_ENDPOINT and
-AZURE_AI_MODEL_DEPLOYMENT_NAME, then run 'az login'.
+Prerequisites: none. No external services, model deployments, or credentials
+are required -- the whole pipeline is local and deterministic.
 """
 
-from __future__ import annotations
-
 import asyncio
+import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
-from dotenv import load_dotenv
-
-load_dotenv()
 
 _BASE = "http://localhost:8088"
-_MODEL = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
+_MAIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
+_SERVER_LOG = "server.log"
 
-# A prompt that reliably produces a substantive multi-paragraph response
-# so the handler is definitely still running when we kill the server.
-_PROMPT = (
-    "I am preparing a report on the energy efficiency of different machine learning model architectures. "
-    "Compare the estimated training and inference energy consumption of ResNet-50, BERT-base, and GPT-2 "
-    "on standard datasets (e.g., ImageNet for ResNet, GLUE for BERT, WebText for GPT-2). "
-    "Then, estimate the CO2 emissions associated with each, assuming training on an Azure Standard_NC6s_v3 "
-    "VM for 24 hours. Provide tables for clarity, and recommend the most energy-efficient model "
-    "per task type (image classification, text classification, and text generation)."
-)
+_STAGES = ("ingest", "transform", "validate", "finalize")
+
+# Allow the host to durably record a completed stage before interrupting the
+# following stage.
+_KILL_GRACE_SECONDS = 2.0
 
 
-async def _wait_for_server(timeout: float = 30) -> bool:
+async def _wait_for_server(base_url: str, timeout: float = 30) -> bool:
     """Poll /readiness until the server responds or the timeout expires."""
     deadline = time.monotonic() + timeout
     async with httpx.AsyncClient() as probe:
         while time.monotonic() < deadline:
             try:
-                r = await probe.get(f"{_BASE}/readiness", timeout=1.0)
+                r = await probe.get(f"{base_url}/readiness", timeout=1.0)
                 if r.status_code == 200:
                     return True
             except Exception:  # noqa: BLE001
@@ -57,43 +60,92 @@ async def _wait_for_server(timeout: float = 30) -> bool:
     return False
 
 
-_MAIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
+async def _wait_for_marker(markers_dir: Path, stage: str, timeout: float = 60) -> None:
+    """Poll the filesystem until <stage>.json appears under markers_dir."""
+    marker = markers_dir / f"{stage}.json"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if marker.exists():
+            return
+        await asyncio.sleep(0.2)
+    raise TimeoutError(f"Timed out waiting for stage marker: {marker}")
 
 
-def _start_server() -> subprocess.Popen[bytes]:
-    """Start main.py as a subprocess, suppressing its output."""
-    return subprocess.Popen(
-        [sys.executable, _MAIN],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+def _start_server(state_dir: Path, stage_delay_seconds: float) -> subprocess.Popen[bytes]:
+    """Start main.py with isolated durable state and captured diagnostics."""
+    env = dict(os.environ)
+    env["HOME"] = str(state_dir)
+    env["USERPROFILE"] = str(state_dir)
+    env["WORKFLOW_STATE_DIR"] = str(state_dir)
+    env["WORKFLOW_STAGE_DELAY_SECONDS"] = str(stage_delay_seconds)
+    with (state_dir / _SERVER_LOG).open("ab") as server_log:
+        server_log.write(b"\n--- starting host instance ---\n")
+        server_log.flush()
+        return subprocess.Popen(
+            [sys.executable, _MAIN],
+            cwd=str(state_dir),
+            env=env,
+            stdout=server_log,
+            stderr=subprocess.STDOUT,
+        )
+
+
+def _interrupt(server: subprocess.Popen[bytes], running_stage: str) -> None:
+    print(f"[INTERRUPT] Stopping the host while '{running_stage}' is running...")
+    server.terminate()
+    try:
+        server.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        server.kill()
+        server.wait(timeout=10)
+    print("[INTERRUPT] Host stopped unexpectedly.\n")
+
+
+def _print_log_tail(state_dir: Path, line_count: int = 40) -> None:
+    log_path = state_dir / _SERVER_LOG
+    if not log_path.exists():
+        return
+    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    print("\nLast server diagnostic lines:")
+    for line in lines[-line_count:]:
+        print(f"  {line}")
+
+
+def _read_audit(state_dir: Path) -> list[dict[str, Any]]:
+    audit_path = state_dir / "audit.jsonl"
+    if not audit_path.exists():
+        return []
+    with audit_path.open(encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
 
 
 async def demo() -> None:
-    """Run the full crash-recovery demonstration."""
-    # ------------------------------------------------------------------
-    # 1. Start the server
-    # ------------------------------------------------------------------
-    print("Step 1/5  Starting server...")
-    server = _start_server()
-    if not await _wait_for_server():
-        server.terminate()
-        print("ERROR: Server did not start within 30 s")
-        sys.exit(1)
-    print(f"          Server ready (pid={server.pid})\n")
+    """Run the customer-facing durability demonstration."""
+    state_dir = Path(tempfile.mkdtemp(prefix="workflow_resilience_demo_"))
+    markers_dir = state_dir / "markers"
+    stage_delay_seconds = 4.0
+    succeeded = False
+    print("Durable workflow recovery demo")
+    print("==============================")
+    print("Pipeline: ingest -> transform -> validate -> finalize")
+    print("The host will be interrupted twice while one request is running.\n")
 
+    server: subprocess.Popen[bytes] | None = None
     try:
+        print("[START] Starting the first host instance...")
+        server = _start_server(state_dir, stage_delay_seconds)
+        if not await _wait_for_server(_BASE):
+            _interrupt(server, "startup")
+            raise RuntimeError("Server did not start within 30 seconds.")
+        print("[OK] Host is ready.\n")
+
         async with httpx.AsyncClient(base_url=_BASE, timeout=60) as client:
-            # ----------------------------------------------------------
-            # 2. Send a background request — returns immediately with
-            #    status=in_progress while the handler runs in a task.
-            # ----------------------------------------------------------
-            print("Step 2/5  Sending background request...")
+            print("[REQUEST] Starting one background workflow request...")
             r = await client.post(
                 "/responses",
                 json={
-                    "model": _MODEL,
-                    "input": _PROMPT,
+                    "model": "n/a",  # ignored: WorkflowAgent doesn't use runtime model options
+                    "input": "run the resilient pipeline",
                     "background": True,
                     "store": True,
                 },
@@ -101,62 +153,97 @@ async def demo() -> None:
             assert r.status_code == 200, f"POST failed: {r.status_code} {r.text}"
             body: dict[str, Any] = r.json()
             resp_id: str = body["id"]
-            print(f"          Response ID : {resp_id}")
-            print(f"          Status      : {body['status']}  (handler is running)\n")
+            print(f"[OK] Request accepted: {resp_id}")
+            print(f"[OK] Initial status: {body['status']}\n")
 
-        # Allow the handler a moment to start before we kill.
-        await asyncio.sleep(10)
+        print("[WORKFLOW] Waiting for the first stage to complete...")
+        await _wait_for_marker(markers_dir, "ingest")
+        print("[OK] 'ingest' completed and its progress was saved.")
+        await asyncio.sleep(_KILL_GRACE_SECONDS)
+        _interrupt(server, "transform")
 
-        # ----------------------------------------------------------
-        # 3. Kill the server — simulates a process crash.
-        # ----------------------------------------------------------
-        print("Step 3/5  Simulating crash (terminating server)...")
-        server.terminate()
-        server.wait(timeout=10)
-        print(f"          Server killed (exit code: {server.returncode})\n")
-        await asyncio.sleep(1)  # allow OS to release the port
+        print("[RECOVER] Starting a replacement host...")
+        server = _start_server(state_dir, stage_delay_seconds)
+        if not await _wait_for_server(_BASE):
+            _interrupt(server, "recovery startup")
+            raise RuntimeError("Replacement host did not start within 30 seconds.")
+        print("[OK] The existing request was recovered automatically.\n")
 
-        # ----------------------------------------------------------
-        # 4. Restart — the recovery scanner runs on startup and
-        #    re-invokes the handler for any in-progress resilient task.
-        # ----------------------------------------------------------
-        print("Step 4/5  Restarting server (recovery scanner will fire)...")
-        server = _start_server()
-        if not await _wait_for_server():
-            server.terminate()
-            print("ERROR: Server did not restart within 30 s")
-            sys.exit(1)
-        print(f"          Server restarted (pid={server.pid})\n")
+        print("[WORKFLOW] Waiting for two more stages to complete...")
+        await _wait_for_marker(markers_dir, "validate")
+        print("[OK] 'transform' and 'validate' completed; saved progress was preserved.")
+        await asyncio.sleep(_KILL_GRACE_SECONDS)
+        _interrupt(server, "finalize")
 
-        # ----------------------------------------------------------
-        # 5. Poll until the response completes.
-        # ----------------------------------------------------------
-        print("Step 5/5  Polling response (watching recovery)...")
-        async with httpx.AsyncClient(base_url=_BASE, timeout=120) as client:
-            for _ in range(600):
-                await asyncio.sleep(30)
+        print("[RECOVER] Starting another replacement host...")
+        server = _start_server(state_dir, stage_delay_seconds)
+        if not await _wait_for_server(_BASE):
+            _interrupt(server, "recovery startup")
+            raise RuntimeError("Replacement host did not start within 30 seconds.")
+        print("[OK] The same request was recovered again.\n")
+
+        print("[REQUEST] Waiting for the original request to finish...")
+        async with httpx.AsyncClient(base_url=_BASE, timeout=60) as client:
+            status = "unknown"
+            for _ in range(150):
+                await asyncio.sleep(0.5)
                 poll = (await client.get(f"/responses/{resp_id}")).json()
                 status = poll.get("status", "unknown")
-                print(f"          status: {status}")
                 if status in ("completed", "failed", "cancelled"):
-                    if status == "completed":
-                        output_text = "".join(
-                            part.get("text", "") or part.get("content", "")
-                            for item in poll.get("output", [])
-                            for part in item.get("content", [])
-                        )
-                        preview = output_text[:400] + ("..." if len(output_text) > 400 else "")
-                        print(f"\nRecovered response ({len(output_text)} chars):\n{preview}")
-                    else:
-                        print(f"\nResponse ended with status={status!r}")
                     break
-            else:
-                print("Response did not complete within the timeout")
+            assert status == "completed", f"Response did not complete: status={status!r}"
+
+            output_text = "".join(
+                part.get("text", "") or part.get("content", "")
+                for item in poll.get("output", [])
+                for part in item.get("content", [])
+            )
+            expected_output = (
+                "Pipeline complete for 'run the resilient pipeline'. "
+                "Stages executed: ingest, transform, validate, finalize."
+            )
+            assert output_text == expected_output, (
+                f"Recovered response did not preserve the expected final workflow output: {output_text!r}"
+            )
+
+        for stage in _STAGES:
+            marker = markers_dir / f"{stage}.json"
+            assert marker.exists(), f"Missing stage marker: {marker}"
+
+        audit = _read_audit(state_dir)
+        counts = {stage: sum(1 for entry in audit if entry["stage"] == stage) for stage in _STAGES}
+        for stage, count in counts.items():
+            assert count == 1, (
+                f"Stage {stage!r} appears {count} times in audit.jsonl; expected exactly once. "
+                "A count > 1 means a completed stage replayed; a count of 0 means it never ran."
+            )
+
+        print("\nResult")
+        print("------")
+        print("[OK] The original request completed after two host interruptions.")
+        print(f"[OK] Final output: {output_text}")
+        print("[OK] Every completed stage ran exactly once:")
+        for stage in _STAGES:
+            print(f"     {stage}: {counts[stage]}")
+        print("\nPASS: Durable progress and response output survived both interruptions.")
+        succeeded = True
+
+    except Exception:
+        print("\nFAIL: The durability demonstration did not complete.")
+        _print_log_tail(state_dir)
+        raise
 
     finally:
-        server.terminate()
-
-    print("\nDEMO COMPLETE")
+        if server is not None and server.poll() is None:
+            server.terminate()
+            try:
+                server.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                server.kill()
+        if succeeded:
+            shutil.rmtree(state_dir, ignore_errors=True)
+        else:
+            print(f"\nDiagnostic state retained at: {state_dir}")
 
 
 if __name__ == "__main__":
