@@ -337,6 +337,28 @@ Endpoint configuration requires `snapshot_scope_resolver` whenever a snapshot st
 the store is already set on a pre-wrapped `AgentFrameworkAgent` or `AgentFrameworkWorkflow`. The resolver returns
 the application-defined Snapshot Scope used with the AG-UI Thread id as the storage key.
 
+For hosted agents, request Shared State is also available through `AgentSession.state` during that run, whether or
+not snapshot persistence is configured. Request values are untrusted per-run context: they overlay ordinary restored
+values, are not passed through typed session restoration, and are excluded from private Session Continuation State.
+Keys owned by configured context providers or reserved for approval and message-injection middleware are not copied
+into `AgentSession.state`; their server-owned values take precedence over client Shared State.
+
+When scoped snapshots are configured, each category has one State Authority:
+
+| State category | State Authority |
+| --- | --- |
+| Conversation history | AG-UI Thread Snapshot messages |
+| AG-UI Shared State and request context | The current AG-UI request and replayable snapshot state |
+| Approval State | The Approval State Store |
+| Other server-produced provider working state | Private Session Continuation State |
+
+Session Continuation State is stored atomically in the optional `AGUIThreadSnapshot.session_state` field and restored
+through the core `AgentSession` typed serialization contract. It is never accepted from an AG-UI request or emitted
+during hydration. Deleting a scoped thread snapshot resets its replayable and private state together, and clearing a
+Snapshot Scope removes all such records in that scope. Missing or empty request Shared State is not a reset command.
+If private continuation cannot be restored or serialized, the endpoint logs the failure and continues without that
+continuation so stale or unsupported provider state cannot permanently block the thread or suppress `RUN_FINISHED`.
+
 AG-UI Thread ids identify AG-UI Threads; they do not authorize snapshot access. Do not treat a thread id as a bearer
 credential or tenant boundary. Production applications must authenticate and authorize every AG-UI endpoint request
 and choose a Snapshot Scope that represents the app's real access boundary, such as an authenticated user, tenant,
@@ -348,14 +370,22 @@ It is not an authentication, tenant authorization, or distributed durability mec
 responsible for endpoint authentication, tenant authorization, and deployment/storage architecture that matches their
 availability and worker topology requirements.
 
-Stored snapshots are untrusted application data with confidentiality impact. They may contain sensitive user text,
-model output, tool results, function arguments, UI payloads, Shared State, and interrupt data. The built-in
-`InMemoryAGUIThreadSnapshotStore` is in-memory only, process-local, bounded, latest-only, and not durable production
-storage. It is cleared on process restart and is not shared across workers.
+Snapshot storage is treated as trusted server-side storage because private continuation is eligible for typed core
+restoration; applications are responsible for providing its integrity protection. Snapshots also have confidentiality
+impact: they may contain sensitive user text, model output, tool results, function arguments, UI payloads, Shared State,
+interrupt data, and private provider working state. The built-in `InMemoryAGUIThreadSnapshotStore` is in-memory only,
+process-local, bounded, latest-only, and not durable production storage. It is cleared on process restart and is not
+shared across workers.
 
 No file-backed AG-UI snapshot store is provided by the package. Applications that need durable persistence should
 provide an app-owned implementation of the `AGUIThreadSnapshotStore` protocol and own storage hardening, including
-encryption, access control, retention, audit, data residency, and deletion behavior.
+encryption, integrity protection, access control, retention, audit, data residency, and deletion behavior. Existing
+custom stores remain source-compatible because `session_state` is optional, but they provide Session State Continuity
+only when they round-trip that field unchanged with the rest of the snapshot.
+
+The supported consistency model is one active run per `(Snapshot Scope, threadId)`. Concurrent writes to the same
+scoped thread remain last-writer-wins. Applications that require stronger consistency must serialize those runs using
+coordination appropriate to their deployment; a process-local lock does not provide distributed consistency.
 
 ## Architecture
 

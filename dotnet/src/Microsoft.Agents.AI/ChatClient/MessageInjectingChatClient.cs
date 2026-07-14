@@ -2,13 +2,11 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -41,13 +39,20 @@ namespace Microsoft.Agents.AI;
 /// method is called.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class MessageInjectingChatClient : DelegatingChatClient
 {
     /// <summary>
     /// The key used to store the pending injected messages queue in the session's <see cref="AgentSessionStateBag"/>.
     /// </summary>
     internal const string PendingMessagesStateKey = "MessageInjectingChatClient.PendingInjectedMessages";
+
+    /// <summary>
+    /// Per-session semaphore used to serialize all access to a session's pending messages queue,
+    /// including its creation. A single client instance is shared across sessions, so the lock is
+    /// keyed on the session and stored in a <see cref="ConditionalWeakTable{TKey, TValue}"/> so it
+    /// is released automatically when the session is collected.
+    /// </summary>
+    private readonly ConditionalWeakTable<AgentSession, SemaphoreSlim> _sessionLocks = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="MessageInjectingChatClient"/> class.
@@ -65,9 +70,8 @@ public sealed class MessageInjectingChatClient : DelegatingChatClient
         CancellationToken cancellationToken = default)
     {
         var session = GetRequiredSession();
-        var queue = GetOrCreateQueue(session);
 
-        var newMessages = DrainInjectedMessages(queue, messages as IList<ChatMessage> ?? messages.ToList());
+        var newMessages = await this.DrainInjectedMessagesAsync(session, messages as IList<ChatMessage> ?? messages.ToList(), cancellationToken).ConfigureAwait(false);
 
         // Loop to process injected messages: after each service call, if no actionable function calls
         // are pending but new messages have been injected into the queue, we call the service again
@@ -86,13 +90,7 @@ public sealed class MessageInjectingChatClient : DelegatingChatClient
 
             // No actionable function calls. If there are pending injected messages, loop again
             // to send them to the service. Otherwise, we're done.
-            bool queueEmpty;
-            lock (queue)
-            {
-                queueEmpty = queue.Count == 0;
-            }
-
-            if (queueEmpty)
+            if (await this.IsQueueEmptyAsync(session, cancellationToken).ConfigureAwait(false))
             {
                 return response;
             }
@@ -101,7 +99,7 @@ public sealed class MessageInjectingChatClient : DelegatingChatClient
             // continue within the same conversation.
             UpdateOptionsForNextIteration(ref options, response.ConversationId);
 
-            newMessages = DrainInjectedMessages(queue, Array.Empty<ChatMessage>());
+            newMessages = await this.DrainInjectedMessagesAsync(session, Array.Empty<ChatMessage>(), cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -112,9 +110,8 @@ public sealed class MessageInjectingChatClient : DelegatingChatClient
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var session = GetRequiredSession();
-        var queue = GetOrCreateQueue(session);
 
-        var newMessages = DrainInjectedMessages(queue, messages as IList<ChatMessage> ?? messages.ToList());
+        var newMessages = await this.DrainInjectedMessagesAsync(session, messages as IList<ChatMessage> ?? messages.ToList(), cancellationToken).ConfigureAwait(false);
 
         // Loop to process injected messages: after each service call, if no actionable function calls
         // are pending but new messages have been injected into the queue, we call the service again
@@ -161,13 +158,7 @@ public sealed class MessageInjectingChatClient : DelegatingChatClient
 
             // No actionable function calls. If there are pending injected messages, loop again
             // to send them to the service. Otherwise, we're done.
-            bool queueEmpty;
-            lock (queue)
-            {
-                queueEmpty = queue.Count == 0;
-            }
-
-            if (queueEmpty)
+            if (await this.IsQueueEmptyAsync(session, cancellationToken).ConfigureAwait(false))
             {
                 yield break;
             }
@@ -176,7 +167,7 @@ public sealed class MessageInjectingChatClient : DelegatingChatClient
             // continue within the same conversation.
             UpdateOptionsForNextIteration(ref options, lastConversationId);
 
-            newMessages = DrainInjectedMessages(queue, Array.Empty<ChatMessage>());
+            newMessages = await this.DrainInjectedMessagesAsync(session, Array.Empty<ChatMessage>(), cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -190,19 +181,26 @@ public sealed class MessageInjectingChatClient : DelegatingChatClient
     /// </remarks>
     /// <param name="session">The agent session to enqueue messages for.</param>
     /// <param name="messages">The messages to enqueue.</param>
-    public void EnqueueMessages(AgentSession session, IEnumerable<ChatMessage> messages)
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
+    /// <returns>A <see cref="Task"/> that represents the asynchronous operation.</returns>
+    public async Task EnqueueMessagesAsync(AgentSession session, IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(session);
         Throw.IfNull(messages);
 
-        var queue = GetOrCreateQueue(session);
-
-        lock (queue)
+        SemaphoreSlim sessionLock = this.GetSessionLock(session);
+        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
+            var queue = GetOrCreateQueue(session);
             foreach (var message in messages)
             {
                 queue.Add(message);
             }
+        }
+        finally
+        {
+            sessionLock.Release();
         }
     }
 
@@ -215,30 +213,47 @@ public sealed class MessageInjectingChatClient : DelegatingChatClient
     /// list is a point-in-time snapshot; messages may be consumed between calls.
     /// </remarks>
     /// <param name="session">The agent session to check.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A read-only list of pending messages, or an empty list if none are pending.</returns>
-    public IReadOnlyList<ChatMessage> GetPendingMessages(AgentSession session)
+    public async Task<IReadOnlyList<ChatMessage>> GetPendingMessagesAsync(AgentSession session, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(session);
 
-        if (!session.StateBag.TryGetValue<List<ChatMessage>>(PendingMessagesStateKey, out var queue) || queue is null)
+        SemaphoreSlim sessionLock = this.GetSessionLock(session);
+        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            return Array.Empty<ChatMessage>();
-        }
+            if (!session.StateBag.TryGetValue<List<ChatMessage>>(PendingMessagesStateKey, out var queue) || queue is null || queue.Count == 0)
+            {
+                return Array.Empty<ChatMessage>();
+            }
 
-        lock (queue)
+            return queue.ToList();
+        }
+        finally
         {
-            return queue.Count == 0 ? Array.Empty<ChatMessage>() : queue.ToList();
+            sessionLock.Release();
         }
     }
 
     /// <summary>
+    /// Returns the per-session semaphore used to serialize access to the session's pending messages queue.
+    /// </summary>
+    private SemaphoreSlim GetSessionLock(AgentSession session)
+        => this._sessionLocks.GetValue(session, static _ => new SemaphoreSlim(1, 1));
+
+    /// <summary>
     /// Gets or creates the pending injected messages queue from the session's <see cref="AgentSessionStateBag"/>.
     /// </summary>
+    /// <remarks>
+    /// Callers must hold the session lock (see <see cref="GetSessionLock"/>) while calling this method and
+    /// while operating on the returned queue, since the get-or-create is a non-atomic check-then-act.
+    /// </remarks>
     private static List<ChatMessage> GetOrCreateQueue(AgentSession session)
     {
-        if (session.StateBag.TryGetValue<List<ChatMessage>>(PendingMessagesStateKey, out var queue))
+        if (session.StateBag.TryGetValue<List<ChatMessage>>(PendingMessagesStateKey, out var queue) && queue is not null)
         {
-            return queue!;
+            return queue;
         }
 
         var newQueue = new List<ChatMessage>();
@@ -263,13 +278,34 @@ public sealed class MessageInjectingChatClient : DelegatingChatClient
     }
 
     /// <summary>
-    /// Drains all pending injected messages from the queue and returns a new list combining
-    /// the original messages with the drained messages. The original list is never modified.
+    /// Returns <see langword="true"/> if the session's pending messages queue is empty or has not been created.
     /// </summary>
-    private static IList<ChatMessage> DrainInjectedMessages(List<ChatMessage> queue, IList<ChatMessage> newMessages)
+    private async Task<bool> IsQueueEmptyAsync(AgentSession session, CancellationToken cancellationToken)
     {
-        lock (queue)
+        SemaphoreSlim sessionLock = this.GetSessionLock(session);
+        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
+            return !session.StateBag.TryGetValue<List<ChatMessage>>(PendingMessagesStateKey, out var queue) || queue is null || queue.Count == 0;
+        }
+        finally
+        {
+            sessionLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Drains all pending injected messages from the session's queue and returns a new list combining
+    /// the original messages with the drained messages. The original <paramref name="newMessages"/> list
+    /// is never modified.
+    /// </summary>
+    private async Task<IList<ChatMessage>> DrainInjectedMessagesAsync(AgentSession session, IList<ChatMessage> newMessages, CancellationToken cancellationToken)
+    {
+        SemaphoreSlim sessionLock = this.GetSessionLock(session);
+        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var queue = GetOrCreateQueue(session);
             if (queue.Count == 0)
             {
                 return newMessages;
@@ -279,6 +315,10 @@ public sealed class MessageInjectingChatClient : DelegatingChatClient
             combined.AddRange(queue);
             queue.Clear();
             return combined;
+        }
+        finally
+        {
+            sessionLock.Release();
         }
     }
 

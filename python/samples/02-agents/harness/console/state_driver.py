@@ -191,6 +191,18 @@ class IUXStateDriver(Protocol):
         """
         ...
 
+    def set_queued_messages(self, pending: list[str]) -> None:
+        """Set the queued (pending injected) message display.
+
+        Called while an agent turn is streaming to reflect messages the user
+        has queued for injection into the ongoing run. Consumed messages are
+        echoed separately via write_user_input_echo.
+
+        Args:
+            pending: List of pending message texts.
+        """
+        ...
+
     def request_shutdown(self) -> None:
         """Request the application to shut down.
 
@@ -324,6 +336,13 @@ class SimpleConsoleStateDriver:
         # Simplified: just print the update
         display_text = new_text[:80] + "..." if len(new_text) > 80 else new_text
         print(f"[Update last entry: {display_text}]", flush=True)
+
+    def set_queued_messages(self, pending: list[str]) -> None:
+        """Set the queued (pending injected) message display."""
+        if pending:
+            print(f"[Queued: {', '.join(pending)}]")
+        else:
+            print("[Queued: (none)]")
 
     def request_shutdown(self) -> None:
         """Request application shutdown."""

@@ -540,7 +540,7 @@ class RawGeminiChatClient(
                 model, contents, config = self._prepare_request(messages, validated)
                 async for chunk in await self._genai_client.aio.models.generate_content_stream(
                     model=model,
-                    contents=contents,  # type: ignore[arg-type]
+                    contents=contents,  # pyright: ignore[reportArgumentType]
                     config=config,
                 ):
                     yield self._process_chunk(chunk)
