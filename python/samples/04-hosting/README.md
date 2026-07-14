@@ -10,7 +10,7 @@ This directory contains Python samples that demonstrate different ways to host A
 | Azure Functions | HTTP or serverless hosting on Azure Functions. | [`azure_functions/README.md`](./azure_functions/README.md) |
 | Durable Task | Durable execution, long-running flows, or orchestration patterns. | [`durabletask/README.md`](./durabletask/README.md) |
 | Foundry Hosted Agents | Microsoft Foundry hosted agent deployment. | [`foundry-hosted-agents/README.md`](./foundry-hosted-agents/README.md) |
-| Self-hosted protocol helpers | Application-owned OpenAI Responses endpoints or Telegram bots. | [`af-hosting/README.md`](./af-hosting/README.md) |
+| Self-Hosted Protocol Helpers | Application-owned OpenAI Responses endpoints or Telegram bots. | [`af-hosting/README.md`](./af-hosting/README.md) |
 
 ## How to Choose
 
@@ -18,7 +18,7 @@ This directory contains Python samples that demonstrate different ways to host A
 - Start with **Azure Functions** if you want an HTTP-hosted or serverless entry point using Azure Functions.
 - Start with **Durable Task** if you need persistent state, durable workflows, or orchestration across multiple steps.
 - Start with **Foundry Hosted Agents** if you want to package and deploy an agent as a hosted agent in Microsoft Foundry.
-- Start with **Self-hosted protocol helpers** if you want to own the web framework or native SDK, routing, authorization, and state storage while using OpenAI Responses or Telegram helpers.
+- Start with **Self-Hosted Protocol Helpers** if you want to own the web framework or native SDK, routing, authorization, and state storage while using OpenAI Responses or Telegram helpers.
 
 ## Common Prerequisites
 
