@@ -358,13 +358,15 @@ class RunnerImpl:
         """
         # Persist executor snapshots into committed shared state before exporting it.
         await self._prepare_checkpoint_state()
-        return await self._ctx.create_checkpoint_object(
+        checkpoint = await self._ctx.create_checkpoint_object(
             self._workflow_name,
             self._graph_signature_hash,
             self._state,
-            None,
+            self._previous_checkpoint_id,
             self._iteration,
         )
+        self._previous_checkpoint_id = checkpoint.checkpoint_id
+        return checkpoint
 
     async def restore_from_checkpoint_object(self, checkpoint: WorkflowCheckpoint) -> None:
         """Restore runner state from an in-memory ``WorkflowCheckpoint`` object.

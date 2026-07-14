@@ -450,10 +450,7 @@ class WorkflowExecutor(Executor):
     @override
     async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
         """Restore the WorkflowExecutor state from a checkpoint snapshot."""
-        # The storage backend fully materializes the checkpoint on load (FileCheckpointStorage
-        # decodes recursively; InMemoryCheckpointStorage deep-copies without encoding), so nested
-        # executor state - including this embedded checkpoint - already arrives as a live object,
-        # exactly as every other executor consumes its already-decoded on_checkpoint_restore state.
+        # The storage backend fully materializes the checkpoint on load, checkpointed data arrives as live objects.
         sub_workflow_checkpoint = state.get("sub_workflow_checkpoint")
         if sub_workflow_checkpoint is not None:
             await self.workflow._runner.restore_from_checkpoint_object(sub_workflow_checkpoint)  # pyright: ignore[reportPrivateUsage]

@@ -560,8 +560,8 @@ async def test_runner_capture_and_restore_checkpoint_object_roundtrip():
     assert runner._resumed_from_checkpoint is True  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_runner_capture_checkpoint_object_rejects_in_flight_messages():
-    """capture_checkpoint_object() must reject capture while in-flight messages are present."""
+async def test_runner_capture_checkpoint_object_includes_in_flight_messages():
+    """capture_checkpoint_object() must snapshot in-flight messages non-destructively."""
     executor = MockExecutor(id="executor_a")
     state = State()
     ctx = InProcRunnerContext()
@@ -569,8 +569,38 @@ async def test_runner_capture_checkpoint_object_rejects_in_flight_messages():
 
     await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="START"))
 
-    with pytest.raises(WorkflowCheckpointException, match="in-flight executor messages"):
-        await runner.capture_checkpoint_object()
+    checkpoint = await runner.capture_checkpoint_object()
+
+    # The in-flight message is captured in the snapshot ...
+    assert list(checkpoint.messages.keys()) == ["START"]
+    assert len(checkpoint.messages["START"]) == 1
+    # ... without draining it from the runner (capture is non-destructive).
+    assert await ctx.has_messages() is True
+
+
+async def test_runner_capture_checkpoint_object_advances_previous_checkpoint_id():
+    """capture_checkpoint_object() must advance _previous_checkpoint_id so a later capture chains to it."""
+    executor = MockExecutor(id="executor_a")
+    state = State()
+    ctx = InProcRunnerContext()
+    runner = Runner([], {executor.id: executor}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    # Pre-condition: nothing captured yet, so there is no parent to chain back to.
+    assert runner._previous_checkpoint_id is None  # pyright: ignore[reportPrivateUsage]
+
+    first = await runner.capture_checkpoint_object()
+
+    # Capturing advances the tracked checkpoint id to the newly-created checkpoint ...
+    assert runner._previous_checkpoint_id == first.checkpoint_id  # pyright: ignore[reportPrivateUsage]
+    # ... and a fresh capture begins a new lineage with no parent.
+    assert first.previous_checkpoint_id is None
+
+    second = await runner.capture_checkpoint_object()
+
+    # The tracked id advances again ...
+    assert runner._previous_checkpoint_id == second.checkpoint_id  # pyright: ignore[reportPrivateUsage]
+    # ... and the second checkpoint chains back to the first.
+    assert second.previous_checkpoint_id == first.checkpoint_id
 
 
 async def test_runner_restore_from_checkpoint_object_rejects_graph_mismatch():
