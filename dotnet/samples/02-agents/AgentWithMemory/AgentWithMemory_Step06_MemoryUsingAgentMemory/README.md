@@ -26,9 +26,10 @@ its Microsoft Agent Framework adapter.
 - A **Neo4j 5.x** instance (the sample bootstraps the schema and seeds sample products)
 - An **Azure OpenAI / Foundry** deployment (a chat model + an embedding model)
 
-## Environment Variables
 
-Matches the other Agent Framework Foundry samples — no secrets in code:
+## Configuration
+
+Set the following environment variables:
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
