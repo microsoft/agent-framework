@@ -488,6 +488,7 @@ class TestGitHubCopilotAgentRun:
                 input_tokens=5,
                 output_tokens=2,
                 finish_reason="length",
+                content_filter_triggered=True,
             ),
             id=uuid4(),
             timestamp=datetime.now(timezone.utc),
@@ -511,7 +512,7 @@ class TestGitHubCopilotAgentRun:
         agent = GitHubCopilotAgent(client=mock_client)
         response = await agent.run("Hello")
 
-        assert response.finish_reason == "length"
+        assert response.finish_reason == "content_filter"
         assert response.usage_details == {
             "input_token_count": 125,
             "output_token_count": 42,
@@ -596,7 +597,7 @@ class TestGitHubCopilotAgentRunStreaming:
             model="gpt-5.1-mini",
             input_tokens=10,
             output_tokens=4,
-            finish_reason="stop",
+            finish_reason="provider_specific_reason",
         )
         usage_event = SessionEvent(
             data=usage_data,
@@ -620,7 +621,7 @@ class TestGitHubCopilotAgentRunStreaming:
         response = await stream.get_final_response()
 
         assert response.text == "Hello"
-        assert response.finish_reason == "stop"
+        assert response.finish_reason == "provider_specific_reason"
         assert response.usage_details == {
             "input_token_count": 10,
             "output_token_count": 4,

@@ -328,7 +328,7 @@ class TestAGUIEventConverter:
 
         assert update is not None
         assert update.role == "assistant"
-        assert update.finish_reason == "content_filter"
+        assert update.finish_reason is None
         assert len(update.contents) == 1
         assert update.contents[0].message == "Connection timeout"
         assert update.contents[0].error_code == "RUN_ERROR"

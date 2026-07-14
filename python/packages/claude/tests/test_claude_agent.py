@@ -311,7 +311,7 @@ class TestClaudeAgentRun:
             agent = ClaudeAgent()
             response = await agent.run("Hello")
 
-        assert response.finish_reason == "end_turn"
+        assert response.finish_reason == "stop"
         assert response.usage_details == {
             "input_token_count": 42,
             "output_token_count": 18,
@@ -465,7 +465,7 @@ class TestClaudeAgentRunStream:
                 pass
             response = await stream.get_final_response()
 
-        assert response.finish_reason == "max_tokens"
+        assert response.finish_reason == "length"
         assert response.usage_details == {
             "input_token_count": 7,
             "output_token_count": 9,
