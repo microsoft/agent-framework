@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from agent_framework import Agent, AgentResponse, Message
+from agent_framework import Agent, AgentResponse
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
@@ -17,8 +17,8 @@ Sample: Concurrent fan-out/fan-in (agent-only API) with default aggregator
 
 Build a high-level concurrent workflow using ConcurrentBuilder and three domain agents.
 The default dispatcher fans out the same user prompt to all agents in parallel.
-The default aggregator fans in their results and yields output containing
-a list[Message] representing the concatenated conversations from all agents.
+The default aggregator fans in their results and yields AgentResponse objects
+containing only the participants' assistant messages.
 
 Demonstrates:
 - Minimal wiring with ConcurrentBuilder(participants=[...]).build()
@@ -91,11 +91,7 @@ async def main() -> None:
     ===== Final Aggregated Conversation (messages) =====
     ------------------------------------------------------------
 
-    01 [user]:
-    We are launching a new budget-friendly electric bike for urban commuters.
-    ------------------------------------------------------------
-
-    02 [researcher]:
+    01 [researcher]:
     **Insights:**
 
     - **Target Demographic:** Urban commuters seeking affordable, eco-friendly transport;
@@ -115,7 +111,7 @@ async def main() -> None:
     ...
     ------------------------------------------------------------
 
-    03 [marketer]:
+    02 [marketer]:
     **Value Proposition:**
     "Empowering your city commute: Our new electric bike combines affordability, reliability, and
         sustainable design—helping you conquer urban journeys without breaking the bank."
@@ -126,7 +122,7 @@ async def main() -> None:
     ...
     ------------------------------------------------------------
 
-    04 [legal]:
+    03 [legal]:
     **Constraints, Disclaimers, & Policy Concerns for Launching a Budget-Friendly Electric Bike for Urban Commuters:**
 
     **1. Regulatory Compliance**
