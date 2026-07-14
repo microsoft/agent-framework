@@ -500,7 +500,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **agent-framework-openai**: New package extracted from core for OpenAI and Azure OpenAI provider support ([#4818](https://github.com/microsoft/agent-framework/pull/4818))
-- **agent-framework-foundry**: New package for Azure AI Foundry integration ([#4818](https://github.com/microsoft/agent-framework/pull/4818))
+- **agent-framework-foundry**: New package for Microsoft Foundry integration ([#4818](https://github.com/microsoft/agent-framework/pull/4818))
 - **agent-framework-core**: Support `structuredContent` in MCP tool results and fix sampling options type ([#4763](https://github.com/microsoft/agent-framework/pull/4763))
 - **agent-framework-core**: Include reasoning messages in `MESSAGES_SNAPSHOT` events ([#4844](https://github.com/microsoft/agent-framework/pull/4844))
 - **agent-framework-core**: [BREAKING] Add context mode to `AgentExecutor` ([#4668](https://github.com/microsoft/agent-framework/pull/4668))
@@ -1325,7 +1325,7 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 - First release of Agent Framework for Python
 - agent-framework-core: Main abstractions, types and implementations for OpenAI and Azure OpenAI
-- agent-framework-azure-ai: Integration with Azure AI Foundry Agents
+- agent-framework-azure-ai: Integration with Microsoft Foundry Agents
 - agent-framework-copilotstudio: Integration with Microsoft Copilot Studio agents
 - agent-framework-a2a: Create A2A agents
 - agent-framework-devui: Browser-based UI to chat with agents and workflows, with tracing visualization

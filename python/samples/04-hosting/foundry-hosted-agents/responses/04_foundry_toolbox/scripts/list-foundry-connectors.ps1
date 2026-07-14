@@ -4,7 +4,7 @@
     List Foundry Tools Catalog connectors, or fetch full details for one connector.
 
 .DESCRIPTION
-    Queries the Azure AI Foundry Tools Catalog (asset-gallery) connectors registry.
+    Queries the Microsoft Foundry Tools Catalog (asset-gallery) connectors registry.
     - With no -ConnectorName: lists all connectors (name, title, detected auth type).
     - With -ConnectorName:    prints the full JSON details for that connector.
 

@@ -56,7 +56,7 @@ Each file includes a unique `*-CANARY-*` token that the model is asked to echo, 
 ## Prerequisites
 
 - Python 3.12+
-- An Azure AI Foundry project with a deployed model (e.g., `gpt-5`)
+- A Microsoft Foundry project with a deployed model (e.g., `gpt-5`)
 - **Azure Developer CLI (`azd`)** 1.25+ with the unified Foundry extension bundle:
   ```bash
   azd extension install microsoft.foundry

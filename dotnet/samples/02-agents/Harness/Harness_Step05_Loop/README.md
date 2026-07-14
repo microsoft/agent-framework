@@ -32,7 +32,7 @@ The Python sample in [microsoft/agent-framework#6174](https://github.com/microso
 
 Before running this sample, ensure you have:
 
-1. An Azure AI Foundry project with a deployed model (e.g., `gpt-5.4`)
+1. A Microsoft Foundry project with a deployed model (e.g., `gpt-5.4`)
 2. Azure CLI installed and authenticated (`az login`)
 
 ## Environment Variables
@@ -40,7 +40,7 @@ Before running this sample, ensure you have:
 Set the following environment variables:
 
 ```bash
-# Required: Your Azure AI Foundry project endpoint
+# Required: Your Microsoft Foundry project endpoint
 export AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/api/projects/your-project"
 
 # Optional: Model deployment name (defaults to gpt-5.4)

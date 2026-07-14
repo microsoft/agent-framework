@@ -32,7 +32,6 @@ public class HarnessAgentTests
         DisableToolAutoApproval = true,
         DisableOpenTelemetry = true,
         DisableFileMemory = true,
-        DisableFileAccess = true,
         DisableWebSearch = true,
         DisableTodoProvider = true,
         DisableAgentModeProvider = true,
@@ -1212,15 +1211,15 @@ public class HarnessAgentTests
     #region Feature: FileAccessProvider
 
     /// <summary>
-    /// Verify that FileAccessProvider is included in AIContextProviders by default.
+    /// Verify that FileAccessProvider is included in AIContextProviders when a FileAccessStore is provided.
     /// </summary>
     [Fact]
-    public void FileAccessProvider_IncludedByDefault()
+    public void FileAccessProvider_IncludedWhenStoreProvided()
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
         var options = CreateAllDisabledOptions();
-        options.DisableFileAccess = false;
+        options.FileAccessStore = new Mock<AgentFileStore>().Object;
 
         // Act
         var agent = new HarnessAgent(chatClient, options);
@@ -1232,10 +1231,10 @@ public class HarnessAgentTests
     }
 
     /// <summary>
-    /// Verify that FileAccessProvider is excluded when disabled.
+    /// Verify that FileAccessProvider is excluded by default (opt-in: no store provided).
     /// </summary>
     [Fact]
-    public void FileAccessProvider_ExcludedWhenDisabled()
+    public void FileAccessProvider_ExcludedByDefault()
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
@@ -1262,7 +1261,6 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
         var customStore = new Mock<AgentFileStore>().Object;
         var options = CreateAllDisabledOptions();
-        options.DisableFileAccess = false;
         options.FileAccessStore = customStore;
 
         // Act
@@ -1272,6 +1270,46 @@ public class HarnessAgentTests
         // Assert — FileAccessProvider should be present with the custom store.
         Assert.NotNull(innerAgent?.AIContextProviders);
         Assert.Contains(innerAgent!.AIContextProviders!, p => p is FileAccessProvider);
+    }
+
+    /// <summary>
+    /// Verify that FileAccessProviderOptions are honored: setting DisableWriteTools must remove the
+    /// write tools from the provider that HarnessAgent wires up, while the read-only tools remain.
+    /// </summary>
+    [Fact]
+    public async Task FileAccessProvider_UsesProvidedOptionsAsync()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var options = CreateAllDisabledOptions();
+        options.FileAccessStore = new InMemoryAgentFileStore();
+        options.FileAccessProviderOptions = new FileAccessProviderOptions { DisableWriteTools = true };
+
+        // Act
+        var agent = new HarnessAgent(chatClient, options);
+        var innerAgent = agent.GetService<ChatClientAgent>();
+
+        // Assert — the FileAccessProvider is present and honors the supplied options.
+        Assert.NotNull(innerAgent?.AIContextProviders);
+        var fileAccessProvider = Assert.IsType<FileAccessProvider>(
+            Assert.Single(innerAgent!.AIContextProviders!, p => p is FileAccessProvider));
+
+        var mockAgent = new Mock<AIAgent>().Object;
+        var session = await agent.CreateSessionAsync();
+#pragma warning disable MAAI001
+        var context = new AIContextProvider.InvokingContext(mockAgent, session, new AIContext());
+#pragma warning restore MAAI001
+        AIContext result = await fileAccessProvider.InvokingAsync(context);
+        var toolNames = result.Tools!.OfType<AIFunction>().Select(t => t.Name).ToList();
+
+        // DisableWriteTools = true => only the read-only tools are exposed.
+        Assert.Contains(FileAccessProvider.ReadFileToolName, toolNames);
+        Assert.Contains(FileAccessProvider.LsToolName, toolNames);
+        Assert.Contains(FileAccessProvider.GrepToolName, toolNames);
+        Assert.DoesNotContain(FileAccessProvider.WriteToolName, toolNames);
+        Assert.DoesNotContain(FileAccessProvider.DeleteFileToolName, toolNames);
+        Assert.DoesNotContain(FileAccessProvider.ReplaceToolName, toolNames);
+        Assert.DoesNotContain(FileAccessProvider.ReplaceLinesToolName, toolNames);
     }
 
     #endregion
@@ -1419,7 +1457,6 @@ public class HarnessAgentTests
         Assert.Contains(providers, p => p is TodoProvider);
         Assert.Contains(providers, p => p is AgentModeProvider);
         Assert.Contains(providers, p => p is FileMemoryProvider);
-        Assert.Contains(providers, p => p is FileAccessProvider);
         Assert.Contains(providers, p => p is AgentSkillsProvider);
 
         // Assert — HostedWebSearchTool is present in the tools sent to the model
@@ -1903,7 +1940,6 @@ public class HarnessAgentTests
             DisableToolAutoApproval = true,
             DisableOpenTelemetry = true,
             DisableFileMemory = true,
-            DisableFileAccess = true,
             DisableWebSearch = true,
             DisableTodoProvider = true,
             DisableAgentModeProvider = true,
@@ -1954,7 +1990,6 @@ public class HarnessAgentTests
             DisableToolAutoApproval = true,
             DisableOpenTelemetry = true,
             DisableFileMemory = true,
-            DisableFileAccess = true,
             DisableWebSearch = true,
             DisableTodoProvider = true,
             DisableAgentModeProvider = true,
@@ -1986,7 +2021,6 @@ public class HarnessAgentTests
             DisableToolAutoApproval = true,
             DisableOpenTelemetry = true,
             DisableFileMemory = true,
-            DisableFileAccess = true,
             DisableWebSearch = true,
             DisableTodoProvider = true,
             DisableAgentModeProvider = true,

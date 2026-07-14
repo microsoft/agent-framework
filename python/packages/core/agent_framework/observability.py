@@ -709,7 +709,7 @@ class ObservabilitySettings:
             Can be set via environment variable ENABLE_SENSITIVE_DATA.
         enable_console_exporters: Enable console exporters for traces, logs, and metrics.
             Default is False. Can be set via environment variable ENABLE_CONSOLE_EXPORTERS.
-        vs_code_extension_port: The port the AI Toolkit or Azure AI Foundry VS Code extensions are listening on.
+        vs_code_extension_port: The port the AI Toolkit or Microsoft Foundry VS Code extensions are listening on.
             Default is None.
             Can be set via environment variable VS_CODE_EXTENSION_PORT.
 
@@ -1225,7 +1225,7 @@ def configure_otel_providers(
         views: Optional list of OpenTelemetry views for metrics configuration.
             Views allow filtering and customizing which metrics are collected.
             Default is None (empty list).
-        vs_code_extension_port: The port the AI Toolkit or Azure AI Foundry VS Code
+        vs_code_extension_port: The port the AI Toolkit or Microsoft Foundry VS Code
             extensions are listening on. When set, additional OTEL exporters will be
             created with endpoint `http://localhost:{vs_code_extension_port}`.
             Overrides the environment variable VS_CODE_EXTENSION_PORT if set. Default is None.

@@ -22,7 +22,7 @@ This sample demonstrates how to **host** Agent Framework agents as A2A-compliant
 ## Environment Variables
 
 ### Required (Server)
-- `FOUNDRY_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
+- `FOUNDRY_PROJECT_ENDPOINT` — Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL` — Model deployment name (e.g. `gpt-4o`)
 
 ## Quick Start

@@ -1,6 +1,6 @@
 # What this sample demonstrates
 
-An [Agent Framework](https://github.com/microsoft/agent-framework) agent with persistent semantic memory backed by an **Azure AI Foundry Memory Store**, hosted using the **Responses protocol**. The agent remembers facts the user has shared (e.g., dietary preferences, name) across sessions by retrieving and updating memories around every model invocation via `FoundryMemoryProvider`.
+An [Agent Framework](https://github.com/microsoft/agent-framework) agent with persistent semantic memory backed by a **Microsoft Foundry Memory Store**, hosted using the **Responses protocol**. The agent remembers facts the user has shared (e.g., dietary preferences, name) across sessions by retrieving and updating memories around every model invocation via `FoundryMemoryProvider`.
 
 ## How It Works
 
@@ -26,7 +26,7 @@ The agent is hosted using the [Agent Framework](https://github.com/microsoft/age
 
 ## Prerequisites
 
-- An Azure AI Foundry project with:
+- A Microsoft Foundry project with:
   - A deployed chat model (e.g., `gpt-4.1-mini`)
   - A deployed embedding model (e.g., `text-embedding-3-small`) — used by the memory store itself, not by the agent at runtime
 - Azure CLI logged in (`az login`)

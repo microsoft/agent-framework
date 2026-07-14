@@ -252,7 +252,6 @@ AIAgent CreateLeanHarnessAgent(
         DisableAgentModeProvider = true,
         DisableTodoProvider = disableTodoProvider,
         DisableFileMemory = true,
-        DisableFileAccess = true,
         DisableWebSearch = true,
         ToolApprovalAgentOptions = toolApprovalAgentOptions,
         ChatOptions = new ChatOptions

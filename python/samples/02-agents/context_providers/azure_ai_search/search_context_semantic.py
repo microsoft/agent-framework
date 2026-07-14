@@ -25,12 +25,12 @@ This sample demonstrates how to use Azure AI Search with semantic mode for RAG
 
 Prerequisites:
 1. An Azure AI Search service with a search index
-2. An Azure AI Foundry project with a model deployment
+2. A Microsoft Foundry project with a model deployment
 3. Set the following environment variables:
    - AZURE_SEARCH_ENDPOINT: Your Azure AI Search endpoint
    - AZURE_SEARCH_API_KEY: (Optional) Your search API key - if not provided, uses AzureCliCredential for Entra ID
    - AZURE_SEARCH_INDEX_NAME: Your search index name
-   - FOUNDRY_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
+   - FOUNDRY_PROJECT_ENDPOINT: Your Microsoft Foundry project endpoint
    - FOUNDRY_MODEL: Your model deployment name (e.g., "gpt-4o")
    - AZURE_OPENAI_EMBEDDING_MODEL: (Optional) Your Azure OpenAI embedding deployment for hybrid search
    - AZURE_OPENAI_ENDPOINT: (Optional) Your Azure OpenAI resource URL, required if using Azure OpenAI embeddings

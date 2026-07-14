@@ -2,7 +2,7 @@
 
 // Middleware — Chain multiple middleware layers on an agent
 //
-// This sample shows multiple middleware layers working together with Azure AI Foundry:
+// This sample shows multiple middleware layers working together with Microsoft Foundry:
 // chat client (global/per-request), agent run (PII filtering and guardrails),
 // function invocation (logging and result overrides), human-in-the-loop
 // approval workflows for sensitive function calls, and MessageAIContextProvider
@@ -15,7 +15,7 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-// Get Azure AI Foundry configuration from environment variables
+// Get Microsoft Foundry configuration from environment variables
 var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 

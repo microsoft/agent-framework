@@ -25,7 +25,7 @@ AIProjectClient aiProjectClient = new(
     new Uri(endpoint),
     new DefaultAzureCredential());
 
-// Create a Qdrant vector store that uses the Azure AI Foundry embedding model to generate embeddings.
+// Create a Qdrant vector store that uses the Microsoft Foundry embedding model to generate embeddings.
 QdrantClient client = new("localhost");
 VectorStore vectorStore = new QdrantVectorStore(client, ownsClient: true, new()
 {
