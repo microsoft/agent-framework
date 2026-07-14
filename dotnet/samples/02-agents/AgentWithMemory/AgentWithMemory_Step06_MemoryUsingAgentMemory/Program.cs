@@ -52,6 +52,9 @@ var embeddingModel = Environment.GetEnvironmentVariable("FOUNDRY_EMBEDDING_MODEL
 
 var clientOptions = new OpenAIClientOptions { Endpoint = new Uri(endpoint) };
 // API key if provided, otherwise Azure credential (dev: `az login`).
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 OpenAIClient openAI = string.IsNullOrWhiteSpace(apiKey)
     ? new OpenAIClient(new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"), clientOptions)
     : new OpenAIClient(new ApiKeyCredential(apiKey), clientOptions);
