@@ -204,6 +204,7 @@ async def handle_update(update: Mapping[str, Any]) -> None:
             encoded = base64.b64encode(data).decode("ascii")
             return f"data:application/octet-stream;base64,{encoded}"
 
+        # <telegram_agent_run>
         try:
             run = await telegram_to_run(update, resolve_file_url=resolve_file_url, stream=True)
         except ValueError:
@@ -243,6 +244,7 @@ async def handle_update(update: Mapping[str, Any]) -> None:
         # Persist the updated AgentSession back under the stable per-chat key after
         # streaming has finalized and the history provider has recorded the turn.
         await state.set_session(session_id, session)
+        # </telegram_agent_run>
 
 
 @dispatcher.message()

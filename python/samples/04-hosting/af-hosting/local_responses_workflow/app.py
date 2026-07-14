@@ -217,6 +217,7 @@ workflow_builder = WorkflowBuilder(
 ).add_edge(writer_ex, formatter_ex)
 
 
+# <workflow_responses_route>
 app = FastAPI()
 state = WorkflowState(workflow_builder, cache_target=False)
 
@@ -270,6 +271,7 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse:  # noqa: 
             session_id=previous_response_id,
         )
     )
+# </workflow_responses_route>
 
 
 async def main() -> None:

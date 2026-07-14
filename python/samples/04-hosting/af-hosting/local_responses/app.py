@@ -104,6 +104,7 @@ def create_agent() -> Agent:
     )
 
 
+# <responses_route>
 app = FastAPI()
 state = AgentState(create_agent)
 
@@ -177,6 +178,7 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
             session_id=session_id,
         )
     )
+# </responses_route>
 
 
 async def main() -> None:
