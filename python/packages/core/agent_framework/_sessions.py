@@ -22,7 +22,7 @@ import uuid
 import weakref
 from abc import abstractmethod
 from base64 import urlsafe_b64encode
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypeGuard, cast
@@ -64,6 +64,17 @@ def _default_json_dumps(value: Any) -> str:
 
 def _default_json_loads(value: str | bytes) -> Any:
     return json.loads(value)
+
+
+def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[str]:
+    """Return origin session IDs in first-seen order without duplicates."""
+    unique_origin_session_ids: list[str] = []
+    seen_origin_session_ids: set[str] = set()
+    for origin_session_id in origin_session_ids:
+        if origin_session_id not in seen_origin_session_ids:
+            seen_origin_session_ids.add(origin_session_id)
+            unique_origin_session_ids.append(origin_session_id)
+    return unique_origin_session_ids
 
 
 def _is_middleware_sequence(
@@ -256,7 +267,10 @@ class SessionContext:
             origin_session_ids: Optional session IDs that originally produced
                 these messages, when different from the current session. Set
                 by providers that inject content stored under other sessions
-                (cross-session memory). The values are exposed under
+                (cross-session memory). The IDs describe the contributing
+                sessions for every message supplied in this call; they are not
+                positionally paired with messages, and a composed message can
+                have multiple origins. The values are exposed under
                 ``additional_properties["_attribution"]["origin_session_ids"]``
                 so downstream context observers can detect cross-session
                 content for governance, audit, or behavioral-analysis
@@ -271,7 +285,7 @@ class SessionContext:
             source_id = source.source_id  # type: ignore[attr-defined]
             attribution = {"source_id": source_id, "source_type": type(source).__name__}
         if origin_session_ids:
-            attribution["origin_session_ids"] = list(dict.fromkeys(origin_session_ids))
+            attribution["origin_session_ids"] = _deduplicate_origin_session_ids(origin_session_ids)
 
         copied: list[Message] = []
         for message in messages:
@@ -288,11 +302,9 @@ class SessionContext:
                         existing_origins = merged_attribution.get(key)
                         if isinstance(existing_origins, Sequence) and not isinstance(existing_origins, str):
                             existing_origin_values = cast(Sequence[Any], existing_origins)
-                            value = list(
-                                dict.fromkeys(
-                                    [origin for origin in existing_origin_values if isinstance(origin, str)]
-                                    + cast(list[str], value)
-                                )
+                            value = _deduplicate_origin_session_ids(
+                                [origin for origin in existing_origin_values if isinstance(origin, str)]
+                                + cast(list[str], value)
                             )
                         merged_attribution[key] = value
                     else:

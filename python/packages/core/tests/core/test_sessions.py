@@ -144,6 +144,27 @@ class TestSessionContext:
             "origin_session_ids": ["prior"],
         }
 
+    def test_extend_messages_applies_all_origins_to_each_message(self) -> None:
+        ctx = SessionContext(session_id="current", input_messages=[])
+        messages = [
+            Message(role="assistant", contents=["first composed memory"]),
+            Message(role="assistant", contents=["second composed memory"]),
+        ]
+
+        ctx.extend_messages("memory_provider", messages, origin_session_ids=["session-a", "session-b"])
+
+        stored_messages = ctx.context_messages["memory_provider"]
+        assert [message.additional_properties["_attribution"] for message in stored_messages] == [
+            {
+                "source_id": "memory_provider",
+                "origin_session_ids": ["session-a", "session-b"],
+            },
+            {
+                "source_id": "memory_provider",
+                "origin_session_ids": ["session-a", "session-b"],
+            },
+        ]
+
     def test_extend_messages_adds_origin_to_existing_attribution(self) -> None:
         ctx = SessionContext(session_id="current", input_messages=[])
         msg = Message(

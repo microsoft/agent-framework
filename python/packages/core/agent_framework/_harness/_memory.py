@@ -1311,17 +1311,13 @@ class MemoryContextProvider(HistoryProvider):
         # can distinguish injected memory from content native to the current
         # session. Loaded topic files may carry contributions from multiple
         # earlier sessions, tracked in ``MemoryTopicRecord.session_ids``.
-        # See ``samples/02-agents/context_providers/cross_session_observer.py``
-        # for an example subscriber.
         current_session_id = context.session_id
-        cross_session_origins = list(
-            dict.fromkeys(
-                contributor
-                for record in selected_topics
-                for contributor in record.session_ids
-                if contributor and contributor != current_session_id
-            )
-        )
+        cross_session_origins = [
+            contributor
+            for record in selected_topics
+            for contributor in record.session_ids
+            if contributor and contributor != current_session_id
+        ]
 
         context.extend_messages(
             self.source_id,
