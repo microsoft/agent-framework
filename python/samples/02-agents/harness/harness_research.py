@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "agent-framework",
+#     "agent-framework-foundry",
 #     "textual>=6.2.1",
 #     "rich>=13.7.1",
 #     "azure-identity",
@@ -43,7 +43,7 @@ is scoped to ``"execute"`` mode so ``"plan"`` mode stays interactive.
 net.
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint URL
+    FOUNDRY_PROJECT_ENDPOINT — Microsoft Foundry project endpoint URL
     FOUNDRY_MODEL            — Model deployment name
 
 Authentication:

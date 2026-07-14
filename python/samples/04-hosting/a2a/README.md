@@ -27,7 +27,7 @@ in application code. The helper package does not choose a web framework.
 ## Environment Variables
 
 ### Required (Server)
-- `FOUNDRY_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
+- `FOUNDRY_PROJECT_ENDPOINT` — Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL` — Model deployment name (e.g. `gpt-4o`)
 
 ## Quick Start

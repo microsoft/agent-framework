@@ -1546,7 +1546,7 @@ class Content:
         return Content(
             "function_call",
             call_id=self_call_id,
-            name=getattr(self, "name", getattr(other, "name", None)),
+            name=getattr(self, "name", None) or getattr(other, "name", None),
             arguments=arguments,
             exception=getattr(self, "exception", None) or getattr(other, "exception", None),
             informational_only=getattr(self, "informational_only", False)

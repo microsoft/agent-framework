@@ -47,7 +47,7 @@ public static class Program
         Console.WriteLine("\n=== Writer-Critic Iteration Workflow ===\n");
         Console.WriteLine($"Writer and Critic will iterate up to {MaxIterations} times until approval.\n");
 
-        // Set up the Azure AI Foundry client
+        // Set up the Microsoft Foundry client
         string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
         string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
         AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());

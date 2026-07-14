@@ -42,14 +42,16 @@ dev = [
     "pyrefly==1.1.1",
     "ty==0.0.55",
     "zuban==0.8.2",
-    "mcp[ws]==1.28.1",
-    "opentelemetry-sdk==1.43.0",
-    "azure-monitor-opentelemetry==1.8.9",
+    "opentelemetry-sdk",
     #tasks
     "poethepoet==0.48.0",
     "rich>=13.7.1,<16.0.0",
     "tomli==2.4.1",
-    "prek==0.4.5",
+    "prek==0.4.8",
+]
+test = [
+    "azure-monitor-opentelemetry",
+    "mcp[ws]",
 ]
 
 [tool.uv]
@@ -57,10 +59,8 @@ package = false
 prerelease = "if-necessary-or-explicit"
 # Security floors for transitive deps; overrides bypass litellm[proxy]'s strict pins.
 constraint-dependencies = ["litellm>=1.83.7", "fastapi-sso>=0.19.0"]
-# Allow opentelemetry-semantic-conventions 0.61b0 for mistralai compatibility
-# (mistralai pins <0.61 but 0.61b0 is compatible at runtime).
 # python-multipart>=0.0.31 overrides litellm[proxy]'s exact pin of <=0.0.27 for security.
-override-dependencies = ["mcp[ws]>=1.27.0", "uvicorn[standard]>=0.34.0", "opentelemetry-semantic-conventions>=0.60b1", "python-multipart>=0.0.31"]
+override-dependencies = ["mcp[ws]>=1.27.0", "uvicorn[standard]>=0.34.0", "python-multipart>=0.0.31"]
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
@@ -94,6 +94,7 @@ agent-framework-github-copilot = { workspace = true }
 agent-framework-hosting = { workspace = true }
 agent-framework-hosting-a2a = { workspace = true }
 agent-framework-hosting-responses = { workspace = true }
+agent-framework-hosting-telegram = { workspace = true }
 agent-framework-hyperlight = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
@@ -245,8 +246,8 @@ executor.type = "uv"
 
 # Workspace setup
 [tool.poe.tasks.install]
-help = "Install all workspace packages, extras, and dev dependencies from the lockfile."
-cmd = "uv sync --all-packages --all-extras --dev --frozen --prerelease=if-necessary-or-explicit"
+help = "Install all workspace packages, extras, and dependency groups from the lockfile."
+cmd = "uv sync --all-packages --all-extras --all-groups --frozen --prerelease=if-necessary-or-explicit"
 
 [tool.poe.tasks.setup]
 help = "Create the workspace virtual environment for -P/--python, install dependencies, and install prek hooks."
@@ -367,14 +368,14 @@ cmd = "uv publish"
 
 # Dependency maintenance
 [tool.poe.tasks.upgrade-dev-dependency-pins]
-help = "Repin the workspace dev dependency versions used in pyproject.toml."
+help = "Repin exact workspace development dependency versions used in pyproject.toml."
 cmd = "python -m scripts.dependencies.upgrade_dev_dependencies"
 
 [tool.poe.tasks._upgrade-lockfile]
 cmd = "uv lock --upgrade"
 
 [tool.poe.tasks.upgrade-dev-dependencies]
-help = "Repin dev dependencies, refresh uv.lock, reinstall, and rerun validation commands."
+help = "Repin development dependencies, refresh uv.lock, reinstall, and rerun validation commands."
 sequence = [
     { ref = "upgrade-dev-dependency-pins" },
     { ref = "_upgrade-lockfile" },

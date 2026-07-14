@@ -67,9 +67,11 @@ dev = [
     "rich>=13.7.1,<15.0.0",
     "tomli==2.4.1",
     "tomli-w==1.2.0",
-    # tau2 from source (not available on PyPI)
+    "prek==0.4.8",
+]
+# tau2 is an executable optional feature fetched from source because it is not available on PyPI.
+tau2 = [
     "tau2@ git+https://github.com/sierra-research/tau2-bench@5ba9e3e56db57c5e4114bf7f901291f09b2c5619",
-    "prek==0.4.5",
 ]
 
 [project.scripts]

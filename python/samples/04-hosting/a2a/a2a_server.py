@@ -49,7 +49,7 @@ Usage:
   uv run python a2a_server.py --agent-type logistics --port 5002
 
 Environment variables:
-  FOUNDRY_PROJECT_ENDPOINT              — Your Azure AI Foundry project endpoint
+  FOUNDRY_PROJECT_ENDPOINT              — Your Microsoft Foundry project endpoint
   FOUNDRY_MODEL — Model deployment name (e.g. gpt-4o)
 """
 

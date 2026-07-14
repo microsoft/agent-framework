@@ -68,7 +68,8 @@ must be aligned with the helper-first model before implementation. Old vocabular
 | `agent-framework-hosting` | `agent_framework_hosting` | `AgentState`, `WorkflowState`, `SessionStore`, and run-argument `TypedDict`s. |
 | `agent-framework-hosting-a2a` | `agent_framework_hosting_a2a` | A2A `Message` to run conversion and Agent Framework output to A2A `Part` conversion. |
 | `agent-framework-hosting-responses` | `agent_framework_hosting_responses` | Responses helpers: request parsing, session id extraction, response id creation, response rendering, streaming rendering. |
-| Future protocol packages | e.g. `agent_framework_hosting_telegram` | Protocol-specific helpers such as `telegram_to_run(...)`, `telegram_from_run(...)`, `telegram_session_id(...)`, and command/media helpers when useful. |
+| `agent-framework-hosting-telegram` | `agent_framework_hosting_telegram` | Telegram Bot API helpers: update parsing, chat/session/command/media extraction, final rendering, and streaming edit rendering. |
+| Future protocol packages | e.g. `agent_framework_hosting_activity_protocol` | Protocol-specific helpers such as `activity_to_run(...)`, `activity_from_run(...)`, `activity_session_id(...)`, and command/media helpers when useful. |
 
 The core hosting package must not depend on protocol SDKs. Protocol packages may depend on their native protocol SDKs if
 needed, but helper functions should stay usable from plain app code and tests.
@@ -268,6 +269,52 @@ artifact-id policy, or session-key policy. Application code composes the two
 helpers with those native A2A SDK constructs and may use any server framework
 supported by the SDK.
 
+## `agent-framework-hosting-telegram`
+
+The Telegram package provides side-effect-free helpers around Telegram Bot API
+update and method payloads. It does not provide a Bot API client, polling loop,
+webhook route, command registry, retry policy, or rate limiter.
+
+### Update helpers
+
+- `telegram_to_run(update, *, resolve_file_url=None, stream=False) -> AgentRunArgs`
+- `telegram_chat_id(update) -> int | None`
+- `telegram_session_id(update, *, bot_id) -> str | None`
+- `telegram_command(update) -> str | None`
+- `telegram_callback_query_id(update) -> str | None`
+- `telegram_media_file_id(update_or_message) -> tuple[str, str] | None`
+
+`telegram_to_run(...)` handles `message`, `edited_message`, and
+`callback_query` updates. Text and captions become AF text content. When the
+app supplies an async `resolve_file_url` callback, supported Telegram media
+file ids can become AF URI content. The package does not call Telegram's
+`getFile` method itself.
+
+`telegram_session_id(..., bot_id=...)` includes the bot identity in every key.
+Private chats return `telegram:<bot_id>:<user_id>`; other chats return
+`telegram:<bot_id>:<chat_id>`, giving groups a shared session by default. This
+matches Telegram's native isolation boundaries while preventing two bots from
+sharing state accidentally. Apps that want per-user sessions inside a group
+can construct a key that includes both chat and sender ids. The app must
+authorize those Telegram identities before loading session state.
+
+`telegram_command(...)` parses Telegram's `/name` and `/name@bot` syntax. It
+does not register commands or invoke handlers.
+
+### Response helpers
+
+- `telegram_from_run(result, *, chat_id, parse_mode=None)`
+- `telegram_from_streaming_run(stream, *, chat_id, message_id, initial_text=None, parse_mode=None)`
+
+The helpers produce Telegram method/payload values for app-owned Bot API
+calls. Final rendering supports text and image URI output and applies
+Telegram's text-length boundary. Streaming rendering produces cumulative
+`editMessageText` payloads for a placeholder message id supplied by the app,
+omitting edits that match an optional `initial_text`, then renders the final
+rich output. Image-only responses remove the placeholder with `deleteMessage`
+before sending the image. The app owns the initial placeholder send, Bot API
+calls, edit throttling, retries, and failure policy.
+
 ## Security responsibilities
 
 Protocol helper packages parse and render. They do not authenticate callers, authorize access to state, or decide which
@@ -370,3 +417,6 @@ Implementation validation must cover:
 - Responses streaming SSE rendering;
 - HTTP round-trip tests showing a native FastAPI route using `AgentState` and Responses helpers;
 - sample type checking for the local Responses sample.
+- Telegram update parsing, chat/session/command/media extraction, final
+  rendering, and streaming edit rendering;
+- sample type checking for the local Telegram polling and webhook entry points.

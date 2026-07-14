@@ -261,7 +261,7 @@ class PublishExecutor(Executor):
 
 
 def _create_chat_client() -> FoundryChatClient:
-    """Create an Azure AI Foundry chat client using AzureCliCredential."""
+    """Create a Microsoft Foundry chat client using AzureCliCredential."""
     return FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["FOUNDRY_MODEL"],

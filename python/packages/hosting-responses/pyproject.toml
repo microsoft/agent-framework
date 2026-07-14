@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = [
+test = [
     "fastapi>=0.115.0,<0.138.1",
     "httpx>=0.28.1",
 ]

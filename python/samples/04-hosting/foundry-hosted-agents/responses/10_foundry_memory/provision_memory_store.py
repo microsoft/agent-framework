@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Provision the Azure AI Foundry Memory Store used by this sample.
+"""Provision the Microsoft Foundry Memory Store used by this sample.
 
 Creates the memory store named by ``MEMORY_STORE_NAME`` if it does not
 already exist. The store is configured with the user-profile capability so the

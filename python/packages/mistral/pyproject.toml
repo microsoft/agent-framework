@@ -24,7 +24,8 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.11.0,<2",
-    "mistralai>=2.0.0,<3",
+    # Mistral 1.x retains the embeddings API without the OpenTelemetry semantic-conventions cap in 2.x.
+    "mistralai>=1.8.1,<3",
 ]
 
 [tool.uv]
