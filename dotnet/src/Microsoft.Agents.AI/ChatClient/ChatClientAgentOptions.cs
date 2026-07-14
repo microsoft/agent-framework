@@ -1,9 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -177,7 +175,6 @@ public sealed class ChatClientAgentOptions
     /// <value>
     /// Default is <see langword="false"/>.
     /// </value>
-    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public bool EnableMessageInjection { get; set; }
 
     /// <summary>
