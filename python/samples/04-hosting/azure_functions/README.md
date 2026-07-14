@@ -63,7 +63,7 @@ azurite
 
 - Install [Azurite storage emulator](https://learn.microsoft.com/en-us/azure/storage/common/storage-install-azurite?toc=%2Fazure%2Fstorage%2Fblobs%2Ftoc.json&bc=%2Fazure%2Fstorage%2Fblobs%2Fbreadcrumb%2Ftoc.json&tabs=visual-studio%2Cblob-storage)
 
-- Create an [Azure AI Foundry project](https://learn.microsoft.com/azure/ai-foundry/) with an OpenAI model deployment. Note the Foundry project endpoint and deployment name, and ensure you can authenticate with `AzureCliCredential`.
+- Create a [Microsoft Foundry project](https://learn.microsoft.com/azure/ai-foundry/) with an OpenAI model deployment. Note the Foundry project endpoint and deployment name, and ensure you can authenticate with `AzureCliCredential`.
 
 - Install a tool to execute HTTP calls, for example the [REST Client extension](https://marketplace.visualstudio.com/items?itemName=humao.rest-client)
 

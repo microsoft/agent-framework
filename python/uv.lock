@@ -53,6 +53,7 @@ members = [
     "agent-framework-github-copilot",
     "agent-framework-hosting",
     "agent-framework-hosting-responses",
+    "agent-framework-hosting-telegram",
     "agent-framework-hyperlight",
     "agent-framework-lab",
     "agent-framework-mem0",
@@ -478,7 +479,7 @@ dev = [
 
 [[package]]
 name = "agent-framework-declarative"
-version = "1.0.0rc2"
+version = "1.0.0"
 source = { editable = "packages/declarative" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -697,6 +698,21 @@ requires-dist = [
 test = [
     { name = "fastapi", specifier = ">=0.115.0,<0.138.1" },
     { name = "httpx", specifier = ">=0.28.1" },
+]
+
+[[package]]
+name = "agent-framework-hosting-telegram"
+version = "1.0.0a260709"
+source = { editable = "packages/hosting-telegram" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "agent-framework-hosting", editable = "packages/hosting" },
 ]
 
 [[package]]

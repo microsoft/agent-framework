@@ -273,8 +273,10 @@ class A2AExecutor(AgentExecutor):
             elif content.type == "uri" and content.uri:
                 parts.append(Part(url=content.uri, media_type=content.media_type or ""))
             else:
-                # Silently skip unsupported content types
-                logger.warning("A2AExecutor does not yet support content type: %s. Omitted.", content.type)
+                # Content that doesn't map to an A2A part (e.g. intermediate function_call /
+                # function_result from tool use) is skipped; only final user-facing output
+                # (text/data/uri) is surfaced.
+                logger.debug("Skipping unsupported content type for A2A: %s", content.type)
 
         if parts:
             if isinstance(item, AgentResponseUpdate):

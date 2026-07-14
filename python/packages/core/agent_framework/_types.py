@@ -1546,7 +1546,7 @@ class Content:
         return Content(
             "function_call",
             call_id=self_call_id,
-            name=getattr(self, "name", getattr(other, "name", None)),
+            name=getattr(self, "name", None) or getattr(other, "name", None),
             arguments=arguments,
             exception=getattr(self, "exception", None) or getattr(other, "exception", None),
             informational_only=getattr(self, "informational_only", False)
@@ -2191,7 +2191,7 @@ def _last_non_empty_assistant_message_text(messages: Sequence[Message]) -> str:
     for message in reversed(messages):
         if message.role != "assistant":
             continue
-        text = message.text
+        text = "".join((content.text or "") for content in message.contents if content.type == "text")
         if text.strip():
             return text
     return ""

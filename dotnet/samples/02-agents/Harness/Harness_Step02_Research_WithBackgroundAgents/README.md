@@ -32,7 +32,7 @@ A parent agent receives a list of stock tickers and uses a web-search background
 
 ## Prerequisites
 
-- An Azure AI Foundry endpoint with an OpenAI model deployment
+- A Microsoft Foundry endpoint with an OpenAI model deployment
 - Set the following environment variables:
   - `AZURE_FOUNDRY_OPENAI_ENDPOINT` — Your Foundry OpenAI endpoint URL
   - `FOUNDRY_MODEL` — Model deployment name (defaults to `gpt-5.4`)

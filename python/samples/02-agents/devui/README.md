@@ -20,7 +20,7 @@ DevUI is a sample application that provides:
 
 Run a single sample directly. This demonstrates how to register agents and workflows in code without using DevUI's directory discovery.
 
-This sample uses Azure AI Foundry. Before running it:
+This sample uses Microsoft Foundry. Before running it:
 
 1. Copy `.env.example` in this folder to `.env`, or export the same values in your shell
 2. Set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL`

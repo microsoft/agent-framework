@@ -125,7 +125,7 @@ agent_framework/
 - **Scoping** - Memories are isolated per session by default: each session writes under a working folder derived from `context.session_id`. Pass an explicit `scope` (e.g. a user id) to group memories across sessions, mirroring `FoundryMemoryProvider`'s `scope` arg.
 - **Descriptions & index** - `file_memory_write` accepts an optional `description`, stored in a companion `<stem>_description.md` sidecar. After each write/delete the provider rebuilds a capped (50-entry) `memories.md` index, and `before_run` injects that index as a `user` context message so the model knows what memories exist. Sidecars and the index are internal files hidden from `file_memory_ls`/`file_memory_grep` and rejected as write targets.
 - **`DEFAULT_FILE_MEMORY_SOURCE_ID`** / **`DEFAULT_FILE_MEMORY_INSTRUCTIONS`** - Public defaults for the provider's source id and instruction banner.
-- **Harness wiring** - `create_harness_agent` includes both `FileMemoryProvider` and `FileAccessProvider` by default. Disable via `disable_file_memory` / `disable_file_access`; override the backing store via `file_memory_store` / `file_access_store`. When no store is supplied, defaults are `FileSystemAgentFileStore` rooted at `{cwd}/agent-file-memory` (memory) and `{cwd}/working` (access), mirroring the .NET `HarnessAgent`. `create_harness_agent` also wires in `MessageInjectionMiddleware` by default (mirroring the .NET harness's `UseMessageInjection`); it is always on with no opt-out because it is a no-op when no messages are queued for the session.
+- **Harness wiring** - `create_harness_agent` includes the `FileMemoryProvider` by default; the `FileAccessProvider` is opt-in and added only when a `file_access_store` is supplied (no implicit `{cwd}/working` store is created). Disable file memory via `disable_file_memory`; override its backing store via `file_memory_store`. When no file-memory store is supplied, the default is `FileSystemAgentFileStore` rooted at `{cwd}/agent-file-memory`. `create_harness_agent` also wires in `MessageInjectionMiddleware` by default (mirroring the .NET harness's `UseMessageInjection`); it is always on with no opt-out because it is a no-op when no messages are queued for the session.
 
 ### Tool Approval Harness (`_harness/_tool_approval.py`)
 
@@ -174,7 +174,7 @@ agent_framework/
 
 ### Foundry (`foundry/`)
 
-- **`FoundryChatClient`** - Chat client for Azure AI Foundry project endpoints
+- **`FoundryChatClient`** - Chat client for Microsoft Foundry project endpoints
 
 ## Key Patterns
 

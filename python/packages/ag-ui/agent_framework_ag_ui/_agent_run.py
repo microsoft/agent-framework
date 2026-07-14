@@ -30,6 +30,9 @@ from ag_ui.core import (
 from agent_framework import (
     AgentSession,
     Content,
+    HistoryProvider,
+    InMemoryHistoryProvider,
+    MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
     Message,
     SupportsAgentRun,
 )
@@ -581,6 +584,7 @@ def _restore_tool_approval_state(
     thread_id: str,
 ) -> None:
     """Restore only core tool-approval state into the per-run AgentSession."""
+    session.state.pop(_TOOL_APPROVAL_STATE_KEY, None)
     if approval_state_store is None:
         return
     stored_state = approval_state_store.tool_approval_states.get(thread_id)
@@ -1624,8 +1628,9 @@ async def _save_thread_snapshot(
     messages: list[dict[str, Any]],
     state: dict[str, Any] | None,
     interrupt: list[dict[str, Any]] | None,
+    session_state: dict[str, Any] | None,
 ) -> None:
-    """Save the latest replayable AG-UI Thread Snapshot when persistence is configured."""
+    """Save the latest AG-UI Thread Snapshot when persistence is configured."""
     if config.snapshot_store is None or scope is None:
         return
 
@@ -1633,7 +1638,12 @@ async def _save_thread_snapshot(
         await config.snapshot_store.save(
             scope=scope,
             thread_id=thread_id,
-            snapshot=AGUIThreadSnapshot(messages=messages, state=state, interrupt=interrupt),
+            snapshot=AGUIThreadSnapshot(
+                messages=messages,
+                state=state,
+                interrupt=interrupt,
+                session_state=session_state,
+            ),
         )
     except Exception:
         # The run itself already streamed successfully; a transient store failure
@@ -1644,6 +1654,90 @@ async def _save_thread_snapshot(
             scope,
             thread_id,
         )
+
+
+def _restore_session_continuation_state(session: AgentSession, snapshot: AGUIThreadSnapshot | None) -> None:
+    """Restore typed private state from trusted snapshot storage."""
+    if snapshot is None or snapshot.session_state is None:
+        return
+    try:
+        restored = AgentSession.from_dict(
+            {
+                "type": "session",
+                "session_id": session.session_id,
+                "state": snapshot.session_state,
+            }
+        )
+    except Exception:
+        logger.exception(
+            "Failed to restore AG-UI Session Continuation State for session_id=%s; continuing without it.",
+            session.session_id,
+        )
+        return
+    session.state.update(restored.state)
+
+
+def _request_state_protected_keys(agent: SupportsAgentRun) -> set[str]:
+    """Return session-state namespaces that client Shared State cannot own."""
+    context_providers = cast(list[Any], getattr(agent, "context_providers", []))
+    return {
+        _TOOL_APPROVAL_STATE_KEY,
+        InMemoryHistoryProvider.DEFAULT_SOURCE_ID,
+        MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
+        *(provider.source_id for provider in context_providers),
+    }
+
+
+def _serialize_session_continuation_state(
+    session: AgentSession,
+    agent: SupportsAgentRun,
+    *,
+    shared_state_keys: set[str],
+) -> dict[str, Any] | None:
+    """Serialize server-owned state while preserving each AG-UI State Authority."""
+    context_providers = cast(list[Any], getattr(agent, "context_providers", []))
+    excluded_keys = {
+        *shared_state_keys,
+        _TOOL_APPROVAL_STATE_KEY,
+        *(provider.source_id for provider in context_providers if isinstance(provider, HistoryProvider)),
+    }
+    continuation_state = {key: value for key, value in session.state.items() if key not in excluded_keys}
+    if not continuation_state:
+        return None
+
+    serialized_session = AgentSession(session_id=session.session_id)
+    serialized_session.state.update(continuation_state)
+    return cast(dict[str, Any], serialized_session.to_dict()["state"])
+
+
+def _safe_serialize_session_continuation_state(
+    session: AgentSession,
+    agent: SupportsAgentRun,
+    *,
+    shared_state_keys: set[str],
+) -> dict[str, Any] | None:
+    """Return JSON-safe continuation state without failing a completed run."""
+    try:
+        serialized_state = _serialize_session_continuation_state(
+            session,
+            agent,
+            shared_state_keys=shared_state_keys,
+        )
+        if serialized_state is None:
+            return None
+        safe_state = make_json_safe(serialized_state)
+        if isinstance(safe_state, dict):
+            return cast(dict[str, Any], safe_state)
+        logger.warning(
+            "Ignoring AG-UI Session Continuation State with unsupported serialized type: %s",
+            type(safe_state).__name__,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to serialize AG-UI Session Continuation State for session_id=%s; saving snapshot without it.",
+            session.session_id,
+        )
+    return None
 
 
 async def run_agent_stream(
@@ -1821,6 +1915,15 @@ async def run_agent_stream(
         session = AgentSession(session_id=thread_id, service_session_id=supplied_thread_id)
     else:
         session = AgentSession(session_id=thread_id)
+    _restore_session_continuation_state(session, stored_snapshot)
+    protected_session_state_keys = _request_state_protected_keys(agent)
+    session.state.update(
+        {
+            key: copy.deepcopy(value)
+            for key, value in flow.current_state.items()
+            if key not in protected_session_state_keys
+        }
+    )
     _restore_tool_approval_state(session, approval_state_store, approval_thread_id)
 
     # Inject metadata for AG-UI orchestration (Feature #2: Azure-safe truncation)
@@ -1894,6 +1997,11 @@ async def run_agent_stream(
             messages=persisted_messages,
             state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
             interrupt=None,
+            session_state=_safe_serialize_session_continuation_state(
+                session,
+                agent,
+                shared_state_keys=set(flow.current_state).difference(protected_session_state_keys),
+            ),
         )
         _save_tool_approval_state(session, approval_state_store, approval_thread_id)
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id)
@@ -1999,6 +2107,9 @@ async def run_agent_stream(
         # Stop if waiting for approval
         if flow.waiting_for_approval:
             break
+
+    if flow.waiting_for_approval and isinstance(stream, ResponseStream):
+        await stream.get_final_response()
 
     # If no updates at all, still emit RunStarted
     if not run_started_emitted:
@@ -2188,6 +2299,11 @@ async def run_agent_stream(
         messages=persisted_messages,
         state=latest_state_snapshot,
         interrupt=flow.interrupts or None,
+        session_state=_safe_serialize_session_continuation_state(
+            session,
+            agent,
+            shared_state_keys=set(flow.current_state).difference(protected_session_state_keys),
+        ),
     )
     _save_tool_approval_state(session, approval_state_store, approval_thread_id)
     yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=flow.interrupts)
