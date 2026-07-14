@@ -22,6 +22,7 @@ This folder contains focused middleware samples for `Agent`, chat clients, tools
 | [`override_result_with_middleware.py`](./override_result_with_middleware.py) | Shows how middleware can replace regular and streaming results, then post-process the final response. |
 | [`runtime_context_delegation.py`](./runtime_context_delegation.py) | Demonstrates delegating arguments with runtime context data. |
 | [`session_behavior_middleware.py`](./session_behavior_middleware.py) | Shows how middleware interacts with session-backed runs. |
+| [`spend_preflight_receipt_middleware.py`](./spend_preflight_receipt_middleware.py) | Demonstrates envelope-bound preflight authorization for a paid tool, non-reusable execution claims, and post-execution receipts. |
 | [`shared_state_middleware.py`](./shared_state_middleware.py) | Demonstrates sharing mutable state across middleware invocations. |
 | [`usage_tracking_middleware.py`](./usage_tracking_middleware.py) | Demonstrates one chat middleware function that tracks per-call usage in non-streaming and streaming tool-loop runs. |
 
