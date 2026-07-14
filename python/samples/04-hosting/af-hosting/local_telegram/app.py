@@ -29,7 +29,9 @@ The secret header authenticates Telegram's webhook delivery, but it does not
 authorize the end user represented by an update. Production apps must still
 authorize chat/user ids before loading sensitive state, use durable state and
 idempotent update processing, and add bounded background work with delivery
-telemetry. See ``README.md#production-readiness``.
+telemetry. This sample serializes each chat's updates in-process; distributed
+deployments need their backend storage's locking or transaction mechanisms, or
+another cross-process ordering strategy. See ``README.md#production-readiness``.
 
 Required environment variables: ``FOUNDRY_PROJECT_ENDPOINT``,
 ``FOUNDRY_MODEL``, ``TELEGRAM_BOT_TOKEN``, ``TELEGRAM_WEBHOOK_URL``, and
@@ -117,6 +119,7 @@ def create_agent() -> Agent:
 state = AgentState(create_agent)
 dispatcher = Dispatcher(disable_fsm=True)
 bot = Bot(token=os.environ["TELEGRAM_BOT_TOKEN"])
+session_locks: dict[str, asyncio.Lock] = {}
 
 
 def telegram_update(event_name: str, event: Message | CallbackQuery) -> dict[str, Any]:
@@ -178,65 +181,68 @@ async def handle_update(update: Mapping[str, Any]) -> None:
     if callback_query_id is not None:
         await bot.answer_callback_query(callback_query_id=callback_query_id)
 
-    if (command := telegram_command(update)) is not None and await handle_command(update, command):
-        return
-
     chat_id = telegram_chat_id(update)
     session_id = telegram_session_id(update, bot_id=bot.id)
     if chat_id is None or session_id is None:
         return
 
-    async def resolve_file_url(file_id: str) -> str | None:
-        file = await bot.get_file(file_id)
-        if file.file_path is None or (file.file_size is not None and file.file_size > MAX_MEDIA_BYTES):
-            return None
-        destination = BytesIO()
-        await bot.download_file(file.file_path, destination=destination)
-        data = destination.getvalue()
-        if len(data) > MAX_MEDIA_BYTES:
-            return None
-        encoded = base64.b64encode(data).decode("ascii")
-        return f"data:application/octet-stream;base64,{encoded}"
+    # Background webhook tasks may overlap. Serialize each chat so /new cannot
+    # delete a session while an earlier response is still updating it.
+    async with session_locks.setdefault(session_id, asyncio.Lock()):
+        if (command := telegram_command(update)) is not None and await handle_command(update, command):
+            return
 
-    try:
-        run = await telegram_to_run(update, resolve_file_url=resolve_file_url, stream=True)
-    except ValueError:
-        LOGGER.debug("Ignoring non-actionable Telegram update", exc_info=True)
-        return
+        async def resolve_file_url(file_id: str) -> str | None:
+            file = await bot.get_file(file_id)
+            if file.file_path is None or (file.file_size is not None and file.file_size > MAX_MEDIA_BYTES):
+                return None
+            destination = BytesIO()
+            await bot.download_file(file.file_path, destination=destination)
+            data = destination.getvalue()
+            if len(data) > MAX_MEDIA_BYTES:
+                return None
+            encoded = base64.b64encode(data).decode("ascii")
+            return f"data:application/octet-stream;base64,{encoded}"
 
-    await bot.send_chat_action(chat_id=chat_id, action="typing")
-    placeholder = await bot.send_message(chat_id=chat_id, text=PLACEHOLDER_TEXT)
+        try:
+            run = await telegram_to_run(update, resolve_file_url=resolve_file_url, stream=True)
+        except ValueError:
+            LOGGER.debug("Ignoring non-actionable Telegram update", exc_info=True)
+            return
 
-    target = await state.get_target()
-    # Reuse one AgentSession per Telegram chat. The /new command removes this
-    # mapping so get_or_create_session creates a clean session next time.
-    session = await state.get_or_create_session(session_id)
-    stream = target.run(
-        run["messages"],
-        stream=True,
-        session=session,
-        options=run["options"],
-    )
-    if not isinstance(stream, ResponseStream):
-        raise RuntimeError("agent did not return a response stream")
+        await bot.send_chat_action(chat_id=chat_id, action="typing")
+        placeholder = await bot.send_message(chat_id=chat_id, text=PLACEHOLDER_TEXT)
 
-    last_edit_at = 0.0
-    async for operation in telegram_from_streaming_run(
-        stream,
-        chat_id=chat_id,
-        message_id=placeholder.message_id,
-        initial_text=PLACEHOLDER_TEXT,
-    ):
-        if operation["method"] == "editMessageText":
-            delay = EDIT_INTERVAL_SECONDS - (time.monotonic() - last_edit_at)
-            if delay > 0:
-                await asyncio.sleep(delay)
-            last_edit_at = time.monotonic()
-        await execute_operation(operation)
+        target = await state.get_target()
+        # Reuse one AgentSession per Telegram chat. The /new command removes this
+        # mapping so get_or_create_session creates a clean session next time.
+        session = await state.get_or_create_session(session_id)
+        stream = target.run(
+            run["messages"],
+            stream=True,
+            session=session,
+            options=run["options"],
+        )
+        if not isinstance(stream, ResponseStream):
+            raise RuntimeError("agent did not return a response stream")
 
-    # Persist the updated AgentSession back under the stable per-chat key after
-    # streaming has finalized and the history provider has recorded the turn.
-    await state.set_session(session_id, session)
+        last_edit_at = 0.0
+        async for operation in telegram_from_streaming_run(
+            stream,
+            chat_id=chat_id,
+            message_id=placeholder.message_id,
+            initial_text=PLACEHOLDER_TEXT,
+        ):
+            if operation["method"] == "editMessageText":
+                delay = EDIT_INTERVAL_SECONDS - (time.monotonic() - last_edit_at)
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                last_edit_at = time.monotonic()
+            await execute_operation(operation)
+
+        # Persist the updated AgentSession back under the stable per-chat key after
+        # streaming has finalized and the history provider has recorded the turn.
+        await state.set_session(session_id, session)
 
 
 @dispatcher.message()

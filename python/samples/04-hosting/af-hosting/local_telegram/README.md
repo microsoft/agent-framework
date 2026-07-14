@@ -102,8 +102,10 @@ process just registered.
   placeholder before emitting `sendPhoto`.
 - **Transport ordering:** polling uses `tasks_concurrency_limit=1`, so this
   compact sample processes updates serially. The webhook acknowledges first
-  and processes in a FastAPI background task; a production app must add its
-  own per-chat ordering and durable queue if required.
+  and processes in a FastAPI background task, but serializes each chat's
+  updates with an in-process lock so `/new` cannot race an in-flight response.
+  A multi-process deployment must instead use its storage backend's locking or
+  transaction mechanisms, or another cross-process ordering strategy.
 - **Webhook trust:** `TELEGRAM_WEBHOOK_SECRET` authenticates delivery from
   Telegram. It does not authorize the Telegram user or chat to access
   application data.
@@ -134,7 +136,9 @@ Before deploying this pattern:
 - authorize users before mapping a chat id to sensitive/shared state;
 - replace process-local history/session state with durable storage partitioned
   by tenant/user and define retention;
-- make update processing idempotent and preserve per-chat ordering;
+- make update processing idempotent and preserve per-chat ordering; use
+  storage-backed locking/transactions or another distributed coordination
+  mechanism when running more than one process;
 - handle Telegram `429` responses and `retry_after` values;
 - add bounded retries, delivery telemetry, and dead-letter handling;
 - decide how partial streaming edits should recover when a final edit fails.
