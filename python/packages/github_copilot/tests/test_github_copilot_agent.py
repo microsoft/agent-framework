@@ -494,6 +494,12 @@ class TestGitHubCopilotAgentRun:
             timestamp=datetime.now(timezone.utc),
             type=SessionEventType.ASSISTANT_USAGE,
         )
+        empty_usage_event = SessionEvent(
+            data=AssistantUsageData(model="gpt-5.1-mini"),
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.ASSISTANT_USAGE,
+        )
         usage_handler: Any = None
 
         def mock_on(handler: Any) -> Any:
@@ -504,6 +510,7 @@ class TestGitHubCopilotAgentRun:
         async def mock_send_and_wait(*args: Any, **kwargs: Any) -> SessionEvent:
             usage_handler(usage_event)
             usage_handler(second_usage_event)
+            usage_handler(empty_usage_event)
             return assistant_message_event
 
         mock_session.on = mock_on
