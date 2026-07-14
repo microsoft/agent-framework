@@ -86,7 +86,7 @@ builder.Services.AddAgentMemoryFramework(options =>
     options.ContextFormat.IncludePreferences = true;
 });
 
-using var host = builder.Build();
+var host = builder.Build();
 await using var hostDisposal = (IAsyncDisposable)host;
 
 await using var scope = host.Services.CreateAsyncScope();
@@ -133,7 +133,7 @@ foreach (var turn in new[]
     "Nice — what would you recommend for me, and is anything I might like out of stock?",
 })
 {
-    await SayAsync(agent, sessionA, ownerContext, shopper, turn);
+    await SayAsync(agent, sessionA, ownerContext, turn);
 }
 
 // ── Session B — a NEW session for the same shopper still recalls her preferences ─────────────────
@@ -141,15 +141,18 @@ Console.WriteLine(">> Session B — a brand-new session; memory is durable\n");
 var sessionB = (await agent.CreateSessionAsync())
     .WithMemoryIdentity(userId: shopper, sessionId: "cart-b", applicationId: "retail-demo");
 
-await SayAsync(agent, sessionB, ownerContext, shopper, "I'm back — remind me what I like and suggest something new.");
+await SayAsync(agent, sessionB, ownerContext, "I'm back — remind me what I like and suggest something new.");
 
 Console.WriteLine("=== Done. Preferences + messages persist in Neo4j across sessions. ===");
 
 // One conversational turn. The ambient owner scope keeps any model-invoked memory tools scoped to
 // this shopper. The context provider recalls memory before the run and persists after — automatically.
-static async Task SayAsync(AIAgent agent, AgentSession session, IWritableMemoryOwnerContext ownerContext,
-    string userId, string message)
+static async Task SayAsync(AIAgent agent, AgentSession session, IWritableMemoryOwnerContext ownerContext, string message)
 {
+    // The user id set via WithMemoryIdentity lives in the session's state bag; read it back rather
+    // than threading it through as a separate parameter (AgentFrameworkOptions.DefaultUserIdKey = "user_id").
+    session.StateBag.TryGetValue<string>(new AgentFrameworkOptions().DefaultUserIdKey, out var userId);
+
     Console.WriteLine($"USER      : {message}");
     using (ownerContext.BeginOwnerScope(userId))
     {
