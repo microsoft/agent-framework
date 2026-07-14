@@ -98,6 +98,9 @@ class TestMultiAgent:
         assert len(tool_calls) > 0, "Expected at least one tool call"
         assert any(call.name == "calculate_tip" for call in tool_calls), "Expected calculate_tip tool to be called"
 
+    @pytest.mark.skip(
+        reason="Flaky in CI: times out waiting for live Azure responses; temporarily disabled and tracked in #6777."
+    )
     def test_multiple_calls_to_same_agent(self):
         """Test multiple sequential calls to the same agent."""
         agent = self.agent_client.get_agent(WEATHER_AGENT_NAME)

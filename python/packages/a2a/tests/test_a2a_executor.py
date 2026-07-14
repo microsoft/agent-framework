@@ -842,7 +842,7 @@ class TestA2AExecutorHandleEvents:
         assert call_kwargs["append"] is True
 
     async def test_handle_unsupported_content_type(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
-        """Test handling messages with unsupported content types."""
+        """Test that unsupported content types are skipped quietly (debug, not warning)."""
         # Arrange
         message = Message(
             contents=[Content(type=cast(Any, "unknown"), text="Some text")],  # type: ignore[arg-type]
@@ -854,7 +854,25 @@ class TestA2AExecutorHandleEvents:
             await executor.handle_events(message, mock_updater)
 
         # Assert
-        mock_logger.warning.assert_called_once()
+        mock_logger.warning.assert_not_called()
+        mock_logger.debug.assert_called_once_with("Skipping unsupported content type for A2A: %s", "unknown")
+        mock_updater.update_status.assert_not_called()
+
+    async def test_handle_intermediate_content_type(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
+        """Test that intermediate tool content (e.g. function_call) is skipped quietly (debug, not warning)."""
+        # Arrange
+        message = Message(
+            contents=[Content(type="function_call")],
+            role="assistant",
+        )
+
+        # Act
+        with patch("agent_framework_a2a._a2a_executor.logger") as mock_logger:
+            await executor.handle_events(message, mock_updater)
+
+        # Assert
+        mock_logger.warning.assert_not_called()
+        mock_logger.debug.assert_called_once_with("Skipping unsupported content type for A2A: %s", "function_call")
         mock_updater.update_status.assert_not_called()
 
 

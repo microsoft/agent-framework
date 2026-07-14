@@ -3,7 +3,7 @@
 // Structured Output — Configure agents to return typed JSON
 //
 // This sample shows how to configure a ChatClientAgent to produce
-// structured output using JSON schema constraints with Azure AI Foundry.
+// structured output using JSON schema constraints with Microsoft Foundry.
 
 using System.ComponentModel;
 using System.Text.Json;

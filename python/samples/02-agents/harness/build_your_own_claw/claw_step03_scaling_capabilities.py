@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "agent-framework",
+#     "agent-framework-foundry",
 #     "agent-framework-tools",
 #     "agent-framework-monty",
 #     "mcp",
@@ -155,6 +155,8 @@ def get_stock_price(
         "currency": "USD",
         "as_of": datetime.now(timezone.utc).isoformat(),
     }
+
+
 # </get_stock_price>
 
 
@@ -174,6 +176,8 @@ def place_trade(
     verb = "Sold" if action == "sell" else "Bought"
     confirmation = f"TRADE-{uuid.uuid4().hex[:8].upper()}"
     return f"{verb} {quantity} share(s) of {symbol.upper()}. Confirmation: {confirmation}."
+
+
 # </place_trade>
 
 
@@ -226,6 +230,8 @@ async def _connect_foundry_toolbox(stack: AsyncExitStack, url: str) -> ClientSes
     session = await stack.enter_async_context(ClientSession(read, write))
     await session.initialize()
     return session
+
+
 # </skills>
 
 
@@ -246,6 +252,8 @@ def _build_research_agent(client: FoundryChatClient) -> Any:
             "with no preamble."
         ),
     )
+
+
 # </background>
 
 
@@ -273,6 +281,8 @@ def _build_shell() -> LocalShellTool:
         ),
         timeout=15,
     )
+
+
 # </shell>
 
 

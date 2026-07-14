@@ -2,11 +2,9 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI;
@@ -143,7 +141,6 @@ public static class ChatClientBuilderExtensions
     /// </remarks>
     /// <param name="builder">The <see cref="ChatClientBuilder"/> to add the decorator to.</param>
     /// <returns>The <paramref name="builder"/> for chaining.</returns>
-    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public static ChatClientBuilder UseMessageInjection(this ChatClientBuilder builder)
     {
         return builder.Use(innerClient => new MessageInjectingChatClient(innerClient));

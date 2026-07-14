@@ -33,7 +33,7 @@ The agent is hosted using the [Agent Framework](https://github.com/microsoft/age
 ## Prerequisites
 
 - Python 3.12+
-- An Azure AI Foundry project with a deployed model (e.g., `gpt-5`)
+- A Microsoft Foundry project with a deployed model (e.g., `gpt-5`)
 - A Foundry Toolbox with skills attached (see below)
 - Azure CLI logged in (`az login`)
 

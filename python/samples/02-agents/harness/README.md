@@ -159,6 +159,13 @@ for vetting the external service, agent, skill source, or provider before enabli
   out to an LLM whose output permanently becomes chat history. A compromised summarization service
   could inject unsafe, persistent instructions. Only use a service you trust as much as the primary
   model.
+- **Auto-approval rules** (`FileAccessProvider.read_only_tools_auto_approval_rule` /
+  `all_tools_auto_approval_rule`, and the equivalent `SkillsProvider` rules, passed to
+  `ToolApprovalMiddleware`) — the built-in rules approve local tools by tool name only (e.g.
+  `file_access_read`, `file_access_ls`, `file_access_grep`). Auto-approval rules may match by name,
+  so any other local tool registered under one of these names — for example the shell tool given a
+  caller-configurable name — may also be auto-approved, bypassing the human approval boundary. Ensure
+  no other tool collides with these reserved names.
 - **Telemetry** — when observability is enabled, telemetry destinations are developer-configured.
   Default telemetry is metadata only; enabling sensitive data additionally emits raw message content,
   tool arguments, and tool results. See the [observability samples](../observability/README.md).

@@ -64,10 +64,15 @@ python/samples/
 4. **Single-file for 01-03**: Only 04-hosting and 05-end-to-end use multi-file
    projects with their own README.
 
+5. **Self-contained alternatives**: When a sample offers alternative entry
+   points (for example polling and webhook hosting), keep each entry point
+   self-contained. Do not extract a shared helper module solely to remove
+   duplication between sample variants.
+
 ## Default provider
 
-All canonical samples (01-get-started) use **Azure AI Foundry project-backed chat** via `FoundryChatClient`
-with an Azure AI Foundry project endpoint:
+All canonical samples (01-get-started) use **Microsoft Foundry project-backed chat** via `FoundryChatClient`
+with a Microsoft Foundry project endpoint:
 
 ```python
 import os
@@ -85,7 +90,7 @@ agent = Agent(client=client, name="...", instructions="...")
 ```
 
 Environment variables:
-- `FOUNDRY_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
+- `FOUNDRY_PROJECT_ENDPOINT` — Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL` — Model deployment name (e.g. gpt-4o)
 
 For authentication, run `az login` before running samples.
@@ -122,6 +127,9 @@ Every sample file follows this order:
 
 Use PEP 723 inline script metadata for external sample-only dependencies; do not add sample-only dependencies to
 the root `pyproject.toml` dev group.
+PEP 723 dependencies must list the minimal specific Agent Framework distributions used by the script (for example,
+`agent-framework-core`, `agent-framework-foundry`, or `agent-framework-openai`), never the `agent-framework`
+meta-package.
 
 ## Syntax checking
 

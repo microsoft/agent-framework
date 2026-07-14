@@ -1,11 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 # ruff: noqa: T201
 
-"""Sample: Workflow Checkpointing with Cosmos DB and Azure AI Foundry.
+"""Sample: Workflow Checkpointing with Cosmos DB and Microsoft Foundry.
 
 Purpose:
 This sample demonstrates how to use CosmosCheckpointStorage with agents built
-on Azure AI Foundry (via FoundryChatClient). It shows a multi-agent
+on Microsoft Foundry (via FoundryChatClient). It shows a multi-agent
 workflow where checkpoint state is persisted to Cosmos DB, enabling durable
 pause-and-resume across process restarts.
 
@@ -20,7 +20,7 @@ Key concepts:
 - These are complementary: sessions track conversation, checkpoints track workflow state
 
 Environment variables:
-  FOUNDRY_PROJECT_ENDPOINT                - Azure AI Foundry project endpoint
+  FOUNDRY_PROJECT_ENDPOINT                - Microsoft Foundry project endpoint
   FOUNDRY_MODEL                           - Model deployment name
   AZURE_COSMOS_ENDPOINT                  - Cosmos DB account endpoint
   AZURE_COSMOS_DATABASE_NAME             - Database name
@@ -44,7 +44,7 @@ load_dotenv()
 
 
 async def main() -> None:
-    """Run the Azure AI Foundry + Cosmos DB checkpointing sample."""
+    """Run the Microsoft Foundry + Cosmos DB checkpointing sample."""
     project_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT")
     model = os.getenv("FOUNDRY_MODEL")
     cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
@@ -71,7 +71,7 @@ async def main() -> None:
             database_name=cosmos_database_name,
             container_name=cosmos_container_name,
         ) as checkpoint_storage:
-            # Create Azure AI Foundry agents
+            # Create Microsoft Foundry agents
             client = FoundryChatClient(
                 project_endpoint=project_endpoint,
                 model=model,
