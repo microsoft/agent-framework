@@ -77,7 +77,7 @@ builder.Services.AddFoundryResponses(agent);
 // The toolbox name must match a toolbox registered in your Foundry project.
 // When FOUNDRY_PROJECT_ENDPOINT is absent (e.g., in local development without Foundry
 // infrastructure), startup succeeds without error and no toolbox tools are loaded.
-builder.Services.AddFoundryToolboxes(toolboxName);
+builder.Services.AddFoundryToolboxes(credential, toolboxName);
 
 var app = builder.Build();
 app.MapFoundryResponses();

@@ -60,6 +60,7 @@ if TYPE_CHECKING:
         KnowledgeBaseRetrievalResponse,
         KnowledgeRetrievalIntent,
         KnowledgeRetrievalSemanticIntent,
+        SearchIndexKnowledgeSourceParams,
     )
     from azure.search.documents.knowledgebases.models import (
         KnowledgeRetrievalMinimalReasoningEffort as KBRetrievalMinimalReasoningEffort,
@@ -85,6 +86,7 @@ try:
         KnowledgeBaseRetrievalResponse,
         KnowledgeRetrievalIntent,
         KnowledgeRetrievalSemanticIntent,
+        SearchIndexKnowledgeSourceParams,
     )
     from azure.search.documents.knowledgebases.models import (
         KnowledgeRetrievalMinimalReasoningEffort as KBRetrievalMinimalReasoningEffort,
@@ -576,6 +578,7 @@ class AzureAISearchContextProvider(ContextProvider):
             )
 
         self._knowledge_base_initialized = False
+        self._knowledge_source_names: list[str] = []
 
     def _common_client_kwargs(self) -> dict[str, Any]:
         """Build the keyword arguments shared by every Azure AI Search client.
@@ -786,6 +789,13 @@ class AzureAISearchContextProvider(ContextProvider):
                     credential=self.credential,
                     **self._common_client_kwargs(),
                 )
+            # Resolve the existing KB's real knowledge source names so agentic
+            # retrieval can request reference source data per source. Without
+            # this, source names were left unset ("None-source").
+            self._knowledge_source_names = []
+            if self._index_client is not None:
+                kb = await self._index_client.get_knowledge_base(knowledge_base_name)
+                self._knowledge_source_names = [ks.name for ks in (kb.knowledge_sources or [])]
             self._knowledge_base_initialized = True
             return
 
@@ -799,6 +809,7 @@ class AzureAISearchContextProvider(ContextProvider):
             raise ValueError("index_name is required when creating Knowledge Base from index")
 
         knowledge_source_name = f"{self.index_name}-source"
+        self._knowledge_source_names = [knowledge_source_name]
         try:
             await self._index_client.get_knowledge_source(knowledge_source_name)
         except ResourceNotFoundError:
@@ -881,6 +892,17 @@ class AzureAISearchContextProvider(ContextProvider):
             # this branch requires low/medium reasoning effort, which __init__ already
             # rejects on the stable/GA SDK.
             request_kwargs["messages"] = self._prepare_messages_for_kb_search(messages)
+
+        # Request reference source data per knowledge source so ref.source_data
+        # is populated when the source has source_data_fields configured (#5095).
+        if self._knowledge_source_names:
+            request_kwargs["knowledge_source_params"] = [
+                SearchIndexKnowledgeSourceParams(
+                    knowledge_source_name=name,
+                    include_reference_source_data=True,
+                )
+                for name in self._knowledge_source_names
+            ]
 
         retrieval_request = KnowledgeBaseRetrievalRequest(**request_kwargs)
 

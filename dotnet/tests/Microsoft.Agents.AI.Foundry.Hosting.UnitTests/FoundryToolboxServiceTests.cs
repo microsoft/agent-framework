@@ -1,9 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using Moq;
 
@@ -252,5 +254,91 @@ public class FoundryToolboxServiceTests
         Assert.Equal(FoundryToolboxStartupStatus.Healthy, service.StartupStatus);
         Assert.Empty(service.FailedToolboxNames);
         Assert.Empty(service.Tools);
+    }
+
+    [Theory]
+    [InlineData("../../admin")]
+    [InlineData("..%2f..%2fadmin")]
+    [InlineData("%2e%2e/%2e%2e/admin")]
+    [InlineData("%25252525252f")]
+    [InlineData("a/b")]
+    [InlineData("..")]
+    [InlineData(".")]
+    [InlineData("box\\..\\secret")]
+    [InlineData("foo?x=1")]
+    [InlineData("foo#frag")]
+    [InlineData("bad%3fx=1")]
+    [InlineData("tb%23frag")]
+    [InlineData("a%2fb")]
+    public async Task GetToolboxToolsAsync_RejectsNonSingleSegmentToolboxNameAsync(string unsafeName)
+    {
+        // Arrange: non-strict mode with a resolved endpoint and a benign opener seam, so a
+        // well-formed single-segment name would resolve successfully. A name that would move the
+        // request target — path separators, relative-path segments, a query/fragment delimiter that
+        // ends the path early, or any of their percent-encoded forms — must be rejected before any
+        // request URL is built, so it can never carry the managed-identity token to an unintended
+        // endpoint.
+        var options = new FoundryToolboxOptions
+        {
+            StrictMode = false,
+            EndpointOverride = "https://proj.example/api/projects/proj",
+        };
+        await using var service = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>())
+        {
+            ToolboxOpener = (name, _, _) => Task.FromResult(
+                new FoundryToolboxService.ToolboxOpenResult(
+                    new FoundryToolboxService.CachedToolbox(Client: null, new HttpClient(), []),
+                    Consents: null)),
+        };
+        await service.StartAsync(CancellationToken.None);
+
+        // Act + Assert: resolution is refused for the caller-influenced marker name.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await service.GetToolboxToolsAsync(unsafeName, version: null, CancellationToken.None));
+
+        Assert.Contains(unsafeName, ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("my-toolbox")]
+    [InlineData("sales")]
+    [InlineData("box.v2")]
+    [InlineData("a..b")]
+    [InlineData("tb:v1")]
+    [InlineData("tb@1")]
+    [InlineData("a(b)")]
+    public async Task GetToolboxToolsAsync_AllowsWellFormedSingleSegmentNameAsync(string validName)
+    {
+        // Arrange: a well-formed single-segment name — including names that merely contain a
+        // character which stays inside the path segment (a dot that is not a standalone relative-path
+        // segment, or reserved characters such as ':' , '@' , and parentheses) — must still resolve
+        // through the opener. Validation is effect-based (does the name change the request target?),
+        // so it does not lock out legitimate names.
+        AITool tool = AIFunctionFactory.Create(() => "ok", name: "some_tool");
+        var options = new FoundryToolboxOptions
+        {
+            StrictMode = false,
+            EndpointOverride = "https://proj.example/api/projects/proj",
+        };
+        await using var service = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>())
+        {
+            ToolboxOpener = (name, _, _) => Task.FromResult(
+                new FoundryToolboxService.ToolboxOpenResult(
+                    new FoundryToolboxService.CachedToolbox(Client: null, new HttpClient(), [tool]),
+                    Consents: null)),
+        };
+        await service.StartAsync(CancellationToken.None);
+
+        // Act
+        var resolution = await service.GetToolboxToolsAsync(validName, version: null, CancellationToken.None);
+
+        // Assert
+        Assert.Empty(resolution.Consents);
+        Assert.Single(resolution.Tools);
+        Assert.Same(tool, resolution.Tools[0]);
     }
 }

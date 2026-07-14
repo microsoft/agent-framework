@@ -8,7 +8,7 @@ Drive the agent across the auth paths with the shared [`Using-Samples/SimpleAgen
 
 | Aspect | This sample | Existing siblings |
 |---|---|---|
-| Toolbox marker pattern | `FoundryAITool.CreateHostedMcpToolbox(name)` + `AddFoundryToolboxes(name)` | Same as [`Hosted-Toolbox/`](../Hosted-Toolbox/) |
+| Toolbox marker pattern | `FoundryAITool.CreateHostedMcpToolbox(name)` + `AddFoundryToolboxes(credential, name)` | Same as [`Hosted-Toolbox/`](../Hosted-Toolbox/) |
 | Tools per toolbox | **Three MCP tools, each with a different auth method** | `Hosted-Toolbox/`: typically one demo tool |
 | Consumption | Server-side (Foundry resolves the marker) | Same |
 | Client | Shared [`Using-Samples/SimpleAgent/`](../Using-Samples/SimpleAgent/) REPL, pointed at this agent | `Hosted-Toolbox/`: any client |
@@ -203,4 +203,3 @@ Inline `authorization` on a toolbox tool entry stores credentials **inside the t
 - Local development against a test MCP server with a throwaway token.
 
 For everything else use `project_connection_id` and let the platform inject credentials.
-

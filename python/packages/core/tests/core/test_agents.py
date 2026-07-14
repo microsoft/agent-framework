@@ -29,13 +29,16 @@ from agent_framework import (
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
+    MessageInjectionMiddleware,
     ResponseStream,
+    ServiceSessionId,
     SessionContext,
     SlidingWindowStrategy,
     SupportsAgentRun,
     SupportsChatGetResponse,
     TruncationStrategy,
     chat_middleware,
+    enqueue_messages,
     tool,
 )
 from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_agent_name
@@ -118,6 +121,24 @@ class _ResponseIdRecordingHistoryProvider(_RecordingHistoryProvider):
         state: dict[str, Any],
     ) -> None:
         state.setdefault("response_ids", []).append(context.response.response_id if context.response else None)
+        await super().after_run(agent=agent, session=session, context=context, state=state)
+
+
+class _ResponseMetadataRecordingHistoryProvider(_RecordingHistoryProvider):
+    def __init__(self, source_id: str = "recording_response_metadata") -> None:
+        super().__init__(source_id=source_id)
+        self.responses: list[AgentResponse] = []
+
+    async def after_run(
+        self,
+        *,
+        agent: SupportsAgentRun,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        if context.response:
+            self.responses.append(context.response)
         await super().after_run(agent=agent, session=session, context=context, state=state)
 
 
@@ -490,6 +511,104 @@ async def test_chat_agent_persists_history_per_service_call(
     assert provider_state["save_call_count"] == 2
     assert stored_messages[-1].text == "It is sunny in Seattle."
     assert session.service_session_id is None
+
+
+async def test_message_injection_persists_each_injected_service_call(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    provider = _RecordingHistoryProvider()
+    session = AgentSession()
+    session.state[provider.source_id] = {"messages": []}
+    captured_messages: list[list[str | None]] = []
+
+    async def fake_get_response(
+        *,
+        messages: Sequence[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        captured_messages.append([message.text for message in messages])
+        if len(captured_messages) == 1:
+            enqueue_messages(session, "queued during first service call")
+            return ChatResponse(messages=Message(role="assistant", contents=["first"]))
+        return ChatResponse(messages=Message(role="assistant", contents=["second"]))
+
+    agent = Agent(
+        client=chat_client_base,
+        context_providers=[provider],
+        middleware=[MessageInjectionMiddleware()],
+        require_per_service_call_history_persistence=True,
+    )
+
+    with patch.object(chat_client_base, "_get_non_streaming_response", side_effect=fake_get_response):
+        result = await agent.run("initial message", session=session)
+
+    provider_state = session.state[provider.source_id]
+    stored_messages = cast(list[Message], provider_state["messages"])
+
+    assert result.text == "second"
+    assert captured_messages == [["initial message"], ["initial message", "first", "queued during first service call"]]
+    assert provider_state["get_call_count"] == 2
+    assert provider_state["save_call_count"] == 2
+    assert stored_messages[-1].text == "second"
+
+
+async def test_per_service_call_history_provider_receives_full_agent_response_metadata(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    provider = _ResponseMetadataRecordingHistoryProvider()
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        return f"Weather in {location}: sunny"
+
+    session = AgentSession()
+    session.state[provider.source_id] = {"messages": []}
+    first_response = ChatResponse(
+        messages=Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="call_1",
+                    name="lookup_weather",
+                    arguments='{"location": "Seattle"}',
+                )
+            ],
+        ),
+        response_id="resp_call_1",
+        created_at="2026-07-07T12:02:00Z",
+        finish_reason="tool_calls",
+        usage_details={"input_token_count": 5, "output_token_count": 1, "total_token_count": 6},
+        continuation_token=cast(Any, {"token": "psc-next"}),
+        additional_properties={"provider": "psc-test"},
+    )
+    final_response = ChatResponse(
+        messages=Message(role="assistant", contents=["It is sunny in Seattle."]),
+        response_id="resp_call_2",
+        finish_reason="stop",
+        usage_details={"input_token_count": 6, "output_token_count": 4, "total_token_count": 10},
+    )
+    chat_client_base.run_responses = [first_response, final_response]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[lookup_weather],
+        context_providers=[provider],
+        require_per_service_call_history_persistence=True,
+    )
+
+    result = await agent.run("What's the weather in Seattle?", session=session)
+
+    assert result.text == "It is sunny in Seattle."
+    assert len(provider.responses) == 2
+    captured = provider.responses[0]
+    assert captured.response_id is None
+    assert captured.created_at == "2026-07-07T12:02:00Z"
+    assert captured.finish_reason == "tool_calls"
+    assert captured.usage_details == {"input_token_count": 5, "output_token_count": 1, "total_token_count": 6}
+    assert captured.continuation_token == {"token": "psc-next"}
+    assert captured.additional_properties == {"provider": "psc-test"}
+    assert captured.raw_representation is first_response
 
 
 async def test_chat_agent_persists_history_per_service_call_streaming(
@@ -1132,7 +1251,7 @@ class MockContextProvider(ContextProvider):
         self.before_run_called = False
         self.after_run_called = False
         self.new_messages: list[Message] = []
-        self.last_service_session_id: str | None = None
+        self.last_service_session_id: str | ServiceSessionId | None = None
 
     async def before_run(self, *, agent: Any, session: Any, context: Any, state: Any) -> None:
         self.before_run_called = True
@@ -1179,6 +1298,144 @@ async def test_chat_agent_context_providers_after_run(
 
     assert mock_provider.after_run_called
     assert mock_provider.last_service_session_id == "test-thread-id"
+
+
+async def test_context_provider_receives_full_agent_response_non_streaming(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Context providers should see the same full AgentResponse returned by non-streaming runs."""
+    captured_response: AgentResponse | None = None
+
+    class CapturingContextProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="capture_response")
+
+        async def after_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            nonlocal captured_response
+            captured_response = context.response
+
+    raw_response = ChatResponse(
+        messages=[Message(role="assistant", contents=[Content.from_text('{"answer": "ok"}')])],
+        response_id="resp_full",
+        created_at="2026-07-07T12:00:00Z",
+        finish_reason="stop",
+        usage_details={"input_token_count": 3, "output_token_count": 2, "total_token_count": 5},
+        continuation_token=cast(Any, {"token": "next"}),
+        additional_properties={"provider": "test"},
+    )
+    chat_client_base.run_responses = [raw_response]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    agent = Agent(client=chat_client_base, context_providers=[CapturingContextProvider()])
+
+    response = await agent.run(
+        "Hello",
+        options={"response_format": {"type": "object", "properties": {"answer": {"type": "string"}}}},
+    )
+
+    assert captured_response is response
+    assert response.response_id == "resp_full"
+    assert response.created_at == "2026-07-07T12:00:00Z"
+    assert response.finish_reason == "stop"
+    assert response.usage_details == {"input_token_count": 3, "output_token_count": 2, "total_token_count": 5}
+    assert response.value == {"answer": "ok"}
+    assert response.continuation_token == {"token": "next"}
+    assert response.additional_properties == {"provider": "test"}
+    assert response.raw_representation is raw_response
+
+
+async def test_context_provider_after_run_preserves_lazy_structured_value_parsing(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Context providers should see the response before malformed structured output raises for callers."""
+    captured_response: AgentResponse | None = None
+
+    class CapturingContextProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="capture_lazy_value_response")
+
+        async def after_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            nonlocal captured_response
+            captured_response = context.response
+
+    raw_response = ChatResponse(messages=[Message(role="assistant", contents=[Content.from_text("not-json")])])
+    chat_client_base.run_responses = [raw_response]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    agent = Agent(client=chat_client_base, context_providers=[CapturingContextProvider()])
+
+    response = await agent.run("Hello", options={"response_format": {"type": "object"}})
+
+    assert captured_response is response
+    assert response.text == "not-json"
+    with pytest.raises(ValueError, match="not valid JSON"):
+        _ = response.value
+
+
+async def test_context_provider_receives_full_agent_response_streaming(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Context providers should see the same full AgentResponse finalized by streaming runs."""
+    captured_response: AgentResponse | None = None
+    raw_update = ChatResponseUpdate(
+        contents=[
+            Content.from_text('{"answer": "ok"}'),
+            Content.from_usage({"input_token_count": 4, "output_token_count": 3, "total_token_count": 7}),
+        ],
+        role="assistant",
+        response_id="resp_stream_full",
+        created_at="2026-07-07T12:01:00Z",
+        finish_reason="stop",
+        continuation_token=cast(Any, {"token": "stream-next"}),
+        additional_properties={"provider": "stream-test"},
+    )
+
+    class CapturingContextProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="capture_stream_response")
+
+        async def after_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            nonlocal captured_response
+            captured_response = context.response
+
+    chat_client_base.streaming_responses = [[raw_update]]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    agent = Agent(client=chat_client_base, context_providers=[CapturingContextProvider()])
+
+    stream = agent.run(
+        "Hello",
+        stream=True,
+        options={"response_format": {"type": "object", "properties": {"answer": {"type": "string"}}}},
+    )
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert captured_response is response
+    assert response.response_id == "resp_stream_full"
+    assert response.created_at == "2026-07-07T12:01:00Z"
+    assert response.finish_reason == "stop"
+    assert response.usage_details == {"input_token_count": 4, "output_token_count": 3, "total_token_count": 7}
+    assert response.value == {"answer": "ok"}
+    assert response.continuation_token == {"token": "stream-next"}
+    assert response.additional_properties == {"provider": "stream-test"}
+    assert response.raw_representation == [raw_update]
 
 
 async def test_chat_agent_context_providers_messages_adding(
@@ -1480,10 +1737,14 @@ async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGet
         )
     )
 
-    assert captured_session is parent_session
+    # Child receives a separate AgentSession (not the parent object) to isolate
+    # service_session_id, but shares the same state dict and session_id.
     assert captured_session is not None
+    assert captured_session is not parent_session
     assert captured_session.session_id == "parent-session-123"
+    assert captured_session.state is parent_session.state
     assert captured_session.state["shared_key"] == "shared_value"
+    assert captured_session.service_session_id is None
 
 
 async def test_chat_agent_as_tool_propagate_session_false_by_default(client: SupportsChatGetResponse) -> None:
@@ -1543,6 +1804,106 @@ async def test_chat_agent_as_tool_propagate_session_shares_state(client: Support
     )
 
     assert parent_session.state["counter"] == 1
+
+
+async def test_chat_agent_as_tool_propagate_session_clears_service_session_id(client: SupportsChatGetResponse) -> None:
+    """Test that propagate_session=True gives the child a separate session with cleared service_session_id."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+
+    parent_session = AgentSession(session_id="shared-session")
+    parent_session.service_session_id = "resp_parent_abc123"
+    parent_session.state["data"] = "shared"
+
+    original_run = agent.run
+    captured_session = None
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal captured_session
+        captured_session = kwargs.get("session")
+        # The child gets a different session object with isolated service_session_id
+        assert captured_session is not None
+        assert captured_session is not parent_session
+        assert captured_session.service_session_id is None
+        # But shares the same state dict by reference
+        assert captured_session.state is parent_session.state
+        assert captured_session.state["data"] == "shared"
+        return original_run(*args, **kwargs)
+
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+    await tool.invoke(
+        context=FunctionInvocationContext(
+            function=tool,
+            arguments={"task": "Hello"},
+            session=parent_session,
+        )
+    )
+
+    # Parent's service_session_id is never mutated
+    assert parent_session.service_session_id == "resp_parent_abc123"
+
+
+async def test_chat_agent_as_tool_propagate_session_restores_service_session_id_on_error(
+    client: SupportsChatGetResponse,
+) -> None:
+    """Test that parent's service_session_id is untouched even if the child agent raises."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+
+    parent_session = AgentSession(session_id="shared-session")
+    parent_session.service_session_id = "resp_parent_xyz789"
+
+    def failing_run(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("Child agent failed")
+
+    agent.run = failing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+    with raises(RuntimeError, match="Child agent failed"):
+        await tool.invoke(
+            context=FunctionInvocationContext(
+                function=tool,
+                arguments={"task": "Hello"},
+                session=parent_session,
+            )
+        )
+
+    # Parent's service_session_id is never mutated — child has its own session
+    assert parent_session.service_session_id == "resp_parent_xyz789"
+
+
+async def test_chat_agent_as_tool_propagate_session_no_service_session_id(client: SupportsChatGetResponse) -> None:
+    """Test that child setting service_session_id does not leak back to the parent."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+
+    parent_session = AgentSession(session_id="shared-session")
+    parent_session.service_session_id = None
+
+    original_run = agent.run
+    captured_session = None
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal captured_session
+        captured_session = kwargs.get("session")
+        assert captured_session is not None
+        assert captured_session.service_session_id is None
+        # Simulate the child's run populating service_session_id
+        captured_session.service_session_id = "resp_child_leaked"
+        return original_run(*args, **kwargs)
+
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+    await tool.invoke(
+        context=FunctionInvocationContext(
+            function=tool,
+            arguments={"task": "Hello"},
+            session=parent_session,
+        )
+    )
+
+    # The child's service_session_id must not leak back to the parent
+    assert parent_session.service_session_id is None
 
 
 async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -> None:
@@ -2314,6 +2675,35 @@ async def test_agent_get_session_with_service_session_id(
 
     assert session is not None
     assert session.service_session_id == "test-thread-123"
+
+
+@pytest.mark.asyncio
+async def test_agent_get_session_with_structured_service_session_id(
+    chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool
+):
+    """Test that get_session accepts structured service_session_id."""
+    agent = Agent(client=chat_client_base, tools=[tool_tool])
+    structured_service_session_id = {"context_id": "ctx-123", "task_id": "task-456", "task_state": "working"}
+
+    session = agent.get_session(service_session_id=structured_service_session_id)
+
+    assert session is not None
+    assert session.service_session_id == structured_service_session_id
+
+
+@pytest.mark.asyncio
+async def test_agent_run_rejects_structured_service_session_id_for_generic_chat_clients(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Structured service_session_id must fail before generic chat client calls."""
+    agent = Agent(client=chat_client_base)
+    session = agent.get_session(service_session_id={"context_id": "ctx-123"})
+
+    with pytest.raises(
+        AgentInvalidRequestException,
+        match="expects a string service_session_id",
+    ):
+        await agent.run("Hello", session=session)
 
 
 def test_agent_session_from_dict(chat_client_base: SupportsChatGetResponse, tool_tool: FunctionTool):

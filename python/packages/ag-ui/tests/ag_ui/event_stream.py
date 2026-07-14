@@ -56,6 +56,29 @@ class EventStream:
         """Return the latest MessagesSnapshotEvent messages list."""
         return self.last("MESSAGES_SNAPSHOT").messages
 
+    def run_finished_interrupts(self, event: Any | None = None) -> list[dict[str, Any]]:
+        """Return canonical interrupts from a RUN_FINISHED event."""
+        target = event or self.last("RUN_FINISHED")
+        dumped = self._event_dump(target)
+        assert "interrupt" not in dumped
+        outcome = dumped.get("outcome")
+        assert isinstance(outcome, dict), f"Expected RUN_FINISHED.outcome, got {dumped}"
+        assert outcome.get("type") == "interrupt"
+        interrupts = outcome.get("interrupts")
+        assert isinstance(interrupts, list), f"Expected outcome.interrupts, got {outcome}"
+        return interrupts
+
+    @staticmethod
+    def interrupt_metadata_value(interrupt: dict[str, Any]) -> dict[str, Any]:
+        """Return Agent Framework interruption details from canonical interrupt metadata."""
+        metadata = interrupt.get("metadata")
+        assert isinstance(metadata, dict)
+        agent_framework_metadata = metadata.get("agent_framework")
+        assert isinstance(agent_framework_metadata, dict)
+        value = agent_framework_metadata.get("value")
+        assert isinstance(value, dict)
+        return value
+
     # ── Structural assertions ──
 
     def assert_bookends(self) -> None:
@@ -173,3 +196,15 @@ class EventStream:
         if isinstance(t, str):
             return t
         return getattr(t, "value", str(t))
+
+    @staticmethod
+    def _event_dump(event: Any) -> dict[str, Any]:
+        """Serialize an event object or return a raw event dict."""
+        if isinstance(event, dict):
+            return event
+        if hasattr(event, "model_dump"):
+            return event.model_dump(by_alias=True, exclude_none=True)
+        raw = getattr(event, "raw", None)
+        if isinstance(raw, dict):
+            return raw
+        raise TypeError(f"Unsupported event type: {type(event).__name__}")

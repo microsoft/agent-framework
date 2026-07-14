@@ -2,12 +2,12 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
@@ -34,12 +34,15 @@ namespace Microsoft.Agents.AI;
 /// </list>
 /// </para>
 /// <para>
-/// Public helper methods <see cref="GetMode"/> and <see cref="SetMode"/> allow external code
+/// Public helper methods <see cref="GetModeAsync"/> and <see cref="SetModeAsync"/> allow external code
 /// to programmatically read and change the mode.
 /// </para>
+/// <para>
+/// All operations are thread-safe; concurrent reads and mutations on the same session are serialized
+/// using a per-session lock to prevent lost updates or inconsistent reads.
+/// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class AgentModeProvider : AIContextProvider
+public sealed class AgentModeProvider : AIContextProvider, IDisposable
 {
     private const string DefaultInstructions =
         """
@@ -102,6 +105,8 @@ public sealed class AgentModeProvider : AIContextProvider
     private readonly string? _instructions;
     private readonly HashSet<string> _validModeNames;
     private readonly string _modeNamesDisplay;
+    private readonly ConditionalWeakTable<AgentSession, SemaphoreSlim> _sessionLocks = new();
+    private readonly SemaphoreSlim _nullSessionLock = new(1, 1);
     private IReadOnlyList<string>? _stateKeys;
 
     /// <summary>
@@ -159,14 +164,33 @@ public sealed class AgentModeProvider : AIContextProvider
     /// <inheritdoc />
     public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        this._nullSessionLock.Dispose();
+    }
+
     /// <summary>
     /// Gets the current operating mode from the session state.
     /// </summary>
     /// <param name="session">The agent session to read the mode from.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>The current mode string.</returns>
-    public string GetMode(AgentSession? session)
+    /// <exception cref="ArgumentNullException"><paramref name="session"/> is <see langword="null"/>.</exception>
+    public async Task<string> GetModeAsync(AgentSession session, CancellationToken cancellationToken = default)
     {
-        return this._sessionState.GetOrInitializeState(session).CurrentMode;
+        _ = Throw.IfNull(session);
+
+        SemaphoreSlim sessionLock = this.GetSessionLock(session);
+        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return this._sessionState.GetOrInitializeState(session).CurrentMode;
+        }
+        finally
+        {
+            sessionLock.Release();
+        }
     }
 
     /// <summary>
@@ -174,50 +198,81 @@ public sealed class AgentModeProvider : AIContextProvider
     /// </summary>
     /// <param name="session">The agent session to update the mode in.</param>
     /// <param name="mode">The new mode to set.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
+    /// <returns>A <see cref="Task"/> that represents the asynchronous operation.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="session"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="mode"/> is not a configured mode.</exception>
-    public void SetMode(AgentSession? session, string mode)
+    public async Task SetModeAsync(AgentSession session, string mode, CancellationToken cancellationToken = default)
     {
+        _ = Throw.IfNull(session);
+
         this.ValidateMode(mode);
 
-        AgentModeState state = this._sessionState.GetOrInitializeState(session);
-        string previousMode = state.CurrentMode;
-        state.CurrentMode = mode;
-
-        if (!string.Equals(previousMode, mode, StringComparison.Ordinal))
+        SemaphoreSlim sessionLock = this.GetSessionLock(session);
+        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            state.PreviousModeForNotification = previousMode;
-        }
+            AgentModeState state = this._sessionState.GetOrInitializeState(session);
+            string previousMode = state.CurrentMode;
+            state.CurrentMode = mode;
 
-        this._sessionState.SaveState(session, state);
+            if (!string.Equals(previousMode, mode, StringComparison.Ordinal))
+            {
+                state.PreviousModeForNotification = previousMode;
+            }
+
+            this._sessionState.SaveState(session, state);
+        }
+        finally
+        {
+            sessionLock.Release();
+        }
     }
 
     /// <inheritdoc />
-    protected override ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
-        AgentModeState state = this._sessionState.GetOrInitializeState(context.Session);
+        string currentMode;
+        string? previousModeForNotification;
 
-        string instructions = this.BuildInstructions(state.CurrentMode);
+        SemaphoreSlim sessionLock = this.GetSessionLock(context.Session);
+        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            AgentModeState state = this._sessionState.GetOrInitializeState(context.Session);
+            currentMode = state.CurrentMode;
+            previousModeForNotification = state.PreviousModeForNotification;
+
+            // If the mode was changed externally (e.g., via /mode command), clear the pending
+            // notification flag now that we are about to surface it to the agent.
+            if (previousModeForNotification != null)
+            {
+                state.PreviousModeForNotification = null;
+                this._sessionState.SaveState(context.Session, state);
+            }
+        }
+        finally
+        {
+            sessionLock.Release();
+        }
 
         var aiContext = new AIContext
         {
-            Instructions = instructions,
-            Tools = this.CreateTools(state, context.Session),
+            Instructions = this.BuildInstructions(currentMode),
+            Tools = this.CreateTools(context.Session),
         };
 
         // If the mode was changed externally (e.g., via /mode command), inject a notification message
         // so the agent clearly sees the change rather than relying solely on the system instructions.
-        if (state.PreviousModeForNotification != null)
+        if (previousModeForNotification != null)
         {
-            string previousMode = state.PreviousModeForNotification;
-            state.PreviousModeForNotification = null;
-
             aiContext.Messages =
             [
-                new ChatMessage(ChatRole.User, $"[Mode changed: The operating mode has been switched from \"{previousMode}\" to \"{state.CurrentMode}\". You must now adjust your behavior to match the \"{state.CurrentMode}\" mode.]"),
+                new ChatMessage(ChatRole.User, $"[Mode changed: The operating mode has been switched from \"{previousModeForNotification}\" to \"{currentMode}\". You must now adjust your behavior to match the \"{currentMode}\" mode.]"),
             ];
         }
 
-        return new ValueTask<AIContext>(aiContext);
+        return aiContext;
     }
 
     private string BuildInstructions(string currentMode)
@@ -227,7 +282,7 @@ public sealed class AgentModeProvider : AIContextProvider
         {
             modesListBuilder.AppendLine($"#### {mode.Name}");
             modesListBuilder.AppendLine();
-            modesListBuilder.AppendLine(mode.Description.TrimEnd());
+            modesListBuilder.AppendLine(mode.Instructions.TrimEnd());
             modesListBuilder.AppendLine();
         }
 
@@ -247,19 +302,43 @@ public sealed class AgentModeProvider : AIContextProvider
         }
     }
 
-    private AITool[] CreateTools(AgentModeState state, AgentSession? session)
+    /// <summary>
+    /// Returns the per-session semaphore used to serialize all mode operations.
+    /// </summary>
+    private SemaphoreSlim GetSessionLock(AgentSession? session)
+    {
+        if (session is null)
+        {
+            return this._nullSessionLock;
+        }
+
+        return this._sessionLocks.GetValue(session, _ => new SemaphoreSlim(1, 1));
+    }
+
+    private AITool[] CreateTools(AgentSession? session)
     {
         var serializerOptions = AgentJsonUtilities.DefaultOptions;
 
         return
         [
             AIFunctionFactory.Create(
-                (string mode) =>
+                async (string mode) =>
                 {
                     this.ValidateMode(mode);
 
-                    state.CurrentMode = mode;
-                    this._sessionState.SaveState(session, state);
+                    SemaphoreSlim sessionLock = this.GetSessionLock(session);
+                    await sessionLock.WaitAsync().ConfigureAwait(false);
+                    try
+                    {
+                        AgentModeState state = this._sessionState.GetOrInitializeState(session);
+                        state.CurrentMode = mode;
+                        this._sessionState.SaveState(session, state);
+                    }
+                    finally
+                    {
+                        sessionLock.Release();
+                    }
+
                     return $"Mode changed to \"{mode}\".";
                 },
                 new AIFunctionFactoryOptions
@@ -270,7 +349,19 @@ public sealed class AgentModeProvider : AIContextProvider
                 }),
 
             AIFunctionFactory.Create(
-                () => state.CurrentMode,
+                async () =>
+                {
+                    SemaphoreSlim sessionLock = this.GetSessionLock(session);
+                    await sessionLock.WaitAsync().ConfigureAwait(false);
+                    try
+                    {
+                        return this._sessionState.GetOrInitializeState(session).CurrentMode;
+                    }
+                    finally
+                    {
+                        sessionLock.Release();
+                    }
+                },
                 new AIFunctionFactoryOptions
                 {
                     Name = "mode_get",

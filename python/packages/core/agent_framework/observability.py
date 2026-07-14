@@ -28,7 +28,6 @@ from time import perf_counter, time_ns
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedDict, cast, overload
 
 from dotenv import load_dotenv
-from opentelemetry import context as otel_context
 from opentelemetry import metrics, trace
 
 from . import __version__ as version_info
@@ -691,6 +690,17 @@ class ObservabilitySettings:
 
     Warning:
         Sensitive events should only be enabled on test and development environments.
+
+    Security considerations:
+        Agent Framework emits telemetry via the standard OpenTelemetry APIs — it does not itself
+        contact any external system. Where that telemetry is sent (a local collector, a hosted
+        observability backend, the VS Code extension port, etc.) is entirely determined by the
+        exporters and pipeline the developer configures. By default, emitted telemetry is limited to
+        metadata (e.g. token counts, operation names, durations) and does not include message
+        content. Enabling ``enable_sensitive_data`` (env var ``ENABLE_SENSITIVE_DATA``) is an
+        explicit, separate opt-in that additionally emits raw chat message content, function-call
+        arguments, and function-call results — treat that data as sensitive and ensure it is not sent
+        to, or retained by, a telemetry backend you have not secured appropriately.
 
     Keyword Args:
         enable_instrumentation: Enable OpenTelemetry diagnostics. Default is True.
@@ -1767,13 +1777,22 @@ class AgentTelemetryLayer:
 
         provider_name = str(self.otel_provider_name)
         merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        get_otel_conversation_id = cast(
+            "Callable[[AgentSession | None], str | None] | None",
+            getattr(self, "_get_otel_conversation_id", None),
+        )
+        conversation_id = (
+            get_otel_conversation_id(session)
+            if callable(get_otel_conversation_id)
+            else (session.service_session_id if (session and isinstance(session.service_session_id, str)) else None)
+        )
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
             agent_id=getattr(self, "id", "unknown"),
             agent_name=getattr(self, "name", None) or getattr(self, "id", "unknown"),
             agent_description=getattr(self, "description", None),
-            thread_id=session.service_session_id if session else None,
+            thread_id=conversation_id,
             all_options=dict(merged_options),
             **merged_client_kwargs,
         )
@@ -2181,6 +2200,8 @@ def _activate_span(span: trace.Span) -> Generator[None]:
     (and therefore the same async task / contextvars context), there is no risk
     of "Failed to detach context" warnings from cross-context cleanup.
     """
+    from opentelemetry import context as otel_context
+
     token = otel_context.attach(trace.set_span_in_context(span))
     try:
         yield

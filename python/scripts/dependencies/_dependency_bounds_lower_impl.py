@@ -119,7 +119,7 @@ class PackagePlan:
     package_name: str
     pyproject_path: Path
     internal_editables: list[Path]
-    include_dev_group: bool
+    dependency_groups: list[str]
     include_dev_extra: bool
     optional_extras: list[str]
 
@@ -610,7 +610,7 @@ def _run_tasks(
     internal_editables: list[Path],
     resolution: str,
     dependency_pin: tuple[str, Version] | None,
-    include_dev_group: bool,
+    dependency_groups: list[str],
     include_dev_extra: bool,
     optional_extras: list[str],
     timeout_seconds: int,
@@ -637,8 +637,8 @@ def _run_tasks(
             "--quiet",
         ]
         extend_command_with_runtime_tools(command, workspace_root)
-        if include_dev_group:
-            command.extend(["--group", "dev"])
+        for group_name in dependency_groups:
+            command.extend(["--group", group_name])
         if include_dev_extra:
             command.extend(["--extra", "dev"])
         for extra_name in optional_extras:
@@ -679,7 +679,7 @@ def _optimize_dependency(
     max_candidates: int,
     timeout_seconds: int,
     package_label: str,
-    include_dev_group: bool,
+    dependency_groups: list[str],
     include_dev_extra: bool,
     optional_extras: list[str],
 ) -> DependencyOutcome:
@@ -720,7 +720,7 @@ def _optimize_dependency(
         internal_editables=internal_editables,
         resolution="lowest-direct",
         dependency_pin=(dependency.name, baseline_version),
-        include_dev_group=include_dev_group,
+        dependency_groups=dependency_groups,
         include_dev_extra=include_dev_extra,
         optional_extras=optional_extras,
         timeout_seconds=timeout_seconds,
@@ -779,7 +779,7 @@ def _optimize_dependency(
             internal_editables=internal_editables,
             resolution="lowest-direct",
             dependency_pin=(dependency.name, candidate),
-            include_dev_group=include_dev_group,
+            dependency_groups=dependency_groups,
             include_dev_extra=include_dev_extra,
             optional_extras=optional_extras,
             timeout_seconds=timeout_seconds,
@@ -902,7 +902,7 @@ def _process_package(
                 max_candidates=max_candidates,
                 timeout_seconds=timeout_seconds,
                 package_label=package_label,
-                include_dev_group=plan.include_dev_group,
+                dependency_groups=plan.dependency_groups,
                 include_dev_extra=plan.include_dev_extra,
                 optional_extras=plan.optional_extras,
             )
@@ -1053,7 +1053,7 @@ def main() -> None:
                 package_name=package_name,
                 pyproject_path=pyproject_file,
                 internal_editables=_resolve_internal_editables(package_name, package_map, internal_graph),
-                include_dev_group="dev" in dependency_groups,
+                dependency_groups=sorted(dependency_groups),
                 include_dev_extra="dev" in optional_dependencies,
                 optional_extras=sorted(name for name in optional_dependencies if name not in {"all", "dev"}),
             )
