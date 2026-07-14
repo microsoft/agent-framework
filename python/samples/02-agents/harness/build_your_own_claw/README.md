@@ -68,8 +68,8 @@ Teaches the assistant to work with *your* data safely.
 ### What this sample demonstrates
 
 - **File access** — the agent reads a pre-populated `working/portfolio.csv` and writes reports
-  with the `file_access_*` tools. File access is on by default; the sample points its store at the
-  sample's `working/` folder via `create_harness_agent(file_access_store=...)`.
+  with the `file_access_*` tools. File access is opt-in; the sample enables it by pointing its
+  store at the sample's `working/` folder via `create_harness_agent(file_access_store=...)`.
 - **Approvals** — file-access tools require approval by default, but the sample wires the built-in
   `read_only_tools_auto_approval_rule` so reads/lists/searches are frictionless while saving and
   deleting still pause for approval. The `place_trade` tool is marked

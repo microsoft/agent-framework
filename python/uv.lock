@@ -462,7 +462,7 @@ dev = [
 
 [[package]]
 name = "agent-framework-declarative"
-version = "1.0.0rc2"
+version = "1.0.0"
 source = { editable = "packages/declarative" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
