@@ -15,7 +15,8 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 ## Types
 
 - **`AGUIRequest`** / **`AGUIChatOptions`** - Request types
-- **`AGUIThreadSnapshot`** / **`AGUIThreadSnapshotStore`** - Replayable thread snapshot model and scoped async store protocol
+- **`AGUIThreadSnapshot`** / **`AGUIThreadSnapshotStore`** - Thread snapshot model with client-replayable data,
+  private Session Continuation State, and a scoped async store protocol
 - **`availableInterrupts` / `resume`** - Optional canonical AG-UI `Interrupt` and `ResumeEntry` protocol data
 - **`AgentState`** / **`RunMetadata`** - State management types
 - **`PredictStateConfig`** - Configuration for state prediction
