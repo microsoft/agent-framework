@@ -3,11 +3,15 @@
   <!--
     Standalone sample: it consumes the *published* AgentMemory NuGet packages (which target
     Microsoft.Agents.AI 1.9.0), so it is intentionally self-contained and does NOT integrate into the
-    agent-framework repo's .NET 10 / Central-Package-Management / source-reference build. The empty
-    Directory.Build.props / Directory.Build.targets next to this project stop the repo-wide
-    dotnet/Directory.Build.props and dotnet/samples/Directory.Build.props from being auto-imported
-    (which would otherwise force net10.0 and pull in unrelated sample defaults). Run it with
+    agent-framework repo's .NET 10 / Central-Package-Management / source-reference build. Run it with
     `dotnet run` from this folder.
+
+    ManagePackageVersionsCentrally is off, but dotnet/Directory.Packages.props still unconditionally
+    merges its repo-wide analyzer PackageReference items (no Version, resolved via CPM) into every
+    project that imports it — including this one. With CPM off here those versions can't resolve
+    (NU1015), so each is removed and re-added with an explicit version below (matching
+    AgentWithRAG_Step05_Neo4jGraphRAG, which hits the same issue). xunit.analyzers/Moq.Analyzers are
+    dropped rather than re-added since this project has no test code.
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -22,6 +26,16 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Remove="Microsoft.CodeAnalysis.NetAnalyzers" />
+    <PackageReference Remove="Microsoft.VisualStudio.Threading.Analyzers" />
+    <PackageReference Remove="xunit.analyzers" />
+    <PackageReference Remove="Moq.Analyzers" />
+    <PackageReference Remove="Roslynator.Analyzers" />
+    <PackageReference Remove="Roslynator.CodeAnalysis.Analyzers" />
+    <PackageReference Remove="Roslynator.Formatting.Analyzers" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- AgentMemory (published) — an unofficial .NET port of the Neo4j Labs agent-memory library + its
          Microsoft Agent Framework adapter. -->
     <PackageReference Include="AgentMemory" Version="1.0.1" />
@@ -31,6 +45,29 @@
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.5.1" />
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.17" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers" Version="10.0.100">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.VisualStudio.Threading.Analyzers" Version="17.14.15">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Roslynator.Analyzers" Version="4.14.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Roslynator.CodeAnalysis.Analyzers" Version="4.14.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Roslynator.Formatting.Analyzers" Version="4.14.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 
 </Project>
