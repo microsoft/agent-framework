@@ -496,6 +496,20 @@ def test_prepare_message_for_anthropic_text_reasoning_with_signature(
     assert result["content"][0]["signature"] == "sig_abc123"
 
 
+def test_prepare_message_for_anthropic_provider_reasoning_without_signature_is_text(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=[Content.from_text_reasoning(id="rs_abc123", text="Foundry summary")],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["content"] == [{"type": "text", "text": "Foundry summary"}]
+
+
 def test_prepare_message_for_anthropic_attaches_signature_only_reasoning(
     mock_anthropic_client: MagicMock,
 ) -> None:
@@ -756,6 +770,27 @@ def test_prepare_tools_for_anthropic_tool(mock_anthropic_client: MagicMock) -> N
     assert "Get weather for a location" in result["tools"][0]["description"]
 
 
+def test_prepare_tools_for_anthropic_single_tool(mock_anthropic_client: MagicMock) -> None:
+    """Test converting a single FunctionTool to Anthropic format."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    @tool(approval_mode="never_require")
+    def get_weather(
+        location: Annotated[str, Field(description="Location to get weather for")],
+    ) -> str:
+        """Get weather for a location."""
+        return f"Weather for {location}"
+
+    chat_options = ChatOptions(tools=get_weather)
+    result = client._prepare_tools_for_anthropic(chat_options)
+
+    assert result is not None
+    assert "tools" in result
+    assert len(result["tools"]) == 1
+    assert result["tools"][0]["type"] == "custom"
+    assert result["tools"][0]["name"] == "get_weather"
+
+
 def test_prepare_tools_for_anthropic_web_search(
     mock_anthropic_client: MagicMock,
 ) -> None:
@@ -920,6 +955,21 @@ def test_prepare_tools_for_anthropic_dict_tool(
     """Test converting dict tool to Anthropic format."""
     client = create_test_anthropic_client(mock_anthropic_client)
     chat_options = ChatOptions(tools=[{"type": "custom", "name": "custom_tool", "description": "A custom tool"}])
+
+    result = client._prepare_tools_for_anthropic(chat_options)
+
+    assert result is not None
+    assert "tools" in result
+    assert len(result["tools"]) == 1
+    assert result["tools"][0]["name"] == "custom_tool"
+
+
+def test_prepare_tools_for_anthropic_single_dict_tool(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Test passing through a single dict tool."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    chat_options = ChatOptions(tools={"type": "custom", "name": "custom_tool", "description": "A custom tool"})
 
     result = client._prepare_tools_for_anthropic(chat_options)
 
@@ -1452,9 +1502,10 @@ def test_parse_contents_server_tool_use_input_json_delta_ignored(
     server_tool_content.input = {}
 
     result = client._parse_contents_from_anthropic([server_tool_content])
-    # server_tool_use falls through to function_call (not mcp_tool_use / code_execution)
+    # server_tool_use falls through to informational-only function_call (not mcp_tool_use / code_execution)
     assert len(result) == 1
     assert result[0].type == "function_call"
+    assert result[0].informational_only is True
     assert client._last_call_content_type == "server_tool_use"  # type: ignore[attr-defined]
 
     # input_json_delta events after server_tool_use must be silently ignored

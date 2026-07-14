@@ -7,8 +7,10 @@ This folder contains sample code demonstrating how to use the **Microsoft Agent 
 Install the declarative package via pip:
 
 ```bash
-pip install agent-framework-declarative --pre
+pip install agent-framework-declarative
 ```
+
+> **Note:** These samples use `AgentFactory` (declarative agents), which is **experimental** and emits an `ExperimentalWarning` on first use. The declarative *workflows* surface is stable.
 
 ## What is Declarative Agent Framework?
 

@@ -2,14 +2,13 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
@@ -38,7 +37,6 @@ namespace Microsoft.Agents.AI;
 /// using a per-session lock to prevent duplicate IDs, lost updates, or inconsistent reads.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class TodoProvider : AIContextProvider, IDisposable
 {
     private const string DefaultInstructions =
@@ -107,8 +105,11 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
     /// <param name="session">The agent session to read todos from.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A list of all todo items. The items are live references to internal state.</returns>
-    public async Task<IReadOnlyList<TodoItem>> GetAllTodosAsync(AgentSession? session, CancellationToken cancellationToken = default)
+    /// <exception cref="ArgumentNullException"><paramref name="session"/> is <see langword="null"/>.</exception>
+    public async Task<IReadOnlyList<TodoItem>> GetAllTodosAsync(AgentSession session, CancellationToken cancellationToken = default)
     {
+        _ = Throw.IfNull(session);
+
         SemaphoreSlim sessionLock = this.GetSessionLock(session);
         await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -132,8 +133,11 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
     /// <param name="session">The agent session to read todos from.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A list of incomplete todo items. The items are live references to internal state.</returns>
-    public async Task<List<TodoItem>> GetRemainingTodosAsync(AgentSession? session, CancellationToken cancellationToken = default)
+    /// <exception cref="ArgumentNullException"><paramref name="session"/> is <see langword="null"/>.</exception>
+    public async Task<List<TodoItem>> GetRemainingTodosAsync(AgentSession session, CancellationToken cancellationToken = default)
     {
+        _ = Throw.IfNull(session);
+
         SemaphoreSlim sessionLock = this.GetSessionLock(session);
         await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try

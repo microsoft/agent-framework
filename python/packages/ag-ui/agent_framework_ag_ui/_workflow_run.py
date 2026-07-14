@@ -62,6 +62,10 @@ _WORKFLOW_EVENT_BASE_FIELDS: set[str] = {
 }
 
 _INTERRUPT_CARD_EVENT_NAME = "WorkflowInterruptEvent"
+# Tool content admitted from streaming updates regardless of role. Approval requests are
+# deliberately excluded: workflow approvals resume through request_info pending state, and an
+# approval interrupt emitted from streamed content would have no pending request to resume against.
+_TOOL_CONTENT_TYPES = {"function_call", "function_result", "mcp_server_tool_call", "mcp_server_tool_result"}
 
 
 def _json_schema_for_response_type(response_type: Any) -> dict[str, Any] | None:
@@ -223,6 +227,19 @@ def _resume_to_workflow_responses(resume_payload: Any) -> dict[str, Any]:
             continue
         value = _coerce_json_value(interrupt.get("value"))
         responses[str(interrupt["id"])] = value
+    return responses
+
+
+def _merge_workflow_response_sources(
+    resume_responses: dict[str, Any],
+    message_responses: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge workflow response sources with explicit resume payloads taking precedence."""
+    if not resume_responses:
+        return dict(message_responses)
+
+    responses = dict(message_responses)
+    responses.update(resume_responses)
     return responses
 
 
@@ -662,16 +679,16 @@ def _workflow_payload_to_contents(payload: Any) -> list[Content] | None:
             return None
         return list(payload.contents or [])
     if isinstance(payload, AgentResponseUpdate):
+        contents = list(payload.contents or [])
         role_field = payload.role
-        if role_field is None:
-            return None
         if isinstance(role_field, str):
             role = role_field
         else:
             role = str(getattr(role_field, "value", role_field))
-        if role != "assistant":
-            return None
-        return list(payload.contents or [])
+        if role == "assistant":
+            return contents
+        tool_contents = [content for content in contents if content.type in _TOOL_CONTENT_TYPES]
+        return tool_contents or None
     if isinstance(payload, AgentResponse):
         return _latest_assistant_contents(list(payload.messages or []))
     if isinstance(payload, list):
@@ -773,12 +790,12 @@ async def run_workflow_stream(
             yield resume_error
             return
 
-    responses = (
+    resume_responses = (
         _resume_entries_to_workflow_responses(resume_entries)
         if pending_interrupt_ids
         else _resume_to_workflow_responses(resume_payload)
     )
-    responses.update(_extract_responses_from_messages(messages))
+    responses = _merge_workflow_response_sources(resume_responses, _extract_responses_from_messages(messages))
     responses, response_error = _coerce_responses_for_pending_requests_strict(responses, pending_before_run)
     if response_error is not None:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
