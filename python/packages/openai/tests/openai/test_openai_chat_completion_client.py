@@ -2306,3 +2306,211 @@ def test_parse_plain_string_content_still_works(
 
 
 # endregion
+
+
+# region Review comment tests (PR #7028)
+
+
+def test_parse_reasoning_summary_entries(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that reasoning.summary entries (with 'summary' field) are extracted."""
+    client = OpenAIChatCompletionClient()
+
+    mock_reasoning_details = [
+        {"type": "reasoning.summary", "summary": "Key insight about the problem."},
+        {"type": "reasoning.text", "text": "Detailed thinking..."},
+    ]
+
+    mock_response = ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model="z-ai/glm-5.2",
+        choices=[
+            Choice(
+                index=0,
+                message=cast(Any, ChatCompletionMessage)(
+                    role="assistant",
+                    content="Answer.",
+                    reasoning_details=mock_reasoning_details,
+                ),
+                finish_reason="stop",
+            )
+        ],
+    )
+
+    response = client._parse_response_from_openai(mock_response, {})
+
+    message = response.messages[0]
+    reasoning_contents = [c for c in message.contents if c.type == "text_reasoning"]
+    assert len(reasoning_contents) == 1
+    # Both summary and text entries should be extracted
+    assert reasoning_contents[0].text == "Key insight about the problem.Detailed thinking..."
+
+
+def test_parse_reasoning_field_from_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that message.reasoning field is surfaced as text_reasoning (non-streaming)."""
+    client = OpenAIChatCompletionClient()
+
+    # OpenRouter sometimes sends a top-level "reasoning" string field
+    message = ChatCompletionMessage.model_construct(
+        role="assistant",
+        content="The answer is 42.",
+        reasoning="I thought carefully about this problem...",
+    )
+
+    mock_response = ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model="openrouter-model",
+        choices=[
+            Choice(
+                index=0,
+                message=message,
+                finish_reason="stop",
+            )
+        ],
+    )
+
+    response = client._parse_response_from_openai(mock_response, {})
+
+    msg = response.messages[0]
+    reasoning_contents = [c for c in msg.contents if c.type == "text_reasoning"]
+    assert len(reasoning_contents) == 1
+    assert reasoning_contents[0].text == "I thought carefully about this problem..."
+    # No protected_data since this is plaintext
+    assert reasoning_contents[0].protected_data is None
+
+
+def test_parse_reasoning_content_field_streaming(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that delta.reasoning_content field is surfaced in streaming."""
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+    from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
+    from openai.types.chat.chat_completion_chunk import ChoiceDelta as ChunkChoiceDelta
+
+    client = OpenAIChatCompletionClient()
+
+    delta = ChunkChoiceDelta.model_construct(
+        role="assistant",
+        content=None,
+        reasoning_content="Step 1: analyze the input...",
+    )
+
+    mock_chunk = ChatCompletionChunk(
+        id="test-chunk",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="openrouter-model",
+        choices=[
+            ChunkChoice(
+                index=0,
+                delta=delta,
+                finish_reason=None,
+            )
+        ],
+    )
+
+    update = client._parse_response_update_from_openai(mock_chunk)
+
+    reasoning_contents = [c for c in update.contents if c.type == "text_reasoning"]
+    assert len(reasoning_contents) == 1
+    assert reasoning_contents[0].text == "Step 1: analyze the input..."
+
+
+def test_mistral_chunked_content_roundtrips_as_single_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that Mistral chunked content round-trips as a single message with list content."""
+    client = OpenAIChatCompletionClient()
+
+    chunked_content = [
+        {"type": "thinking", "thinking": [{"type": "text", "text": "Let me reason about this..."}]},
+        {"type": "text", "text": "The answer is 42."},
+    ]
+
+    message = ChatCompletionMessage.model_construct(
+        role="assistant",
+        content=cast(Any, chunked_content),
+    )
+
+    mock_response = ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model="mistral-medium-latest",
+        choices=[
+            Choice(
+                index=0,
+                message=message,
+                finish_reason="stop",
+            )
+        ],
+    )
+
+    response = client._parse_response_from_openai(mock_response, {})
+
+    # Framework sees both reasoning and text
+    msg = response.messages[0]
+    assert len(msg.contents) == 2
+    assert msg.contents[0].type == "text_reasoning"
+    assert msg.contents[1].type == "text"
+
+    # The original list should be stored for round-trip
+    assert "_source_content_list" in msg.contents[0].additional_properties
+    assert msg.contents[0].additional_properties["_source_content_list"] == chunked_content
+
+    # Round-trip: prepare_message should produce a single message with list content
+    prepared = client._prepare_message_for_openai(msg)
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "assistant"
+    assert prepared[0]["content"] == chunked_content
+
+
+def test_reasoning_details_takes_priority_over_reasoning_field(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """When both reasoning_details and reasoning are present, reasoning_details wins."""
+    client = OpenAIChatCompletionClient()
+
+    mock_reasoning_details = [
+        {"type": "reasoning.text", "text": "From reasoning_details."},
+    ]
+
+    # Message has both reasoning_details AND reasoning field
+    message = ChatCompletionMessage.model_construct(
+        role="assistant",
+        content="Answer.",
+        reasoning_details=mock_reasoning_details,
+        reasoning="From reasoning field.",
+    )
+
+    mock_response = ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model="some-model",
+        choices=[
+            Choice(
+                index=0,
+                message=message,
+                finish_reason="stop",
+            )
+        ],
+    )
+
+    response = client._parse_response_from_openai(mock_response, {})
+
+    msg = response.messages[0]
+    reasoning_contents = [c for c in msg.contents if c.type == "text_reasoning"]
+    # Should only have one reasoning content (from reasoning_details, not both)
+    assert len(reasoning_contents) == 1
+    assert reasoning_contents[0].text == "From reasoning_details."
+
+
+# endregion

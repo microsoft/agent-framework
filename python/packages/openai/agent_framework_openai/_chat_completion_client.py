@@ -118,9 +118,16 @@ def _extract_reasoning_text(reasoning_details: Any) -> str | None:
             if isinstance(item, str):
                 parts.append(item)
             elif isinstance(item, dict):
-                entry_text = cast(dict[str, object], item).get("text")
+                entry_dict = cast(dict[str, object], item)
+                # Check "text" field (reasoning.text entries)
+                entry_text = entry_dict.get("text")
                 if isinstance(entry_text, str) and entry_text:
                     parts.append(entry_text)
+                    continue
+                # Check "summary" field (reasoning.summary entries)
+                entry_summary = entry_dict.get("summary")
+                if isinstance(entry_summary, str) and entry_summary:
+                    parts.append(entry_summary)
         return "".join(parts) or None
 
     if isinstance(reasoning_details, dict):
@@ -129,6 +136,10 @@ def _extract_reasoning_text(reasoning_details: Any) -> str | None:
         text_val = detail_dict.get("text")
         if isinstance(text_val, str) and text_val:
             return text_val
+        # Handle {"summary": "..."} style (reasoning.summary entries)
+        summary_val = detail_dict.get("summary")
+        if isinstance(summary_val, str) and summary_val:
+            return summary_val
         # Handle {"content": [...]} or {"content": "..."} style
         content_val = detail_dict.get("content")
         if isinstance(content_val, str) and content_val:
@@ -139,9 +150,14 @@ def _extract_reasoning_text(reasoning_details: Any) -> str | None:
                 if isinstance(item, str):
                     parts.append(item)
                 elif isinstance(item, dict):
-                    entry_text2 = cast(dict[str, object], item).get("text")
+                    entry_dict2 = cast(dict[str, object], item)
+                    entry_text2 = entry_dict2.get("text")
                     if isinstance(entry_text2, str) and entry_text2:
                         parts.append(entry_text2)
+                        continue
+                    entry_summary2 = entry_dict2.get("summary")
+                    if isinstance(entry_summary2, str) and entry_summary2:
+                        parts.append(entry_summary2)
             return "".join(parts) or None
 
     return None
@@ -765,6 +781,15 @@ class RawOpenAIChatCompletionClient(
                     text=_extract_reasoning_text(reasoning_details),
                     protected_data=json.dumps(reasoning_details),
                 ))
+            # Some OpenAI-compatible providers (e.g. OpenRouter) expose plaintext reasoning
+            # via a top-level "reasoning" or "reasoning_content" field instead of (or in
+            # addition to) "reasoning_details".  Surface it when no reasoning was already parsed.
+            elif reasoning_str := (
+                getattr(choice.message, "reasoning", None)
+                or getattr(choice.message, "reasoning_content", None)
+            ):
+                if isinstance(reasoning_str, str) and reasoning_str:
+                    contents.append(Content.from_text_reasoning(text=reasoning_str))
             messages.append(Message(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
@@ -811,6 +836,12 @@ class RawOpenAIChatCompletionClient(
                     text=_extract_reasoning_text(reasoning_details),
                     protected_data=json.dumps(reasoning_details),
                 ))
+            elif reasoning_str := (
+                getattr(choice.delta, "reasoning", None)
+                or getattr(choice.delta, "reasoning_content", None)
+            ):
+                if isinstance(reasoning_str, str) and reasoning_str:
+                    contents.append(Content.from_text_reasoning(text=reasoning_str))
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
@@ -872,6 +903,11 @@ class RawOpenAIChatCompletionClient(
         Handles chunk types:
         - ``{"type": "thinking", "thinking": "..." | [{"type": "text", "text": "..."}]}``
         - ``{"type": "text", "text": "..."}``
+
+        The original chunk list is stored in the first Content item's
+        ``additional_properties["_source_content_list"]`` so that
+        ``_prepare_message_for_openai`` can reconstruct the original list
+        format required by Mistral for multi-turn reasoning.
         """
         results: list[Content] = []
         for item in cast(list[object], chunks):
@@ -897,6 +933,10 @@ class RawOpenAIChatCompletionClient(
                 text_val = chunk_dict.get("text")
                 if isinstance(text_val, str) and text_val:
                     results.append(Content.from_text(text=text_val, raw_representation=choice))
+
+        # Store the original list on the first item so it can round-trip correctly.
+        if results:
+            results[0].additional_properties["_source_content_list"] = chunks
         return results
 
     def _get_metadata_from_chat_response(self, response: ChatCompletion) -> dict[str, Any]:
@@ -981,10 +1021,19 @@ class RawOpenAIChatCompletionClient(
 
         all_messages: list[dict[str, Any]] = []
         pending_reasoning: Any = None
+        _skip_structured_siblings = False
         for content in message.contents:
             # Skip approval content - it's internal framework state, not for the LLM
             if content.type in ("function_approval_request", "function_approval_response"):
                 continue
+
+            # Skip sibling content items that were part of a structured content list
+            # already emitted (e.g. the text portion following a Mistral thinking chunk).
+            if _skip_structured_siblings and "_source_content_list" not in content.additional_properties:
+                if content.type in ("text", "text_reasoning"):
+                    continue
+                # Non-text items (function calls etc.) are NOT skipped.
+                _skip_structured_siblings = False
 
             args: dict[str, Any] = {
                 "role": message.role,
@@ -1018,6 +1067,13 @@ class RawOpenAIChatCompletionClient(
                         args["content"] = content.result if content.result is not None else ""
                     all_messages.append(args)
                     continue
+                case "text_reasoning" if "_source_content_list" in content.additional_properties:
+                    # Mistral-style: emit a single message with the original structured list content
+                    # so it round-trips correctly for multi-turn reasoning / tool continuation.
+                    source_list: list[Any] = content.additional_properties["_source_content_list"]
+                    args["content"] = source_list
+                    # Mark that subsequent content items from the same chunked source should be skipped
+                    _skip_structured_siblings = True
                 case "text_reasoning" if (protected_data := content.protected_data) is not None:
                     # Buffer reasoning to attach to the next message with content/tool_calls
                     pending_reasoning = json.loads(protected_data)
