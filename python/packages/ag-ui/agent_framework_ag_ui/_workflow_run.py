@@ -649,6 +649,28 @@ def _latest_assistant_contents(messages: list[Message]) -> list[Content] | None:
     return None
 
 
+def _unemitted_exposed_function_results(response: AgentResponse, flow: FlowState) -> list[Content]:
+    """Return finalized function results that complete calls exposed during this run."""
+    exposed_call_ids = set(flow.tool_calls_by_id)
+    emitted_call_ids = {
+        str(result["toolCallId"]) for result in flow.tool_results if isinstance(result.get("toolCallId"), str)
+    }
+    results: list[Content] = []
+    for message in response.messages or []:
+        for content in message.contents or []:
+            call_id = content.call_id
+            if (
+                content.type != "function_result"
+                or not call_id
+                or call_id not in exposed_call_ids
+                or call_id in emitted_call_ids
+            ):
+                continue
+            results.append(content)
+            emitted_call_ids.add(call_id)
+    return results
+
+
 def _text_from_contents(contents: list[Content]) -> str | None:
     """Return normalized assistant text from a content list when present."""
     text_parts: list[str] = []
@@ -795,7 +817,12 @@ async def run_workflow_stream(
         if pending_interrupt_ids
         else _resume_to_workflow_responses(resume_payload)
     )
-    responses = _merge_workflow_response_sources(resume_responses, _extract_responses_from_messages(messages))
+    message_responses = {
+        request_id: value
+        for request_id, value in _extract_responses_from_messages(messages).items()
+        if request_id in pending_interrupt_ids
+    }
+    responses = _merge_workflow_response_sources(resume_responses, message_responses)
     responses, response_error = _coerce_responses_for_pending_requests_strict(responses, pending_before_run)
     if response_error is not None:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
@@ -973,6 +1000,10 @@ async def run_workflow_stream(
                     for item in output_payload:
                         yield item
                     continue
+                if isinstance(output_payload, AgentResponse):
+                    for result in _unemitted_exposed_function_results(output_payload, flow):
+                        for out_event in _emit_content(result, flow, predictive_handler=None, skip_text=False):
+                            yield out_event
                 contents = _workflow_payload_to_contents(output_payload)
                 if contents:
                     output_text = _text_from_contents(contents)
