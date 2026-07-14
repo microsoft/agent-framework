@@ -87,18 +87,30 @@ uv run python agent_with_a2a.py
 
 ## Security considerations for multi-tenant hosting
 
-The default `a2a-sdk` task/push-config stores scope ownership by `user_name` only. **Any host that mounts tenant-bearing routes must pass a tenant-aware `owner_resolver`** to the stores, e.g.:
+These runnable samples intentionally configure no authentication or
+authorization. Their `context.tenant`, `context.context_id`, and task IDs come
+from protocol requests and are not trusted caller identities. Do not expose the
+sample servers as multi-user services without an authenticated outer server,
+middleware layer, or gateway.
+
+A production host must authenticate the caller before the A2A request handler,
+derive a trusted tenant and subject from that authentication context, authorize
+all task/context continuation and cancellation IDs, and bind Agent Framework
+session ownership to that trusted identity. The sample session key is only a
+protocol-level demonstration; it is not sufficient isolation on its own.
+
+The default `a2a-sdk` task/push-config stores scope ownership by `user_name`
+only. A multi-tenant host must also pass an `owner_resolver` that uses the same
+trusted tenant and subject to its stores, for example:
 
 ```python
 from a2a.server.tasks import InMemoryTaskStore
 
 def resolve_tenant_user_scope(context):
-    # Derive tenant + user identity from your host's auth/session context.
+    # These values must be populated from the outer server's trusted auth context.
     return f"{context.tenant}:{context.user.user_name}"
 task_store = InMemoryTaskStore(owner_resolver=resolve_tenant_user_scope)
 ```
 
-The sample also includes the authenticated A2A tenant and protocol context id
-in its Agent Framework session key. Production applications must derive that
-tenant from trusted authentication context and use a durable session store when
-running multiple replicas or transient workers.
+Production applications must also use a durable session store when running
+multiple replicas or transient workers.

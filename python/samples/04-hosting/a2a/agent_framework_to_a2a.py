@@ -61,6 +61,7 @@ class AppAgentExecutor(AgentExecutor, Generic[AgentT]):
             await updater.start_work()
             run = a2a_to_run(context.message, stream=True)
             agent = await self.state.get_target()
+            # Demo-only key: the outer server must authenticate and authorize these protocol IDs for multi-user use.
             session_id = f"a2a:{context.tenant}:{context.context_id}"
             session = await self.state.get_or_create_session(session_id)
             if not run["stream"]:
