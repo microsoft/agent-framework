@@ -37,11 +37,6 @@ template:
       #   azd ai toolbox create maf-skills-toolbox --from-file ./toolbox.yaml
       #   azd env set TOOLBOX_ENDPOINT "<endpoint-from-output>"
       value: "{{TOOLBOX_ENDPOINT}}"
-parameters:
-  properties:
-    - name: TOOLBOX_ENDPOINT
-      secret: false
-      description: Full versioned MCP endpoint of the Foundry skills toolbox to connect to for MCP skill discovery
 resources:
   - kind: model
     id: gpt-5

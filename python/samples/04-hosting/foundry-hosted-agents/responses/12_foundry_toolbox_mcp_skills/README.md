@@ -2,7 +2,7 @@
 
 An [Agent Framework](https://github.com/microsoft/agent-framework) agent that discovers **Agent Skills attached to a Foundry Toolbox** over the **MCP protocol** and exposes them to the model using the [Agent Skills](https://agentskills.io/) progressive-disclosure pattern, hosted on Microsoft Foundry using the **Responses protocol**.
 
-Unlike the [C# reference sample](https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/csharp/hosted-agents/agent-framework/foundry-toolbox-mcp-skills), which consumes skills from a toolbox that already exists, **this sample is self-contained**: it ships the `SKILL.md` sources and a `toolbox.yaml`, and walks you through creating the skills and the toolbox from zero with `azd`.
+This sample is **self-contained**: it ships the `SKILL.md` sources and a `toolbox.yaml`, and walks you through creating the skills and the toolbox from zero with `azd` — you don't need an existing toolbox to run it.
 
 ## How progressive disclosure works
 
@@ -11,7 +11,7 @@ The `FoundryToolbox` is attached to the agent and its skills are exposed through
 1. **Advertise** — each skill's name and description are injected into the system prompt so the model knows what is available (~100 tokens per skill).
 2. **Load** — when the model decides a skill is relevant, it retrieves the full `SKILL.md` body on demand via `resources/read`.
 
-> The Agent Skills spec defines a third stage — **read resources** — where a skill fetches supplementary files (reference documents, assets) on demand. That stage requires skills to be served as `type: skill-md` with sibling resources, but Foundry serves ZIP-uploaded (multi-file) skills as `type: archive`, which the Python `MCPSkillsSource` does not currently discover. So this sample keeps both skills as single-file `SKILL.md` (advertise + load only). See the [`09_foundry_skills`](../09_foundry_skills/README.md) sample for the same instruction-only pattern via direct download.
+> The Agent Skills spec defines a third stage — **read resources** — where a skill fetches supplementary files (reference documents, assets) on demand. That stage requires skills to be served as `type: skill-md` with sibling resources, but Foundry serves ZIP-uploaded (multi-file) skills as `type: archive`, which toolbox skill discovery does not currently surface. So this sample keeps both skills as single-file `SKILL.md` (advertise + load only). See the [`09_foundry_skills`](../09_foundry_skills/README.md) sample for the same instruction-only pattern via direct download.
 
 ## Toolbox MCP skills vs. Foundry Skills
 
@@ -86,7 +86,7 @@ azd ai skill create support-style     --file ./skills/support-style/SKILL.md    
 azd ai skill create escalation-policy --file ./skills/escalation-policy/SKILL.md --no-prompt
 ```
 
-> **Why single files (not ZIPs)?** Uploading a skill as a `.zip` (to bundle supplementary resource files) makes Foundry serve it as `type: archive` in the toolbox's `skill://index.json`. The Python `MCPSkillsSource` only discovers `type: skill-md` entries, so archive skills are silently dropped. Keeping each skill as a single `SKILL.md` ensures both are discovered.
+> **Why single files (not ZIPs)?** Uploading a skill as a `.zip` (to bundle supplementary resource files) makes Foundry serve it as `type: archive` in the toolbox's `skill://index.json`. Toolbox skill discovery currently surfaces only `type: skill-md` entries, so archive skills are silently dropped. Keeping each skill as a single `SKILL.md` ensures both are discovered.
 
 > The `name:` in each `SKILL.md` front matter must equal the positional skill name you pass to `azd ai skill create`. To replace a skill after editing it, re-run with `--force` (this deletes the existing skill and all its versions, then uploads a fresh v1).
 
