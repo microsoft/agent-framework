@@ -1,5 +1,8 @@
 # This sample makes no external model calls, so agent-framework-foundry
 # (FoundryChatClient) is not needed -- only the hosting layer is.
+# For the private durability preview, follow README.md and install the local
+# Agent Framework and AgentServer wheel files explicitly instead of using this
+# package-name-only requirements file.
 agent-framework-foundry-hosting
 
 # demo.py's HTTP client. (Previously pulled in transitively via

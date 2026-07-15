@@ -12,12 +12,74 @@ ingest -> transform -> validate -> finalize
 No model deployment, external service, credentials, or environment variables
 are required.
 
-## Run the demo
+## Private preview wheel setup
 
-From the repository's `python` directory:
+The private AgentServer preview wheels currently use the same package versions
+as older public artifacts. Installing by package name or running the repository
+workspace sync can therefore replace the preview build with the public build.
+
+Create an isolated environment and install the local wheel files explicitly.
+The Agent Framework wheel directory must contain
+`agent_framework_core-*.whl` and
+`agent_framework_foundry_hosting-*.whl`. The AgentServer wheel directory must
+contain the `core`, `invocations`, and `responses` wheels.
+
+PowerShell:
 
 ```powershell
-uv run python .\samples\04-hosting\foundry-hosted-agents\responses\15_workflow_resilience\demo.py
+$afWheels = "C:\path\to\agent-framework-wheels"
+$agentServerWheels = "C:\path\to\agent-server-wheels"
+
+uv venv .venv-preview
+uv pip install --python .venv-preview\Scripts\python.exe `
+    (Get-ChildItem "$afWheels\agent_framework_core-*.whl").FullName `
+    (Get-ChildItem "$afWheels\agent_framework_foundry_hosting-*.whl").FullName `
+    (Get-ChildItem "$agentServerWheels\azure_ai_agentserver_core-*.whl").FullName `
+    (Get-ChildItem "$agentServerWheels\azure_ai_agentserver_invocations-*.whl").FullName `
+    (Get-ChildItem "$agentServerWheels\azure_ai_agentserver_responses-*.whl").FullName `
+    httpx
+```
+
+macOS/Linux:
+
+```bash
+export AF_WHEEL_DIR=/path/to/agent-framework-wheels
+export AGENTSERVER_WHEEL_DIR=/path/to/agent-server-wheels
+
+uv venv .venv-preview
+uv pip install --python .venv-preview/bin/python \
+    "$AF_WHEEL_DIR"/agent_framework_core-*.whl \
+    "$AF_WHEEL_DIR"/agent_framework_foundry_hosting-*.whl \
+    "$AGENTSERVER_WHEEL_DIR"/azure_ai_agentserver_core-*.whl \
+    "$AGENTSERVER_WHEEL_DIR"/azure_ai_agentserver_invocations-*.whl \
+    "$AGENTSERVER_WHEEL_DIR"/azure_ai_agentserver_responses-*.whl \
+    httpx
+```
+
+Verify that the installed AgentServer build exposes the preview API:
+
+```powershell
+.venv-preview\Scripts\python.exe -c "from azure.ai.agentserver.responses import ResponsesServerOptions; assert ResponsesServerOptions(resilient_background=True).resilient_background"
+```
+
+```bash
+.venv-preview/bin/python -c "from azure.ai.agentserver.responses import ResponsesServerOptions; assert ResponsesServerOptions(resilient_background=True).resilient_background"
+```
+
+Do not run `uv sync` in this environment. When using the repository workspace
+environment instead, reinstall the three local AgentServer wheels after every
+sync and run commands with `uv run --no-sync`.
+
+## Run the demo
+
+From the repository's `python` directory, using the isolated environment above:
+
+```powershell
+.venv-preview\Scripts\python.exe .\samples\04-hosting\foundry-hosted-agents\responses\15_workflow_resilience\demo.py
+```
+
+```bash
+.venv-preview/bin/python ./samples/04-hosting/foundry-hosted-agents/responses/15_workflow_resilience/demo.py
 ```
 
 Run `demo.py`, not `main.py`. `main.py` is the hosted agent server and waits for
@@ -117,7 +179,11 @@ asserts that each completed stage appears exactly once.
 To start only the hosted agent server:
 
 ```powershell
-uv run python .\samples\04-hosting\foundry-hosted-agents\responses\15_workflow_resilience\main.py
+.venv-preview\Scripts\python.exe .\samples\04-hosting\foundry-hosted-agents\responses\15_workflow_resilience\main.py
+```
+
+```bash
+.venv-preview/bin/python ./samples/04-hosting/foundry-hosted-agents/responses/15_workflow_resilience/main.py
 ```
 
 The server then waits for Responses API requests on `http://localhost:8088`.
