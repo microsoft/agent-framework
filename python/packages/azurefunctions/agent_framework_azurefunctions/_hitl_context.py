@@ -44,7 +44,7 @@ WEBSITE_HOSTNAME_ENV = "WEBSITE_HOSTNAME"
 
 # Loopback hosts that resolve to ``http`` (not ``https``) when WEBSITE_HOSTNAME is
 # host-only; covers the addresses ``func start`` can bind locally.
-_LOOPBACK_HOSTS = frozenset({"localhost", "0.0.0.0", "::1"})  # noqa: S104
+_LOOPBACK_HOSTS = frozenset({"localhost", "0.0.0.0", "::1"})  # noqa: S104  # nosec B104
 
 
 def _is_loopback(host: str) -> bool:
