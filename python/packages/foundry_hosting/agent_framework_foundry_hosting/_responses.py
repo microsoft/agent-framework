@@ -605,6 +605,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
 
         resilient_background = bool(options and options.resilient_background)
+        self._resilient_background = resilient_background
 
         self._is_workflow_agent = False
         self._checkpoint_storage_path: str | None = None
@@ -792,9 +793,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # sequence for one update can leave an output builder half-open.
             for event in tracker.close():
                 yield event
-            if context.shutdown.is_set():
-                # This only returns control to recovery when resilient background
-                # execution is active; otherwise AgentServer raises an error.
+            if (
+                context.shutdown.is_set()
+                and self._resilient_background
+                and context.mode_flags.background
+                and context.mode_flags.store
+            ):
                 await context.exit_for_recovery()
             if cancellation_signal.is_set():
                 logger.debug(
@@ -1356,6 +1360,7 @@ class _OutputItemTracker:
         self._text_content: TextContentBuilder | None = None
         self._reasoning_item: OutputItemReasoningItemBuilder | None = None
         self._summary_part: ReasoningSummaryPartBuilder | None = None
+        self._reasoning_protected_data: str | None = None
         self._fc_builder: OutputItemFunctionCallBuilder | None = None
         self._mcp_builder: OutputItemMcpCallBuilder | None = None
         self._mcp_call_id: str | None = None  # call_id of the in-progress MCP call for result matching
@@ -1384,13 +1389,16 @@ class _OutputItemTracker:
             if self._text_content is not None:
                 yield self._text_content.emit_delta(content.text)
 
-        elif content.type == "text_reasoning" and content.text is not None:
+        elif content.type == "text_reasoning" and (content.text is not None or content.protected_data is not None):
             if self._active_type != "text_reasoning":
                 yield from self._close()
-                yield from self._open_reasoning()
-            self._accumulated.append(content.text)
-            if self._summary_part is not None:
-                yield self._summary_part.emit_text_delta(content.text)
+                yield from self._open_reasoning(content)
+            if content.protected_data is not None:
+                self._reasoning_protected_data = content.protected_data
+            if content.text is not None:
+                self._accumulated.append(content.text)
+                if self._summary_part is not None:
+                    yield self._summary_part.emit_text_delta(content.text)
 
         elif content.type == "function_call" and content.call_id is not None:
             if self._active_type != "function_call" or self._active_id != content.call_id:
@@ -1459,12 +1467,16 @@ class _OutputItemTracker:
         yield self._message_item.emit_added()
         yield self._text_content.emit_added()
 
-    def _open_reasoning(self) -> Generator[ResponseStreamEvent]:
+    def _open_reasoning(self, content: Content) -> Generator[ResponseStreamEvent]:
         self._reasoning_item = self._stream.add_output_item_reasoning_item()
         self._summary_part = self._reasoning_item.add_summary_part()
+        self._reasoning_protected_data = content.protected_data
         self._active_type = "text_reasoning"
         self._active_id = None
-        yield self._reasoning_item.emit_added()
+        added = self._reasoning_item.emit_added()
+        if self._reasoning_protected_data is not None:
+            _set_reasoning_encrypted_content(self._stream, added, self._reasoning_protected_data)
+        yield added
         yield self._summary_part.emit_added()
 
     def _open_function_call(self, content: Content) -> Generator[ResponseStreamEvent]:
@@ -1502,9 +1514,13 @@ class _OutputItemTracker:
         elif self._active_type == "text_reasoning" and self._summary_part and self._reasoning_item:
             yield self._summary_part.emit_text_done(accumulated)
             yield self._summary_part.emit_done()
-            yield self._reasoning_item.emit_done()
+            done = self._reasoning_item.emit_done()
+            if self._reasoning_protected_data is not None:
+                _set_reasoning_encrypted_content(self._stream, done, self._reasoning_protected_data)
+            yield done
             self._summary_part = None
             self._reasoning_item = None
+            self._reasoning_protected_data = None
 
         elif self._active_type == "function_call" and self._fc_builder:
             yield self._fc_builder.emit_arguments_done(accumulated)
@@ -1651,8 +1667,18 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         reasoning = cast(ItemReasoningItem, item)
         reason_contents: list[Content] = []
         if reasoning.summary:
-            for summary in reasoning.summary:
-                reason_contents.append(Content.from_text_reasoning(id=reasoning.id, text=summary.text))
+            for index, summary in enumerate(reasoning.summary):
+                reason_contents.append(
+                    Content.from_text_reasoning(
+                        id=reasoning.id,
+                        text=summary.text,
+                        protected_data=reasoning.encrypted_content if index == 0 else None,
+                    )
+                )
+        elif reasoning.encrypted_content is not None:
+            reason_contents.append(
+                Content.from_text_reasoning(id=reasoning.id, text=None, protected_data=reasoning.encrypted_content)
+            )
         return Message(role="assistant", contents=reason_contents)
 
     if item.type == "mcp_call":
@@ -1945,8 +1971,18 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         reasoning = cast(OutputItemReasoningItem, item)
         contents: list[Content] = []
         if reasoning.summary:
-            for summary in reasoning.summary:
-                contents.append(Content.from_text_reasoning(id=reasoning.id, text=summary.text))
+            for index, summary in enumerate(reasoning.summary):
+                contents.append(
+                    Content.from_text_reasoning(
+                        id=reasoning.id,
+                        text=summary.text,
+                        protected_data=reasoning.encrypted_content if index == 0 else None,
+                    )
+                )
+        elif reasoning.encrypted_content is not None:
+            contents.append(
+                Content.from_text_reasoning(id=reasoning.id, text=None, protected_data=reasoning.encrypted_content)
+            )
         return Message(role="assistant", contents=contents)
 
     if item.type == "mcp_call":
@@ -2305,6 +2341,22 @@ def _arguments_to_str(arguments: Any | None) -> str:
     return json.dumps(arguments, default=_argument_json_default)
 
 
+def _set_reasoning_encrypted_content(
+    stream: ResponseEventStream,
+    event: ResponseStreamEvent,
+    encrypted_content: str,
+) -> None:
+    """Attach encrypted reasoning state to both the event and persisted response item."""
+    item = getattr(event, "item", None)
+    if item is None or item.type != "reasoning":
+        raise RuntimeError("Expected a reasoning output item event.")
+    item.encrypted_content = encrypted_content
+    for output_item in reversed(stream.response.output):
+        if output_item.type == "reasoning" and output_item.id == item.id:
+            output_item.encrypted_content = encrypted_content
+            break
+
+
 async def _to_outputs(
     stream: ResponseEventStream,
     content: Content,
@@ -2329,9 +2381,18 @@ async def _to_outputs(
     if content.type == "text" and content.text is not None:
         async for event in stream.aoutput_item_message(content.text):
             yield event
-    elif content.type == "text_reasoning" and content.text is not None:
-        async for event in stream.aoutput_item_reasoning_item(content.text):
+    elif content.type == "text_reasoning" and (content.text is not None or content.protected_data is not None):
+        item = stream.add_output_item_reasoning_item()
+        added = item.emit_added()
+        if content.protected_data is not None:
+            _set_reasoning_encrypted_content(stream, added, content.protected_data)
+        yield added
+        for event in item.summary_part(content.text or ""):
             yield event
+        done = item.emit_done()
+        if content.protected_data is not None:
+            _set_reasoning_encrypted_content(stream, done, content.protected_data)
+        yield done
     elif content.type == "function_call":
         async for event in stream.aoutput_item_function_call(
             content.name,  # type: ignore[arg-type]

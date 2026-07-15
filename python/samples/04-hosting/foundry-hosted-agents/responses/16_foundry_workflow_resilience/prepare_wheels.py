@@ -15,6 +15,7 @@ EXPECTED_WHEELS = (
     "azure_ai_agentserver_invocations-*.whl",
     "azure_ai_agentserver_responses-*.whl",
 )
+GENERATED_REQUIREMENTS = "private-wheels.txt"
 
 
 def _find_one(pattern: str, directories: list[Path]) -> Path:
@@ -28,9 +29,7 @@ def _find_one(pattern: str, directories: list[Path]) -> Path:
 def _validate_responses_preview(path: Path) -> None:
     with zipfile.ZipFile(path) as wheel:
         exposes_durability = any(
-            b"resilient_background" in wheel.read(name)
-            for name in wheel.namelist()
-            if name.endswith(".py")
+            b"resilient_background" in wheel.read(name) for name in wheel.namelist() if name.endswith(".py")
         )
     if not exposes_durability:
         raise RuntimeError(
@@ -79,6 +78,12 @@ def main() -> None:
         shutil.copy2(source, destination / source.name)
         print(f"Copied {source.name}")
 
+    requirements = destination / GENERATED_REQUIREMENTS
+    requirements.write_text(
+        "".join(f"./wheelhouse/{source.name}\n" for source in sources),
+        encoding="utf-8",
+    )
+    print(f"Generated {requirements.name}")
     print(f"Prepared private deployment wheels in {destination}")
 
 

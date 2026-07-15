@@ -11,6 +11,8 @@ Each stage intentionally terminates its host once, then calls a real model
 through `FoundryChatClient` after recovery. Before exiting, the stage atomically
 writes and flushes a marker in the session's persistent home directory. The
 replacement host sees that marker and continues instead of crashing again.
+After the recovered stage completes, it removes its marker so a later workflow
+request demonstrates the same three crashes again.
 `ResponsesServerOptions(resilient_background=True)` keeps the original
 background response and workflow checkpoints alive across all three restarts.
 
@@ -51,12 +53,14 @@ python .\prepare_wheels.py `
 ```
 
 The script requires exactly one matching wheel for each package, verifies that
-the Responses wheel contains the private durability API, and copies the four
-files into the container build context. This rejects the same-version public
-Responses wheel before deployment. The wheel files are intentionally
-gitignored, but `.agentignore` explicitly includes them in the Foundry code
-deployment ZIP. `requirements.txt` installs each wheel by its relative file
-path, so code deployment does not fall back to the public packages.
+the Responses wheel contains the private durability API, copies the four files
+into the container build context, and generates `wheelhouse/private-wheels.txt`
+with their actual filenames. This rejects the same-version public Responses
+wheel before deployment. The generated files are intentionally gitignored, but
+`.agentignore` explicitly includes them in the Foundry code deployment ZIP.
+`requirements.txt` includes the generated requirements fragment, so code
+deployment does not fall back to public packages or depend on one build's wheel
+filenames.
 
 Initialize or select an `azd` environment, then provision:
 
@@ -113,7 +117,9 @@ The first attempt at each translation stage persists a marker and exits with
 code 70. Foundry automatically starts a replacement container with the same
 session ID and persistent home directory. The client continues polling the
 original response through all three replacements. The container logs show one
-intentional termination and one recovered continuation for each stage.
+intentional termination and one recovered continuation for each stage. Each
+marker is removed after its recovered stage succeeds, so another request in the
+same session repeats the demonstration.
 
 A successful run ends with the persisted French, Spanish, and round-trip
 English output followed by:

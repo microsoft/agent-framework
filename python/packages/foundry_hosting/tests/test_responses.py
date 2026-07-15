@@ -344,6 +344,22 @@ class TestResponsesHostServerInit:
 
 
 class TestDurableResponseStreamSeeding:
+    async def test_delete_checkpoints_except_keeps_selected_checkpoint(self) -> None:
+        storage = InMemoryCheckpointStorage()
+        retained = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="hash")
+        deleted = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="hash")
+        await storage.save(retained)
+        await storage.save(deleted)
+
+        await ResponsesHostServer._delete_checkpoints_except(  # pyright: ignore[reportPrivateUsage]
+            storage,
+            "wf",
+            retained.checkpoint_id,
+        )
+
+        checkpoints = await storage.list_checkpoints(workflow_name="wf")
+        assert [checkpoint.checkpoint_id for checkpoint in checkpoints] == [retained.checkpoint_id]
+
     async def test_workflow_checkpoint_save_publishes_without_waiting_for_response_checkpoint(self) -> None:
         stream = ResponseEventStream(response_id="resp_sync", model="test-model")
         publisher = _WorkflowCheckpointPublisher(stream)
@@ -768,15 +784,19 @@ class TestDurableResponseStreamSeeding:
         assert event_types.count("response.completed") == 1
 
     async def test_shutdown_exits_for_recovery_without_terminal_event(self) -> None:
-        from azure.ai.agentserver.responses._response_context import ResponseExitForRecovery
+        from azure.ai.agentserver.responses._response_context import ResponseExitForRecovery, ResponseModeFlags
         from azure.ai.agentserver.responses.models import CreateResponse
 
         agent = _make_agent(
             stream_updates=[AgentResponseUpdate(contents=[Content.from_text("chunk")], role="assistant")]
         )
         server = _make_server(agent)
+        server._resilient_background = True  # pyright: ignore[reportPrivateUsage]
         request = CreateResponse(model="test-model", input="hi", stream=True)
-        context = ResponseContext(response_id="resp_shutdown", mode_flags=MagicMock())
+        context = ResponseContext(
+            response_id="resp_shutdown",
+            mode_flags=ResponseModeFlags(stream=True, store=True, background=True),
+        )
         context.shutdown.set()
         context.exit_for_recovery = AsyncMock(side_effect=ResponseExitForRecovery())  # type: ignore[method-assign]
         events: list[Any] = []
@@ -796,6 +816,37 @@ class TestDurableResponseStreamSeeding:
         context.exit_for_recovery.assert_awaited_once()
         event_types = [getattr(event, "type", None) for event in events]
         assert "response.completed" not in event_types
+        assert "response.failed" not in event_types
+
+    async def test_non_resilient_shutdown_completes_without_recovery_failure(self) -> None:
+        from azure.ai.agentserver.responses._response_context import ResponseModeFlags
+        from azure.ai.agentserver.responses.models import CreateResponse
+
+        agent = _make_agent(
+            stream_updates=[AgentResponseUpdate(contents=[Content.from_text("chunk")], role="assistant")]
+        )
+        server = _make_server(agent)
+        request = CreateResponse(model="test-model", input="hi", stream=True)
+        context = ResponseContext(
+            response_id="resp_foreground_shutdown",
+            mode_flags=ResponseModeFlags(stream=True, store=False, background=False),
+        )
+        context.shutdown.set()
+        events: list[Any] = []
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            async for event in server._handle_response(  # pyright: ignore[reportPrivateUsage]
+                request,
+                context,
+                asyncio.Event(),
+            ):
+                events.append(event)
+
+        event_types = [getattr(event, "type", None) for event in events]
+        assert "response.completed" in event_types
         assert "response.failed" not in event_types
 
 
@@ -940,6 +991,23 @@ class TestNonStreaming:
         types = [item["type"] for item in body["output"]]
         assert "reasoning" in types
         assert "message" in types
+
+    async def test_protected_reasoning_without_text_is_preserved(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text_reasoning(text=None, protected_data="encrypted-state")],
+                    role="assistant",
+                )
+            ]
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=False)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        reasoning = next(item for item in body["output"] if item["type"] == "reasoning")
+        assert reasoning["encrypted_content"] == "encrypted-state"
 
     async def test_empty_response(self) -> None:
         agent = _make_agent([])
@@ -1412,6 +1480,19 @@ class TestOutputItemToMessage:
         msg = await _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents == []
+
+    async def test_reasoning_with_encrypted_content_only(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemReasoningItem
+
+        item = OutputItemReasoningItem({
+            "type": "reasoning",
+            "id": "r-protected",
+            "encrypted_content": "encrypted-state",
+        })
+        msg = await _output_item_to_message(item)
+        assert len(msg.contents) == 1
+        assert msg.contents[0].text is None
+        assert msg.contents[0].protected_data == "encrypted-state"
 
     async def test_mcp_call(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpToolCall
@@ -1906,6 +1987,19 @@ class TestItemToMessage:
         assert msg is not None
         assert msg.role == "assistant"
         assert msg.contents == []
+
+    async def test_reasoning_with_encrypted_content_only(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemReasoningItem
+
+        item = ItemReasoningItem({
+            "type": "reasoning",
+            "id": "r-protected",
+            "encrypted_content": "encrypted-state",
+        })
+        msg = await _item_to_message(item)
+        assert len(msg.contents) == 1
+        assert msg.contents[0].text is None
+        assert msg.contents[0].protected_data == "encrypted-state"
 
     async def test_mcp_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemMcpToolCall
