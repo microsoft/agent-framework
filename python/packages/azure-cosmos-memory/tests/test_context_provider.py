@@ -238,8 +238,8 @@ class TestBeforeRun:
         assert "0.95" in added[0].text  # type: ignore
         assert "0.85" in added[0].text  # type: ignore
 
-    async def test_user_summary_injected_as_instruction(self, mock_memory_client: AsyncMock) -> None:
-        """User summary is retrieved and injected as instruction."""
+    async def test_user_summary_injected_as_untrusted_message(self, mock_memory_client: AsyncMock) -> None:
+        """User summary is injected as an untrusted context message, not as agent instructions."""
         mock_memory_client.search_cosmos.return_value = []
         # get_user_summary returns the Cosmos summary document (a dict) whose roll-up text
         # lives in the "content" field.
@@ -256,9 +256,12 @@ class TestBeforeRun:
             agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
         )
 
-        assert len(ctx.instructions) == 1
-        assert "User Profile:" in ctx.instructions[0]
-        assert "Tech enthusiast" in ctx.instructions[0]
+        # The summary must NOT be promoted into agent instructions (stored prompt-injection guard).
+        assert len(ctx.instructions) == 0
+        added = ctx.context_messages["cosmos_memory"]
+        assert len(added) == 1
+        assert "Tech enthusiast" in added[0].text  # type: ignore
+        assert "untrusted" in added[0].text.lower()  # type: ignore
 
     async def test_empty_user_summary_dict_not_injected(self, mock_memory_client: AsyncMock) -> None:
         """A user summary document with empty content is not injected."""
@@ -274,9 +277,10 @@ class TestBeforeRun:
         )
 
         assert len(ctx.instructions) == 0
+        assert "cosmos_memory" not in ctx.context_messages
 
     async def test_no_user_summary_not_injected(self, mock_memory_client: AsyncMock) -> None:
-        """No user summary (None) does not inject an instruction."""
+        """No user summary (None) does not inject anything."""
         mock_memory_client.search_cosmos.return_value = []
         mock_memory_client.get_user_summary.return_value = None
 
@@ -289,6 +293,7 @@ class TestBeforeRun:
         )
 
         assert len(ctx.instructions) == 0
+        assert "cosmos_memory" not in ctx.context_messages
 
     async def test_empty_input_skips_search(self, mock_memory_client: AsyncMock) -> None:
         """Empty input messages skip memory search."""
@@ -364,8 +369,9 @@ class TestBeforeRun:
             agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
         )
 
-        # Memories failed, but the user summary was still injected as an instruction.
-        assert any("Prefers concise answers" in instr for instr in ctx.instructions)
+        # Memories failed, but the user summary was still injected as an untrusted context message.
+        added = ctx.context_messages["cosmos_memory"]
+        assert any("Prefers concise answers" in m.text for m in added)  # type: ignore
 
     async def test_user_summary_failure_does_not_block_search(self, mock_memory_client: AsyncMock) -> None:
         """A user-summary failure must not suppress memory injection (split error handling)."""
