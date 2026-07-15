@@ -20,9 +20,10 @@ workspace sync can therefore replace the preview build with the public build.
 
 Create an isolated environment and install the local wheel files explicitly.
 The Agent Framework wheel directory must contain
-`agent_framework_core-*.whl` and
 `agent_framework_foundry_hosting-*.whl`. The AgentServer wheel directory must
-contain the `core`, `invocations`, and `responses` wheels.
+contain the `core`, `invocations`, and `responses` wheels. The released
+`agent-framework-core` package and any other Agent Framework packages are
+resolved normally from the configured package index.
 
 PowerShell:
 
@@ -32,7 +33,6 @@ $agentServerWheels = "C:\path\to\agent-server-wheels"
 
 uv venv .venv-preview
 uv pip install --python .venv-preview\Scripts\python.exe `
-    (Get-ChildItem "$afWheels\agent_framework_core-*.whl").FullName `
     (Get-ChildItem "$afWheels\agent_framework_foundry_hosting-*.whl").FullName `
     (Get-ChildItem "$agentServerWheels\azure_ai_agentserver_core-*.whl").FullName `
     (Get-ChildItem "$agentServerWheels\azure_ai_agentserver_invocations-*.whl").FullName `
@@ -48,7 +48,6 @@ export AGENTSERVER_WHEEL_DIR=/path/to/agent-server-wheels
 
 uv venv .venv-preview
 uv pip install --python .venv-preview/bin/python \
-    "$AF_WHEEL_DIR"/agent_framework_core-*.whl \
     "$AF_WHEEL_DIR"/agent_framework_foundry_hosting-*.whl \
     "$AGENTSERVER_WHEEL_DIR"/azure_ai_agentserver_core-*.whl \
     "$AGENTSERVER_WHEEL_DIR"/azure_ai_agentserver_invocations-*.whl \
