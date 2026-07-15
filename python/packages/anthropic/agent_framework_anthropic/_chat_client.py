@@ -579,7 +579,9 @@ class RawAnthropicClient(
         """
         # Start with a copy of options, excluding keys we handle separately
         run_options: dict[str, Any] = {
-            k: v for k, v in options.items() if v is not None and k not in {"instructions", "response_format"}
+            k: v
+            for k, v in options.items()
+            if v is not None and k not in {"instructions", "response_format", "additional_beta_flags"}
         }
         # Framework-level options handled elsewhere; do not forward as raw Anthropic request kwargs.
         run_options.pop("allow_multiple_tool_calls", None)
@@ -592,7 +594,9 @@ class RawAnthropicClient(
         # This includes underscore-prefixed internal objects (like _function_middleware_pipeline)
         # and framework kwargs like 'thread' and 'middleware'.
         filtered_kwargs = {
-            k: v for k, v in kwargs.items() if not k.startswith("_") and k not in {"thread", "middleware"}
+            k: v
+            for k, v in kwargs.items()
+            if not k.startswith("_") and k not in {"thread", "middleware", "additional_beta_flags"}
         }
         _apply_option_translations(filtered_kwargs)
         run_options.update(filtered_kwargs)

@@ -7,7 +7,7 @@ These samples demonstrate how to use context providers to enrich agent conversat
 | File / Folder | Description |
 |---------------|-------------|
 | [`simple_context_provider.py`](simple_context_provider.py) | Implement a custom context provider by extending `ContextProvider` to extract and inject structured user information across turns. |
-| [`agentsandbox_codeact/`](agentsandbox_codeact/) | Run LLM-emitted Python via `AgentSandboxCodeActProvider` inside a Kubernetes Pod (kubernetes-sigs/agent-sandbox), with filesystem + `pip install` state persisting across `execute_code` calls. Uses a local Ollama model. See its own [README](agentsandbox_codeact/README.md). |
+| [`cross_session_observer.py`](cross_session_observer.py) | Detect injected context messages whose origins differ from the current session, via the `Message.additional_properties["_attribution"]["origin_session_ids"]` field. Self-contained — no LLM credentials required. |
 | [`azure_ai_foundry_memory.py`](azure_ai_foundry_memory.py) | Use `FoundryMemoryProvider` to add semantic memory — automatically retrieves, searches, and stores memories via Microsoft Foundry. |
 | [`file_access_data_processing/`](file_access_data_processing/) | Use `FileAccessProvider` with `FileSystemAgentFileStore` to give an agent read/write/search access to a folder of CSV data files. See its own [README](file_access_data_processing/README.md). |
 | [`azure_ai_search/`](azure_ai_search/) | Retrieval Augmented Generation (RAG) with Azure AI Search in semantic and agentic modes. See its own [README](azure_ai_search/README.md). |
@@ -15,6 +15,9 @@ These samples demonstrate how to use context providers to enrich agent conversat
 | [`redis/`](redis/) | Redis-backed context providers for conversation memory and sessions. See its own [README](redis/README.md). |
 
 ## Prerequisites
+
+**For `cross_session_observer.py`:**
+- No external dependencies; runs against in-memory `SessionContext`.
 
 **For `simple_context_provider.py`:**
 - `FOUNDRY_PROJECT_ENDPOINT`: Your Microsoft Foundry project endpoint

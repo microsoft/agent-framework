@@ -1089,7 +1089,7 @@ public class ChatOptions
 
 ##### 6.1.5 Continuation Token of a Custom Type
 
-The option is similar the the "6.1.3 Continuation Token of System.ClientModel.ContinuationToken Type" option but suggests using a 
+The option is similar to the "6.1.3 Continuation Token of System.ClientModel.ContinuationToken Type" option but suggests using a 
 custom type for the continuation token instead of the `System.ClientModel.ContinuationToken` type.
 
 **Pros**
