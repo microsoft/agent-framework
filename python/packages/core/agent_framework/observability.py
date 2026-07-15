@@ -39,8 +39,10 @@ from typing import (
 
 from dotenv import load_dotenv
 from opentelemetry import metrics, trace
+from typing_extensions import Sentinel
 
 from . import __version__ as version_info
+from ._serialization import SerializationProtocol
 from ._settings import load_settings
 
 if sys.version_info >= (3, 13):
@@ -2324,7 +2326,7 @@ def _get_instructions_from_options(options: Any) -> str | list[str] | None:
 # the cache.
 _TOOL_OTEL_JSON_CACHE: weakref.WeakKeyDictionary[Any, str | None] = weakref.WeakKeyDictionary()
 # Sentinel distinguishing "not cached" from a cached ``None`` (unparseable tool).
-_CACHE_MISS: Final = object()
+_CACHE_MISS: Final = Sentinel("CACHE_MISS")
 
 
 def _serialize_tool_definitions(tools: Any) -> str | None:
@@ -2442,7 +2444,7 @@ def _build_tool_otel_definition(tool_item: Any) -> dict[str, Any] | None:
     raw: Mapping[str, Any] | None = None
     if isinstance(tool_item, BaseModel):
         raw = tool_item.model_dump(exclude_none=True)
-    elif isinstance(tool_item, SerializationMixin):
+    elif isinstance(tool_item, (SerializationMixin, SerializationProtocol)):
         raw = tool_item.to_dict()
     elif isinstance(tool_item, Mapping):
         mapping_item = cast("Mapping[str, Any]", tool_item)

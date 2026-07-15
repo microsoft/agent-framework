@@ -3455,6 +3455,71 @@ def test_tool_to_otel_json_skips_cache_for_unhashable_specs() -> None:
     assert json.loads(fragment) == {"type": "web_search", "name": "web_search"}
 
 
+def test_tool_to_otel_json_caches_none_for_unparseable_weakrefable_tool() -> None:
+    """A weak-referenceable tool that can't be represented caches ``None`` and reuses it.
+
+    Exercises the ``_CACHE_MISS`` sentinel: a cached ``None`` (an unparseable but
+    weak-referenceable tool) must be distinguished from a cache miss so the fragment is
+    not rebuilt on subsequent calls.
+    """
+    from unittest.mock import patch
+
+    from agent_framework import observability
+    from agent_framework.observability import _CACHE_MISS, _TOOL_OTEL_JSON_CACHE, _tool_to_otel_json
+
+    class _Opaque:
+        """Not callable, mapping, BaseModel, or a known tool type — cannot be represented."""
+
+    opaque = _Opaque()
+
+    with patch.object(observability, "_build_tool_otel_json", wraps=observability._build_tool_otel_json) as build_spy:
+        first = _tool_to_otel_json(opaque)
+        second = _tool_to_otel_json(opaque)
+
+    assert first is None
+    assert second is None
+    # The unparseable-but-weak-referenceable tool is cached as ``None`` ...
+    assert opaque in _TOOL_OTEL_JSON_CACHE
+    assert _TOOL_OTEL_JSON_CACHE[opaque] is None
+    # ... and the sentinel distinguishes that cached ``None`` from a cache miss, so the
+    # fragment is built only once (the second call is served from the cache).
+    assert _TOOL_OTEL_JSON_CACHE.get(opaque, _CACHE_MISS) is None
+    assert build_spy.call_count == 1
+
+
+def test_build_tool_otel_definition_supports_serialization_protocol_tool() -> None:
+    """Tools satisfying ``SerializationProtocol`` (duck-typed to_dict/from_dict) are reshaped via to_dict()."""
+    from collections.abc import MutableMapping
+
+    from agent_framework._serialization import SerializationMixin, SerializationProtocol
+    from agent_framework.observability import _build_tool_otel_definition
+
+    class _ProtocolTool:
+        """Satisfies SerializationProtocol without subclassing SerializationMixin or BaseModel."""
+
+        def to_dict(self, **kwargs: Any) -> dict[str, Any]:
+            return {
+                "type": "web_search",
+                "name": "protocol_search",
+                "description": "Search the web",
+                "secret": "should-be-dropped",
+            }
+
+        @classmethod
+        def from_dict(cls, value: MutableMapping[str, Any], /, **kwargs: Any) -> "_ProtocolTool":
+            return cls()
+
+    tool_item = _ProtocolTool()
+    # The tool matches the protocol via duck typing but is not a SerializationMixin subclass.
+    assert isinstance(tool_item, SerializationProtocol)
+    assert not isinstance(tool_item, SerializationMixin)
+
+    result = _build_tool_otel_definition(tool_item)
+
+    # Only OTel-relevant fields are kept; extras such as ``secret`` are dropped.
+    assert result == {"type": "web_search", "name": "protocol_search", "description": "Search the web"}
+
+
 # region Test _capture_response
 
 
