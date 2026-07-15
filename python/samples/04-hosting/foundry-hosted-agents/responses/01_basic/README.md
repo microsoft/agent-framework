@@ -41,12 +41,7 @@ curl -X POST http://localhost:8088/responses -H "Content-Type: application/json"
 ## Next steps
 
 - [13_steering](../13_steering) — steerable conversations: queue a new turn while the previous one is still running
-- [14_resilience](../14_resilience) — crash recovery: automatically re-invoke the handler after a process restart
-
-## Deploying the Agent to Foundry
-
-To host the agent on Foundry, follow the instructions in the [Deploying the Agent to Foundry](../../README.md#deploying-the-agent-to-foundry) section of the README in the parent directory.
-
+- [15_workflow_resilience](../15_workflow_resilience) — durable workflow recovery across host restarts
 
 ## Deploying the Agent to Foundry
 

@@ -57,10 +57,6 @@ test = [
 [tool.uv]
 package = false
 prerelease = "if-necessary-or-explicit"
-# azure-ai-agentserver-* are distributed via the private preview repo and not on PyPI.
-# Clone https://github.com/microsoft/long-running-agents-private-preview and update the
-# find-links path below to point at its artifacts/wheels directory.
-find-links = ["C:/Users/bentho/src/long-running-agents-private-preview/artifacts/wheels"]
 # Security floors for transitive deps; overrides bypass litellm[proxy]'s strict pins.
 constraint-dependencies = ["litellm>=1.83.7", "fastapi-sso>=0.19.0"]
 # python-multipart>=0.0.31 overrides litellm[proxy]'s exact pin of <=0.0.27 for security.

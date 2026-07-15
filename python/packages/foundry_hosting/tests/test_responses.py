@@ -59,7 +59,7 @@ from agent_framework_foundry_hosting._responses import (
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     _WorkflowCheckpointExecution,  # pyright: ignore[reportPrivateUsage]
-    _WorkflowCheckpointSynchronizer,  # pyright: ignore[reportPrivateUsage]
+    _WorkflowCheckpointPublisher,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
 )
 
@@ -245,6 +245,22 @@ class TestResponsesHostServerInit:
         server = ResponsesHostServer(agent, options=explicit_options, store=InMemoryResponseProvider())
         assert server is not None
 
+    def test_init_warns_when_resilient_background_is_used_with_non_workflow_agent(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from azure.ai.agentserver.responses import ResponsesServerOptions
+
+        agent = _make_agent(stream_updates=[])
+
+        with caplog.at_level("WARNING", logger="agent_framework_foundry_hosting._responses"):
+            ResponsesHostServer(
+                agent,
+                options=ResponsesServerOptions(resilient_background=True),
+                store=MagicMock(),
+            )
+
+        assert "Crash recovery is not supported for non-workflow agents." in caplog.text
+
     def test_init_steerable_conversations_creates_options_when_store_supplied(self) -> None:
         """steerable_conversations=True creates options even when an explicit store is supplied."""
         from azure.ai.agentserver.responses import ResponsesServerOptions
@@ -276,30 +292,30 @@ class TestResponsesHostServerInit:
 
 
 class TestDurableResponseStreamSeeding:
-    async def test_workflow_checkpoint_save_waits_for_response_checkpoint_acknowledgement(self) -> None:
+    async def test_workflow_checkpoint_save_publishes_without_waiting_for_response_checkpoint(self) -> None:
         stream = ResponseEventStream(response_id="resp_sync", model="test-model")
-        synchronizer = _WorkflowCheckpointSynchronizer(stream)
+        publisher = _WorkflowCheckpointPublisher(stream)
         storage = _ContextAwareCheckpointStorage(
             InMemoryCheckpointStorage(),
-            synchronizer,
+            publisher,
             "resp_sync",
             "current",
         )
         checkpoint = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="hash")
 
-        save_task = asyncio.create_task(storage.save(checkpoint))
-        pending = await asyncio.wait_for(synchronizer.next_pending(), timeout=1)
+        checkpoint_id = await asyncio.wait_for(storage.save(checkpoint), timeout=1)
+        reference = await asyncio.wait_for(publisher.next_pending(), timeout=1)
 
-        assert not save_task.done()
-        assert isinstance(pending.event, ResponseCheckpointEvent)
+        assert checkpoint_id == checkpoint.checkpoint_id
+        assert reference is not None
+        assert "workflow_checkpoint" not in stream.internal_metadata
+        event = publisher.checkpoint_event(reference)
+        assert isinstance(event, ResponseCheckpointEvent)
         assert stream.internal_metadata["workflow_checkpoint"] == {
             "checkpoint_id": checkpoint.checkpoint_id,
             "context_id": "resp_sync",
             "kind": "current",
         }
-
-        synchronizer.acknowledge(pending)
-        assert await save_task == checkpoint.checkpoint_id
 
     async def test_current_turn_recovery_forwards_resumed_workflow_outputs(self) -> None:
         workflow_event = MagicMock()
@@ -320,10 +336,10 @@ class TestDurableResponseStreamSeeding:
         server = object.__new__(ResponsesHostServer)
         server._agent = agent  # pyright: ignore[reportPrivateUsage]
         stream = ResponseEventStream(response_id="resp_recovery", model="test-model")
-        synchronizer = _WorkflowCheckpointSynchronizer(stream)
+        publisher = _WorkflowCheckpointPublisher(stream)
         storage = _ContextAwareCheckpointStorage(
             InMemoryCheckpointStorage(),
-            synchronizer,
+            publisher,
             "resp_recovery",
             "current",
         )
@@ -332,7 +348,7 @@ class TestDurableResponseStreamSeeding:
             restore_checkpoint_id="checkpoint-current",
             write_storage=storage,
             resume_current_turn=True,
-            synchronizer=synchronizer,
+            publisher=publisher,
         )
 
         updates = [
@@ -544,7 +560,38 @@ class TestDurableResponseStreamSeeding:
         assert "response.in_progress" in event_types
         # Must emit response.completed — the framework overrides to cancelled for
         # real client cancels; for steering pressure completed is the correct terminal.
-        assert "response.completed" in event_types
+        assert event_types.count("response.completed") == 1
+
+    async def test_shutdown_exits_for_recovery_without_terminal_event(self) -> None:
+        from azure.ai.agentserver.responses._response_context import ResponseExitForRecovery
+        from azure.ai.agentserver.responses.models import CreateResponse
+
+        agent = _make_agent(
+            stream_updates=[AgentResponseUpdate(contents=[Content.from_text("chunk")], role="assistant")]
+        )
+        server = _make_server(agent)
+        request = CreateResponse(model="test-model", input="hi", stream=True)
+        context = ResponseContext(response_id="resp_shutdown", mode_flags=MagicMock())
+        context.shutdown.set()
+        context.exit_for_recovery = AsyncMock(side_effect=ResponseExitForRecovery())  # type: ignore[method-assign]
+        events: list[Any] = []
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+            pytest.raises(ResponseExitForRecovery),
+        ):
+            async for event in server._handle_response(  # pyright: ignore[reportPrivateUsage]
+                request,
+                context,
+                asyncio.Event(),
+            ):
+                events.append(event)
+
+        context.exit_for_recovery.assert_awaited_once()
+        event_types = [getattr(event, "type", None) for event in events]
+        assert "response.completed" not in event_types
+        assert "response.failed" not in event_types
 
 
 # region Health Check
@@ -1118,6 +1165,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].name == "get_weather"
+        assert msg.contents[0].informational_only is True
 
     async def test_function_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
@@ -1331,6 +1379,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "file_search"
         assert '"what is AI"' in (msg.contents[0].arguments or "")
+        assert msg.contents[0].informational_only is True
 
     async def test_web_search_call(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemWebSearchToolCall, WebSearchActionSearch
@@ -1345,6 +1394,7 @@ class TestOutputItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "web_search"
+        assert msg.contents[0].informational_only is True
 
     async def test_computer_call(self) -> None:
         from azure.ai.agentserver.responses.models import ComputerAction, OutputItemComputerToolCall
@@ -1361,6 +1411,7 @@ class TestOutputItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "computer_use"
+        assert msg.contents[0].informational_only is True
 
     async def test_computer_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import (
@@ -1395,6 +1446,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "my_tool"
         assert msg.contents[0].arguments == '{"key": "value"}'
+        assert msg.contents[0].informational_only is True
 
     async def test_custom_tool_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemCustomToolCallOutput
@@ -1451,6 +1503,7 @@ class TestOutputItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "apply_patch"
+        assert msg.contents[0].informational_only is True
 
     async def test_apply_patch_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemApplyPatchToolCallOutput
@@ -1592,6 +1645,7 @@ class TestItemToMessage:
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].name == "get_weather"
         assert msg.contents[0].arguments == '{"city": "NYC"}'
+        assert msg.contents[0].informational_only is True
 
     async def test_function_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
@@ -1819,6 +1873,7 @@ class TestItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "file_search"
         assert '"what is AI"' in (msg.contents[0].arguments or "")
+        assert msg.contents[0].informational_only is True
 
     async def test_web_search_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemWebSearchToolCall
@@ -1833,6 +1888,7 @@ class TestItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "web_search"
+        assert msg.contents[0].informational_only is True
 
     async def test_computer_call(self) -> None:
         from azure.ai.agentserver.responses.models import ComputerAction, ItemComputerToolCall
@@ -1850,6 +1906,7 @@ class TestItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "computer_use"
+        assert msg.contents[0].informational_only is True
 
     async def test_computer_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ComputerCallOutputItemParam, ComputerScreenshotImage
@@ -1883,6 +1940,7 @@ class TestItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "my_tool"
         assert msg.contents[0].arguments == '{"key": "value"}'
+        assert msg.contents[0].informational_only is True
 
     async def test_custom_tool_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ItemCustomToolCallOutput
@@ -1953,6 +2011,7 @@ class TestItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "apply_patch"
+        assert msg.contents[0].informational_only is True
 
     async def test_apply_patch_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ApplyPatchToolCallOutputItemParam
@@ -3903,6 +3962,7 @@ class TestOAuthConsentSurfacing:
         assert types[0] == "response.created"
         assert types[1] == "response.in_progress"
         assert types[-1] == "response.completed"
+        assert types.count("response.completed") == 1
 
         added = [e for e in events if e["event"] == "response.output_item.added"]
         oauth_added = [e for e in added if e["data"]["item"]["type"] == "oauth_consent_request"]

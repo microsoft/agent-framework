@@ -297,29 +297,28 @@ class _ContextAwareCheckpointStorage:
 
     The workflow saves checkpoints internally with no post-save hook, so we wrap
     the storage handed to ``run()``: :meth:`save` persists to the inner storage
-    then performs the request-scoped post-save logic, which uses the request's
-    ``ResponseEventStream``. Every other operation delegates unchanged to the
-    inner storage.
+    then publishes the exact reference for response-level persistence. Every
+    other operation delegates unchanged to the inner storage.
 
-    Created **per request** so the synchronizer can rendezvous with the response
-    handler while the wrapped inner storage stays cached/persistent across turns.
+    Created **per request** so checkpoint references are sent to the current
+    response handler while the wrapped inner storage stays cached across turns.
     """
 
     def __init__(
         self,
         inner: CheckpointStorage,
-        synchronizer: _WorkflowCheckpointSynchronizer,
+        publisher: _WorkflowCheckpointPublisher,
         context_id: str,
         reference_kind: Literal["base", "current"],
     ) -> None:
         self._inner = inner
-        self._synchronizer = synchronizer
+        self._publisher = publisher
         self._context_id = context_id
         self._reference_kind: Literal["base", "current"] = reference_kind
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         checkpoint_id = await self._inner.save(checkpoint)
-        await self._synchronizer.synchronize(checkpoint_id, self._context_id, self._reference_kind)
+        self._publisher.publish(checkpoint_id, self._context_id, self._reference_kind)
         return checkpoint_id
 
     async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
@@ -366,25 +365,15 @@ class _WorkflowCheckpointReference:
         return cls(checkpoint_id=checkpoint_id, context_id=context_id, kind=cast(Literal["base", "current"], kind))
 
 
-@dataclass
-class _PendingResponseCheckpoint:
-    """A response checkpoint event waiting for the handler to yield it."""
-
-    event: Any
-    acknowledged: asyncio.Future[None]
-
-
-class _WorkflowCheckpointSynchronizer:
-    """Synchronize workflow checkpoint saves with durable response snapshots."""
+class _WorkflowCheckpointPublisher:
+    """Publish workflow checkpoint references for response-level persistence."""
 
     CHECKPOINT_REFERENCE_KEY = "workflow_checkpoint"
     LEGACY_CHECKPOINT_ID_KEY = "last_checkpoint_id"
 
     def __init__(self, response_event_stream: ResponseEventStream) -> None:
         self._response_event_stream = response_event_stream
-        self._pending: asyncio.Queue[_PendingResponseCheckpoint] = asyncio.Queue()
-        self._waiters: set[asyncio.Future[None]] = set()
-        self._closed_error: BaseException | None = None
+        self._pending: asyncio.Queue[_WorkflowCheckpointReference | None] = asyncio.Queue()
 
     def seed(self, reference: _WorkflowCheckpointReference | None) -> None:
         metadata = self._response_event_stream.internal_metadata
@@ -414,58 +403,32 @@ class _WorkflowCheckpointSynchronizer:
             )
         return None
 
-    async def synchronize(
+    def publish(
         self,
         checkpoint_id: CheckpointID,
         context_id: str,
         kind: Literal["base", "current"],
     ) -> None:
-        if self._closed_error is not None:
-            raise RuntimeError("Workflow checkpoint synchronizer is closed.") from self._closed_error
-
-        self.seed(
+        self._pending.put_nowait(
             _WorkflowCheckpointReference(
                 checkpoint_id=checkpoint_id,
                 context_id=context_id,
                 kind=kind,
             )
         )
-        acknowledged = asyncio.get_running_loop().create_future()
-        self._waiters.add(acknowledged)
-        acknowledged.add_done_callback(self._waiters.discard)
-        acknowledged.add_done_callback(self._consume_future_exception)
-        await self._pending.put(
-            _PendingResponseCheckpoint(
-                event=self._response_event_stream.checkpoint(),
-                acknowledged=acknowledged,
-            )
-        )
-        await acknowledged
 
-    async def next_pending(self) -> _PendingResponseCheckpoint:
+    async def next_pending(self) -> _WorkflowCheckpointReference | None:
         return await self._pending.get()
 
-    def acknowledge(self, pending: _PendingResponseCheckpoint) -> None:
-        if not pending.acknowledged.done():
-            pending.acknowledged.set_result(None)
+    def checkpoint_event(self, reference: _WorkflowCheckpointReference) -> Any:
+        # Apply the immutable queued reference immediately before snapshotting so
+        # a later workflow save cannot alter an earlier response checkpoint.
+        self.seed(reference)
+        return self._response_event_stream.checkpoint()
 
-    @staticmethod
-    def _consume_future_exception(future: asyncio.Future[None]) -> None:
-        if not future.cancelled():
-            future.exception()
-
-    def close(self, error: BaseException) -> None:
-        self._closed_error = error
-        for acknowledged in list(self._waiters):
-            if not acknowledged.done():
-                acknowledged.set_exception(error)
-        while True:
-            try:
-                pending = self._pending.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-            if not pending.acknowledged.done():
-                pending.acknowledged.set_exception(error)
+    def finish_run(self) -> None:
+        # The sentinel is ordered after every reference published by this run.
+        self._pending.put_nowait(None)
 
 
 @dataclass(frozen=True)
@@ -476,7 +439,7 @@ class _WorkflowCheckpointExecution:
     restore_checkpoint_id: CheckpointID | None
     write_storage: CheckpointStorage
     resume_current_turn: bool
-    synchronizer: _WorkflowCheckpointSynchronizer
+    publisher: _WorkflowCheckpointPublisher
 
 
 def _approval_storage_path_for_user(base_path: str, user_id: str) -> str:
@@ -780,29 +743,18 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # also drains the tracker so the SSE stream stays well-formed).
         response_event_stream = self._create_response_event_stream(request, context)
         tracker = _OutputItemTracker(response_event_stream)
-        workflow_checkpoint_execution: _WorkflowCheckpointExecution | None = None
-        workflow_preparation_error: Exception | None = None
-        if self._is_workflow_agent:
-            try:
-                workflow_checkpoint_execution = await self._prepare_workflow_checkpoint_execution(
-                    request,
-                    context,
-                    response_event_stream,
-                )
-            except Exception as ex:
-                workflow_preparation_error = ex
 
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
         try:
-            if workflow_preparation_error is not None:
-                raise workflow_preparation_error
-
             if self._is_workflow_agent:
                 # Workflow agents are handled differently because they require checkpoint restoration
-                if workflow_checkpoint_execution is None:
-                    raise RuntimeError("Workflow checkpoint execution was not prepared.")
+                workflow_checkpoint_execution = await self._prepare_workflow_checkpoint_execution(
+                    request,
+                    context,
+                    response_event_stream,
+                )
                 if not context.is_recovery and workflow_checkpoint_execution.restore_checkpoint_id is not None:
                     # ``response.created`` strips framework-internal metadata
                     # from its wire payload. Explicitly checkpoint the live
@@ -826,32 +778,24 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 inner = self._handle_inner_agent(request, context, response_event_stream, tracker, cancellation_signal)
 
             async for event in inner:
-                if context.shutdown.is_set():
-                    # Cooperative exit on shutdown: defer to crash recovery when durable.
-                    for event in tracker.close():
-                        yield event
-                    # This statement only takes effect when `resilient_background=True`.
-                    await context.exit_for_recovery()
-                    break
-                if cancellation_signal.is_set():
-                    # Cooperative exit on cancellation (steering pressure or client cancel).
-                    try:
-                        for event in tracker.close():
-                            yield event
-                    except Exception:
-                        logger.debug("Error closing tracker on cancellation", exc_info=True)
-                    logger.debug(
-                        "Workflow response handler exiting early: %s",
-                        "client cancelled" if context.client_cancelled else "steering pressure",
-                    )
-                    yield response_event_stream.emit_completed()
-                    break
-
                 yield event
 
-            # Close any remaining active builder
+            # Stop only between complete agent updates. Interrupting the event
+            # sequence for one update can leave an output builder half-open.
             for event in tracker.close():
                 yield event
+            if context.shutdown.is_set():
+                # This only returns control to recovery when resilient background
+                # execution is active; otherwise AgentServer raises an error.
+                await context.exit_for_recovery()
+            if cancellation_signal.is_set():
+                logger.debug(
+                    "Workflow response handler exiting early: %s",
+                    "client cancelled" if context.client_cancelled else "steering pressure",
+                )
+                yield response_event_stream.emit_completed()
+                return
+
             yield response_event_stream.emit_completed()
         except Exception as ex:
             logger.exception("Failed to produce response")
@@ -929,7 +873,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 builder = response_event_stream.add_output_item(oauth_item.id)
                 yield builder.emit_added(oauth_item)
                 yield builder.emit_done(oauth_item)
-            yield response_event_stream.emit_completed()
             return
 
         async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
@@ -944,6 +887,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     ):
                         yield item
                     tracker.needs_async = False
+            if cancellation_signal.is_set() or context.shutdown.is_set():
+                return
 
     async def _handle_inner_workflow(
         self,
@@ -1015,14 +960,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 )
                 async for event in self._drive_workflow_stream(
                     restore_stream,
-                    checkpoint_execution.synchronizer,
+                    checkpoint_execution.publisher,
                     response_event_stream,
                     tracker,
                     approval_storage,
+                    cancellation_signal,
+                    context.shutdown,
                     forward_updates=False,
-                    close_synchronizer_on_completion=False,
                 ):
                     yield event
+                if cancellation_signal.is_set() or context.shutdown.is_set():
+                    return
 
             run_stream = self._agent.run(
                 input_messages,
@@ -1032,10 +980,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         async for event in self._drive_workflow_stream(
             run_stream,
-            checkpoint_execution.synchronizer,
+            checkpoint_execution.publisher,
             response_event_stream,
             tracker,
             approval_storage,
+            cancellation_signal,
+            context.shutdown,
         ):
             yield event
 
@@ -1044,7 +994,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         response_id: str,
         checkpoint_execution: _WorkflowCheckpointExecution,
     ) -> AsyncIterable[AgentResponseUpdate]:
-        """Resume current-turn workflow work without discarding its output events."""
+        """Resume current-turn workflow work without discarding its output events.
+
+        ``WorkflowAgent.run(checkpoint_id=...)`` consumes restored workflow
+        events internally. Recovery must forward those events because they can
+        contain response output produced after the last persisted snapshot.
+        """
         if not isinstance(self._agent, WorkflowAgent):
             raise RuntimeError("Agent is not a workflow agent.")
         if checkpoint_execution.restore_checkpoint_id is None or checkpoint_execution.restore_storage is None:
@@ -1064,49 +1019,52 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     async def _drive_workflow_stream(
         self,
         run_stream: AsyncIterable[AgentResponseUpdate],
-        synchronizer: _WorkflowCheckpointSynchronizer,
+        publisher: _WorkflowCheckpointPublisher,
         response_event_stream: ResponseEventStream,
         tracker: _OutputItemTracker,
         approval_storage: ApprovalStorage,
+        cancellation_signal: asyncio.Event,
+        shutdown_signal: asyncio.Event,
         *,
         forward_updates: bool = True,
-        close_synchronizer_on_completion: bool = True,
     ) -> AsyncIterable[ResponseStreamEvent]:
-        """Drive workflow updates while yielding checkpoint control events with backpressure."""
+        """Drive workflow updates and publish queued checkpoint references."""
         iterator = run_stream.__aiter__()
 
         async def _next_update() -> AgentResponseUpdate:
             return await anext(iterator)
 
-        update_task: asyncio.Task[AgentResponseUpdate] = asyncio.create_task(_next_update())
-        checkpoint_task: asyncio.Task[_PendingResponseCheckpoint] = asyncio.create_task(synchronizer.next_pending())
-        completed = False
+        update_task: asyncio.Task[AgentResponseUpdate] | None = asyncio.create_task(_next_update())
+        checkpoint_task = asyncio.create_task(publisher.next_pending())
 
         try:
             while True:
-                wait_tasks: set[asyncio.Task[Any]] = {
-                    cast(asyncio.Task[Any], update_task),
-                    cast(asyncio.Task[Any], checkpoint_task),
-                }
+                wait_tasks: set[asyncio.Task[Any]] = {cast(asyncio.Task[Any], checkpoint_task)}
+                if update_task is not None:
+                    wait_tasks.add(cast(asyncio.Task[Any], update_task))
                 done, _ = await asyncio.wait(
                     wait_tasks,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
-                # A completed workflow checkpoint must be persisted before the
-                # workflow is allowed to advance into the next superstep.
+                # Checkpoints are published before a later workflow update can be
+                # consumed, preserving the workflow stream's save ordering.
                 if checkpoint_task in done:
-                    pending = checkpoint_task.result()
-                    yield cast(ResponseStreamEvent, pending.event)
-                    synchronizer.acknowledge(pending)
-                    checkpoint_task = asyncio.create_task(synchronizer.next_pending())
+                    reference = checkpoint_task.result()
+                    if reference is None:
+                        break
+                    yield cast(ResponseStreamEvent, publisher.checkpoint_event(reference))
+                    checkpoint_task = asyncio.create_task(publisher.next_pending())
                     continue
 
                 try:
-                    update = update_task.result()
+                    update = cast(asyncio.Task[AgentResponseUpdate], update_task).result()
                 except StopAsyncIteration:
-                    completed = True
-                    break
+                    update_task = None
+                    # Drain every checkpoint published by the completed workflow
+                    # before allowing the response to emit its terminal event.
+                    publisher.finish_run()
+                    continue
 
                 if forward_updates:
                     for content in update.contents:
@@ -1120,24 +1078,23 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             ):
                                 yield item
                             tracker.needs_async = False
+                if cancellation_signal.is_set() or shutdown_signal.is_set():
+                    return
 
                 update_task = asyncio.create_task(_next_update())
         finally:
-            if close_synchronizer_on_completion or not completed:
-                cancellation_error = RuntimeError("Workflow response stream stopped before checkpoint acknowledgement.")
-                synchronizer.close(cancellation_error)
-            for task in (update_task, checkpoint_task):
-                if not task.done():
-                    task.cancel()
-            for task in (update_task, checkpoint_task):
-                with suppress(asyncio.CancelledError, StopAsyncIteration):
+            pending_tasks = [task for task in (update_task, checkpoint_task) if task is not None and not task.done()]
+            for task in pending_tasks:
+                task.cancel()
+            for task in pending_tasks:
+                with suppress(asyncio.CancelledError):
                     await task
 
     def _get_checkpoint_storage(
         self,
         context_id: str,
         user_id: str | None,
-        synchronizer: _WorkflowCheckpointSynchronizer,
+        publisher: _WorkflowCheckpointPublisher,
         *,
         reference_kind: Literal["base", "current"],
     ) -> CheckpointStorage:
@@ -1169,7 +1126,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 cached = InMemoryCheckpointStorage()
                 self._checkpoint_storages_by_key[key] = cached
             inner = cached
-        return _ContextAwareCheckpointStorage(inner, synchronizer, context_id, reference_kind)
+        return _ContextAwareCheckpointStorage(inner, publisher, context_id, reference_kind)
 
     async def _prepare_workflow_checkpoint_execution(
         self,
@@ -1224,13 +1181,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # the current response so the next turn can reference it.
         prior_context_id = request.previous_response_id or context.conversation_id
         write_context_id = context.conversation_id or context.response_id
-        synchronizer = _WorkflowCheckpointSynchronizer(response_event_stream)
+        publisher = _WorkflowCheckpointPublisher(response_event_stream)
 
         persisted_reference: _WorkflowCheckpointReference | None = None
         if context.is_recovery:
             # Crash recovery must use the checkpoint named by the persisted
             # response snapshot, not whichever checkpoint happens to be newest.
-            persisted_reference = synchronizer.get_persisted_reference(
+            persisted_reference = publisher.get_persisted_reference(
                 fallback_context_id=write_context_id,
             )
 
@@ -1246,7 +1203,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             restore_storage = self._get_checkpoint_storage(
                 persisted_reference.context_id,
                 user_id,
-                synchronizer,
+                publisher,
                 reference_kind=persisted_reference.kind,
             )
             resume_current_turn = persisted_reference.kind == "current"
@@ -1256,7 +1213,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             restore_storage = self._get_checkpoint_storage(
                 prior_context_id,
                 user_id,
-                synchronizer,
+                publisher,
                 reference_kind="base",
             )
             latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
@@ -1280,7 +1237,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             restore_storage = self._get_checkpoint_storage(
                 request.previous_response_id,
                 user_id,
-                synchronizer,
+                publisher,
                 reference_kind="base",
             )
             latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
@@ -1295,14 +1252,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         if not context.is_recovery:
             # Persist the selected prior boundary in the initial response
             # snapshot, covering a crash before this turn writes a checkpoint.
-            synchronizer.seed(persisted_reference)
+            publisher.seed(persisted_reference)
 
         # Every checkpoint created after this request starts is a current-turn
         # boundary and must be written where this response can recover it.
         write_storage = self._get_checkpoint_storage(
             write_context_id,
             user_id,
-            synchronizer,
+            publisher,
             reference_kind="current",
         )
         return _WorkflowCheckpointExecution(
@@ -1310,7 +1267,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             restore_checkpoint_id=restore_checkpoint_id,
             write_storage=write_storage,
             resume_current_turn=resume_current_turn,
-            synchronizer=synchronizer,
+            publisher=publisher,
         )
 
     @staticmethod
@@ -1622,7 +1579,14 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         fc = cast(ItemFunctionToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(fc.call_id, fc.name, arguments=fc.arguments)],
+            contents=[
+                Content.from_function_call(
+                    fc.call_id,
+                    fc.name,
+                    arguments=fc.arguments,
+                    informational_only=True,
+                )
+            ],
         )
 
     if item.type == "function_call_output":
@@ -1765,6 +1729,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
                     fs.id,
                     "file_search",
                     arguments=json.dumps({"queries": fs.queries}),
+                    informational_only=True,
                 )
             ],
         )
@@ -1773,7 +1738,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         ws = cast(ItemWebSearchToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(ws.id, "web_search")],
+            contents=[Content.from_function_call(ws.id, "web_search", informational_only=True)],
         )
 
     if item.type == "computer_call":
@@ -1785,6 +1750,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
                     cc.call_id,
                     "computer_use",
                     arguments=str(cc.action),
+                    informational_only=True,
                 )
             ],
         )
@@ -1800,7 +1766,14 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         ct = cast(ItemCustomToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(ct.call_id, ct.name, arguments=ct.input)],
+            contents=[
+                Content.from_function_call(
+                    ct.call_id,
+                    ct.name,
+                    arguments=ct.input,
+                    informational_only=True,
+                )
+            ],
         )
 
     if item.type == "custom_tool_call_output":
@@ -1832,6 +1805,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
                     ap.call_id,
                     "apply_patch",
                     arguments=str(ap.operation),
+                    informational_only=True,
                 )
             ],
         )
@@ -1899,7 +1873,14 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         fc = cast(OutputItemFunctionToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(fc.call_id, fc.name, arguments=fc.arguments)],
+            contents=[
+                Content.from_function_call(
+                    fc.call_id,
+                    fc.name,
+                    arguments=fc.arguments,
+                    informational_only=True,
+                )
+            ],
         )
 
     if item.type == "function_call_output":
@@ -2043,6 +2024,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
                     fs.id,
                     "file_search",
                     arguments=json.dumps({"queries": fs.queries}),
+                    informational_only=True,
                 )
             ],
         )
@@ -2051,7 +2033,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         ws = cast(OutputItemWebSearchToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(ws.id, "web_search")],
+            contents=[Content.from_function_call(ws.id, "web_search", informational_only=True)],
         )
 
     if item.type == "computer_call":
@@ -2063,6 +2045,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
                     cc.call_id,
                     "computer_use",
                     arguments=str(cc.action),
+                    informational_only=True,
                 )
             ],
         )
@@ -2078,7 +2061,14 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         ct = cast(OutputItemCustomToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(ct.call_id, ct.name, arguments=ct.input)],
+            contents=[
+                Content.from_function_call(
+                    ct.call_id,
+                    ct.name,
+                    arguments=ct.input,
+                    informational_only=True,
+                )
+            ],
         )
 
     if item.type == "custom_tool_call_output":
@@ -2108,6 +2098,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
                     ap.call_id,
                     "apply_patch",
                     arguments=str(ap.operation),
+                    informational_only=True,
                 )
             ],
         )
