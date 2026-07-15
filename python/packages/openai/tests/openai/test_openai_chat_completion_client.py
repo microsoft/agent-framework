@@ -2513,4 +2513,172 @@ def test_reasoning_details_takes_priority_over_reasoning_field(
     assert reasoning_contents[0].text == "From reasoning_details."
 
 
+def test_reasoning_field_records_source_provenance(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Reasoning surfaced from a top-level field records which field it came from."""
+    client = OpenAIChatCompletionClient()
+
+    message = ChatCompletionMessage.model_construct(
+        role="assistant",
+        content="Answer.",
+        reasoning="Thinking...",
+    )
+    mock_response = ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model="vllm-model",
+        choices=[Choice(index=0, message=message, finish_reason="stop")],
+    )
+
+    response = client._parse_response_from_openai(mock_response, {})
+
+    reasoning_contents = [c for c in response.messages[0].contents if c.type == "text_reasoning"]
+    assert len(reasoning_contents) == 1
+    assert reasoning_contents[0].additional_properties.get("_reasoning_source_field") == "reasoning"
+
+
+def test_reasoning_field_roundtrips_under_source_key(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Plaintext reasoning echoes back under the originating `reasoning` field (issue #7028 comment)."""
+    client = OpenAIChatCompletionClient()
+
+    message = ChatCompletionMessage.model_construct(
+        role="assistant",
+        content="The answer is 42.",
+        reasoning="I reasoned about this...",
+    )
+    mock_response = ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model="vllm-model",
+        choices=[Choice(index=0, message=message, finish_reason="stop")],
+    )
+
+    parsed = client._parse_response_from_openai(mock_response, {})
+
+    prepared = client._prepare_message_for_openai(parsed.messages[0])
+    # A single assistant message carrying both the answer and the reasoning echoed back
+    # under its original key (not replayed as visible answer text).
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "assistant"
+    assert prepared[0]["content"] == "The answer is 42."
+    assert prepared[0]["reasoning"] == "I reasoned about this..."
+
+
+def test_reasoning_content_field_roundtrips_under_source_key(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Plaintext reasoning echoes back under the originating `reasoning_content` field."""
+    client = OpenAIChatCompletionClient()
+
+    message = ChatCompletionMessage.model_construct(
+        role="assistant",
+        content="Done.",
+        reasoning_content="Step-by-step trace.",
+    )
+    mock_response = ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model="vllm-model",
+        choices=[Choice(index=0, message=message, finish_reason="stop")],
+    )
+
+    parsed = client._parse_response_from_openai(mock_response, {})
+
+    prepared = client._prepare_message_for_openai(parsed.messages[0])
+    assert len(prepared) == 1
+    assert prepared[0]["content"] == "Done."
+    assert prepared[0]["reasoning_content"] == "Step-by-step trace."
+    assert "reasoning" not in prepared[0]
+
+
+def test_reasoning_field_only_roundtrips_as_standalone_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Reasoning with no accompanying answer still round-trips under its source key."""
+    client = OpenAIChatCompletionClient()
+
+    reasoning_content = Content.from_text_reasoning(
+        text="Only reasoning here.",
+        additional_properties={"_reasoning_source_field": "reasoning"},
+    )
+    message = Message(role="assistant", contents=[reasoning_content])
+
+    prepared = client._prepare_message_for_openai(message)
+    assert len(prepared) == 1
+    assert prepared[0]["reasoning"] == "Only reasoning here."
+    assert prepared[0]["content"] == ""
+
+
+def test_chunked_content_text_first_roundtrips_as_single_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """A chunk list whose first item is `text` still round-trips as one structured message.
+
+    Regression for the case where the ``_source_content_list`` marker lands on a ``text``
+    Content instead of a ``text_reasoning`` one (issue #7028 comment).
+    """
+    client = OpenAIChatCompletionClient()
+
+    # Text chunk before the thinking chunk => results[0] is a `text` Content.
+    chunked_content = [
+        {"type": "text", "text": "The answer is 42."},
+        {"type": "thinking", "thinking": [{"type": "text", "text": "Let me reason..."}]},
+    ]
+    message = ChatCompletionMessage.model_construct(role="assistant", content=cast(Any, chunked_content))
+    mock_response = ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model="mistral-medium-latest",
+        choices=[Choice(index=0, message=message, finish_reason="stop")],
+    )
+
+    parsed = client._parse_response_from_openai(mock_response, {})
+    msg = parsed.messages[0]
+    # First emitted content is `text`; the source-list marker sits on it.
+    assert msg.contents[0].type == "text"
+    assert "_source_content_list" in msg.contents[0].additional_properties
+
+    prepared = client._prepare_message_for_openai(msg)
+    assert len(prepared) == 1
+    assert prepared[0]["content"] == chunked_content
+
+
+def test_chunked_content_does_not_drop_unrelated_siblings(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Only the chunk list's own siblings are collapsed; unrelated content is preserved."""
+    client = OpenAIChatCompletionClient()
+
+    chunked_content = [
+        {"type": "thinking", "thinking": "Reasoning..."},
+        {"type": "text", "text": "Structured answer."},
+    ]
+    message = ChatCompletionMessage.model_construct(role="assistant", content=cast(Any, chunked_content))
+    mock_response = ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model="mistral-medium-latest",
+        choices=[Choice(index=0, message=message, finish_reason="stop")],
+    )
+    parsed = client._parse_response_from_openai(mock_response, {})
+
+    # Append an unrelated plain-text content that is NOT part of the chunked group.
+    unrelated = Content.from_text(text="Separate note.")
+    combined = Message(role="assistant", contents=[*parsed.messages[0].contents, unrelated])
+
+    prepared = client._prepare_message_for_openai(combined)
+    # One message for the structured chunk list, one for the unrelated content.
+    assert len(prepared) == 2
+    assert prepared[0]["content"] == chunked_content
+    assert prepared[1]["content"] == "Separate note."
+
+
 # endregion
