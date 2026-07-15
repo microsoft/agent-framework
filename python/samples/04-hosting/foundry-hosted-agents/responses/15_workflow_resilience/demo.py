@@ -15,13 +15,16 @@ Server and telemetry output is written to an isolated diagnostic log instead
 of the console. The temporary state is removed after a successful run.
 
 Usage:
-    uv run python demo.py
+    .venv-preview/Scripts/python.exe demo.py  # Windows
+    .venv-preview/bin/python demo.py          # macOS/Linux
 
-Prerequisites: none. No external services, model deployments, or credentials
-are required -- the whole pipeline is local and deterministic.
+No external services, model deployments, or credentials are required. The
+private preview Agent Framework and AgentServer wheels must be installed as
+described in README.md.
 """
 
 import asyncio
+import inspect
 import json
 import os
 import shutil
@@ -43,6 +46,18 @@ _STAGES = ("ingest", "transform", "validate", "finalize")
 # Allow the host to durably record a completed stage before interrupting the
 # following stage.
 _KILL_GRACE_SECONDS = 2.0
+
+
+def _require_private_preview() -> None:
+    """Fail before starting a child process when the public AgentServer build is installed."""
+    from azure.ai.agentserver.responses import ResponsesServerOptions
+
+    if "resilient_background" not in inspect.signature(ResponsesServerOptions).parameters:
+        raise RuntimeError(
+            "This interpreter does not contain the private AgentServer durability preview: "
+            f"{sys.executable}. Follow the README.md private preview wheel setup, then run "
+            "the demo with .venv-preview's Python directly. Do not use `uv run` without `--no-sync`."
+        )
 
 
 async def _wait_for_server(base_url: str, timeout: float = 30) -> bool:
@@ -121,6 +136,7 @@ def _read_audit(state_dir: Path) -> list[dict[str, Any]]:
 
 async def demo() -> None:
     """Run the customer-facing durability demonstration."""
+    _require_private_preview()
     state_dir = Path(tempfile.mkdtemp(prefix="workflow_resilience_demo_"))
     markers_dir = state_dir / "markers"
     stage_delay_seconds = 4.0
