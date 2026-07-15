@@ -106,17 +106,23 @@ class TestUrlBuilders:
         assert _routes.build_workflow_status_url("https://h", "wf", "i", prefix="") == "https://h/workflow/wf/status/i"
 
 
-class TestStripRoutePrefix:
-    """Deriving the base URL from a request URL honors the configured prefix."""
+class TestSplitRequestUrl:
+    """Deriving base URL and route prefix from an incoming request URL."""
 
     def test_default_prefix(self) -> None:
-        assert _routes.strip_route_prefix("https://h:7071/api/workflow/wf/run", prefix="api") == "https://h:7071"
+        assert _routes.split_request_url("https://h:7071/api/workflow/wf/run") == ("https://h:7071", "api")
 
     def test_custom_prefix(self) -> None:
-        assert _routes.strip_route_prefix("https://h/gw/workflow/wf/status/i", prefix="gw") == "https://h"
+        assert _routes.split_request_url("https://h/gw/workflow/wf/status/i") == ("https://h", "gw")
 
-    def test_empty_prefix_splits_on_workflow(self) -> None:
-        assert _routes.strip_route_prefix("https://h/workflow/wf/run", prefix="") == "https://h"
+    def test_empty_prefix(self) -> None:
+        assert _routes.split_request_url("https://h/workflow/wf/run") == ("https://h", "")
 
-    def test_marker_absent_falls_back_to_request_url(self) -> None:
-        assert _routes.strip_route_prefix("https://h/other/path", prefix="api") == "https://h/other/path"
+    def test_multi_segment_prefix(self) -> None:
+        assert _routes.split_request_url("https://h/a/b/workflow/wf/run") == ("https://h", "a/b")
+
+    def test_no_workflow_segment(self) -> None:
+        assert _routes.split_request_url("https://h/api/health") == ("https://h", "")
+
+    def test_non_absolute_falls_back(self) -> None:
+        assert _routes.split_request_url("/api/workflow/wf/run") == ("/api/workflow/wf/run", "")

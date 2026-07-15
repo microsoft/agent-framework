@@ -3,11 +3,13 @@
 """Single source of truth for the AgentFunctionApp HTTP route prefix and HITL URLs.
 
 The server endpoints (:mod:`._app`) and the in-workflow addressing helper
-(:mod:`._hitl_context`) build the same ``{prefix}/workflow/{name}/...`` URLs. Keeping
-that shape and the route prefix in one place stops the producer and consumer from
-drifting -- previously they were only kept in sync by an integration test asserting the
-two strings match -- and lets a customized ``routePrefix`` in ``host.json`` be honored
-everywhere instead of a hardcoded ``api`` that would 404 on resume.
+(:mod:`._hitl_context`) build the same ``{prefix}/workflow/{name}/...`` URLs. Keeping the
+shape and the prefix logic here stops the two sides from drifting -- previously they were
+only kept in sync by an integration test asserting the two strings match -- and lets a
+customized ``routePrefix`` be honored instead of a hardcoded ``api`` that would 404 on
+resume. The server derives the prefix from the incoming request URL (the value the host
+actually routed); the helper, which runs inside an executor with no request context,
+reads it from ``host.json``.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import json
 import logging
 import os
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -96,17 +99,19 @@ def build_workflow_status_url(
     return f"{base_url}/{_prefix_segment(prefix)}workflow/{workflow_name}/status/{instance_id}"
 
 
-def strip_route_prefix(request_url: str, *, prefix: str | None = None) -> str:
-    """Return the base URL (scheme + host) from a full request URL.
+def split_request_url(request_url: str) -> tuple[str, str]:
+    """Return ``(base_url, route_prefix)`` derived from an incoming request URL.
 
-    Splits the incoming request URL on the route-prefix segment (``/{prefix}/``) so it
-    honors a customized ``routePrefix``. When the prefix is empty the routes live directly
-    under the host, so it splits on the first ``/workflow/`` segment instead. Falls back to
-    the request URL without a trailing slash when neither marker is present.
+    On the server the request URL is the authoritative source for the prefix, since the
+    host served it through the configured ``routePrefix``. The scheme and host form the
+    base URL, and the path before the first ``/workflow/`` segment is the prefix (empty
+    when the routes sit directly under the host). Falls back to ``(request_url, "")`` when
+    the value is not an absolute URL.
     """
-    resolved = route_prefix() if prefix is None else prefix.strip("/")
-    marker = f"/{resolved}/" if resolved else "/workflow/"
-    base_url, separator, _ = request_url.partition(marker)
-    if not separator or not base_url:
-        return request_url.rstrip("/")
-    return base_url
+    parts = urlsplit(request_url)
+    if not (parts.scheme and parts.netloc):
+        return request_url.rstrip("/"), ""
+    base_url = f"{parts.scheme}://{parts.netloc}"
+    index = parts.path.find("/workflow/")
+    prefix = parts.path[:index].strip("/") if index != -1 else ""
+    return base_url, prefix
