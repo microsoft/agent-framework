@@ -10,10 +10,12 @@
 # are. The toolbox is effectively skills-only from the agent's perspective.
 #
 # The skills referenced below must already exist in the same Foundry project —
-# create them first from the bundled skills/ folder:
+# create them first from the bundled skills/ folder (support-style as a single
+# SKILL.md; escalation-policy zipped as an archive so its resource ships too):
 #
-#   azd ai skill create support-style     --file ./skills/support-style/SKILL.md     --no-prompt
-#   azd ai skill create escalation-policy --file ./skills/escalation-policy/SKILL.md --no-prompt
+#   azd ai skill create support-style --file ./skills/support-style/SKILL.md --no-prompt
+#   Compress-Archive -Path skills\escalation-policy\* -DestinationPath escalation-policy.zip -Force
+#   azd ai skill create escalation-policy --file ./escalation-policy.zip --no-prompt
 #
 # Then create the toolbox once from this file:
 #

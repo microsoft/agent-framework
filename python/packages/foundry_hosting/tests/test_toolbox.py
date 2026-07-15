@@ -217,8 +217,9 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     captured: dict[str, object] = {}
 
     class _StubSkillsSource:
-        def __init__(self, *, client: object) -> None:
+        def __init__(self, *, client: object, **kwargs: object) -> None:
             captured["client"] = client
+            captured["kwargs"] = kwargs
 
         async def get_skills(self, context: SkillsSourceContext) -> list[str]:
             return ["skill-a"]
@@ -229,3 +230,53 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
 
     assert result == ["skill-a"]
     assert captured["client"] is sentinel_session
+    # No archive options set -> MCPSkillsSource is constructed with defaults.
+    assert captured["kwargs"] == {}
+
+
+async def test_skills_source_forwards_archive_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/tb/mcp",
+    )
+    toolbox.session = object()  # type: ignore
+
+    captured: dict[str, object] = {}
+
+    class _StubSkillsSource:
+        def __init__(self, *, client: object, **kwargs: object) -> None:
+            captured["kwargs"] = kwargs
+
+        async def get_skills(self, context: SkillsSourceContext) -> list[str]:
+            return []
+
+    monkeypatch.setattr("agent_framework_foundry_hosting._toolbox.MCPSkillsSource", _StubSkillsSource)
+
+    source = _FoundryToolboxSkillsSource(
+        toolbox,
+        archive_options={"archive_skills_directory": "/tmp/skills", "archive_max_file_count": 5},
+    )
+    await source.get_skills(_source_context())
+
+    # Only the explicitly-set archive options are forwarded to MCPSkillsSource.
+    assert captured["kwargs"] == {"archive_skills_directory": "/tmp/skills", "archive_max_file_count": 5}
+
+
+def test_as_skills_provider_forwards_only_set_archive_options() -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/tb/mcp",
+    )
+    # Unset archive kwargs are not forwarded (fall back to MCPSkillsSource defaults);
+    # set ones are collected for forwarding.
+    default_provider = toolbox.as_skills_provider()
+    assert default_provider._source._archive_options == {}  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue, reportPrivateUsage]
+
+    provider = toolbox.as_skills_provider(
+        archive_skills_directory="/tmp/skills",
+        archive_resource_search_depth=1,
+    )
+    assert provider._source._archive_options == {  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue, reportPrivateUsage]
+        "archive_skills_directory": "/tmp/skills",
+        "archive_resource_search_depth": 1,
+    }

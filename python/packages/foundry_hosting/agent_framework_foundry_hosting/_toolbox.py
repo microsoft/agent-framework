@@ -19,6 +19,8 @@ from azure.ai.agentserver.core import get_request_context
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+    from pathlib import Path
+    from typing import Any
 
     from agent_framework import Skill
     from azure.core.credentials import TokenCredential
@@ -198,6 +200,12 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         disable_load_skill_approval: bool = False,
         disable_read_skill_resource_approval: bool = False,
         disable_run_skill_script_approval: bool = False,
+        archive_skills_directory: str | Path | None = None,
+        archive_resource_extensions: tuple[str, ...] | None = None,
+        archive_resource_search_depth: int | None = None,
+        archive_max_file_count: int | None = None,
+        archive_max_size_bytes: int | None = None,
+        archive_max_uncompressed_size_bytes: int | None = None,
     ) -> SkillsProvider:
         """Return a :class:`~agent_framework.SkillsProvider` backed by this toolbox.
 
@@ -210,6 +218,12 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         happens lazily on the first agent run). Connect it by passing the toolbox to
         the agent via ``tools=`` -- set ``load_tools=False`` if you want skills only
         and no tools -- or by entering it as an ``async with`` context manager.
+
+        Skills served as ``archive`` entries (a packaged ZIP / TAR) are downloaded and
+        extracted to a local directory, then served like file-based skills. The
+        ``archive_*`` keyword arguments configure that behavior; see
+        :class:`~agent_framework.MCPSkillsSource` for their full semantics. Any left
+        as ``None`` fall back to the ``MCPSkillsSource`` defaults.
 
         Keyword Args:
             source_id: Unique identifier for the provider instance.
@@ -225,10 +239,29 @@ class FoundryToolbox(MCPStreamableHTTPTool):
                 cannot satisfy the default approval flow). Defaults to ``False``.
             disable_read_skill_resource_approval: When ``True``, register the
                 provider's ``read_skill_resource`` tool with
-                ``approval_mode="never_require"``. Defaults to ``False``.
+                ``approval_mode="never_require"``. Set this alongside
+                ``disable_load_skill_approval`` for an unattended agent that reads
+                archive-skill resources. Defaults to ``False``.
             disable_run_skill_script_approval: When ``True``, register the provider's
                 ``run_skill_script`` tool with ``approval_mode="never_require"``.
                 Defaults to ``False``.
+            archive_skills_directory: Base directory that ``archive``-type skills are
+                extracted to and served from. When ``None``, a per-instance unique
+                directory under the current working directory is used. Set this to a
+                writable location (for example, a temp directory) when the working
+                directory may be read-only, such as a hosted container.
+            archive_resource_extensions: Allowed file extensions for resources
+                discovered in extracted archive skills. ``None`` uses the default set.
+            archive_resource_search_depth: Maximum depth to search for resource files
+                within each extracted archive skill directory. ``None`` uses the
+                default.
+            archive_max_file_count: Maximum number of files that may be extracted from
+                a single archive skill (DoS guard). ``None`` uses the default.
+            archive_max_size_bytes: Maximum size, in bytes, of a downloaded archive
+                skill resource. ``None`` uses the default.
+            archive_max_uncompressed_size_bytes: Maximum total uncompressed size, in
+                bytes, of all files extracted from a single archive skill
+                (decompression-bomb guard). ``None`` uses the default.
 
         Returns:
             A :class:`~agent_framework.SkillsProvider` that advertises and loads the
@@ -250,8 +283,24 @@ class FoundryToolbox(MCPStreamableHTTPTool):
                 )
                 await ResponsesHostServer(agent).run_async()
         """
+        # Forward only explicitly-set archive options so unset ones fall back to the
+        # MCPSkillsSource defaults (avoids duplicating those defaults here).
+        archive_options: dict[str, Any] = {}
+        if archive_skills_directory is not None:
+            archive_options["archive_skills_directory"] = archive_skills_directory
+        if archive_resource_extensions is not None:
+            archive_options["archive_resource_extensions"] = archive_resource_extensions
+        if archive_resource_search_depth is not None:
+            archive_options["archive_resource_search_depth"] = archive_resource_search_depth
+        if archive_max_file_count is not None:
+            archive_options["archive_max_file_count"] = archive_max_file_count
+        if archive_max_size_bytes is not None:
+            archive_options["archive_max_size_bytes"] = archive_max_size_bytes
+        if archive_max_uncompressed_size_bytes is not None:
+            archive_options["archive_max_uncompressed_size_bytes"] = archive_max_uncompressed_size_bytes
+
         return SkillsProvider(
-            _FoundryToolboxSkillsSource(self),
+            _FoundryToolboxSkillsSource(self, archive_options=archive_options),
             source_id=source_id,
             instruction_template=instruction_template,
             disable_caching=disable_caching,
@@ -269,8 +318,10 @@ class _FoundryToolboxSkillsSource(SkillsSource):
     discovery time rather than captured at construction.
     """
 
-    def __init__(self, toolbox: FoundryToolbox) -> None:
+    def __init__(self, toolbox: FoundryToolbox, *, archive_options: dict[str, Any] | None = None) -> None:
         self._toolbox = toolbox
+        # Explicitly-set MCPSkillsSource archive kwargs; empty means use its defaults.
+        self._archive_options: dict[str, Any] = archive_options or {}
 
     async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         session = self._toolbox.session
@@ -280,4 +331,4 @@ class _FoundryToolboxSkillsSource(SkillsSource):
                 "Pass the toolbox to the agent (tools=...) or enter it as an async "
                 "context manager before the agent runs."
             )
-        return await MCPSkillsSource(client=session).get_skills(context)
+        return await MCPSkillsSource(client=session, **self._archive_options).get_skills(context)
