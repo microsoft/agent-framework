@@ -140,11 +140,6 @@ internal sealed class WorkflowModel<TCondition> where TCondition : class
         return null;
     }
 
-    /// <summary>
-    /// Finds all non-discrete parent actions that need completion events raised.
-    /// These are actions that rely on their Post step to raise completion events
-    /// (e.g., ConditionGroupExecutor, ForeachExecutor).
-    /// </summary>
     public IEnumerable<TAction> LocateNonDiscreteAncestors<TAction>(string? itemId) where TAction : class, IModeledAction
     {
         if (string.IsNullOrEmpty(itemId))
@@ -152,7 +147,6 @@ internal sealed class WorkflowModel<TCondition> where TCondition : class
             yield break;
         }
 
-        // Get the starting node and move to its parent first (don't include the starting node)
         if (!this.Nodes.TryGetValue(itemId, out ModelNode? startNode))
         {
             yield break;
@@ -167,19 +161,11 @@ internal sealed class WorkflowModel<TCondition> where TCondition : class
                 yield break;
             }
 
-            // Check if this is a non-discrete action type that needs completion events
-            // (actions that rely on Post step for completion, not HandleAsync finally block)
             if (itemNode.Action is TAction nonDiscreteAction)
             {
                 Type actionType = nonDiscreteAction.GetType();
-                Type? baseType = actionType.BaseType;
-
-                // ConditionGroupExecutor and ForeachExecutor are non-discrete
-                // They have IsDiscreteAction = false and raise completion in their Post step
-                bool isNonDiscrete = actionType.Name.Contains("ConditionGroupExecutor") ||
-                                    actionType.Name.Contains("ForeachExecutor") ||
-                                    (baseType is not null && (baseType.Name.Contains("ConditionGroupExecutor") ||
-                                                            baseType.Name.Contains("ForeachExecutor")));
+                bool isNonDiscrete = actionType == typeof(Microsoft.Agents.AI.Workflows.Declarative.ObjectModel.ConditionGroupExecutor) ||
+                actionType == typeof(Microsoft.Agents.AI.Workflows.Declarative.ObjectModel.ForeachExecutor);
 
                 if (isNonDiscrete)
                 {

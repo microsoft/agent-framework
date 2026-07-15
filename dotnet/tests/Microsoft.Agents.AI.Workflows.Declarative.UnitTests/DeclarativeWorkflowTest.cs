@@ -91,10 +91,6 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.AssertNotExecuted("sendActivity_3");
     }
 
-    /// <summary>
-    /// Regression test for issue #3743: DeclarativeActionCompletedEvent must be raised
-    /// for parent actions when GotoAction bypasses the default terminal edge.
-    /// </summary>
     [Fact]
     public async Task GotoInsideCondition_RaisesParentCompletionEventAsync()
     {
