@@ -961,6 +961,24 @@ def _prepare_all_tasks(
     return all_tasks, task_metadata_list, remaining_agent_messages
 
 
+def _index_subworkflows(task_metadata_list: list[TaskMetadata]) -> dict[str, list[str]]:
+    """Group dispatched sub-workflow child instance ids by executor id, in dispatch order.
+
+    This is the read-side addressing map the parent publishes to its custom status so the
+    status/respond endpoints can resolve a nested pending request: a request qualified as
+    ``{executorId}~{ordinal}~{bare}`` maps to ``subworkflows[executorId][ordinal]``. That
+    ordinal is the child's position in this list, which must equal the write-side ordinal
+    :func:`_prepare_all_tasks` stamps into the child's request-path prefix. Both derive from
+    the same ``task_metadata_list`` order, so building the map here in one place keeps the
+    two sides from drifting (guarded by ``test_readside_index_matches_dispatch_ordinal``).
+    """
+    subworkflows: dict[str, list[str]] = {}
+    for meta in task_metadata_list:
+        if meta.task_type == TaskType.SUBWORKFLOW and meta.child_instance_id is not None:
+            subworkflows.setdefault(meta.executor_id, []).append(meta.child_instance_id)
+    return subworkflows
+
+
 # ============================================================================
 # Main Orchestrator
 # ============================================================================
@@ -1111,15 +1129,10 @@ def run_workflow_orchestrator(
             logger.debug("Executing %d tasks in parallel (agents + activities)", len(all_tasks))
             # Record dispatched sub-workflow child instance ids before suspending in
             # task_all. While a nested sub-workflow waits for human input, this parent
-            # stays suspended here, so its custom status must already carry the child
-            # ids for the read side to discover and qualify nested pending requests.
-            # Grouped as {executorId: [childInstanceId, ...]} in dispatch order so a
-            # node that dispatches several children this superstep keeps each one
-            # addressable by its ordinal.
-            active_subworkflows: dict[str, list[str]] = {}
-            for meta in task_metadata_list:
-                if meta.task_type == TaskType.SUBWORKFLOW and meta.child_instance_id is not None:
-                    active_subworkflows.setdefault(meta.executor_id, []).append(meta.child_instance_id)
+            # stays suspended here, so its custom status must already carry the child ids
+            # for the read side to discover and qualify nested pending requests (see
+            # _index_subworkflows for the dispatch-order / ordinal addressing contract).
+            active_subworkflows = _index_subworkflows(task_metadata_list)
             if active_subworkflows:
                 publish_live_status("running", subworkflows=active_subworkflows)
             raw_results = yield ctx.task_all(all_tasks)

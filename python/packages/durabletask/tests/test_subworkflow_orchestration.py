@@ -22,8 +22,10 @@ from agent_framework_durabletask._workflows.naming import qualify_subworkflow_re
 from agent_framework_durabletask._workflows.orchestrator import (
     SUBWORKFLOW_ADDRESS_KEY,
     SUBWORKFLOW_INPUT_KEY,
+    TaskMetadata,
     TaskType,
     _coerce_initial_input,
+    _index_subworkflows,
     _prepare_all_tasks,
     _prepare_subworkflow_task,
     _process_subworkflow_result,
@@ -312,10 +314,12 @@ class TestSubworkflowAddressPropagation:
     for the tricky case: one node fanning out to several children in one superstep.
     """
 
-    def _dispatch(self, address: dict[str, str], message_count: int) -> tuple[list[dict[str, str]], list[str]]:
+    def _dispatch(
+        self, address: dict[str, str], message_count: int
+    ) -> tuple[list[dict[str, str]], list[str], list[TaskMetadata]]:
         """Run _prepare_all_tasks for one WorkflowExecutor node fanning out N children.
 
-        Returns (child_addresses, child_instance_ids) in dispatch order.
+        Returns (child_addresses, child_instance_ids, task_metadata) in dispatch order.
         """
         node_id = "review_sub"
         executor = _subworkflow_executor(node_id, "human_review")
@@ -337,11 +341,11 @@ class TestSubworkflowAddressPropagation:
         _all_tasks, task_metadata, _remaining = _prepare_all_tasks(ctx, workflow, pending, None, [0], address)
         child_ids = [m.child_instance_id for m in task_metadata if m.task_type == TaskType.SUBWORKFLOW]
         assert all(cid is not None for cid in child_ids)
-        return captured, [cid for cid in child_ids if cid is not None]
+        return captured, [cid for cid in child_ids if cid is not None], task_metadata
 
     def test_fanout_prefixes_match_readside_qualification(self) -> None:
         top = {"root_instance_id": "root", "root_workflow_name": "moderation_pipeline", "request_path_prefix": ""}
-        addresses, child_ids = self._dispatch(top, message_count=3)
+        addresses, child_ids, _task_metadata = self._dispatch(top, message_count=3)
 
         # Read side: subworkflows["review_sub"] = [child0, child1, child2]; a nested
         # request from child ``ordinal`` is qualified as review_sub~{ordinal}~{bare}.
@@ -364,9 +368,23 @@ class TestSubworkflowAddressPropagation:
             "root_workflow_name": "moderation_pipeline",
             "request_path_prefix": "outer_node~2~",
         }
-        addresses, _child_ids = self._dispatch(nested, message_count=2)
+        addresses, _child_ids, _task_metadata = self._dispatch(nested, message_count=2)
 
         assert [a["request_path_prefix"] for a in addresses] == [
             "outer_node~2~review_sub~0~",
             "outer_node~2~review_sub~1~",
         ]
+
+    def test_readside_index_matches_dispatch_ordinal(self) -> None:
+        # Close the loop through the read-side map the parent actually publishes: a nested
+        # request qualified review_sub~{ordinal}~ must resolve, via subworkflows[executor],
+        # to the same child the dispatch stamped that ordinal onto. Guards the write ordinal
+        # and read index from drifting if task_metadata order or the grouping ever changes.
+        top = {"root_instance_id": "root", "root_workflow_name": "moderation_pipeline", "request_path_prefix": ""}
+        addresses, child_ids, task_metadata = self._dispatch(top, message_count=3)
+
+        subworkflows = _index_subworkflows(task_metadata)
+        assert subworkflows == {"review_sub": child_ids}
+        for ordinal, (child_id, child_address) in enumerate(zip(child_ids, addresses, strict=True)):
+            assert child_address["request_path_prefix"] == qualify_subworkflow_request_id("review_sub", ordinal, "")
+            assert subworkflows["review_sub"][ordinal] == child_id
