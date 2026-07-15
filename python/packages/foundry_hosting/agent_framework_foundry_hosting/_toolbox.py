@@ -9,6 +9,8 @@ from urllib.parse import urlsplit
 
 import httpx
 from agent_framework import (
+    CachingSkillsSource,
+    DeduplicatingSkillsSource,
     MCPSkillsSource,
     MCPStreamableHTTPTool,
     SkillsProvider,
@@ -19,6 +21,7 @@ from azure.ai.agentserver.core import get_request_context
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+    from datetime import timedelta
 
     from agent_framework import Skill
     from azure.core.credentials import TokenCredential
@@ -195,6 +198,7 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         source_id: str | None = None,
         instruction_template: str | None = None,
         disable_caching: bool = False,
+        cache_refresh_interval: timedelta | None = None,
         disable_load_skill_approval: bool = False,
         disable_read_skill_resource_approval: bool = False,
         disable_run_skill_script_approval: bool = False,
@@ -215,8 +219,17 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             source_id: Unique identifier for the provider instance.
             instruction_template: Custom system-prompt template for advertising
                 skills; see :class:`~agent_framework.SkillsProvider`.
-            disable_caching: Re-query the toolbox on every agent run instead of
-                caching after the first discovery.
+            disable_caching: When ``True``, re-query the toolbox on every agent run,
+                re-reading ``skill://index.json`` each time. When ``False`` (the
+                default), the toolbox's skill discovery is cached after the first run
+                so the index is read once. The toolbox's skills are the same for every
+                caller (discovery ignores the per-run :class:`SkillsSourceContext`), so
+                caching them here is safe.
+            cache_refresh_interval: Optional duration after which the cached skill
+                discovery is considered stale and re-read from the toolbox on the next
+                agent run. Useful when a toolbox's attached skills change over the
+                process lifetime. When ``None`` (the default), the cache never expires.
+                Ignored when ``disable_caching=True``.
             disable_load_skill_approval: When ``True``, register the provider's
                 ``load_skill`` tool with ``approval_mode="never_require"`` so loading
                 a skill body needs no host approval. Set this for unattended agents
@@ -250,11 +263,16 @@ class FoundryToolbox(MCPStreamableHTTPTool):
                 )
                 await ResponsesHostServer(agent).run_async()
         """
+        # _FoundryToolboxSkillsSource is context-independent (get_skills ignores the
+        # SkillsSourceContext), so caching it here can't leak skills across callers.
+        # SkillsProvider won't auto-cache a caller source, so we compose it ourselves.
+        source: SkillsSource = _FoundryToolboxSkillsSource(self)
+        if not disable_caching:
+            source = DeduplicatingSkillsSource(CachingSkillsSource(source, refresh_interval=cache_refresh_interval))
         return SkillsProvider(
-            _FoundryToolboxSkillsSource(self),
+            source,
             source_id=source_id,
             instruction_template=instruction_template,
-            disable_caching=disable_caching,
             disable_load_skill_approval=disable_load_skill_approval,
             disable_read_skill_resource_approval=disable_read_skill_resource_approval,
             disable_run_skill_script_approval=disable_run_skill_script_approval,
