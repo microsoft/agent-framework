@@ -22,7 +22,7 @@ import uuid
 import weakref
 from abc import abstractmethod
 from base64 import urlsafe_b64encode
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypeGuard, cast
@@ -64,6 +64,17 @@ def _default_json_dumps(value: Any) -> str:
 
 def _default_json_loads(value: str | bytes) -> Any:
     return json.loads(value)
+
+
+def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[str]:
+    """Return origin session IDs in first-seen order without duplicates."""
+    unique_origin_session_ids: list[str] = []
+    seen_origin_session_ids: set[str] = set()
+    for origin_session_id in origin_session_ids:
+        if origin_session_id not in seen_origin_session_ids:
+            seen_origin_session_ids.add(origin_session_id)
+            unique_origin_session_ids.append(origin_session_id)
+    return unique_origin_session_ids
 
 
 def _is_middleware_sequence(
@@ -230,7 +241,13 @@ class SessionContext:
         """The agent's response. Set by the framework after invocation, read-only for providers."""
         return self._response
 
-    def extend_messages(self, source: str | object, messages: Sequence[Message]) -> None:
+    def extend_messages(
+        self,
+        source: str | object,
+        messages: Sequence[Message],
+        *,
+        origin_session_ids: Sequence[str] | None = None,
+    ) -> None:
         """Add context messages from a specific source.
 
         Messages are copied before attribution is added, so the caller's
@@ -245,19 +262,56 @@ class SessionContext:
                 object is passed, its class name is recorded as
                 ``source_type`` in the attribution.
             messages: The messages to add.
+
+        Keyword Args:
+            origin_session_ids: Optional session IDs that originally produced
+                these messages, when different from the current session. Set
+                by providers that inject content stored under other sessions
+                (cross-session memory). The IDs describe the contributing
+                sessions for every message supplied in this call; they are not
+                positionally paired with messages, and a composed message can
+                have multiple origins. The values are exposed under
+                ``additional_properties["_attribution"]["origin_session_ids"]``
+                so downstream context observers can detect cross-session
+                content for governance, audit, or behavioral-analysis
+                purposes. Omit (default) when content originates in the
+                current session; absence of the field means that no origin
+                information was supplied.
         """
         if isinstance(source, str):
             source_id = source
-            attribution: dict[str, str] = {"source_id": source_id}
+            attribution: dict[str, Any] = {"source_id": source_id}
         else:
             source_id = source.source_id  # type: ignore[attr-defined]
             attribution = {"source_id": source_id, "source_type": type(source).__name__}
+        if origin_session_ids:
+            attribution["origin_session_ids"] = _deduplicate_origin_session_ids(origin_session_ids)
 
         copied: list[Message] = []
         for message in messages:
             msg_copy = copy.copy(message)
             msg_copy.additional_properties = dict(message.additional_properties)
-            msg_copy.additional_properties.setdefault("_attribution", attribution)
+            message_attribution = dict(attribution)
+            if "origin_session_ids" in message_attribution:
+                message_attribution["origin_session_ids"] = list(message_attribution["origin_session_ids"])
+            existing_attribution = msg_copy.additional_properties.get("_attribution")
+            if isinstance(existing_attribution, Mapping):
+                merged_attribution = dict(cast(Mapping[str, Any], existing_attribution))
+                for key, value in message_attribution.items():
+                    if key == "origin_session_ids":
+                        existing_origins = merged_attribution.get(key)
+                        if isinstance(existing_origins, Sequence) and not isinstance(existing_origins, str):
+                            existing_origin_values = cast(Sequence[Any], existing_origins)
+                            value = _deduplicate_origin_session_ids(
+                                [origin for origin in existing_origin_values if isinstance(origin, str)]
+                                + cast(list[str], value)
+                            )
+                        merged_attribution[key] = value
+                    else:
+                        merged_attribution.setdefault(key, value)
+                msg_copy.additional_properties["_attribution"] = merged_attribution
+            else:
+                msg_copy.additional_properties.setdefault("_attribution", message_attribution)
             copied.append(msg_copy)
         if source_id not in self.context_messages:
             self.context_messages[source_id] = []

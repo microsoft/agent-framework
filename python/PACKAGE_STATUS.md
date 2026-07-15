@@ -27,7 +27,7 @@ Status is grouped into these buckets:
 | `agent-framework-claude` | `python/packages/claude` | `beta` |
 | `agent-framework-copilotstudio` | `python/packages/copilotstudio` | `beta` |
 | `agent-framework-core` | `python/packages/core` | `released` |
-| `agent-framework-declarative` | `python/packages/declarative` | `rc` |
+| `agent-framework-declarative` | `python/packages/declarative` | `released` |
 | `agent-framework-devui` | `python/packages/devui` | `beta` |
 | `agent-framework-durabletask` | `python/packages/durabletask` | `beta` |
 | `agent-framework-foundry` | `python/packages/foundry` | `released` |
@@ -36,6 +36,7 @@ Status is grouped into these buckets:
 | `agent-framework-github-copilot` | `python/packages/github_copilot` | `rc` |
 | `agent-framework-hosting` | `python/packages/hosting` | `alpha` |
 | `agent-framework-hosting-responses` | `python/packages/hosting-responses` | `alpha` |
+| `agent-framework-hosting-telegram` | `python/packages/hosting-telegram` | `alpha` |
 | `agent-framework-hyperlight` | `python/packages/hyperlight` | `beta` |
 | `agent-framework-lab` | `python/packages/lab` | `beta` |
 | `agent-framework-mem0` | `python/packages/mem0` | `beta` |

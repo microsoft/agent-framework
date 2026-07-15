@@ -22,7 +22,7 @@ samples (`samples/04-hosting/azure_functions/10_workflow_no_shared_state`).
 
 See the [README.md](../README.md) in the parent directory for environment setup.
 
-This sample uses Azure AI Foundry credentials:
+This sample uses Microsoft Foundry credentials:
 
 - `FOUNDRY_PROJECT_ENDPOINT`
 - `FOUNDRY_MODEL`

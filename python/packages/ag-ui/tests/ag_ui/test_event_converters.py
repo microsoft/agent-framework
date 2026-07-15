@@ -6,6 +6,7 @@ import logging
 from typing import Any, cast
 
 import pytest
+from agent_framework import ChatResponse
 
 from agent_framework_ag_ui._event_converters import AGUIEventConverter
 
@@ -422,3 +423,47 @@ class TestAGUIEventConverter:
         assert len(non_none_updates) == 4
         assert non_none_updates[0].contents[0].name == "search"
         assert non_none_updates[2].contents[0].name == "fetch"
+
+    def test_tool_call_args_must_match_current_tool_call_id(self) -> None:
+        """TOOL_CALL_ARGS for another call must not be rebound to the current tool."""
+        converter = AGUIEventConverter()
+
+        events = [
+            {"type": "TOOL_CALL_START", "toolCallId": "safe", "toolName": "safe_tool"},
+            {"type": "TOOL_CALL_START", "toolCallId": "danger", "toolName": "danger_tool"},
+            {"type": "TOOL_CALL_ARGS", "toolCallId": "safe", "delta": '{"amount": 100}'},
+            {"type": "TOOL_CALL_END", "toolCallId": "safe"},
+            {"type": "TOOL_CALL_END", "toolCallId": "danger"},
+        ]
+
+        updates = [update for event in events if (update := converter.convert_event(event)) is not None]
+        response = ChatResponse.from_updates(updates)
+        function_calls = [
+            (content.call_id, content.name, content.arguments)
+            for message in response.messages
+            for content in message.contents
+            if content.type == "function_call"
+        ]
+
+        assert ("danger", "danger_tool", "") in function_calls
+        assert ("danger", "danger_tool", '{"amount": 100}') not in function_calls
+        assert all(call[2] != '{"amount": 100}' for call in function_calls)
+
+    def test_tool_call_end_must_match_current_tool_call_id(self) -> None:
+        """TOOL_CALL_END for another call must not clear the current call state."""
+        converter = AGUIEventConverter()
+
+        converter.convert_event({"type": "TOOL_CALL_START", "toolCallId": "danger", "toolName": "danger_tool"})
+        converter.convert_event({"type": "TOOL_CALL_ARGS", "toolCallId": "danger", "delta": '{"amount":'})
+        update = converter.convert_event({"type": "TOOL_CALL_END", "toolCallId": "safe"})
+
+        assert update is None
+        assert converter.current_tool_call_id == "danger"
+        assert converter.current_tool_name == "danger_tool"
+        assert converter.accumulated_tool_args == '{"amount":'
+
+        converter.convert_event({"type": "TOOL_CALL_END", "toolCallId": "danger"})
+
+        assert converter.current_tool_call_id is None
+        assert converter.current_tool_name is None
+        assert converter.accumulated_tool_args == ""

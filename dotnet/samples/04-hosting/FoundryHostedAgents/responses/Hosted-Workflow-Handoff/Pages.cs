@@ -119,7 +119,7 @@ internal static class Pages
     </div>
     <div id="chat"></div>
     <form id="form">
-      <input id="input" placeholder="Try: 'What time is it?' or 'Search docs for Azure AI Foundry'" autocomplete="off" autofocus />
+      <input id="input" placeholder="Try: 'What time is it?' or 'Search docs for Microsoft Foundry'" autocomplete="off" autofocus />
       <button type="submit">Send</button>
     </form>
     <div id="status"></div>

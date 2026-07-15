@@ -1803,7 +1803,7 @@ Only load what is needed, when it is needed."""
 
 RESOURCE_INSTRUCTIONS: Final[str] = (
     "- Use `read_skill_resource` to read any referenced resources, using the name exactly as listed\n"
-    '   (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ"` not `"FAQ.md"`).\n'
+    '   (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ.md"` not `"FAQ.md"`).\n'
 )
 
 SCRIPT_RUNNER_INSTRUCTIONS: Final[str] = (
@@ -1969,6 +1969,15 @@ class SkillsProvider(ContextProvider):
         auto-approved, even when their name matches a skill tool, so the rule
         stays scoped to this provider's local tools.
 
+        .. warning::
+            **Security — avoid tool-name collisions.** This rule approves local
+            tool calls by tool name only (``load_skill`` and
+            ``read_skill_resource``). Any other local tool registered under one
+            of these names — for example a tool with a caller-configurable name
+            such as the shell tool — may also be auto-approved, bypassing the
+            human approval boundary. Ensure no other tool collides with these
+            reserved names.
+
         Args:
             function_call: The pending ``function_call`` content.
 
@@ -1996,6 +2005,15 @@ class SkillsProvider(ContextProvider):
         Hosted-tool calls (those carrying a ``server_label``) are never
         auto-approved, even when their name matches a skill tool, so the rule
         stays scoped to this provider's local tools.
+
+        .. warning::
+            **Security — avoid tool-name collisions.** This rule approves local
+            tool calls by tool name only (``load_skill``,
+            ``read_skill_resource``, and ``run_skill_script``). Any other local
+            tool registered under one of these names — for example a tool with a
+            caller-configurable name such as the shell tool — may also be
+            auto-approved, bypassing the human approval boundary. Ensure no other
+            tool collides with these reserved names.
 
         Args:
             function_call: The pending ``function_call`` content.

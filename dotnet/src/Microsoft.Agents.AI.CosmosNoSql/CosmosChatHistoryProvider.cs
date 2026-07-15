@@ -607,7 +607,10 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         [Newtonsoft.Json.JsonProperty("type")]
         public string Type { get; set; } = string.Empty;
 
-        [Newtonsoft.Json.JsonProperty("ttl")]
+        // Omit "ttl" from the document when null so Cosmos DB leaves TTL unset (disabled) instead of
+        // rejecting the write. Cosmos requires ttl to be a positive integer or -1; a literal null is
+        // invalid, so serializing MessageTtlSeconds = null must drop the property entirely.
+        [Newtonsoft.Json.JsonProperty("ttl", NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore)]
         public int? Ttl { get; set; }
 
         /// <summary>

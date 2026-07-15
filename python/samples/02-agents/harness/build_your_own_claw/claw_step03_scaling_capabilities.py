@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "agent-framework",
+#     "agent-framework-foundry",
 #     "agent-framework-tools",
 #     "agent-framework-monty",
 #     "mcp",
@@ -58,9 +58,9 @@ from typing import Annotated, Any, Literal
 
 import httpx
 from agent_framework import (
-    AggregatingSkillsSource,
     Agent,
     AgentModeProvider,
+    AggregatingSkillsSource,
     DeduplicatingSkillsSource,
     FileAccessProvider,
     FileSkillsSource,
@@ -84,7 +84,6 @@ from pydantic import Field
 # subprocess script runner used to execute file-based skill scripts.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from console import build_observers_with_planning, run_agent_async  # noqa: E402
-
 from subprocess_script_runner import subprocess_script_runner  # noqa: E402
 
 _SAMPLE_DIR = Path(__file__).resolve().parent
@@ -156,6 +155,8 @@ def get_stock_price(
         "currency": "USD",
         "as_of": datetime.now(timezone.utc).isoformat(),
     }
+
+
 # </get_stock_price>
 
 
@@ -175,6 +176,8 @@ def place_trade(
     verb = "Sold" if action == "sell" else "Bought"
     confirmation = f"TRADE-{uuid.uuid4().hex[:8].upper()}"
     return f"{verb} {quantity} share(s) of {symbol.upper()}. Confirmation: {confirmation}."
+
+
 # </place_trade>
 
 
@@ -227,6 +230,8 @@ async def _connect_foundry_toolbox(stack: AsyncExitStack, url: str) -> ClientSes
     session = await stack.enter_async_context(ClientSession(read, write))
     await session.initialize()
     return session
+
+
 # </skills>
 
 
@@ -247,6 +252,8 @@ def _build_research_agent(client: FoundryChatClient) -> Any:
             "with no preamble."
         ),
     )
+
+
 # </background>
 
 
@@ -274,6 +281,8 @@ def _build_shell() -> LocalShellTool:
         ),
         timeout=15,
     )
+
+
 # </shell>
 
 

@@ -1,7 +1,7 @@
 name: agent-framework-agent-foundry-memory-responses
 description: >
   An Agent Framework agent with persistent semantic memory backed by an
-  Azure AI Foundry Memory Store. Uses FoundryMemoryProvider to retrieve and
+  Microsoft Foundry Memory Store. Uses FoundryMemoryProvider to retrieve and
   store memories around each model invocation, allowing the agent to remember
   facts about a user across sessions.
 metadata:

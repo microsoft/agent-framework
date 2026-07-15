@@ -139,7 +139,7 @@ patterns like Sequential, Concurrent, Handoff, GroupChat, and Magentic.
 
 Orchestration samples that use `FoundryChatClient` expect:
 
-- `FOUNDRY_PROJECT_ENDPOINT` (Azure AI Foundry Agent Service (V2) project endpoint)
+- `FOUNDRY_PROJECT_ENDPOINT` (Microsoft Foundry Agent Service (V2) project endpoint)
 - `FOUNDRY_MODEL` (model deployment name)
 
 These values are passed directly into the client constructor via `os.getenv()` in sample code.

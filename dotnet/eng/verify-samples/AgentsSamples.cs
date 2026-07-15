@@ -837,7 +837,7 @@ internal static class AgentsSamples
             ProjectPath = "samples/02-agents/Agents/Agent_Step15_DeepResearch",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT", "AZURE_AI_MODEL_DEPLOYMENT_NAME", "AZURE_AI_BING_CONNECTION_ID"],
             OptionalEnvironmentVariables = ["AZURE_AI_REASONING_DEPLOYMENT_NAME"],
-            SkipReason = "Requires Azure AI Foundry project with Bing search connection.",
+            SkipReason = "Requires Microsoft Foundry project with Bing search connection.",
         },
 
         new SampleDefinition

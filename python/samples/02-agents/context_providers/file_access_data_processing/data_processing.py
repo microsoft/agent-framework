@@ -19,7 +19,7 @@ salesperson). The agent is asked, in a single session, to: list available
 files, inspect the data, compute regional totals, and save a markdown summary.
 
 Prerequisites:
-    - ``FOUNDRY_PROJECT_ENDPOINT``: Your Azure AI Foundry project endpoint.
+    - ``FOUNDRY_PROJECT_ENDPOINT``: Your Microsoft Foundry project endpoint.
     - ``FOUNDRY_MODEL``: Chat model deployment name.
     - Run ``az login`` before executing the sample.
 """

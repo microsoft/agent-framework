@@ -9,7 +9,6 @@ from asyncio import sleep
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, MutableMapping, Sequence
 from typing import Any, Literal, cast
 
-from .._feature_stage import ExperimentalFeature, experimental
 from .._middleware import AgentContext, AgentMiddleware
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession
@@ -83,7 +82,6 @@ def _content_to_state(content: Content) -> dict[str, Any]:
     return content.to_dict()
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class ToolApprovalRule(SerializationMixin):
     """A standing rule for approving future matching tool calls."""
 
@@ -156,7 +154,6 @@ class ToolApprovalRule(SerializationMixin):
         return payload
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class ToolApprovalState(SerializationMixin):
     """Session-backed state used by :class:`ToolApprovalMiddleware`."""
 
@@ -342,7 +339,6 @@ def _clone_without_always_approve_metadata(response: Content) -> Content:
     return cloned
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class ToolApprovalMiddleware(AgentMiddleware):
     """Coordinate standing tool approvals and queued approval prompts for an agent.
 
@@ -364,6 +360,19 @@ class ToolApprovalMiddleware(AgentMiddleware):
             auto_approval_rules: Optional callbacks that can auto-approve a
                 ``function_call``. Each callback receives the function-call
                 content and returns ``True`` to approve it.
+
+                .. warning::
+                    **Security.** Auto-approval rules may match tool calls by
+                    name (each callback receives the full ``function_call``
+                    content, including arguments, and can implement stricter,
+                    argument-aware matching). A rule provided for one feature
+                    (for example a provider's read-only rule) may auto-approve
+                    **any** local tool whose name matches, not just the tool the
+                    rule was designed for. When adding rules here, ensure no
+                    unrelated tools you register collide with a name approved by
+                    any rule in this list, otherwise that tool may be
+                    auto-approved without a human prompt, bypassing the approval
+                    boundary.
         """
         self.source_id = source_id
         self.auto_approval_rules = tuple(auto_approval_rules or ())
