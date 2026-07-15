@@ -116,4 +116,39 @@ public sealed class HeadTailBufferTests
         Assert.False(truncated);
         Assert.Equal("ABCD\n", text);
     }
+
+    [Fact]
+    public void Append_MultiByteUtf8_ExactlyAtCap_PreservesOrderAndAllContent()
+    {
+        // Arrange
+        const string Input = "aaaaaaa🔥🔥🔥"; // 7 ASCII + 3 * 4-byte runes + newline = 20 bytes.
+        var buf = new HeadTailBuffer(cap: 20);
+
+        // Act
+        buf.AppendLine(Input);
+        var (text, truncated) = buf.ToFinalString();
+
+        // Assert
+        Assert.False(truncated);
+        Assert.Equal(Input + "\n", text);
+    }
+
+    [Fact]
+    public void Append_MultiByteUtf8_Overflow_PreservesHeadAndTailOrder()
+    {
+        // Arrange
+        const string Input = "aaaaaaa🔥🔥🔥x"; // AppendLine makes this one byte over cap.
+        var buf = new HeadTailBuffer(cap: 20);
+
+        // Act
+        buf.AppendLine(Input);
+        var (text, truncated) = buf.ToFinalString();
+
+        // Assert
+        Assert.True(truncated);
+        Assert.StartsWith("aaaaaaa\n", text, System.StringComparison.Ordinal);
+        Assert.Contains("[... truncated 4 bytes ...]", text, System.StringComparison.Ordinal);
+        Assert.EndsWith("🔥🔥x\n", text, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("\uFFFD", text);
+    }
 }
