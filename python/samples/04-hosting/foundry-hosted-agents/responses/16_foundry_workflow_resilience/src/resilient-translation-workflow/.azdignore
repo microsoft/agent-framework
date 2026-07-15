@@ -1,0 +1,8 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.durability-response.json
+
+!wheelhouse/
+!wheelhouse/*.whl

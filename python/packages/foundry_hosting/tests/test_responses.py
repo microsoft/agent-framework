@@ -246,6 +246,57 @@ class TestResponsesHostServerInit:
         server = ResponsesHostServer(agent, options=explicit_options, store=InMemoryResponseProvider())
         assert server is not None
 
+    async def test_hosted_storage_persists_across_server_instances(self, tmp_path: Any) -> None:
+        from agent_framework_foundry_hosting._responses import (  # pyright: ignore[reportPrivateUsage]
+            _checkpoint_storage_for_context,
+        )
+
+        home = tmp_path / "home"
+        hosted_config = MagicMock(is_hosted=True, sse_keepalive_interval=0)
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+        agent.workflow.name = "wf"
+        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+
+        with (
+            patch("azure.ai.agentserver.core._config.AgentConfig.from_env", return_value=hosted_config),
+            patch("agent_framework_foundry_hosting._responses.Path.home", return_value=home),
+        ):
+            first_server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+            checkpoint_root = first_server._checkpoint_storage_path  # pyright: ignore[reportPrivateUsage]
+            assert checkpoint_root == str(home / ".checkpoints")
+            assert first_server._approval_storage._storage_path == str(  # pyright: ignore[reportPrivateUsage]
+                home / ".function_approvals" / "approval_requests.json"
+            )
+            assert first_server._approval_storage_for_user(  # pyright: ignore[reportPrivateUsage]
+                "user-A"
+            )._storage_path == str(home / ".function_approvals" / "user-A" / "approval_requests.json")  # type: ignore[attr-defined]
+
+            checkpoint = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="hash")
+            first_storage = _checkpoint_storage_for_context(checkpoint_root, "conversation", user_id="user-A")
+            await first_storage.save(checkpoint)
+
+            approval = _make_function_approval_request_content(request_id="apr_persisted")
+            await first_server._approval_storage.save_approval_request(  # pyright: ignore[reportPrivateUsage]
+                "apr_persisted", approval
+            )
+
+            replacement_server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+            replacement_root = replacement_server._checkpoint_storage_path  # pyright: ignore[reportPrivateUsage]
+            replacement_storage = _checkpoint_storage_for_context(replacement_root, "conversation", user_id="user-A")
+
+            restored_checkpoint = await replacement_storage.load(checkpoint.checkpoint_id)
+            restored_approval = await replacement_server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
+                "apr_persisted"
+            )
+
+        assert restored_checkpoint.checkpoint_id == checkpoint.checkpoint_id
+        assert restored_approval.id == "apr_persisted"  # type: ignore[attr-defined]
+
     def test_init_warns_when_resilient_background_is_used_with_non_workflow_agent(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:

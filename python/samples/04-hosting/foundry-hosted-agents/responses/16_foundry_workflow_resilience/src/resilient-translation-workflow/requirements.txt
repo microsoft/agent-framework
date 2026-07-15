@@ -1,0 +1,5 @@
+./wheelhouse/agent_framework_foundry_hosting-1.0.0a260709-py3-none-any.whl
+./wheelhouse/azure_ai_agentserver_core-2.0.0b7-py3-none-any.whl
+./wheelhouse/azure_ai_agentserver_invocations-1.0.0b6-py3-none-any.whl
+./wheelhouse/azure_ai_agentserver_responses-1.0.0b8-py3-none-any.whl
+agent-framework-foundry>=1.10.1,<2

@@ -1,0 +1,19 @@
+name: resilient-translation-workflow
+description: >
+  A durable Agent Framework workflow that translates English to French to
+  Spanish and back to English.
+template:
+  name: resilient-translation-workflow
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: v1
+  environment_variables:
+    - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+      value: "{{chat}}"
+    - name: WORKFLOW_CRASH_ONCE_PER_STAGE
+      value: "true"
+resources:
+  - name: chat
+    kind: model
+    id: gpt-5.4

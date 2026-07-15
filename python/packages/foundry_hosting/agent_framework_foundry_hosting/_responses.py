@@ -630,8 +630,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             self._checkpoint_storage_path = self._resolve_storage_path(self.CHECKPOINT_STORAGE_PATH)
 
         self._agent = agent
+        self._approval_storage_path = self._resolve_storage_path(self.FUNCTION_APPROVAL_STORAGE_PATH)
         self._approval_storage = (
-            FileBasedFunctionApprovalStorage(self._resolve_storage_path(self.FUNCTION_APPROVAL_STORAGE_PATH))
+            FileBasedFunctionApprovalStorage(self._approval_storage_path)
             if use_file_storage
             else InMemoryFunctionApprovalStorage()
         )
@@ -689,14 +690,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     def _resolve_storage_path(self, mount_path: str) -> str:
         """Resolve a durable storage mount path for the current environment.
 
-        Hosted deployments use the absolute container mount path as-is. Local
-        (non-hosted) resilient runs re-root the same relative layout under the
-        current working directory so file-based storage works without a mounted
-        volume.
+        Hosted deployments re-root storage under the session's persistent home
+        directory. Local resilient runs use the current working directory.
         """
-        if self.config.is_hosted:
-            return mount_path
-        return os.path.join(os.getcwd(), mount_path.lstrip("/"))
+        root = Path.home() if self.config.is_hosted else Path.cwd()
+        return str(root / mount_path.lstrip("/\\"))
 
     def _approval_storage_for_user(self, user_id: str | None) -> ApprovalStorage:
         """Return the approval storage scoped to ``user_id`` when applicable.
@@ -716,7 +714,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         storage = self._approval_storages_by_user.get(user_id)
         if storage is None:
             storage = FileBasedFunctionApprovalStorage(
-                _approval_storage_path_for_user(self.FUNCTION_APPROVAL_STORAGE_PATH, user_id)
+                _approval_storage_path_for_user(self._approval_storage_path, user_id)
             )
             self._approval_storages_by_user[user_id] = storage
         return storage
