@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 import pytest
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
+from typing_extensions import Self
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -3506,7 +3507,7 @@ def test_build_tool_otel_definition_supports_serialization_protocol_tool() -> No
             }
 
         @classmethod
-        def from_dict(cls, value: MutableMapping[str, Any], /, **kwargs: Any) -> "_ProtocolTool":
+        def from_dict(cls, value: MutableMapping[str, Any], /, **kwargs: Any) -> Self:
             return cls()
 
     tool_item = _ProtocolTool()
