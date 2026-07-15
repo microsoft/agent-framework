@@ -9,7 +9,7 @@ It then verifies that:
 - the original request still completes,
 - completed stages are not repeated,
 - interrupted work continues automatically, and
-- the final response output is preserved.
+- intermediate progress and final response output are preserved.
 
 Server and telemetry output is written to an isolated diagnostic log instead
 of the console. The temporary state is removed after a successful run.
@@ -193,18 +193,24 @@ async def demo() -> None:
                     break
             assert status == "completed", f"Response did not complete: status={status!r}"
 
-            output_text = "".join(
-                part.get("text", "") or part.get("content", "")
+            output_texts = [
+                "".join(part.get("text", "") or part.get("content", "") for part in item.get("content", []))
                 for item in poll.get("output", [])
-                for part in item.get("content", [])
+                if item.get("type") == "message"
+            ]
+            expected_outputs = [
+                "[ingest] received request: 'run the resilient pipeline'",
+                "[transform] normalized request: 'run the resilient pipeline'",
+                "[validate] validated request: 'run the resilient pipeline'",
+                (
+                    "Pipeline complete for 'run the resilient pipeline'. "
+                    "Stages executed: ingest, transform, validate, finalize."
+                ),
+            ]
+            assert output_texts == expected_outputs, (
+                f"Recovered response did not preserve the expected workflow outputs: {output_texts!r}"
             )
-            expected_output = (
-                "Pipeline complete for 'run the resilient pipeline'. "
-                "Stages executed: ingest, transform, validate, finalize."
-            )
-            assert output_text == expected_output, (
-                f"Recovered response did not preserve the expected final workflow output: {output_text!r}"
-            )
+            final_output = output_texts[-1]
 
         for stage in _STAGES:
             marker = markers_dir / f"{stage}.json"
@@ -221,7 +227,8 @@ async def demo() -> None:
         print("\nResult")
         print("------")
         print("[OK] The original request completed after two host interruptions.")
-        print(f"[OK] Final output: {output_text}")
+        print("[OK] Progress output from every completed stage was preserved.")
+        print(f"[OK] Final output: {final_output}")
         print("[OK] Every completed stage ran exactly once:")
         for stage in _STAGES:
             print(f"     {stage}: {counts[stage]}")

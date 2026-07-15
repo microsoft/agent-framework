@@ -15,7 +15,7 @@ import json
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal, overload
+from typing import Literal, cast, overload
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -58,6 +58,7 @@ from agent_framework_foundry_hosting._responses import (
     _ContextAwareCheckpointStorage,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
+    _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _WorkflowCheckpointExecution,  # pyright: ignore[reportPrivateUsage]
     _WorkflowCheckpointPublisher,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
@@ -370,6 +371,66 @@ class TestDurableResponseStreamSeeding:
             workflow_event,
         )
 
+    async def test_checkpoint_finalizes_output_and_preserves_mcp_result_identity(self) -> None:
+        stream = ResponseEventStream(response_id="resp_atomic", model="test-model")
+        stream.emit_created()
+        stream.emit_in_progress()
+        publisher = _WorkflowCheckpointPublisher(stream)
+        tracker = _OutputItemTracker(stream)
+        server = object.__new__(ResponsesHostServer)
+
+        async def _updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("before checkpoint")], role="assistant")
+            publisher.publish("checkpoint-text", "resp_atomic", "current")
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_mcp_server_tool_call(
+                        call_id="framework-call",
+                        tool_name="search",
+                        server_name="server",
+                        arguments='{"q":"test"}',
+                    )
+                ],
+                role="assistant",
+            )
+            publisher.publish("checkpoint-mcp", "resp_atomic", "current")
+
+        events = [
+            event
+            async for event in server._drive_workflow_stream(  # pyright: ignore[reportPrivateUsage]
+                _updates(),
+                publisher,
+                stream,
+                tracker,
+                InMemoryFunctionApprovalStorage(),
+                asyncio.Event(),
+                asyncio.Event(),
+            )
+        ]
+
+        checkpoint_indexes = [index for index, event in enumerate(events) if isinstance(event, ResponseCheckpointEvent)]
+        assert len(checkpoint_indexes) == 2
+        assert all(events[index - 1].type == "response.output_item.done" for index in checkpoint_indexes)
+        assert [events[index - 1].item.type for index in checkpoint_indexes] == ["message", "mcp_call"]  # type: ignore[union-attr]
+
+        mcp_call_id = next(
+            item.id
+            for item in events[checkpoint_indexes[1]].response.output  # type: ignore[union-attr]
+            if item.type == "mcp_call"
+        )
+        recovered_stream = ResponseEventStream(
+            response=events[checkpoint_indexes[1]].response,  # type: ignore[union-attr]
+            response_id="resp_atomic",
+        )
+        recovered_tracker = _OutputItemTracker(recovered_stream)
+        result = Content.from_mcp_server_tool_result(
+            call_id="framework-call",
+            output=[Content.from_text("result")],
+        )
+        assert list(recovered_tracker.handle(result)) == []
+        assert recovered_tracker.needs_async is True
+        assert recovered_tracker.take_async_call_id_override() == mcp_call_id
+
     async def test_recovery_uses_exact_persisted_checkpoint_context(self, tmp_path: Any) -> None:
         from azure.ai.agentserver.responses.models import CreateResponse
 
@@ -407,7 +468,9 @@ class TestDurableResponseStreamSeeding:
         assert execution.resume_current_turn is True
         assert execution.restore_checkpoint_id == "checkpoint-durable"
         assert execution.restore_storage is not None
-        assert execution.restore_storage._inner.storage_path == (root / response_id).resolve()  # pyright: ignore[reportPrivateUsage]
+        restore_storage = cast(_ContextAwareCheckpointStorage, execution.restore_storage)
+        inner_storage = cast(FileCheckpointStorage, restore_storage._inner)  # pyright: ignore[reportPrivateUsage]
+        assert inner_storage.storage_path == (root / response_id).resolve()
 
     async def test_recovery_ignores_newer_unsynchronized_checkpoint(self, tmp_path: Any) -> None:
         from azure.ai.agentserver.responses.models import CreateResponse
@@ -433,7 +496,9 @@ class TestDurableResponseStreamSeeding:
         orphan = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="hash")
         await storage.save(durable)
         await storage.save(orphan)
-        assert (await storage.get_latest(workflow_name="wf")).checkpoint_id == orphan.checkpoint_id  # type: ignore[union-attr]
+        latest = await storage.get_latest(workflow_name="wf")
+        assert latest is not None
+        assert latest.checkpoint_id == orphan.checkpoint_id
 
         server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
         server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
@@ -506,6 +571,95 @@ class TestDurableResponseStreamSeeding:
         }
         remaining = await checkpoint_storage.list_checkpoint_ids(workflow_name="wf")
         assert remaining == [checkpoint.checkpoint_id]
+
+    async def test_conversation_baseline_is_seeded_before_response_created(self, tmp_path: Any) -> None:
+        from azure.ai.agentserver.responses.models import CreateResponse
+
+        from agent_framework_foundry_hosting._responses import (  # pyright: ignore[reportPrivateUsage]
+            _checkpoint_storage_for_context,
+        )
+
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+        agent.workflow.name = "wf"
+        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+
+        conversation_id = "conv_recovery"
+        response_id = "resp_recovery"
+        root = tmp_path / "checkpoints"
+        root.mkdir()
+        checkpoint_storage = _checkpoint_storage_for_context(str(root), conversation_id)
+        checkpoint = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="hash")
+        await checkpoint_storage.save(checkpoint)
+
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
+        request = CreateResponse(model="test-model", input="hello")
+        context = ResponseContext(
+            response_id=response_id,
+            conversation_id=conversation_id,
+            mode_flags=MagicMock(),
+        )
+
+        prepare = AsyncMock(wraps=server._prepare_workflow_checkpoint_execution)  # pyright: ignore[reportPrivateUsage]
+        with patch.object(server, "_prepare_workflow_checkpoint_execution", new=prepare):
+            events = server._handle_response(request, context, asyncio.Event())  # pyright: ignore[reportPrivateUsage]
+            iterator = events.__aiter__()
+            created = await anext(iterator)
+            await cast(Any, iterator).aclose()
+
+        assert created.type == "response.created"
+        prepare.assert_awaited_once()
+        prepare_args = prepare.await_args
+        assert prepare_args is not None
+        prepared_stream = prepare_args.args[2]
+        expected_reference = {
+            "checkpoint_id": checkpoint.checkpoint_id,
+            "context_id": conversation_id,
+            "kind": "base",
+        }
+        assert prepared_stream.internal_metadata["workflow_checkpoint"] == expected_reference
+        assert cast(Any, created).response.internal_metadata["workflow_checkpoint"] == expected_reference
+
+    async def test_checkpoint_preparation_failure_emits_valid_lifecycle(self) -> None:
+        from azure.ai.agentserver.responses.models import CreateResponse
+
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+        agent.workflow.name = "wf"
+        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
+
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        request = CreateResponse(model="test-model", input="hello")
+        context = ResponseContext(response_id="resp_prepare_failure", mode_flags=MagicMock())
+
+        with patch.object(
+            server,
+            "_prepare_workflow_checkpoint_execution",
+            new=AsyncMock(side_effect=RuntimeError("checkpoint preparation failed")),
+        ):
+            events = [
+                event
+                async for event in server._handle_response(  # pyright: ignore[reportPrivateUsage]
+                    request,
+                    context,
+                    asyncio.Event(),
+                )
+            ]
+
+        assert [event.type for event in events] == [
+            "response.created",
+            "response.in_progress",
+            "response.failed",
+        ]
 
     async def test_cancellation_signal_emits_completed_for_streaming(self) -> None:
         """On steering pressure or client cancel the streaming handler emits response.completed."""
@@ -661,6 +815,8 @@ class TestNonStreaming:
         assert "message" in types
 
     async def test_hosted_mcp_call_and_result_persist_as_single_mcp_call(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemCustomToolCallOutput, OutputItemMcpToolCall
+
         update1 = AgentResponseUpdate(
             contents=[
                 Content.from_mcp_server_tool_call(
@@ -704,6 +860,12 @@ class TestNonStreaming:
         output_items = [item for item in body["output"] if item["type"] == "custom_tool_call_output"]
         assert len(output_items) == 1
         assert output_items[0]["output"] == "found 10 cats"
+        assert output_items[0]["call_id"] == mcp_items[0]["id"]
+
+        call_message = await _output_item_to_message(OutputItemMcpToolCall(mcp_items[0]))
+        result_message = await _output_item_to_message(OutputItemCustomToolCallOutput(output_items[0]))
+        assert call_message.contents[0].call_id == result_message.contents[0].call_id
+        assert result_message.contents[0].type == "mcp_server_tool_result"
 
     async def test_reasoning_content(self) -> None:
         update1 = AgentResponseUpdate(
@@ -1188,6 +1350,8 @@ class TestOutputItemToMessage:
         msg = await _output_item_to_message(item)
         assert msg.role == "assistant"
         assert len(msg.contents) == 1
+        assert msg.contents[0].type == "text_reasoning"
+        assert msg.contents[0].id == "r-1"
         assert msg.contents[0].text == "thinking hard"
 
     async def test_reasoning_no_summary(self) -> None:
@@ -1679,6 +1843,8 @@ class TestItemToMessage:
         assert msg is not None
         assert msg.role == "assistant"
         assert len(msg.contents) == 1
+        assert msg.contents[0].type == "text_reasoning"
+        assert msg.contents[0].id == "r-1"
         assert msg.contents[0].text == "thinking hard"
 
     async def test_reasoning_no_summary(self) -> None:
@@ -2533,10 +2699,10 @@ class TestMultiTurnMixedContent:
         assert len(mcp_call_contents) >= 1
         assert len(mcp_result_contents) >= 1
         assert all((c.call_id or "") != "mcp_abc123" for c in function_result_contents)
-        # In b8 the mcp_call history item carries an auto-generated SDK id rather than
-        # the original call_id, so we can no longer assert the specific value here.
-        assert any(c.call_id is not None for c in mcp_call_contents)
-        assert any((c.call_id or "") == "mcp_abc123" for c in mcp_result_contents)
+        mcp_call_ids = {c.call_id for c in mcp_call_contents}
+        mcp_result_ids = {c.call_id for c in mcp_result_contents}
+        assert None not in mcp_call_ids
+        assert mcp_call_ids <= mcp_result_ids
 
     async def test_multi_turn_reasoning_in_history(self) -> None:
         """Turn 1 produces reasoning + text, turn 2 sees them in history."""
@@ -3474,7 +3640,7 @@ class TestCheckpointContextPathValidation:
 
         assert agent.run.call_count == 2
         assert isinstance(events[2], ResponseCheckpointEvent)
-        assert events[2].response.internal_metadata["workflow_checkpoint"]["kind"] == "base"
+        assert cast(Any, events[2].response).internal_metadata["workflow_checkpoint"]["kind"] == "base"
         restore_call = agent.run.call_args_list[0]
         assert restore_call.kwargs["checkpoint_id"] == checkpoint.checkpoint_id
         assert restore_call.kwargs["checkpoint_storage"]._inner.storage_path == (root / previous_response_id).resolve()

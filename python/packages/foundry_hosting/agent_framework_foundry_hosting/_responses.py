@@ -743,18 +743,28 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # also drains the tracker so the SSE stream stays well-formed).
         response_event_stream = self._create_response_event_stream(request, context)
         tracker = _OutputItemTracker(response_event_stream)
-
-        yield response_event_stream.emit_created()
-        yield response_event_stream.emit_in_progress()
+        created_yielded = False
+        in_progress_yielded = False
 
         try:
+            workflow_checkpoint_execution: _WorkflowCheckpointExecution | None = None
             if self._is_workflow_agent:
-                # Workflow agents are handled differently because they require checkpoint restoration
+                # Seed the workflow baseline before response.created is yielded so
+                # recovery never observes an unreferenced conversation directory.
                 workflow_checkpoint_execution = await self._prepare_workflow_checkpoint_execution(
                     request,
                     context,
                     response_event_stream,
                 )
+
+            created_event = response_event_stream.emit_created()
+            created_yielded = True
+            yield created_event
+            in_progress_event = response_event_stream.emit_in_progress()
+            in_progress_yielded = True
+            yield in_progress_event
+
+            if workflow_checkpoint_execution is not None:
                 if not context.is_recovery and workflow_checkpoint_execution.restore_checkpoint_id is not None:
                     # ``response.created`` strips framework-internal metadata
                     # from its wire payload. Explicitly checkpoint the live
@@ -798,6 +808,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             yield response_event_stream.emit_completed()
         except Exception as ex:
+            if not created_yielded:
+                yield response_event_stream.emit_created()
+            if not in_progress_yielded:
+                yield response_event_stream.emit_in_progress()
             logger.exception("Failed to produce response")
             for event in self._emit_failure(response_event_stream, tracker, ex):
                 yield event
@@ -884,6 +898,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         response_event_stream,
                         content,
                         approval_storage=approval_storage,
+                        call_id_override=tracker.take_async_call_id_override(),
                     ):
                         yield item
                     tracker.needs_async = False
@@ -1053,6 +1068,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     reference = checkpoint_task.result()
                     if reference is None:
                         break
+                    for event in tracker.close():
+                        yield event
                     yield cast(ResponseStreamEvent, publisher.checkpoint_event(reference))
                     checkpoint_task = asyncio.create_task(publisher.next_pending())
                     continue
@@ -1075,6 +1092,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                                 response_event_stream,
                                 content,
                                 approval_storage=approval_storage,
+                                call_id_override=tracker.take_async_call_id_override(),
                             ):
                                 yield item
                             tracker.needs_async = False
@@ -1233,7 +1251,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # Legacy recovery: older response snapshots did not carry a
             # structured baseline reference, so recover the prior turn's latest
             # checkpoint. This cannot select a current-turn orphan because those
-            # checkpoints live under the current response id.
+            # checkpoints live under the current response id. A conversation's
+            # shared directory cannot safely distinguish a baseline from an orphan.
             restore_storage = self._get_checkpoint_storage(
                 request.previous_response_id,
                 user_id,
@@ -1326,6 +1345,7 @@ class _OutputItemTracker:
     """
 
     _DELTA_TYPES = frozenset({"text", "text_reasoning", "function_call", "mcp_server_tool_call"})
+    _MCP_ITEM_IDS_METADATA_KEY = "mcp_item_ids"
 
     def __init__(self, stream: ResponseEventStream) -> None:
         self._stream = stream
@@ -1341,6 +1361,15 @@ class _OutputItemTracker:
         self._fc_builder: OutputItemFunctionCallBuilder | None = None
         self._mcp_builder: OutputItemMcpCallBuilder | None = None
         self._mcp_call_id: str | None = None  # call_id of the in-progress MCP call for result matching
+        persisted_mcp_item_ids = stream.internal_metadata.get(self._MCP_ITEM_IDS_METADATA_KEY)
+        self._mcp_item_ids: dict[str, str] = {}
+        if isinstance(persisted_mcp_item_ids, Mapping):
+            persisted_mapping: Mapping[Any, Any] = persisted_mcp_item_ids  # pyright: ignore[reportUnknownVariableType]
+            for call_id, item_id in persisted_mapping.items():
+                if isinstance(call_id, str) and isinstance(item_id, str):
+                    self._mcp_item_ids[call_id] = item_id
+        self._sync_mcp_item_ids_metadata()
+        self._async_call_id_override: str | None = None
         self.needs_async = False
 
     def handle(self, content: Content) -> Generator[ResponseStreamEvent]:
@@ -1395,6 +1424,7 @@ class _OutputItemTracker:
             yield self._mcp_builder.emit_arguments_done(accumulated)
             yield self._mcp_builder.emit_completed()
             yield self._mcp_builder.emit_done()
+            self._async_call_id_override = self._take_mcp_item_id(content.call_id)
             self._mcp_builder = None
             self._mcp_call_id = None
             self._active_type = None
@@ -1407,11 +1437,19 @@ class _OutputItemTracker:
 
         else:
             yield from self._close()
+            if content.type == "mcp_server_tool_result" and content.call_id is not None:
+                self._async_call_id_override = self._take_mcp_item_id(content.call_id)
             self.needs_async = True
 
     def close(self) -> Generator[ResponseStreamEvent]:
         """Close any remaining active builder."""
         yield from self._close()
+
+    def take_async_call_id_override(self) -> str | None:
+        """Return and clear the persisted call ID for the pending async output."""
+        call_id = self._async_call_id_override
+        self._async_call_id_override = None
+        return call_id
 
     # -- Private open/close helpers --
 
@@ -1446,6 +1484,9 @@ class _OutputItemTracker:
             name=content.tool_name or "",
         )
         self._mcp_call_id = content.call_id
+        if content.call_id is not None:
+            self._mcp_item_ids[content.call_id] = self._mcp_builder.item_id
+            self._sync_mcp_item_ids_metadata()
         self._active_type = "mcp_server_tool_call"
         self._active_id = content.call_id or f"{content.server_name or 'default'}::{content.tool_name}"
         yield self._mcp_builder.emit_added()
@@ -1482,6 +1523,17 @@ class _OutputItemTracker:
         self._active_type = None
         self._active_id = None
         self._accumulated.clear()
+
+    def _take_mcp_item_id(self, call_id: str) -> str | None:
+        item_id = self._mcp_item_ids.pop(call_id, None)
+        self._sync_mcp_item_ids_metadata()
+        return item_id
+
+    def _sync_mcp_item_ids_metadata(self) -> None:
+        if self._mcp_item_ids:
+            self._stream.internal_metadata[self._MCP_ITEM_IDS_METADATA_KEY] = dict(self._mcp_item_ids)
+        else:
+            self._stream.internal_metadata.pop(self._MCP_ITEM_IDS_METADATA_KEY, None)
 
 
 # endregion
@@ -1602,7 +1654,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         reason_contents: list[Content] = []
         if reasoning.summary:
             for summary in reasoning.summary:
-                reason_contents.append(Content.from_text(summary.text))
+                reason_contents.append(Content.from_text_reasoning(id=reasoning.id, text=summary.text))
         return Message(role="assistant", contents=reason_contents)
 
     if item.type == "mcp_call":
@@ -1896,7 +1948,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         contents: list[Content] = []
         if reasoning.summary:
             for summary in reasoning.summary:
-                contents.append(Content.from_text(summary.text))
+                contents.append(Content.from_text_reasoning(id=reasoning.id, text=summary.text))
         return Message(role="assistant", contents=contents)
 
     if item.type == "mcp_call":
@@ -2260,6 +2312,7 @@ async def _to_outputs(
     content: Content,
     *,
     approval_storage: ApprovalStorage | None = None,
+    call_id_override: str | None = None,
 ) -> AsyncIterator[ResponseStreamEvent]:
     """Converts a Content object to an async sequence of ResponseStreamEvent objects.
 
@@ -2267,6 +2320,7 @@ async def _to_outputs(
         stream: The ResponseEventStream to use for building events.
         content: The Content to convert.
         approval_storage: An optional ApprovalStorage instance to use for saving and loading function approval requests.
+        call_id_override: The persisted item ID to use for a tool result when it differs from the framework call ID.
 
     Yields:
         ResponseStreamEvent: The converted event objects.
@@ -2308,7 +2362,10 @@ async def _to_outputs(
         yield mcp_call.emit_done()
     elif content.type == "mcp_server_tool_result":
         output = _stringify_mcp_output(content.output)
-        async for event in stream.aoutput_item_custom_tool_call_output(content.call_id or "", output):
+        async for event in stream.aoutput_item_custom_tool_call_output(
+            call_id_override or content.call_id or "",
+            output,
+        ):
             yield event
     elif content.type == "shell_tool_call":
         action = FunctionShellAction(commands=content.commands or [], timeout_ms=0, max_output_length=0)

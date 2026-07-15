@@ -33,8 +33,8 @@ The demo:
 4. Stops the replacement host while `finalize` is running.
 5. Starts another replacement host and waits for the original request to
    complete.
-6. Verifies that completed stages were preserved and the final response output
-   survived both interruptions.
+6. Verifies that completed stages, intermediate progress output, and the final
+   response output survived both interruptions.
 
 The console shows only the customer-visible recovery story. Detailed server and
 telemetry output is captured in an isolated diagnostic log and is printed only
@@ -76,6 +76,7 @@ The host will be interrupted twice while one request is running.
 Result
 ------
 [OK] The original request completed after two host interruptions.
+[OK] Progress output from every completed stage was preserved.
 [OK] Final output: Pipeline complete for 'run the resilient pipeline'. Stages executed: ingest, transform, validate, finalize.
 [OK] Every completed stage ran exactly once:
      ingest: 1
