@@ -103,6 +103,8 @@ var memoryProvider = sp.GetRequiredService<Neo4jMemoryContextProvider>();
 var memoryTools    = sp.GetRequiredService<MemoryToolFactory>().CreateAIFunctions();
 var productTools   = catalog.CreateAIFunctions();
 
+// WithMemoryOwnerScoping(sp) scopes the whole invocation (recall, tool calls, persistence) to the
+// owner set via WithMemoryIdentity below — no manual BeginOwnerScope wrapping needed per turn.
 AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions
 {
     Name = "ShoppingAssistant",
@@ -117,9 +119,8 @@ AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions
         Tools = [.. memoryTools, .. productTools],
     },
     AIContextProviders = [memoryProvider],
-});
+}).WithMemoryOwnerScoping(sp);
 
-var ownerContext = sp.GetRequiredService<IWritableMemoryOwnerContext>();
 const string shopper = "shopper-amelia";
 
 // ── Session A — the customer shops; the model calls the tools and remembers preferences ──────────
@@ -133,7 +134,7 @@ foreach (var turn in new[]
     "Nice — what would you recommend for me, and is anything I might like out of stock?",
 })
 {
-    await SayAsync(agent, sessionA, ownerContext, turn);
+    await SayAsync(agent, sessionA, turn);
 }
 
 // ── Session B — a NEW session for the same shopper still recalls her preferences ─────────────────
@@ -141,22 +142,15 @@ Console.WriteLine(">> Session B — a brand-new session; memory is durable\n");
 var sessionB = (await agent.CreateSessionAsync())
     .WithMemoryIdentity(userId: shopper, sessionId: "cart-b", applicationId: "retail-demo");
 
-await SayAsync(agent, sessionB, ownerContext, "I'm back — remind me what I like and suggest something new.");
+await SayAsync(agent, sessionB, "I'm back — remind me what I like and suggest something new.");
 
 Console.WriteLine("=== Done. Preferences + messages persist in Neo4j across sessions. ===");
 
-// One conversational turn. The ambient owner scope keeps any model-invoked memory tools scoped to
-// this shopper. The context provider recalls memory before the run and persists after — automatically.
-static async Task SayAsync(AIAgent agent, AgentSession session, IWritableMemoryOwnerContext ownerContext, string message)
+// One conversational turn. Owner scoping (recall, tool calls, and persistence) is guaranteed
+// automatically by the WithMemoryOwnerScoping-wrapped agent — no manual BeginOwnerScope needed here.
+static async Task SayAsync(AIAgent agent, AgentSession session, string message)
 {
-    // The user id set via WithMemoryIdentity lives in the session's state bag; read it back rather
-    // than threading it through as a separate parameter (AgentFrameworkOptions.DefaultUserIdKey = "user_id").
-    session.StateBag.TryGetValue<string>(new AgentFrameworkOptions().DefaultUserIdKey, out var userId);
-
     Console.WriteLine($"USER      : {message}");
-    using (ownerContext.BeginOwnerScope(userId))
-    {
-        var response = await agent.RunAsync(message, session);
-        Console.WriteLine($"ASSISTANT : {response.Text}\n");
-    }
+    var response = await agent.RunAsync(message, session);
+    Console.WriteLine($"ASSISTANT : {response.Text}\n");
 }
