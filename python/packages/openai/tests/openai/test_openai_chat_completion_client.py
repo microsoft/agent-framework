@@ -932,6 +932,76 @@ def test_prepare_message_with_unprotected_text_reasoning_content(
     assert prepared == [{"role": "assistant", "content": "Foundry summary"}]
 
 
+def test_prepare_message_sanitizes_author_name(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that author_name is sanitized before being sent as the message ``name``.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/7126
+    OpenAI validates the Chat Completions message ``name`` against ``^[^\\s<|\\\\/>]+$``, so an
+    agent display name containing a space (e.g. "My Agent") previously failed every request
+    with a 400. Sanitization mirrors SanitizeAuthorName in the .NET client: characters outside
+    ``[a-zA-Z0-9_]`` are removed and the result is truncated to 64 characters.
+    """
+    client = OpenAIChatCompletionClient()
+
+    message = Message(
+        role="assistant",
+        contents=[Content.from_text(text="hello")],
+        author_name="My Agent",
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert prepared == [{"role": "assistant", "name": "MyAgent", "content": "hello"}]
+
+    # System/developer path sanitizes too.
+    system_message = Message(
+        role="system",
+        contents=[Content.from_text(text="be helpful")],
+        author_name="orchestrator/planner",
+    )
+
+    assert client._prepare_message_for_openai(system_message) == [
+        {"role": "system", "content": "be helpful", "name": "orchestratorplanner"}
+    ]
+
+    # A name with no valid characters is omitted rather than sent empty.
+    invalid_only = Message(
+        role="assistant",
+        contents=[Content.from_text(text="hello")],
+        author_name="<|/\\>",
+    )
+
+    assert client._prepare_message_for_openai(invalid_only) == [{"role": "assistant", "content": "hello"}]
+
+    # Long names are truncated to 64 characters.
+    long_name = Message(
+        role="assistant",
+        contents=[Content.from_text(text="hello")],
+        author_name="a" * 100,
+    )
+
+    assert client._prepare_message_for_openai(long_name)[0]["name"] == "a" * 64
+
+
+def test_prepare_message_keeps_valid_author_name(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """A name that is already valid for the Chat Completions API is passed through unchanged."""
+    client = OpenAIChatCompletionClient()
+
+    message = Message(
+        role="assistant",
+        contents=[Content.from_text(text="hello")],
+        author_name="Agent_42",
+    )
+
+    assert client._prepare_message_for_openai(message) == [
+        {"role": "assistant", "name": "Agent_42", "content": "hello"}
+    ]
+
+
 def test_prepare_message_with_only_text_reasoning_content(
     openai_unit_test_env: dict[str, str],
 ) -> None:
