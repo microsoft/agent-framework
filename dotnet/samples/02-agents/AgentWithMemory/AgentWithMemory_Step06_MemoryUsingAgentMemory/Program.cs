@@ -10,8 +10,9 @@
 // traversal, backed by DURABLE memory in Neo4j. It uses the AgentMemory library — a .NET port of the
 // Python memory provider, not an officially recognized Neo4j integration — and its Microsoft Agent
 // Framework adapter:
-//   • Neo4jMemoryContextProvider  (an AIContextProvider)  — recalls memory before each run, persists after
-//   • MemoryToolFactory.CreateAIFunctions()               — memory tools (search/remember/recall)
+//   • Neo4jMemoryContextProvider  (an AIContextProvider)  — recalls memory before each run, persists
+//     after, and (via ExposeMemoryToolsFromContextProvider) surfaces the memory tools (search/remember/
+//     recall) itself through AIContext.Tools
 //   • ProductCatalog.CreateAIFunctions()                  — retail tools over a Neo4j :Product graph
 //
 // This is a STANDALONE sample consuming the published AgentMemory NuGet packages.
@@ -37,7 +38,6 @@ using Microsoft.Extensions.Logging;
 using OpenAI;
 using AgentMemory.Abstractions.Services;
 using AgentMemory.AgentFramework;
-using AgentMemory.AgentFramework.Tools;
 using AgentMemory.Core;
 using AgentMemory.Core.Stubs;
 using AgentMemory.Neo4j.Infrastructure;
@@ -84,6 +84,7 @@ builder.Services.AddAgentMemoryFramework(options =>
     options.ContextFormat.IncludeEntities    = true;
     options.ContextFormat.IncludeFacts       = true;
     options.ContextFormat.IncludePreferences = true;
+    options.ExposeMemoryToolsFromContextProvider = true;
 });
 
 var host = builder.Build();
@@ -98,9 +99,8 @@ await sp.GetRequiredService<ISchemaBootstrapper>().BootstrapAsync();
 await catalog.SeedAsync();
 Console.WriteLine("Neo4j schema ready; sample products loaded.\n");
 
-// ── The shopping assistant: context provider + memory tools + product tools ──────────────────────
+// ── The shopping assistant: context provider (recall + memory tools) + product tools ─────────────
 var memoryProvider = sp.GetRequiredService<Neo4jMemoryContextProvider>();
-var memoryTools    = sp.GetRequiredService<MemoryToolFactory>().CreateAIFunctions();
 var productTools   = catalog.CreateAIFunctions();
 
 // WithMemoryOwnerScoping(sp) scopes the whole invocation (recall, tool calls, persistence) to the
@@ -116,7 +116,9 @@ AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions
           + "preferences (brands, budget, categories) using the memory tools, and recommend products that "
           + "fit using the product tools. Explain why each recommendation matches, and suggest alternatives "
           + "when something is out of stock.",
-        Tools = [.. memoryTools, .. productTools],
+        // memoryProvider appends the six memory tools (search_memory, remember_fact, ...) to this list
+        // on every model call via AIContext.Tools — see ExposeMemoryToolsFromContextProvider above.
+        Tools = [.. productTools],
     },
     AIContextProviders = [memoryProvider],
 }).WithMemoryOwnerScoping(sp);

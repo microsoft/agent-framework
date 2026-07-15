@@ -38,8 +38,8 @@
   <ItemGroup>
     <!-- AgentMemory (published) — an unofficial .NET port of the Neo4j Labs agent-memory library + its
          Microsoft Agent Framework adapter. -->
-    <PackageReference Include="AgentMemory" Version="1.1.0" />
-    <PackageReference Include="AgentMemory.AgentFramework" Version="1.1.0" />
+    <PackageReference Include="AgentMemory" Version="1.2.0" />
+    <PackageReference Include="AgentMemory.AgentFramework" Version="1.2.0" />
     <!-- Microsoft Agent Framework (matches AgentMemory's target) + the OpenAI/Foundry chat & embedding clients. -->
     <PackageReference Include="Microsoft.Agents.AI" Version="1.9.0" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.5.1" />
