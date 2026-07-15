@@ -1590,9 +1590,25 @@ class RawOpenAIChatClient(
                     )
                     if function_call:
                         all_messages.append(function_call)
-                case "function_approval_response" | "function_approval_request":
+                case "function_approval_request":
+                    # The model's approval request is a server-issued item; under a
+                    # continuation the server already has it, so replaying it inline
+                    # duplicates it (#3295). Same treatment as function_call above.
                     if request_uses_service_side_storage:
                         continue
+                    prepared = self._prepare_content_for_openai(
+                        message.role,
+                        content,
+                        replays_local_storage=replays_local_storage,
+                    )
+                    if prepared:
+                        all_messages.append(prepared)
+                case "function_approval_response":
+                    # The approval response is the user's decision that resumes an
+                    # approval-paused run. It references the prior request by id and is
+                    # not itself a server-stored item, so it must reach the model even
+                    # under service-side storage; skipping it leaves the run paused
+                    # forever (#7125). Same treatment as function_result above.
                     prepared = self._prepare_content_for_openai(
                         message.role,
                         content,
