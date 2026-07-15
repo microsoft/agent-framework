@@ -12,7 +12,7 @@ using Microsoft.Extensions.AI;
 string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
-const string AgentInstructions = "You are a helpful assistant that can use the countries API to retrieve information about countries by their currency code. When calling the API, always pass fields=name to limit the response to just country names.";
+const string AgentInstructions = "You are a helpful assistant that can retrieve the latest currency exchange rates using the Frankfurter API. Always call the API to get live data rather than guessing.";
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
@@ -25,44 +25,45 @@ AIAgent agent = aiProjectClient.AsAIAgent(deploymentName,
     name: "OpenAPIToolsAgent",
     tools: [openApiTool]);
 
-// Run the agent with a question about countries
-Console.WriteLine(await agent.RunAsync("What countries use the Euro (EUR) as their currency? Please list them."));
+// Run the agent with a question about EUR exchange rates
+Console.WriteLine(await agent.RunAsync("What is the latest EUR exchange rate against the US Dollar (USD) and British Pound (GBP)?"));
 
 OpenApiFunctionDefinition CreateOpenAPIFunctionDefinition()
 {
-    // A simple OpenAPI specification for the REST Countries API
-    const string CountriesOpenApiSpec = """
+    // OpenAPI spec for Frankfurter — a free, no-auth exchange rate API backed by ECB data.
+    // See https://www.frankfurter.dev/ for documentation.
+    const string FrankfurterOpenApiSpec = """
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "REST Countries API",
-    "description": "Retrieve information about countries by currency code",
-    "version": "v3.1"
+    "title": "Frankfurter Exchange Rate API",
+    "description": "Free currency exchange rates from the European Central Bank",
+    "version": "v1"
   },
   "servers": [
     {
-      "url": "https://restcountries.com/v3.1"
+      "url": "https://api.frankfurter.dev/v1"
     }
   ],
   "paths": {
-    "/currency/{currency}": {
+    "/latest": {
       "get": {
-        "description": "Get countries that use a specific currency code (e.g., USD, EUR, GBP)",
-        "operationId": "GetCountriesByCurrency",
+        "description": "Get the latest exchange rates for a given base currency",
+        "operationId": "GetLatestExchangeRates",
         "parameters": [
           {
-            "name": "currency",
-            "in": "path",
-            "description": "Currency code (e.g., USD, EUR, GBP)",
-            "required": true,
+            "name": "from",
+            "in": "query",
+            "description": "Base currency code (e.g. EUR, USD, GBP). Defaults to EUR.",
+            "required": false,
             "schema": {
               "type": "string"
             }
           },
           {
-            "name": "fields",
+            "name": "to",
             "in": "query",
-            "description": "Comma-separated list of fields to include in the response (e.g., name,currencies)",
+            "description": "Comma-separated list of target currency codes (e.g. USD,GBP,JPY).",
             "required": false,
             "schema": {
               "type": "string"
@@ -71,20 +72,14 @@ OpenApiFunctionDefinition CreateOpenAPIFunctionDefinition()
         ],
         "responses": {
           "200": {
-            "description": "Successful response with list of countries",
+            "description": "Latest exchange rates",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object"
-                  }
+                  "type": "object"
                 }
               }
             }
-          },
-          "404": {
-            "description": "No countries found for the currency"
           }
         }
       }
@@ -93,12 +88,11 @@ OpenApiFunctionDefinition CreateOpenAPIFunctionDefinition()
 }
 """;
 
-    // Create the OpenAPI function definition
     return new(
-        "get_countries",
-        BinaryData.FromString(CountriesOpenApiSpec),
+        "get_exchange_rates",
+        BinaryData.FromString(FrankfurterOpenApiSpec),
         new OpenAPIAnonymousAuthenticationDetails())
     {
-        Description = "Retrieve information about countries by currency code"
+        Description = "Get live currency exchange rates from the European Central Bank via Frankfurter"
     };
 }

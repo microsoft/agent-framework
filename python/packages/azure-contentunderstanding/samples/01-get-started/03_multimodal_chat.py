@@ -35,7 +35,7 @@ The provider auto-detects the media type and selects the right CU analyzer:
   - Video       → prebuilt-videoSearch
 
 Environment variables:
-  FOUNDRY_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
+  FOUNDRY_PROJECT_ENDPOINT                — Microsoft Foundry project endpoint
   FOUNDRY_MODEL             — Model deployment name (e.g. gpt-4.1)
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 """

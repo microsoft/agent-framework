@@ -122,6 +122,8 @@
   <Folder Name="/Samples/02-agents/Harness/">
     <File Path="samples/02-agents/Harness/README.md" />
     <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step01_MeetYourClaw/Claw_Step01_MeetYourClaw.csproj" />
+    <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step02_WorkingWithData/Claw_Step02_WorkingWithData.csproj" />
+    <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step03_ScalingCapabilities/Claw_Step03_ScalingCapabilities.csproj" />
     <Project Path="samples/02-agents/Harness/ConsoleReactiveComponents/ConsoleReactiveComponents.csproj" />
     <Project Path="samples/02-agents/Harness/ConsoleReactiveFramework/ConsoleReactiveFramework.csproj" />
     <Project Path="samples/02-agents/Harness/Harness_Shared_Console/Harness_Shared_Console.csproj" />
@@ -604,7 +606,6 @@
     <Project Path="src/Aspire.Hosting.AgentFramework.DevUI/Aspire.Hosting.AgentFramework.DevUI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.A2A/Microsoft.Agents.AI.A2A.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Abstractions/Microsoft.Agents.AI.Abstractions.csproj" />
-    <Project Path="src/Microsoft.Agents.AI.AGUI/Microsoft.Agents.AI.AGUI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Anthropic/Microsoft.Agents.AI.Anthropic.csproj" />
     <Project Path="src/Microsoft.Agents.AI.AzureAI.Persistent/Microsoft.Agents.AI.AzureAI.Persistent.csproj" />
     <Project Path="src/Microsoft.Agents.AI.CopilotStudio/Microsoft.Agents.AI.CopilotStudio.csproj" />
@@ -663,7 +664,6 @@
     <Project Path="tests/Aspire.Hosting.AgentFramework.DevUI.UnitTests/Aspire.Hosting.AgentFramework.DevUI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.A2A.UnitTests/Microsoft.Agents.AI.A2A.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Abstractions.UnitTests/Microsoft.Agents.AI.Abstractions.UnitTests.csproj" />
-    <Project Path="tests/Microsoft.Agents.AI.AGUI.UnitTests/Microsoft.Agents.AI.AGUI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Anthropic.UnitTests/Microsoft.Agents.AI.Anthropic.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/Microsoft.Agents.AI.CosmosNoSql.UnitTests.csproj" />

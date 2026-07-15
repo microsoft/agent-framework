@@ -350,6 +350,7 @@ SAMPLE_TYPING_EXCLUDES = (
     "_to_delete",
     "05-end-to-end",
     "harness",
+    "local_telegram",
 )
 
 
@@ -358,7 +359,7 @@ def _mypy_command(paths: list[str], *, samples: bool) -> list[str]:
     # single shared ``.mypy_cache`` in the working directory; concurrent writes corrupt it
     # and mypy aborts with ``INTERNAL ERROR``. Give each invocation an isolated cache dir
     # keyed by its target paths so incremental caching still works per package without races.
-    cache_key = hashlib.sha1("\0".join(sorted(paths)).encode()).hexdigest()[:16]
+    cache_key = hashlib.sha256("\0".join(sorted(paths)).encode()).hexdigest()[:16]
     cache_dir = Path(".mypy_cache") / ("samples" if samples else "tests") / cache_key
     command = [
         "uv",

@@ -19,7 +19,7 @@ var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt
 // Create a host builder that we will register services with and then run.
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
-// Create the AI agent from the Azure AI Foundry project client.
+// Create the AI agent from the Microsoft Foundry project client.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.

@@ -3,7 +3,7 @@
 """Foundry Memory hosted agent sample.
 
 This agent uses :class:`FoundryMemoryProvider` to give an otherwise stateless
-hosted agent persistent, semantic memory backed by an Azure AI Foundry
+hosted agent persistent, semantic memory backed by a Microsoft Foundry
 Memory Store. The store itself is provisioned once via
 ``provision_memory_store.py`` and its name is passed in through the
 ``MEMORY_STORE_NAME`` environment variable.

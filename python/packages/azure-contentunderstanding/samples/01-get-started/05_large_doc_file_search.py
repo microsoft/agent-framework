@@ -55,7 +55,7 @@ CU supports PDFs up to 300 pages / 200 MB, and audio files up to 300 MB
 https://learn.microsoft.com/azure/ai-services/content-understanding/service-limits#input-file-limits
 
 Environment variables:
-  FOUNDRY_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
+  FOUNDRY_PROJECT_ENDPOINT                — Microsoft Foundry project endpoint
   FOUNDRY_MODEL             — Model deployment name (e.g. gpt-4.1)
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 """

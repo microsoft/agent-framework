@@ -10,11 +10,20 @@ updates (regression guard for the shallow-copy bug, #4500).
 """
 
 import json
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 from agent_framework_durabletask import execute_workflow_activity
-from agent_framework_durabletask._workflows.orchestrator import SOURCE_ORCHESTRATOR
+from agent_framework_durabletask._workflows.orchestrator import SOURCE_HITL_RESPONSE, SOURCE_ORCHESTRATOR
+from agent_framework_durabletask._workflows.serialization import serialize_value
+
+
+@dataclass
+class ApprovalRequest:
+    """Typed request used to select a HITL response handler."""
+
+    prompt: str
 
 
 def _make_executor(executor_id: str, mutate: Any) -> Mock:
@@ -115,6 +124,31 @@ class TestExecuteWorkflowActivityStateDiff:
 
         assert "to_remove" in result["shared_state_deletes"]
         assert "keep" not in result["shared_state_deletes"]
+
+
+def test_hitl_response_handler_receives_typed_original_request() -> None:
+    """Already-serialized HITL requests are decoded before response handler dispatch."""
+    original_request = ApprovalRequest(prompt="Approve this?")
+    hitl_message = {
+        "original_request": serialize_value(original_request),
+        "response": "approved",
+        "response_type": None,
+    }
+    input_data = json.dumps({
+        "message": serialize_value(hitl_message),
+        "shared_state_snapshot": {},
+        "source_executor_ids": [f"{SOURCE_HITL_RESPONSE}_request-1"],
+    })
+
+    handler = AsyncMock()
+    executor = Mock()
+    executor.id = "review-gate"
+    executor._find_response_handler.return_value = handler
+
+    execute_workflow_activity(executor, input_data)
+
+    executor._find_response_handler.assert_called_once_with(original_request, "approved")
+    handler.assert_awaited_once()
 
 
 if __name__ == "__main__":

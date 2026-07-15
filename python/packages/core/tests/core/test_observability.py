@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import logging
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, cast
@@ -4901,6 +4902,97 @@ async def test_function_call_spans_nested_under_agent_span(span_exporter: InMemo
         assert inner_context.trace_id == agent_context.trace_id
 
 
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_parallel_function_call_spans_nested_under_agent_span(span_exporter: InMemorySpanExporter):
+    """Parallel execute_tool spans should preserve the active agent span context."""
+    from agent_framework._tools import FunctionInvocationLayer
+
+    @tool(name="first_tool", description="First parallel tool", approval_mode="never_require")
+    async def first_tool() -> str:
+        await asyncio.sleep(0)
+        return "first"
+
+    @tool(name="second_tool", description="Second parallel tool", approval_mode="never_require")
+    async def second_tool() -> str:
+        await asyncio.sleep(0)
+        return "second"
+
+    class ParallelToolChatClient(FunctionInvocationLayer, ChatTelemetryLayer, BaseChatClient[Any]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.call_count = 0
+
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(
+            self, *, messages: Sequence[Message], stream: bool, options: Mapping[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            del stream, messages, options, kwargs
+            self.call_count += 1
+            if self.call_count == 1:
+
+                async def _get_tool_calls() -> ChatResponse:
+                    return ChatResponse(
+                        messages=[
+                            Message(
+                                role="assistant",
+                                contents=[
+                                    Content.from_function_call(
+                                        call_id="call_first",
+                                        name="first_tool",
+                                        arguments="{}",
+                                    ),
+                                    Content.from_function_call(
+                                        call_id="call_second",
+                                        name="second_tool",
+                                        arguments="{}",
+                                    ),
+                                ],
+                            )
+                        ],
+                    )
+
+                return _get_tool_calls()
+
+            async def _get_final() -> ChatResponse:
+                return ChatResponse(
+                    messages=[Message(role="assistant", contents=["Both tools completed."])],
+                    finish_reason="stop",
+                )
+
+            return _get_final()
+
+    agent = Agent(
+        client=ParallelToolChatClient(),  # ty: ignore[invalid-argument-type]
+        id="parallel_tool_agent_id",
+        name="parallel_tool_agent",
+        default_options={"model": "ToolModel", "tools": [first_tool, second_tool], "tool_choice": "auto"},  # pyrefly: ignore[bad-argument-type]
+    )
+
+    span_exporter.clear()
+    await agent.run("Call both tools.")
+
+    spans = span_exporter.get_finished_spans()
+    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    tool_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.TOOL_EXECUTION_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+    assert len(invoke_spans) == 1
+    assert len(tool_spans) == 2
+    assert {s.attributes.get(OtelAttr.TOOL_NAME.value) for s in tool_spans} == {"first_tool", "second_tool"}  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+    agent_span = invoke_spans[0]
+    agent_context = agent_span.context
+    assert agent_context is not None
+    for tool_span in tool_spans:
+        tool_parent = tool_span.parent
+        tool_context = tool_span.context
+        assert tool_parent is not None, f"Span {tool_span.name} has no parent"
+        assert tool_context is not None
+        assert tool_parent.span_id == agent_context.span_id
+        assert tool_context.trace_id == agent_context.trace_id
+
+
 @pytest.mark.parametrize("stream", [False, True])
 async def test_chat_span_nested_under_explicit_outer_span(
     span_exporter: InMemorySpanExporter, mock_chat_client, stream: bool
@@ -5249,7 +5341,212 @@ async def test_agent_streaming_execute_failure_closes_span_and_resets_contextvar
     assert agent_spans[0].status.status_code == StatusCode.ERROR
 
 
-# region Test heavy operations skipped when span is not recording
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_run_contextvars_safe_when_awaited_in_different_context(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """``run()`` is a sync method that returns an awaitable; the telemetry contextvar set and reset
+    must happen in the same execution context so the returned coroutine can be awaited in a different
+    context.
+
+    Regression for background agents (``BackgroundAgentsProvider``), which do
+    ``asyncio.create_task(agent.run(...))``: ``run()`` executes synchronously in the parent context
+    while the returned coroutine is awaited in a fresh copied context. If the contextvar token were
+    created eagerly in the parent context but reset inside the coroutine, this raised
+    ``ValueError: <Token ...> was created in a different Context``.
+    """
+
+    class _SimpleAgent:
+        AGENT_PROVIDER_NAME = "test_provider"
+
+        def __init__(self):
+            self._id = "simple"
+            self._name = "Simple"
+            self._description = "Agent that returns a response without raising"
+            self._default_options: dict[str, Any] = {}
+
+        @property
+        def id(self):
+            return self._id
+
+        @property
+        def name(self):
+            return self._name
+
+        @property
+        def description(self):
+            return self._description
+
+        @property
+        def default_options(self):
+            return self._default_options
+
+        def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
+            async def _inner() -> AgentResponse:
+                return AgentResponse(messages=[Message(role="assistant", contents=["hi"])])
+
+            return _inner()
+
+    class SimpleAgent(AgentTelemetryLayer, _SimpleAgent):  # type: ignore[misc]
+        pass
+
+    agent = SimpleAgent()
+    span_exporter.clear()
+
+    # Mimic BackgroundAgentsProvider: invoke run() synchronously in this context, then await the
+    # returned coroutine inside a separate task (a different/copied context).
+    awaitable = agent.run(messages="Hello", stream=False)
+
+    async def _runner(aw):
+        return await aw
+
+    result = await asyncio.create_task(_runner(awaitable))
+    assert isinstance(result, AgentResponse)
+
+    spans = span_exporter.get_finished_spans()
+    agent_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert len(agent_spans) == 1
+    assert agent_spans[0].status.status_code != StatusCode.ERROR
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_run_error_path_contextvars_safe_when_awaited_in_different_context(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Error-path variant: the coroutine returned by ``run()`` raises, and is awaited in a different
+    context via ``asyncio.create_task``. The telemetry contextvars are set and reset inside the
+    coroutine (its ``finally``), so the reset on the exception path must not raise
+    ``ValueError: <Token ...> was created in a different Context``; the original error must surface.
+    """
+
+    class _FailingRunAgent:
+        AGENT_PROVIDER_NAME = "test_provider"
+
+        def __init__(self):
+            self._id = "failing_run"
+            self._name = "Failing Run"
+            self._description = "Agent whose run coroutine raises"
+            self._default_options: dict[str, Any] = {}
+
+        @property
+        def id(self):
+            return self._id
+
+        @property
+        def name(self):
+            return self._name
+
+        @property
+        def description(self):
+            return self._description
+
+        @property
+        def default_options(self):
+            return self._default_options
+
+        def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
+            async def _inner() -> AgentResponse:
+                raise RuntimeError("run failed")
+
+            return _inner()
+
+    class FailingRunAgent(AgentTelemetryLayer, _FailingRunAgent):  # type: ignore[misc]
+        pass
+
+    agent = FailingRunAgent()
+    span_exporter.clear()
+
+    awaitable = agent.run(messages="Hello", stream=False)
+
+    async def _runner(aw):
+        return await aw
+
+    # The original RuntimeError must propagate unchanged — not a cross-context ValueError from the
+    # contextvar reset in the coroutine's finally block.
+    with pytest.raises(RuntimeError, match="run failed"):
+        await asyncio.create_task(_runner(awaitable))
+
+    spans = span_exporter.get_finished_spans()
+    agent_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert len(agent_spans) == 1
+    assert agent_spans[0].status.status_code == StatusCode.ERROR
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_streaming_contextvars_safe_when_consumed_in_different_context(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """``run(stream=True)`` returns a ``ResponseStream`` synchronously, but its cleanup hooks (which
+    reset the telemetry contextvars) run when the stream is *consumed* — possibly in a different
+    context (e.g. ``stream = agent.run(stream=True)`` then ``await asyncio.create_task(consume(stream))``).
+
+    The contextvars are therefore set lazily on the first pull, in the consuming context, so the set
+    and the reset both run there. Otherwise this raised
+    ``ValueError: <Token ...> was created in a different Context``.
+    """
+    from agent_framework import AgentResponseUpdate
+
+    class _StreamingAgent:
+        AGENT_PROVIDER_NAME = "test_provider"
+
+        def __init__(self):
+            self._id = "streaming_xctx"
+            self._name = "Streaming XCtx"
+            self._description = "Streaming agent for cross-context consumption"
+            self._default_options: dict[str, Any] = {}
+
+        @property
+        def id(self):
+            return self._id
+
+        @property
+        def name(self):
+            return self._name
+
+        @property
+        def description(self):
+            return self._description
+
+        @property
+        def default_options(self):
+            return self._default_options
+
+        def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
+            if stream:
+
+                async def _stream():
+                    yield AgentResponseUpdate(contents=[Content.from_text("Hello ")], role="assistant")
+                    yield AgentResponseUpdate(contents=[Content.from_text("World")], role="assistant")
+
+                return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+            raise NotImplementedError
+
+    class StreamingAgent(AgentTelemetryLayer, _StreamingAgent):  # type: ignore[misc]
+        pass
+
+    agent = StreamingAgent()
+    span_exporter.clear()
+
+    # Create the stream synchronously in this context, then consume it inside a separate task (a
+    # different/copied context) — mirroring how a caller might hand the stream off to be drained.
+    stream = agent.run(messages="Hello", stream=True)
+
+    async def _consume(s):
+        collected = []
+        async for update in s:
+            collected.append(update)
+        await s.get_final_response()
+        return collected
+
+    updates = await asyncio.create_task(_consume(stream))
+    assert len(updates) == 2
+
+    spans = span_exporter.get_finished_spans()
+    agent_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert len(agent_spans) == 1
+    assert agent_spans[0].status.status_code != StatusCode.ERROR
+
+
 #
 # When ``ENABLE_INSTRUMENTATION`` is on (the default) but no OpenTelemetry
 # tracer provider has been configured, the global provider is the

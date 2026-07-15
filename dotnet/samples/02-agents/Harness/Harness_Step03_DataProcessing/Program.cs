@@ -1,12 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use a HarnessAgent with the default FileAccessProvider
+// This sample demonstrates how to use a HarnessAgent with the FileAccessProvider
 // to give an agent access to a folder of CSV data files. The agent can read, analyze,
 // and extract information from the data, then write results back as new files.
 //
 // The sample includes a pre-populated `working/` folder with sales transaction data.
-// The HarnessAgent's default FileAccessProvider uses `{cwd}/working` as its working directory,
-// which matches this sample's folder layout.
+// File access is opt-in: setting HarnessAgentOptions.FileAccessStore enables the
+// FileAccessProvider, and this sample points it at the `working/` folder below the location of the executable.
 // Ask the agent to analyze the data, produce summaries, or create new output files.
 //
 // Special commands:
@@ -37,7 +37,7 @@ var instructions =
     You are a data analyst assistant. You have access to a folder of data files via the file_access_* tools.
 
     ## Getting started
-    - Start by listing available files with file_access_list_files to see what data is available.
+    - Start by listing available files with file_access_ls to see what data is available.
     - Read the files to understand their structure and contents.
 
     ## Working with data
@@ -46,7 +46,7 @@ var instructions =
     - When calculations are needed, work through them step by step and show your reasoning.
 
     ## Writing output
-    - When asked to produce output files (e.g., reports, summaries, filtered data), use file_access_save_file to write them.
+    - When asked to produce output files (e.g., reports, summaries, filtered data), use file_access_write to write them.
     - Use appropriate file formats: CSV for tabular data, Markdown for reports.
     - Confirm what you wrote and where.
 

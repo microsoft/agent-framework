@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "agent-framework",
+#     "agent-framework-foundry",
 #     "textual>=6.2.1",
 #     "rich>=13.7.1",
 #     "azure-identity",
@@ -105,6 +105,8 @@ def get_stock_price(
         "currency": "USD",
         "as_of": datetime.now(timezone.utc).isoformat(),
     }
+
+
 # </get_stock_price>
 
 

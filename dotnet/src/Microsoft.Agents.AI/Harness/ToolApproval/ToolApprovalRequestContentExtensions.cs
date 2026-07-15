@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -12,7 +10,6 @@ namespace Microsoft.Agents.AI;
 /// <see cref="AlwaysApproveToolApprovalResponseContent"/> instances that instruct the
 /// <see cref="ToolApprovalAgent"/> middleware to record standing approval rules.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class ToolApprovalRequestContentExtensions
 {
     /// <summary>

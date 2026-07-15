@@ -18,7 +18,7 @@ namespace WorkflowMagenticOrchestrationSample;
 /// </summary>
 /// <remarks>
 /// Pre-requisites:
-/// - An Azure AI Foundry project endpoint and model deployment must be configured.
+/// - A Microsoft Foundry project endpoint and model deployment must be configured.
 /// - Run <c>az login</c> before executing the sample.
 /// </remarks>
 public static class Program

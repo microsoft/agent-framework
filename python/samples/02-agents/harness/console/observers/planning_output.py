@@ -25,7 +25,7 @@ from .base import ConsoleObserver
 from .planning_models import PlanningResponse, PlanningResponseType
 
 if TYPE_CHECKING:
-    from agent_framework import Agent, AgentModeProvider, Message
+    from agent_framework import Agent, AgentModeProvider, AgentResponseUpdate, Message
 
     from ..state_driver import IUXStateDriver
 
@@ -67,6 +67,10 @@ class PlanningOutputObserver(ConsoleObserver):
         self._execution_mode_name = execution_mode_name
         self._mode_colors = mode_colors or {}
         self._text_collector: list[str] = []
+        # Track the current response so that, when a run produces multiple model
+        # invocations for a structured-output request (for example after message
+        # injection), only the last response's text is retained for JSON parsing.
+        self._last_response_id: str | None = None
 
     def configure_run_options(
         self,
@@ -78,18 +82,46 @@ class PlanningOutputObserver(ConsoleObserver):
         if self._is_planning_mode(session):
             options["response_format"] = PlanningResponse
 
-    async def on_text(
+    async def on_response_update(
         self,
         ux: IUXStateDriver,
-        text: str,
+        update: AgentResponseUpdate,
         agent: Agent,
         session: Any,
     ) -> None:
-        """Collect text in plan mode; stream through in execute mode."""
-        if self._is_planning_mode_from_ux(ux):
-            self._text_collector.append(text)
-        else:
-            ux.write_text(escape(text))
+        """Stream in execute mode; collect the last response's text in plan mode.
+
+        In planning mode a single agent run may produce multiple model
+        invocations for one structured-output request (for example message
+        injection triggers a follow-up response). Each model invocation is a new
+        response with a distinct, non-``None`` ``response_id`` (surfaced on the
+        provider's lifecycle events). When a new response begins, the previously
+        collected text is flushed to the UX as plain streamed text so that only
+        the final response's text is retained for JSON parsing.
+
+        Text-delta updates in the Responses/Foundry path carry ``response_id =
+        None``; those are simply accumulated and never treated as a boundary.
+        """
+        # Execution mode: stream text straight through to the console.
+        if not self._is_planning_mode_from_ux(ux):
+            if update.text:
+                ux.write_text(escape(update.text))
+            return
+
+        # A new model invocation starts a new response with a different,
+        # non-None response_id. Flush the previously collected (earlier) message
+        # as plain text and reset the collector so only the latest response's
+        # text is parsed as structured output.
+        if update.response_id and update.response_id != self._last_response_id:
+            if self._last_response_id is not None:
+                collected_text = "".join(self._text_collector)
+                if collected_text.strip():
+                    ux.write_text(escape(collected_text))
+                self._text_collector.clear()
+            self._last_response_id = update.response_id
+
+        if update.text:
+            self._text_collector.append(update.text)
 
     async def on_stream_complete(
         self,
@@ -100,10 +132,12 @@ class PlanningOutputObserver(ConsoleObserver):
         """Parse collected text as PlanningResponse and build follow-up actions."""
         if not self._is_planning_mode_from_ux(ux):
             self._text_collector.clear()
+            self._reset_response_tracking()
             return None
 
         collected_text = "".join(self._text_collector)
         self._text_collector.clear()
+        self._reset_response_tracking()
 
         if not collected_text.strip():
             return None
@@ -135,7 +169,17 @@ class PlanningOutputObserver(ConsoleObserver):
         from agent_framework import get_agent_mode
 
         try:
-            current_mode = get_agent_mode(session)
+            # Thread the provider's own configuration (source id, default mode, and the set of
+            # available modes) so this read matches what the provider resolves in ``before_run``.
+            # ``get_agent_mode`` persists the resolved default into session state, so reading with
+            # the built-in default here would wrongly store ``plan`` and override the provider's
+            # configured default (e.g. ``execute``) before the agent ever runs.
+            current_mode = get_agent_mode(
+                session,
+                source_id=self._mode_provider.source_id,
+                default_mode=self._mode_provider.default_mode,
+                available_modes=self._mode_provider.available_modes,
+            )
         except (AttributeError, TypeError):
             return True  # No mode provider → treat as planning
         return current_mode.lower() == self._plan_mode_name.lower()
@@ -146,6 +190,10 @@ class PlanningOutputObserver(ConsoleObserver):
         if current is None:
             return True
         return current.lower() == self._plan_mode_name.lower()
+
+    def _reset_response_tracking(self) -> None:
+        """Reset response-boundary tracking for the next stream."""
+        self._last_response_id = None
 
     def _build_clarification_actions(
         self,
@@ -218,7 +266,12 @@ class PlanningOutputObserver(ConsoleObserver):
             if selection == approve_option:
                 from agent_framework import set_agent_mode
 
-                set_agent_mode(session, self._execution_mode_name)
+                set_agent_mode(
+                    session,
+                    self._execution_mode_name,
+                    source_id=self._mode_provider.source_id,
+                    available_modes=self._mode_provider.available_modes,
+                )
                 exec_color = self._mode_colors.get(self._execution_mode_name)
                 ux.set_mode(self._execution_mode_name, exec_color)
                 ux.append_info_line(
