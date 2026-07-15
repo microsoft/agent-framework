@@ -269,14 +269,17 @@ def test_as_skills_provider_forwards_only_set_archive_options() -> None:
     )
     # Unset archive kwargs are not forwarded (fall back to MCPSkillsSource defaults);
     # set ones are collected for forwarding.
-    default_provider = toolbox.as_skills_provider()
-    assert default_provider._source._archive_options == {}  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue, reportPrivateUsage]
+    default_source = cast(_FoundryToolboxSkillsSource, toolbox.as_skills_provider()._source)  # pyright: ignore[reportPrivateUsage]
+    assert default_source._archive_options == {}  # pyright: ignore[reportPrivateUsage]
 
-    provider = toolbox.as_skills_provider(
-        archive_skills_directory="/tmp/skills",
-        archive_resource_search_depth=1,
+    source = cast(
+        _FoundryToolboxSkillsSource,
+        toolbox.as_skills_provider(
+            archive_skills_directory="/tmp/skills",
+            archive_resource_search_depth=1,
+        )._source,  # pyright: ignore[reportPrivateUsage]
     )
-    assert provider._source._archive_options == {  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue, reportPrivateUsage]
+    assert source._archive_options == {  # pyright: ignore[reportPrivateUsage]
         "archive_skills_directory": "/tmp/skills",
         "archive_resource_search_depth": 1,
     }
