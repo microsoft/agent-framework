@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 from pathlib import Path
 from typing import Any
@@ -18,10 +17,6 @@ from typing_extensions import Never
 
 TranslationState = dict[str, Any]
 _agents: dict[str, Agent] = {}
-
-
-def _stage_delay_seconds() -> float:
-    return float(os.getenv("WORKFLOW_STAGE_DELAY_SECONDS", "20"))
 
 
 def _crash_once(stage: str) -> None:
@@ -47,7 +42,6 @@ def _crash_once(stage: str) -> None:
 
 
 async def _translate(stage: str, text: str) -> str:
-    await asyncio.sleep(_stage_delay_seconds())
     response = await _agents[stage].run(text)
     return response.text.strip()
 

@@ -42,8 +42,6 @@ services:
     environmentVariables:
       - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
         value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
-      - name: WORKFLOW_STAGE_DELAY_SECONDS
-        value: "20"
       - name: WORKFLOW_CRASH_ONCE_PER_STAGE
         value: "true"
     container:
