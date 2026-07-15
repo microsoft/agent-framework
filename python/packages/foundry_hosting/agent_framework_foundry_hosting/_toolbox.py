@@ -222,9 +222,10 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             disable_caching: When ``True``, re-query the toolbox on every agent run,
                 re-reading ``skill://index.json`` each time. When ``False`` (the
                 default), the toolbox's skill discovery is cached after the first run
-                so the index is read once. The toolbox's skills are the same for every
-                caller (discovery ignores the per-run :class:`SkillsSourceContext`), so
-                caching them here is safe.
+                so the index is read once. The toolbox's advertised skill set is the
+                same for every caller (the per-request call-id governs execution/
+                authorization, not which skills are listed), so a single shared cache
+                is safe.
             cache_refresh_interval: Optional duration after which the cached skill
                 discovery is considered stale and re-read from the toolbox on the next
                 agent run. Useful when a toolbox's attached skills change over the
@@ -263,9 +264,10 @@ class FoundryToolbox(MCPStreamableHTTPTool):
                 )
                 await ResponsesHostServer(agent).run_async()
         """
-        # _FoundryToolboxSkillsSource is context-independent (get_skills ignores the
-        # SkillsSourceContext), so caching it here can't leak skills across callers.
-        # SkillsProvider won't auto-cache a caller source, so we compose it ourselves.
+        # The toolbox advertises the same skill set to every caller (the per-request
+        # call-id governs execution/authorization, not which skills are listed), so a
+        # single shared cache is safe. SkillsProvider won't auto-cache a caller source,
+        # so we compose the caching ourselves.
         source: SkillsSource = _FoundryToolboxSkillsSource(self)
         if not disable_caching:
             source = DeduplicatingSkillsSource(CachingSkillsSource(source, refresh_interval=cache_refresh_interval))
