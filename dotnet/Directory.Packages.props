@@ -55,10 +55,10 @@
     <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.8" />
     <!-- AG-UI .NET SDK packages (published by the AG-UI team). -->
     <PackageVersion Include="AGUI.Abstractions" Version="0.0.4" />
-    <PackageVersion Include="AGUI.Formatting" Version="0.0.3" />
-    <PackageVersion Include="AGUI.Protobuf" Version="0.0.3" />
-    <PackageVersion Include="AGUI.Client" Version="0.0.3" />
-    <PackageVersion Include="AGUI.Server" Version="0.0.3" />
+    <PackageVersion Include="AGUI.Formatting" Version="0.0.4" />
+    <PackageVersion Include="AGUI.Protobuf" Version="0.0.4" />
+    <PackageVersion Include="AGUI.Client" Version="0.0.4" />
+    <PackageVersion Include="AGUI.Server" Version="0.0.4" />
     <PackageVersion Include="System.Text.Json" Version="10.0.9" />
     <PackageVersion Include="System.Threading.Channels" Version="10.0.8" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
