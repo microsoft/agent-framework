@@ -41,7 +41,7 @@ dev = [
     "pyright==1.1.411",
     "pyrefly==1.1.1",
     "ty==0.0.55",
-    "zuban==0.8.2",
+    "zuban==0.9.0",
     "opentelemetry-sdk",
     #tasks
     "poethepoet==0.48.0",
