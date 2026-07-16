@@ -123,7 +123,11 @@ public class ChatClientAgentSessionTests
     {
         // Arrange
         var session = new ChatClientAgentSession();
-        JsonSerializerOptions options = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+        JsonSerializerOptions options = new()
+        {
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            RespectRequiredConstructorParameters = true,
+        };
         options.TypeInfoResolverChain.Add(AgentJsonUtilities.DefaultOptions.TypeInfoResolver!);
 
         // Act
