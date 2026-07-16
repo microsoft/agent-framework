@@ -3,7 +3,7 @@
 // Background Responses — Asynchronous agent execution with polling
 //
 // This sample shows how to use background responses with ChatClientAgent
-// and Azure AI Foundry for non-blocking agent execution.
+// and Microsoft Foundry for non-blocking agent execution.
 
 using Azure.AI.Projects;
 using Azure.Identity;

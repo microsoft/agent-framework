@@ -2,11 +2,6 @@
 
 import asyncio
 import os
-
-# Uncomment this filter to suppress the experimental Skills warning before
-# using the sample's Skills APIs.
-# import warnings
-# warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from textwrap import dedent
 
 from agent_framework import Agent, Content, InlineSkill, Message, SkillFrontmatter, SkillsProvider
@@ -40,7 +35,7 @@ To approve skill tools automatically instead of prompting, use
 ``samples/02-agents/skills/skills_auto_approval/skills_auto_approval.py``.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL (defaults to "gpt-4o-mini").
 """
 

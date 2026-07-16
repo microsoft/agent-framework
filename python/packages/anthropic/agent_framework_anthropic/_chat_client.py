@@ -28,7 +28,7 @@ from agent_framework import (
 )
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent
-from agent_framework._tools import SHELL_TOOL_KIND_VALUE
+from agent_framework._tools import SHELL_TOOL_KIND_VALUE, normalize_tools
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import AsyncAnthropic, AsyncAnthropicFoundry
@@ -79,7 +79,6 @@ logger = logging.getLogger("agent_framework.anthropic")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
 BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
-STRUCTURED_OUTPUTS_BETA_FLAG: Final[str] = "structured-outputs-2025-11-13"
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 AnthropicAsyncClient = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex
@@ -580,7 +579,9 @@ class RawAnthropicClient(
         """
         # Start with a copy of options, excluding keys we handle separately
         run_options: dict[str, Any] = {
-            k: v for k, v in options.items() if v is not None and k not in {"instructions", "response_format"}
+            k: v
+            for k, v in options.items()
+            if v is not None and k not in {"instructions", "response_format", "additional_beta_flags"}
         }
         # Framework-level options handled elsewhere; do not forward as raw Anthropic request kwargs.
         run_options.pop("allow_multiple_tool_calls", None)
@@ -593,7 +594,9 @@ class RawAnthropicClient(
         # This includes underscore-prefixed internal objects (like _function_middleware_pipeline)
         # and framework kwargs like 'thread' and 'middleware'.
         filtered_kwargs = {
-            k: v for k, v in kwargs.items() if not k.startswith("_") and k not in {"thread", "middleware"}
+            k: v
+            for k, v in kwargs.items()
+            if not k.startswith("_") and k not in {"thread", "middleware", "additional_beta_flags"}
         }
         _apply_option_translations(filtered_kwargs)
         run_options.update(filtered_kwargs)
@@ -638,12 +641,17 @@ class RawAnthropicClient(
         if tools_config := self._prepare_tools_for_anthropic(options):
             run_options.update(tools_config)
 
-        # response_format - use native output_format for structured outputs
+        # response_format - emit Anthropic's GA ``output_config.format`` shape.
+        # The deprecated ``output_format`` parameter (gated by the
+        # ``structured-outputs-2025-11-13`` beta flag) produced concatenated /
+        # malformed JSON when combined with tools — the GA path does not.
+        # Merge into any caller-supplied ``output_config`` so e.g. the
+        # adaptive-thinking ``effort`` setting survives the transformation.
         response_format = options.get("response_format")
         if response_format is not None:
-            run_options["output_format"] = self._prepare_response_format(response_format)
-            # Add the structured outputs beta flag
-            run_options["betas"].add(STRUCTURED_OUTPUTS_BETA_FLAG)
+            output_config = dict(run_options.get("output_config") or {})
+            output_config["format"] = self._prepare_response_format(response_format)
+            run_options["output_config"] = output_config
 
         return run_options
 
@@ -693,7 +701,7 @@ class RawAnthropicClient(
         }
 
     def _prepare_response_format(self, response_format: type[BaseModel] | dict[str, Any]) -> dict[str, Any]:
-        """Prepare the output_format parameter for structured output.
+        """Build the ``output_config.format`` payload for Anthropic structured outputs.
 
         Args:
             response_format: Either a Pydantic model class or a dict with the schema specification.
@@ -701,7 +709,8 @@ class RawAnthropicClient(
                 or direct format with "schema" key, or the raw schema dict itself.
 
         Returns:
-            A dictionary representing the output_format for Anthropic's structured outputs.
+            A ``{"type": "json_schema", "schema": ...}`` dict — the value placed
+            under ``output_config["format"]`` on the GA structured-outputs path.
         """
         if isinstance(response_format, dict):
             if "json_schema" in response_format:
@@ -916,6 +925,9 @@ class RawAnthropicClient(
                         ):
                             a_content[-1]["signature"] = content.protected_data
                         continue
+                    if content.id and not content.protected_data:
+                        a_content.append({"type": "text", "text": content.text})
+                        continue
                     thinking_block: dict[str, Any] = {"type": "thinking", "thinking": content.text}
                     if content.protected_data:
                         thinking_block["signature"] = content.protected_data
@@ -950,7 +962,7 @@ class RawAnthropicClient(
             tool_list: list[Any] = []
             mcp_server_list: list[Any] = []
             tool_name_aliases: dict[str, str] = {}
-            for tool in tools:
+            for tool in normalize_tools(tools):
                 if isinstance(tool, FunctionTool) and tool.kind == SHELL_TOOL_KIND_VALUE:
                     api_type = (tool.additional_properties or {}).get("type", "bash_20250124")
                     tool_name_aliases["bash"] = tool.name
@@ -1183,6 +1195,7 @@ class RawAnthropicClient(
                                 call_id=content_block.id,
                                 name=resolved_tool_name,
                                 arguments=content_block.input,
+                                informational_only=content_block.type == "server_tool_use",
                                 raw_representation=content_block,
                             )
                         )

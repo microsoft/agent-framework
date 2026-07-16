@@ -16,12 +16,12 @@ from agent_framework import (
     Message,
     SupportsChatGetResponse,
     TodoFileStore,
-    TodoInput,
     TodoItem,
     TodoProvider,
     TodoSessionStore,
     TodoStore,
 )
+from agent_framework._harness._todo import TodoInput
 
 
 def _tool_by_name(tools: list[object], name: str) -> object:
@@ -366,12 +366,14 @@ async def test_todo_provider_serializes_concurrent_mutations(
     assert {item["id"] for item in payload if item["is_complete"]} == {1, 2, 3, 4, 5}
 
 
-def test_todo_harness_classes_are_marked_experimental() -> None:
-    """Todo harness public classes should expose HARNESS experimental metadata."""
-    assert TodoStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert TodoItem.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert TodoInput.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert TodoSessionStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+def test_todo_harness_graduated_classes_are_not_experimental() -> None:
+    """Graduated todo harness types should carry no experimental metadata; TodoFileStore stays experimental."""
+    for graduated in (TodoStore, TodoItem, TodoInput, TodoSessionStore, TodoProvider):
+        assert not hasattr(graduated, "__feature_id__")
+    assert TodoProvider.__doc__ is not None
+    assert ".. warning:: Experimental" not in TodoProvider.__doc__
+
+    # TodoFileStore remains opt-in and experimental.
     assert TodoFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert TodoProvider.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert ".. warning:: Experimental" in TodoProvider.__doc__  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert TodoFileStore.__doc__ is not None
+    assert ".. warning:: Experimental" in TodoFileStore.__doc__

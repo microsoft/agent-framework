@@ -2,7 +2,7 @@
 
 """Agent invocation executors for declarative workflows.
 
-These executors handle invoking Azure AI Foundry agents and other AI agents,
+These executors handle invoking Microsoft Foundry agents and other AI agents,
 supporting both streaming responses and human-in-loop patterns.
 
 Aligned with .NET's InvokeAzureAgentExecutor behavior including:
@@ -371,7 +371,7 @@ def _normalize_variable_path(variable: str) -> str:
 
 
 class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
-    """Executor that invokes an Azure AI Foundry agent.
+    """Executor that invokes a Microsoft Foundry agent.
 
     This executor supports both Python-style and .NET-style YAML schemas:
 

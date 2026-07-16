@@ -1,6 +1,6 @@
 # Foundry Local Package (agent-framework-foundry-local)
 
-Integration with Azure AI Foundry Local for local model inference.
+Integration with Microsoft Foundry Local for local model inference.
 
 ## Main Classes
 

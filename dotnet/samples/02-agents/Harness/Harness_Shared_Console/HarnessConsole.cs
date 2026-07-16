@@ -40,9 +40,11 @@ public static class HarnessConsole
             ? await options.SessionFactory(agent)
             : await agent.CreateSessionAsync();
 
+        string? initialMode = modeProvider is null ? null : await modeProvider.GetModeAsync(session);
+
         using var component = new HarnessAppComponent(
             placeholder: userPrompt,
-            initialMode: modeProvider?.GetMode(session),
+            initialMode: initialMode,
             inputEnabled: messageInjector is not null,
             runnerFactory: ux => new HarnessAgentRunner(
                 agent: agent,

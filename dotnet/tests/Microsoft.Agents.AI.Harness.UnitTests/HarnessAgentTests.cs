@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -30,7 +32,6 @@ public class HarnessAgentTests
         DisableToolAutoApproval = true,
         DisableOpenTelemetry = true,
         DisableFileMemory = true,
-        DisableFileAccess = true,
         DisableWebSearch = true,
         DisableTodoProvider = true,
         DisableAgentModeProvider = true,
@@ -682,7 +683,7 @@ public class HarnessAgentTests
         options.DisableToolAutoApproval = false;
         options.ToolApprovalAgentOptions = new ToolApprovalAgentOptions
         {
-            AutoApprovalRules = [fcc => new ValueTask<bool>(fcc.Name == "ReadTool")]
+            AutoApprovalRules = [context => new ValueTask<bool>(context.FunctionCallContent.Name == "ReadTool")]
         };
 
         var agent = new HarnessAgent(mockClient.Object, options);
@@ -698,15 +699,15 @@ public class HarnessAgentTests
 
     #endregion
 
-    #region Feature: NonApprovalRequiredFunctionBypassing
+    #region Feature: ApprovalNotRequiredFunctionBypassing
 
     /// <summary>
     /// Verify that by default, when a response contains a mix of tools that require approval and tools that do not,
     /// only the approval-required tool is surfaced to the caller. The non-approval-required tool is bypassed
-    /// (stored as auto-approved) by the <c>NonApprovalRequiredFunctionBypassingChatClient</c> decorator.
+    /// (stored as auto-approved) by the <c>ApprovalNotRequiredFunctionBypassingChatClient</c> decorator.
     /// </summary>
     [Fact]
-    public async Task NonApprovalRequiredFunctionBypassing_BypassesNonApprovalToolsByDefaultAsync()
+    public async Task ApprovalNotRequiredFunctionBypassing_BypassesNonApprovalToolsByDefaultAsync()
     {
         // Arrange — the model requests both a normal tool and an approval-required tool in the same turn.
         var normalTool = AIFunctionFactory.Create(() => "result", "NormalTool");
@@ -748,7 +749,7 @@ public class HarnessAgentTests
     /// as approval requests, reflecting the all-or-nothing behavior of <see cref="FunctionInvokingChatClient"/>.
     /// </summary>
     [Fact]
-    public async Task NonApprovalRequiredFunctionBypassing_SurfacesAllApprovalsWhenDisabledAsync()
+    public async Task ApprovalNotRequiredFunctionBypassing_SurfacesAllApprovalsWhenDisabledAsync()
     {
         // Arrange — the model requests both a normal tool and an approval-required tool in the same turn.
         var normalTool = AIFunctionFactory.Create(() => "result", "NormalTool");
@@ -767,7 +768,7 @@ public class HarnessAgentTests
             ])));
 
         var options = CreateAllDisabledOptions();
-        options.DisableNonApprovalRequiredFunctionBypassing = true;
+        options.DisableApprovalNotRequiredFunctionBypassing = true;
         options.ChatOptions = new ChatOptions { Tools = [normalTool, approvalTool] };
 
         var agent = new HarnessAgent(mockClient.Object, options);
@@ -842,6 +843,90 @@ public class HarnessAgentTests
 
         // Assert
         Assert.NotNull(agent.GetService<OpenTelemetryAgent>());
+    }
+
+    /// <summary>
+    /// Verify that the inner agent's ChatClient pipeline includes OpenTelemetryChatClient when
+    /// OpenTelemetry is enabled, so model calls are traced in addition to the agent-level
+    /// <see cref="OpenTelemetryAgent"/> wrapper.
+    /// </summary>
+    [Fact]
+    public void Pipeline_IncludesOpenTelemetryChatClientWhenEnabled()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var options = CreateAllDisabledOptions();
+        options.DisableOpenTelemetry = false;
+
+        // Act
+        var agent = new HarnessAgent(chatClient, options);
+        var innerAgent = agent.GetService<ChatClientAgent>();
+
+        // Assert
+        Assert.NotNull(innerAgent);
+        Assert.NotNull(innerAgent!.ChatClient.GetService<OpenTelemetryChatClient>());
+    }
+
+    /// <summary>
+    /// Verify that the inner agent's ChatClient pipeline excludes OpenTelemetryChatClient when
+    /// OpenTelemetry is disabled.
+    /// </summary>
+    [Fact]
+    public void Pipeline_ExcludesOpenTelemetryChatClientWhenDisabled()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+
+        // Act
+        var agent = new HarnessAgent(chatClient, CreateAllDisabledOptions());
+        var innerAgent = agent.GetService<ChatClientAgent>();
+
+        // Assert
+        Assert.NotNull(innerAgent);
+        Assert.Null(innerAgent!.ChatClient.GetService<OpenTelemetryChatClient>());
+    }
+
+    /// <summary>
+    /// Verify that the chat-client-level OpenTelemetry instrumentation emits a chat span under the
+    /// configured <see cref="HarnessAgentOptions.OpenTelemetrySourceName"/>, proving both that the
+    /// ChatClient pipeline is instrumented and that the source name is propagated.
+    /// </summary>
+    [Fact]
+    public async Task OpenTelemetry_ChatClientEmitsChatSpanUnderConfiguredSourceNameAsync()
+    {
+        // Arrange
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new ConcurrentQueue<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == sourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activities.Enqueue,
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var mockClient = new Mock<IChatClient>();
+        mockClient
+            .Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Hello!")));
+
+        var options = CreateAllDisabledOptions();
+        options.DisableOpenTelemetry = false;
+        options.OpenTelemetrySourceName = sourceName;
+
+        var agent = new HarnessAgent(mockClient.Object, options);
+        var session = await agent.CreateSessionAsync();
+
+        // Act
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert
+        Assert.Contains(
+            activities,
+            a => string.Equals(a.GetTagItem("gen_ai.operation.name") as string, "chat", StringComparison.Ordinal));
     }
 
     #endregion
@@ -1126,15 +1211,15 @@ public class HarnessAgentTests
     #region Feature: FileAccessProvider
 
     /// <summary>
-    /// Verify that FileAccessProvider is included in AIContextProviders by default.
+    /// Verify that FileAccessProvider is included in AIContextProviders when a FileAccessStore is provided.
     /// </summary>
     [Fact]
-    public void FileAccessProvider_IncludedByDefault()
+    public void FileAccessProvider_IncludedWhenStoreProvided()
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
         var options = CreateAllDisabledOptions();
-        options.DisableFileAccess = false;
+        options.FileAccessStore = new Mock<AgentFileStore>().Object;
 
         // Act
         var agent = new HarnessAgent(chatClient, options);
@@ -1146,10 +1231,10 @@ public class HarnessAgentTests
     }
 
     /// <summary>
-    /// Verify that FileAccessProvider is excluded when disabled.
+    /// Verify that FileAccessProvider is excluded by default (opt-in: no store provided).
     /// </summary>
     [Fact]
-    public void FileAccessProvider_ExcludedWhenDisabled()
+    public void FileAccessProvider_ExcludedByDefault()
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
@@ -1176,7 +1261,6 @@ public class HarnessAgentTests
         var chatClient = new Mock<IChatClient>().Object;
         var customStore = new Mock<AgentFileStore>().Object;
         var options = CreateAllDisabledOptions();
-        options.DisableFileAccess = false;
         options.FileAccessStore = customStore;
 
         // Act
@@ -1186,6 +1270,46 @@ public class HarnessAgentTests
         // Assert — FileAccessProvider should be present with the custom store.
         Assert.NotNull(innerAgent?.AIContextProviders);
         Assert.Contains(innerAgent!.AIContextProviders!, p => p is FileAccessProvider);
+    }
+
+    /// <summary>
+    /// Verify that FileAccessProviderOptions are honored: setting DisableWriteTools must remove the
+    /// write tools from the provider that HarnessAgent wires up, while the read-only tools remain.
+    /// </summary>
+    [Fact]
+    public async Task FileAccessProvider_UsesProvidedOptionsAsync()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var options = CreateAllDisabledOptions();
+        options.FileAccessStore = new InMemoryAgentFileStore();
+        options.FileAccessProviderOptions = new FileAccessProviderOptions { DisableWriteTools = true };
+
+        // Act
+        var agent = new HarnessAgent(chatClient, options);
+        var innerAgent = agent.GetService<ChatClientAgent>();
+
+        // Assert — the FileAccessProvider is present and honors the supplied options.
+        Assert.NotNull(innerAgent?.AIContextProviders);
+        var fileAccessProvider = Assert.IsType<FileAccessProvider>(
+            Assert.Single(innerAgent!.AIContextProviders!, p => p is FileAccessProvider));
+
+        var mockAgent = new Mock<AIAgent>().Object;
+        var session = await agent.CreateSessionAsync();
+#pragma warning disable MAAI001
+        var context = new AIContextProvider.InvokingContext(mockAgent, session, new AIContext());
+#pragma warning restore MAAI001
+        AIContext result = await fileAccessProvider.InvokingAsync(context);
+        var toolNames = result.Tools!.OfType<AIFunction>().Select(t => t.Name).ToList();
+
+        // DisableWriteTools = true => only the read-only tools are exposed.
+        Assert.Contains(FileAccessProvider.ReadFileToolName, toolNames);
+        Assert.Contains(FileAccessProvider.LsToolName, toolNames);
+        Assert.Contains(FileAccessProvider.GrepToolName, toolNames);
+        Assert.DoesNotContain(FileAccessProvider.WriteToolName, toolNames);
+        Assert.DoesNotContain(FileAccessProvider.DeleteFileToolName, toolNames);
+        Assert.DoesNotContain(FileAccessProvider.ReplaceToolName, toolNames);
+        Assert.DoesNotContain(FileAccessProvider.ReplaceLinesToolName, toolNames);
     }
 
     #endregion
@@ -1333,7 +1457,6 @@ public class HarnessAgentTests
         Assert.Contains(providers, p => p is TodoProvider);
         Assert.Contains(providers, p => p is AgentModeProvider);
         Assert.Contains(providers, p => p is FileMemoryProvider);
-        Assert.Contains(providers, p => p is FileAccessProvider);
         Assert.Contains(providers, p => p is AgentSkillsProvider);
 
         // Assert — HostedWebSearchTool is present in the tools sent to the model
@@ -1817,7 +1940,6 @@ public class HarnessAgentTests
             DisableToolAutoApproval = true,
             DisableOpenTelemetry = true,
             DisableFileMemory = true,
-            DisableFileAccess = true,
             DisableWebSearch = true,
             DisableTodoProvider = true,
             DisableAgentModeProvider = true,
@@ -1868,7 +1990,6 @@ public class HarnessAgentTests
             DisableToolAutoApproval = true,
             DisableOpenTelemetry = true,
             DisableFileMemory = true,
-            DisableFileAccess = true,
             DisableWebSearch = true,
             DisableTodoProvider = true,
             DisableAgentModeProvider = true,
@@ -1900,7 +2021,6 @@ public class HarnessAgentTests
             DisableToolAutoApproval = true,
             DisableOpenTelemetry = true,
             DisableFileMemory = true,
-            DisableFileAccess = true,
             DisableWebSearch = true,
             DisableTodoProvider = true,
             DisableAgentModeProvider = true,

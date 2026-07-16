@@ -101,11 +101,11 @@ def execute_workflow_activity(executor: Executor, input_json: str, workflow: Wor
         shared_state.import_state(deserialized_state)
 
         if is_hitl_response:
-            if not isinstance(message_data, dict):
+            if not isinstance(message, dict):
                 raise ValueError("HITL message payload must be a JSON object")
             await execute_hitl_response_handler(
                 executor=executor,
-                hitl_message=cast(dict[str, Any], message_data),
+                hitl_message=cast(dict[str, Any], message),
                 shared_state=shared_state,
                 runner_context=runner_context,
             )

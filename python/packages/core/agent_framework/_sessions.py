@@ -22,15 +22,24 @@ import uuid
 import weakref
 from abc import abstractmethod
 from base64 import urlsafe_b64encode
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypeGuard, cast
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import ChatContext, ChatMiddleware
-from ._types import AgentResponse, ChatResponse, Message, ResponseStream
-from .exceptions import ChatClientInvalidResponseException
+from ._types import (
+    AgentResponse,
+    AgentRunInputs,
+    ChatResponse,
+    ChatResponseUpdate,
+    Message,
+    ResponseStream,
+    _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
+    normalize_messages,
+)
+from .exceptions import ChatClientInvalidRequestException, ChatClientInvalidResponseException
 
 if TYPE_CHECKING:
     from ._agents import SupportsAgentRun
@@ -41,6 +50,8 @@ logger = logging.getLogger("agent_framework")
 
 # Registry of known types for state deserialization
 _STATE_TYPE_REGISTRY: dict[str, type] = {}
+MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY: str = "message_injection.pending_messages"
+_MESSAGE_INJECTION_LOCK = threading.Lock()
 
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
@@ -53,6 +64,17 @@ def _default_json_dumps(value: Any) -> str:
 
 def _default_json_loads(value: str | bytes) -> Any:
     return json.loads(value)
+
+
+def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[str]:
+    """Return origin session IDs in first-seen order without duplicates."""
+    unique_origin_session_ids: list[str] = []
+    seen_origin_session_ids: set[str] = set()
+    for origin_session_id in origin_session_ids:
+        if origin_session_id not in seen_origin_session_ids:
+            seen_origin_session_ids.add(origin_session_id)
+            unique_origin_session_ids.append(origin_session_id)
+    return unique_origin_session_ids
 
 
 def _is_middleware_sequence(
@@ -160,7 +182,8 @@ class SessionContext:
 
     Attributes:
         session_id: The ID of the current session.
-        service_session_id: Service-managed session ID (if present, service handles storage).
+        service_session_id: Service-managed session identifier
+            (if present, the service stores history).
         input_messages: The new messages being sent to the agent (set by caller).
         context_messages: Dict mapping source_id -> messages added by that provider.
             Maintains insertion order (provider execution order).
@@ -190,7 +213,7 @@ class SessionContext:
 
         Args:
             session_id: The ID of the current session.
-            service_session_id: Service-managed session ID.
+            service_session_id: Service-managed session identifier.
             input_messages: The new messages being sent to the agent.
             context_messages: Pre-populated context messages by source.
             instructions: Pre-populated instructions.
@@ -218,7 +241,13 @@ class SessionContext:
         """The agent's response. Set by the framework after invocation, read-only for providers."""
         return self._response
 
-    def extend_messages(self, source: str | object, messages: Sequence[Message]) -> None:
+    def extend_messages(
+        self,
+        source: str | object,
+        messages: Sequence[Message],
+        *,
+        origin_session_ids: Sequence[str] | None = None,
+    ) -> None:
         """Add context messages from a specific source.
 
         Messages are copied before attribution is added, so the caller's
@@ -233,19 +262,56 @@ class SessionContext:
                 object is passed, its class name is recorded as
                 ``source_type`` in the attribution.
             messages: The messages to add.
+
+        Keyword Args:
+            origin_session_ids: Optional session IDs that originally produced
+                these messages, when different from the current session. Set
+                by providers that inject content stored under other sessions
+                (cross-session memory). The IDs describe the contributing
+                sessions for every message supplied in this call; they are not
+                positionally paired with messages, and a composed message can
+                have multiple origins. The values are exposed under
+                ``additional_properties["_attribution"]["origin_session_ids"]``
+                so downstream context observers can detect cross-session
+                content for governance, audit, or behavioral-analysis
+                purposes. Omit (default) when content originates in the
+                current session; absence of the field means that no origin
+                information was supplied.
         """
         if isinstance(source, str):
             source_id = source
-            attribution: dict[str, str] = {"source_id": source_id}
+            attribution: dict[str, Any] = {"source_id": source_id}
         else:
             source_id = source.source_id  # type: ignore[attr-defined]
             attribution = {"source_id": source_id, "source_type": type(source).__name__}
+        if origin_session_ids:
+            attribution["origin_session_ids"] = _deduplicate_origin_session_ids(origin_session_ids)
 
         copied: list[Message] = []
         for message in messages:
             msg_copy = copy.copy(message)
             msg_copy.additional_properties = dict(message.additional_properties)
-            msg_copy.additional_properties.setdefault("_attribution", attribution)
+            message_attribution = dict(attribution)
+            if "origin_session_ids" in message_attribution:
+                message_attribution["origin_session_ids"] = list(message_attribution["origin_session_ids"])
+            existing_attribution = msg_copy.additional_properties.get("_attribution")
+            if isinstance(existing_attribution, Mapping):
+                merged_attribution = dict(cast(Mapping[str, Any], existing_attribution))
+                for key, value in message_attribution.items():
+                    if key == "origin_session_ids":
+                        existing_origins = merged_attribution.get(key)
+                        if isinstance(existing_origins, Sequence) and not isinstance(existing_origins, str):
+                            existing_origin_values = cast(Sequence[Any], existing_origins)
+                            value = _deduplicate_origin_session_ids(
+                                [origin for origin in existing_origin_values if isinstance(origin, str)]
+                                + cast(list[str], value)
+                            )
+                        merged_attribution[key] = value
+                    else:
+                        merged_attribution.setdefault(key, value)
+                msg_copy.additional_properties["_attribution"] = merged_attribution
+            else:
+                msg_copy.additional_properties.setdefault("_attribution", message_attribution)
             copied.append(msg_copy)
         if source_id not in self.context_messages:
             self.context_messages[source_id] = []
@@ -546,7 +612,7 @@ def is_local_history_conversation_id(conversation_id: str | None) -> bool:
 def _response_contains_follow_up_request(response: ChatResponse) -> bool:
     """Return whether a response requires another model call in the current run."""
     return any(
-        item.type in {"function_call", "function_approval_request"}
+        item.type == "function_approval_request" or (item.type == "function_call" and not item.informational_only)
         for message in response.messages
         for item in message.contents
     )
@@ -566,6 +632,160 @@ def _split_service_call_messages(messages: Sequence[Message]) -> tuple[list[Mess
                 continue
         input_messages.append(message)
     return input_messages, context_messages
+
+
+def enqueue_messages(session: AgentSession, messages: AgentRunInputs) -> None:
+    """Enqueue messages for the next model call in the given session.
+
+    Args:
+        session: The session whose pending message queue should receive the messages.
+        messages: The messages to enqueue. Accepts the same flexible shapes as ``Agent.run`` input:
+            a string, ``Content``, ``Message``, or a sequence of those.
+    """
+    pending_messages = normalize_messages(messages)
+    if not pending_messages:
+        return
+    with _MESSAGE_INJECTION_LOCK:
+        queue = cast(
+            list[Message],
+            session.state.setdefault(MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY, []),
+        )
+        queue.extend(pending_messages)
+
+
+class MessageInjectionMiddleware(ChatMiddleware):
+    """Chat middleware that injects queued session messages into the model call loop.
+
+    Messages can be enqueued for an :class:`AgentSession` before a run starts or while a run is in progress,
+    including from tool code that receives a :class:`FunctionInvocationContext`. Pending messages are stored in
+    ``session.state`` and drained into the next model call for that session. After a model call completes, the
+    middleware loops internally only when there are newly queued messages and the response does not contain function
+    calls that the function invocation layer must handle.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the middleware."""
+
+    def enqueue_messages(self, session: AgentSession, messages: AgentRunInputs) -> None:
+        """Enqueue messages for the next model call in the given session.
+
+        Args:
+            session: The session whose pending message queue should receive the messages.
+            messages: The messages to enqueue. Accepts the same flexible shapes as ``Agent.run`` input:
+                a string, ``Content``, ``Message``, or a sequence of those.
+        """
+        enqueue_messages(session, messages)
+
+    def get_pending_messages(self, session: AgentSession) -> list[Message]:
+        """Return a snapshot of messages queued for the given session.
+
+        Args:
+            session: The session whose pending messages should be returned.
+
+        Returns:
+            A point-in-time copy of the queued messages. The returned list is not updated if the queue is later
+            drained or extended.
+        """
+        with _MESSAGE_INJECTION_LOCK:
+            return list(cast(list[Message], session.state.get(MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY, [])))
+
+    def _drain_pending_messages(self, session: AgentSession, messages: Sequence[Message]) -> list[Message]:
+        with _MESSAGE_INJECTION_LOCK:
+            queue = cast(
+                list[Message],
+                session.state.setdefault(MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY, []),
+            )
+            if not queue:
+                return list(messages)
+            next_messages = [*messages, *queue]
+            queue.clear()
+            return next_messages
+
+    def _has_pending_messages(self, session: AgentSession) -> bool:
+        with _MESSAGE_INJECTION_LOCK:
+            return bool(session.state.get(MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY, []))
+
+    @staticmethod
+    def _update_context_conversation_id(context: ChatContext, conversation_id: str | None) -> None:
+        if conversation_id is None:
+            return
+        context.kwargs["conversation_id"] = conversation_id
+        if context.options is None:
+            context.options = {"conversation_id": conversation_id}
+            return
+        context.options = {**context.options, "conversation_id": conversation_id}
+
+    async def _process_non_streaming(
+        self,
+        context: ChatContext,
+        call_next: Callable[[], Awaitable[None]],
+        session: AgentSession,
+    ) -> None:
+        while True:
+            context.messages = self._drain_pending_messages(session, context.messages)
+            context.result = None
+            await call_next()
+            if context.result is None:
+                return
+            if isinstance(context.result, ResponseStream):
+                raise ValueError("Non-streaming message injection middleware requires a ChatResponse result.")
+            response = cast(ChatResponse, context.result)
+            if _response_contains_follow_up_request(response) or not self._has_pending_messages(session):
+                return
+            self._update_context_conversation_id(context, response.conversation_id)
+            empty_messages: list[Message] = []
+            context.messages = empty_messages
+
+    async def _stream_injected_messages(
+        self,
+        context: ChatContext,
+        call_next: Callable[[], Awaitable[None]],
+        session: AgentSession,
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        while True:
+            context.messages = self._drain_pending_messages(session, context.messages)
+            context.result = None
+            await call_next()
+            if context.result is None:
+                return
+            if not isinstance(context.result, ResponseStream):
+                raise ValueError("Streaming message injection middleware requires a ResponseStream result.")
+            stream = cast(ResponseStream[ChatResponseUpdate, ChatResponse], context.result)
+            async for update in stream:
+                yield update
+            response = await stream.get_final_response()
+            if _response_contains_follow_up_request(response) or not self._has_pending_messages(session):
+                return
+            self._update_context_conversation_id(context, response.conversation_id)
+            empty_messages: list[Message] = []
+            context.messages = empty_messages
+
+    async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        """Inject pending session messages into chat model calls.
+
+        Args:
+            context: The chat invocation context for the current model call.
+            call_next: The next middleware or leaf chat client.
+
+        Raises:
+            ChatClientInvalidRequestException: If the middleware is used without an active ``AgentSession``.
+            ValueError: If downstream middleware returns a non-streaming result for streaming mode, or vice versa.
+        """
+        session = context.session
+        if session is None:
+            raise ChatClientInvalidRequestException(
+                "MessageInjectionMiddleware requires an AgentSession. Pass session=... when running the agent."
+            )
+
+        if not context.stream:
+            await self._process_non_streaming(context, call_next, session)
+            return
+
+        response_format = context.options.get("response_format") if context.options is not None else None
+        context.result = ResponseStream(
+            self._stream_injected_messages(context, call_next, session),
+            finalizer=lambda updates: ChatResponse.from_updates(updates, output_format_type=response_format),
+        )
 
 
 class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
@@ -634,9 +854,9 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         response: ChatResponse,
     ) -> None:
         """Persist a single model-call response through the configured history providers."""
-        service_call_context._response = AgentResponse(  # type: ignore[assignment]
-            messages=response.messages,
-            response_id=None,
+        service_call_context._response = _build_agent_response_from_chat_response(  # type: ignore[assignment]
+            response,
+            suppress_response_id=True,
         )
         for provider in reversed(self._providers):
             await provider.after_run(
@@ -750,9 +970,16 @@ class AgentSession:
     Lightweight state container. Provider instances are owned by the agent,
     not the session. The session only holds session IDs and a mutable state dict.
 
+    ``service_session_id`` can contain a provider-issued service session
+    identifier, such as a service conversation ID or response ID. Treat this
+    value as trusted application state: it is scoped by the backing API key,
+    service account, or project, but it is not an end-user authorization
+    boundary by itself.
+
     Attributes:
         session_id: Unique identifier for this session.
-        service_session_id: Service-managed session ID (if using service-side storage).
+        service_session_id: Service-managed session identifier
+            (if using service-side storage).
         state: Mutable state dict shared with all providers.
     """
 
@@ -766,7 +993,7 @@ class AgentSession:
 
         Args:
             session_id: Optional session ID (generated if not provided).
-            service_session_id: Optional service-managed session ID.
+            service_session_id: Optional service-managed session identifier.
         """
         self._session_id = session_id or str(uuid.uuid4())
         self.service_session_id = service_session_id

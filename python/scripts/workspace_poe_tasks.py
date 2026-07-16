@@ -350,6 +350,7 @@ SAMPLE_TYPING_EXCLUDES = (
     "_to_delete",
     "05-end-to-end",
     "harness",
+    "local_telegram",
 )
 
 

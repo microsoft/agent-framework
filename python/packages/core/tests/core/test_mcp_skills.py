@@ -18,12 +18,18 @@ from mcp.types import (
 )
 from pydantic import AnyUrl
 
-from agent_framework import MCPSkill, MCPSkillResource, MCPSkillsSource
+from agent_framework import MCPSkill, MCPSkillResource, MCPSkillsSource, SkillsSourceContext
 from agent_framework._skills import _parse_mcp_skill_index
+
+from .conftest import MockAgent
 
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
 # ---------------------------------------------------------------------------
+
+
+# Shared context for exercising skill sources where the agent/session are irrelevant.
+_SOURCE_CTX = SkillsSourceContext(agent=MockAgent())  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]
 
 SAMPLE_SKILL_MD = """\
 ---
@@ -130,6 +136,24 @@ class TestParseMCPSkillIndex:
 # ---------------------------------------------------------------------------
 # MCPSkillResource tests
 # ---------------------------------------------------------------------------
+
+
+class TestMCPSkillsExperimentalStage:
+    """Tests confirming the MCP skills types remain experimental (MCP_SKILLS)."""
+
+    def test_docstrings_include_experimental_warning(self) -> None:
+        assert MCPSkillResource.__doc__ is not None
+        assert MCPSkill.__doc__ is not None
+        assert MCPSkillsSource.__doc__ is not None
+
+        assert ".. warning:: Experimental" in MCPSkillResource.__doc__
+        assert ".. warning:: Experimental" in MCPSkill.__doc__
+        assert ".. warning:: Experimental" in MCPSkillsSource.__doc__
+
+    def test_feature_metadata_is_set(self) -> None:
+        for cls in (MCPSkillResource, MCPSkill, MCPSkillsSource):
+            assert getattr(cls, "__feature_stage__", None) == "experimental"
+            assert getattr(cls, "__feature_id__", None) == "MCP_SKILLS"
 
 
 class TestMCPSkillResource:
@@ -342,7 +366,7 @@ class TestMCPSkillsSource:
             "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
         })
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
 
         assert len(skills) == 1
         assert skills[0].frontmatter.name == "unit-converter"
@@ -356,7 +380,7 @@ class TestMCPSkillsSource:
     async def test_no_index_returns_empty(self) -> None:
         client = _make_client()  # No resources at all
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
     @pytest.mark.asyncio
@@ -365,7 +389,7 @@ class TestMCPSkillsSource:
         # Discovery should succeed because it only reads the index.
         client = _make_client(**{"skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
 
         assert len(skills) == 1
         assert skills[0].frontmatter.name == "unit-converter"
@@ -385,7 +409,7 @@ class TestMCPSkillsSource:
         })
         client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
     @pytest.mark.asyncio
@@ -402,7 +426,7 @@ class TestMCPSkillsSource:
         })
         client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
     @pytest.mark.asyncio
@@ -420,7 +444,7 @@ class TestMCPSkillsSource:
         })
         client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
     @pytest.mark.asyncio
@@ -437,21 +461,21 @@ class TestMCPSkillsSource:
         })
         client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
     @pytest.mark.asyncio
     async def test_empty_index_returns_empty(self) -> None:
         client = _make_client(**{"skill://index.json": _make_text_result('{"skills": []}', uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
     @pytest.mark.asyncio
     async def test_malformed_index_json_returns_empty(self) -> None:
         client = _make_client(**{"skill://index.json": _make_text_result("not valid json", uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
     @pytest.mark.asyncio
@@ -462,7 +486,7 @@ class TestMCPSkillsSource:
             "skill://unit-converter/references/checklist.md": _make_text_result("- check thing 1\n- check thing 2"),
         })
         source = MCPSkillsSource(client=client)
-        skill = (await source.get_skills())[0]
+        skill = (await source.get_skills(_SOURCE_CTX))[0]
         resource = await skill.get_resource("references/checklist.md")
         assert resource is not None
         content = await resource.read()
@@ -477,7 +501,7 @@ class TestMCPSkillsSource:
             "skill://unit-converter/assets/icon.bin": _make_blob_result(data),
         })
         source = MCPSkillsSource(client=client)
-        skill = (await source.get_skills())[0]
+        skill = (await source.get_skills(_SOURCE_CTX))[0]
         resource = await skill.get_resource("assets/icon.bin")
         assert resource is not None
         content = await resource.read()
@@ -504,7 +528,7 @@ class TestMCPSkillsSourceErrorCodeBranching:
         client = AsyncMock()
         client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=-32601, message="Method not found")))
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
     @pytest.mark.asyncio
@@ -515,7 +539,7 @@ class TestMCPSkillsSourceErrorCodeBranching:
             side_effect=McpError(error=ErrorData(code=-32002, message="Resource not found"))
         )
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
     @pytest.mark.asyncio
@@ -525,7 +549,7 @@ class TestMCPSkillsSourceErrorCodeBranching:
         client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=-32602, message="Invalid params")))
         source = MCPSkillsSource(client=client)
         with pytest.raises(McpError):
-            await source.get_skills()
+            await source.get_skills(_SOURCE_CTX)
 
     @pytest.mark.asyncio
     async def test_index_internal_error_propagates(self) -> None:
@@ -534,7 +558,7 @@ class TestMCPSkillsSourceErrorCodeBranching:
         client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=-32603, message="Internal error")))
         source = MCPSkillsSource(client=client)
         with pytest.raises(McpError):
-            await source.get_skills()
+            await source.get_skills(_SOURCE_CTX)
 
     @pytest.mark.asyncio
     async def test_index_connection_closed_propagates(self) -> None:
@@ -545,7 +569,7 @@ class TestMCPSkillsSourceErrorCodeBranching:
         )
         source = MCPSkillsSource(client=client)
         with pytest.raises(McpError):
-            await source.get_skills()
+            await source.get_skills(_SOURCE_CTX)
 
     @pytest.mark.asyncio
     async def test_index_generic_error_code_propagates(self) -> None:
@@ -554,7 +578,7 @@ class TestMCPSkillsSourceErrorCodeBranching:
         client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=0, message="Some handler error")))
         source = MCPSkillsSource(client=client)
         with pytest.raises(McpError):
-            await source.get_skills()
+            await source.get_skills(_SOURCE_CTX)
 
     @pytest.mark.asyncio
     async def test_index_non_mcp_error_propagates(self) -> None:
@@ -563,7 +587,7 @@ class TestMCPSkillsSourceErrorCodeBranching:
         client.read_resource = AsyncMock(side_effect=ConnectionError("connection lost"))
         source = MCPSkillsSource(client=client)
         with pytest.raises(ConnectionError):
-            await source.get_skills()
+            await source.get_skills(_SOURCE_CTX)
 
     @pytest.mark.asyncio
     async def test_get_resource_internal_error_propagates(self) -> None:
@@ -634,4 +658,4 @@ class TestMCPSkillsSourceErrorCodeBranching:
         client.read_resource = AsyncMock(side_effect=TimeoutError("read timed out"))
         source = MCPSkillsSource(client=client)
         with pytest.raises(TimeoutError):
-            await source.get_skills()
+            await source.get_skills(_SOURCE_CTX)
