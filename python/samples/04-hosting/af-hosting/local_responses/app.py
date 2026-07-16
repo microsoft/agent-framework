@@ -118,6 +118,7 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     session_id = responses_session_id(body)
+    conversation_id = session_id if body.get("conversation_id") == session_id else None
     response_id = create_response_id()
 
     # App-specific policy: allow only the request options this route is willing
@@ -155,6 +156,11 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
             # after finalization so a later `previous_response_id` can restore
             # this exact continuation point.
             await state.set_session(response_id, session)
+            if conversation_id is not None:
+                # A stable conversation id is a mutable head. Apps must ensure
+                # only one caller advances it at a time; AgentState does not
+                # serialize concurrent runs for the same id.
+                await state.set_session(conversation_id, session)
 
         return StreamingResponse(
             stream_events(),
@@ -170,6 +176,10 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
     # response id after the run so `previous_response_id=response_id` continues
     # from this exact point.
     await state.set_session(response_id, session)
+    if conversation_id is not None:
+        # Preserve sequential conversation continuity. Production apps must
+        # provide their own per-conversation single-writer coordination.
+        await state.set_session(conversation_id, session)
     return JSONResponse(
         responses_from_run(
             result,

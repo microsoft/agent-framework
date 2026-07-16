@@ -106,13 +106,23 @@ class TestSessionStore:
 
         assert await store.get("session-1") is None
 
-    async def test_set_then_get_returns_stored_session(self) -> None:
+    async def test_set_then_get_returns_session_copy(self) -> None:
         store = SessionStore()
         session = AgentSession(session_id="session-1")
+        session.state["nested"] = {"values": ["original"]}
 
         await store.set("session-1", session)
 
-        assert await store.get("session-1") is session
+        stored = await store.get("session-1")
+        assert stored is not None
+        assert stored is not session
+        assert stored.session_id == session.session_id
+        assert stored.state == session.state
+
+        stored.state["nested"]["values"].append("changed")
+        reread = await store.get("session-1")
+        assert reread is not None
+        assert reread.state["nested"]["values"] == ["original"]
 
     async def test_set_can_store_same_session_under_additional_id(self) -> None:
         store = SessionStore()
@@ -121,8 +131,13 @@ class TestSessionStore:
         await store.set("resp_1", session)
         await store.set("resp_2", session)
 
-        assert await store.get("resp_1") is session
-        assert await store.get("resp_2") is session
+        first = await store.get("resp_1")
+        second = await store.get("resp_2")
+        assert first is not None
+        assert second is not None
+        assert first is not session
+        assert second is not session
+        assert first is not second
 
     async def test_set_replaces_existing_entry(self) -> None:
         store = SessionStore()
@@ -132,7 +147,10 @@ class TestSessionStore:
         await store.set("session-1", first)
         await store.set("session-1", second)
 
-        assert await store.get("session-1") is second
+        stored = await store.get("session-1")
+        assert stored is not None
+        assert stored is not second
+        assert stored.session_id == second.session_id
 
     async def test_delete_forgets_session(self) -> None:
         store = SessionStore()
@@ -247,8 +265,9 @@ class TestAgentState:
         first = await state.get_or_create_session("session-1")
         second = await state.get_or_create_session("session-1")
 
-        assert first is second
+        assert first is not second
         assert first.session_id == "session-1"
+        assert second.session_id == "session-1"
         assert len(agent.created_sessions) == 1
 
     async def test_get_or_create_session_creates_once_for_concurrent_callers(self) -> None:
@@ -266,7 +285,8 @@ class TestAgentState:
 
         sessions = await asyncio.gather(*(state.get_or_create_session("session-1") for _ in range(20)))
 
-        assert all(session is sessions[0] for session in sessions)
+        assert len({id(session) for session in sessions}) == len(sessions)
+        assert all(session.session_id == "session-1" for session in sessions)
         assert len(agent.created_sessions) == 1
 
     async def test_get_or_create_session_reuses_a_session_set_on_the_state(self) -> None:
@@ -277,7 +297,8 @@ class TestAgentState:
 
         session = await state.get_or_create_session("session-1")
 
-        assert session is pre_existing
+        assert session is not pre_existing
+        assert session.session_id == pre_existing.session_id
         assert len(agent.created_sessions) == 0
 
 
@@ -331,6 +352,15 @@ class TestWorkflowState:
         second = await state.get_target()
 
         assert first is second
+
+    async def test_workflow_builder_returns_fresh_targets_when_cache_disabled(self) -> None:
+        builder = _workflow_fixture("echo_workflow_builder")()
+        state: WorkflowState[Workflow] = WorkflowState(builder, cache_target=False)
+
+        first = await state.get_target()
+        second = await state.get_target()
+
+        assert first is not second
 
     async def test_accepts_orchestration_style_builder_without_importing_orchestrations(self) -> None:
         """``SupportsBuild`` is structural: any object with a zero-arg ``build() -> Workflow``

@@ -178,6 +178,9 @@ The target may be:
 - `await get_target()`;
 - synchronous `target` only after a target is already available/resolved.
 
+A workflow instance permits one active run. Concurrent hosts use a factory or
+builder with `cache_target=False` to resolve a fresh instance per run.
+
 Workflow checkpointing uses Agent Framework's existing `CheckpointStorage` abstraction directly. Apps that need
 per-session workflow resume should keep an app-owned cursor such as `session_id -> checkpoint_id`. When the app uses
 file-backed cursor storage, the file-based checkpoint storage should share the same app storage root and should be
