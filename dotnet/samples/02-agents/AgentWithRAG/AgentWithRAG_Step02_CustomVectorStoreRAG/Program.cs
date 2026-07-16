@@ -4,33 +4,32 @@
 // While the sample is using Qdrant, it can easily be replaced with any other vector store that implements the Microsoft.Extensions.VectorData abstractions.
 // The TextSearchProvider runs a search against the vector store before each model invocation and injects the results into the model context.
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.VectorData;
 using Microsoft.SemanticKernel.Connectors.Qdrant;
-using OpenAI.Chat;
 using Qdrant.Client;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
-var embeddingDeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-3-large";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
+var embeddingDeploymentName = Environment.GetEnvironmentVariable("FOUNDRY_EMBEDDING_MODEL") ?? "text-embedding-3-large";
 var afOverviewUrl = "https://raw.githubusercontent.com/MicrosoftDocs/semantic-kernel-docs/refs/heads/main/agent-framework/overview/index.md";
 var afMigrationUrl = "https://raw.githubusercontent.com/MicrosoftDocs/semantic-kernel-docs/refs/heads/main/agent-framework/migration-guide/from-semantic-kernel/index.md";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AzureOpenAIClient azureOpenAIClient = new(
+AIProjectClient aiProjectClient = new(
     new Uri(endpoint),
     new DefaultAzureCredential());
 
-// Create a Qdrant vector store that uses the Azure OpenAI embedding model to generate embeddings.
+// Create a Qdrant vector store that uses the Microsoft Foundry embedding model to generate embeddings.
 QdrantClient client = new("localhost");
 VectorStore vectorStore = new QdrantVectorStore(client, ownsClient: true, new()
 {
-    EmbeddingGenerator = azureOpenAIClient.GetEmbeddingClient(embeddingDeploymentName).AsIEmbeddingGenerator()
+    EmbeddingGenerator = aiProjectClient.GetProjectOpenAIClient().GetEmbeddingClient(embeddingDeploymentName).AsIEmbeddingGenerator()
 });
 
 // Create a collection and upsert some text into it.
@@ -69,11 +68,10 @@ TextSearchProviderOptions textSearchOptions = new()
 };
 
 // Create the AI agent with the TextSearchProvider as the AI context provider.
-AIAgent agent = azureOpenAIClient
-    .GetChatClient(deploymentName)
+AIAgent agent = aiProjectClient
     .AsAIAgent(new ChatClientAgentOptions
     {
-        ChatOptions = new() { Instructions = "You are a helpful support specialist for the Microsoft Agent Framework. Answer questions using the provided context and cite the source document when available. Keep responses brief." },
+        ChatOptions = new() { ModelId = deploymentName, Instructions = "You are a helpful support specialist for the Microsoft Agent Framework. Answer questions using the provided context and cite the source document when available. Keep responses brief." },
         AIContextProviders = [new TextSearchProvider(SearchAdapter, textSearchOptions)],
         // Configure a filter on the InMemoryChatHistoryProvider so that we don't persist the messages produced by the TextSearchProvider in chat history.
         // The default is to persist all messages except those that came from chat history in the first place.

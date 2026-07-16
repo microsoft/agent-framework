@@ -33,7 +33,7 @@ Key Concepts:
 - Useful for passing authentication tokens, configuration, or request context
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 """
 
@@ -140,8 +140,7 @@ async def main() -> None:
     async for event in outer_workflow.run(
         "Please fetch my profile data and then call the users service.",
         stream=True,
-        user_token=user_token,
-        service_config=service_config,
+        function_invocation_kwargs={"user_token": user_token, "service_config": service_config},
     ):
         if event.type == "output":
             output_data = event.data

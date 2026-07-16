@@ -3,10 +3,8 @@
 import asyncio
 import os
 import sys
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
@@ -31,7 +29,7 @@ from agent_framework import (  # noqa: E402
     handler,
     response_handler,
 )
-from workflow_as_agent_reflection_pattern import (  # noqa: E402
+from workflow_as_agent_reflection_pattern import (  # pyrefly: ignore[missing-import]  # noqa: E402
     ReviewRequest,
     ReviewResponse,
     Worker,
@@ -48,7 +46,7 @@ to a human, receives the human response, and then forwards that response back
 to the Worker. The workflow completes when idle.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Familiarity with WorkflowBuilder, Executor, and WorkflowContext from agent_framework.
 - Understanding of request-response message handling in executors.
@@ -141,28 +139,14 @@ async def main() -> None:
     # Handle the human review if required.
     if human_review_function_call:
         # Parse the human review request arguments.
-        human_request_args = human_review_function_call.arguments
-        if isinstance(human_request_args, str):
-            request: WorkflowAgent.RequestInfoFunctionArgs = WorkflowAgent.RequestInfoFunctionArgs.from_json(
-                human_request_args
-            )
-        elif isinstance(human_request_args, Mapping):
-            request = WorkflowAgent.RequestInfoFunctionArgs.from_dict(dict(human_request_args))
-        else:
-            raise TypeError("Unexpected argument type for human review function call.")
-
-        request_payload: Any = request.data
+        human_request_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(human_review_function_call.arguments)  # type: ignore
+        request_payload = human_request_args.request_event.data
         if not isinstance(request_payload, HumanReviewRequest):
             raise ValueError("Human review request payload must be a HumanReviewRequest.")
-
-        agent_request = request_payload.agent_request
-        if agent_request is None:
-            raise ValueError("Human review request must include agent_request.")
-
-        request_id = agent_request.request_id
+        if not request_payload.agent_request:
+            raise ValueError("Human review request must contain an agent_request.")
         # Mock a human response approval for demonstration purposes.
-        human_response = ReviewResponse(request_id=request_id, feedback="", approved=True)
-
+        human_response = ReviewResponse(request_id=request_payload.agent_request.request_id, feedback="", approved=True)
         # Create the function call result object to send back to the agent.
         human_review_function_result = Content(
             "function_result",

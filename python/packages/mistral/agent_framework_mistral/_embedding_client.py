@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Sequence
+from importlib import import_module
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
@@ -17,12 +18,29 @@ from agent_framework import (
 )
 from agent_framework._settings import SecretString
 from agent_framework.observability import EmbeddingTelemetryLayer
-from mistralai.client import Mistral
+
+
+def _load_mistral_client_class() -> Any:
+    try:
+        mistral_class = getattr(import_module("mistralai.client"), "Mistral", None)
+    except ModuleNotFoundError as exc:
+        if exc.name != "mistralai.client":
+            raise
+        mistral_class = None
+
+    if mistral_class is None:
+        mistral_class = getattr(import_module("mistralai"), "Mistral", None)
+    if mistral_class is None:
+        raise ImportError("The installed mistralai package does not expose the Mistral client class.")
+    return mistral_class
+
+
+Mistral: Any = _load_mistral_client_class()
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 
 logger = logging.getLogger("agent_framework.mistral")
@@ -93,7 +111,7 @@ class RawMistralEmbeddingClient(
         model: str | None = None,
         api_key: str | SecretString | None = None,
         server_url: str | None = None,
-        client: Mistral | None = None,
+        client: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -231,7 +249,7 @@ class MistralEmbeddingClient(
         model: str | None = None,
         api_key: str | SecretString | None = None,
         server_url: str | None = None,
-        client: Mistral | None = None,
+        client: Any | None = None,
         otel_provider_name: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,

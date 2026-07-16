@@ -375,13 +375,15 @@ class DevServer:
             logger.info("Starting Agent Framework Server")
             await self._ensure_executor()
             await self._ensure_openai_executor()  # Initialize OpenAI executor
-            yield
-            # Shutdown
-            logger.info("Shutting down Agent Framework Server")
+            try:
+                yield
+            finally:
+                # Shutdown
+                logger.info("Shutting down Agent Framework Server")
 
-            # Cleanup entity resources (e.g., close credentials, clients)
-            if self.executor:
-                await self._cleanup_entities()
+                # Cleanup entity resources (e.g., close credentials, clients)
+                if self.executor:
+                    await self._cleanup_entities()
 
         app = FastAPI(
             title="Agent Framework Server",
@@ -564,12 +566,12 @@ class DevServer:
                     workflow_dump: dict[str, Any] | str | None = None
                     if hasattr(entity_obj, "to_dict") and callable(getattr(entity_obj, "to_dict", None)):
                         try:
-                            workflow_dump = entity_obj.to_dict()  # type: ignore[attr-defined]
+                            workflow_dump = entity_obj.to_dict()
                         except Exception:
                             workflow_dump = None
                     elif hasattr(entity_obj, "to_json") and callable(getattr(entity_obj, "to_json", None)):
                         try:
-                            raw_dump = entity_obj.to_json()  # type: ignore[attr-defined]
+                            raw_dump = entity_obj.to_json()
                         except Exception:
                             workflow_dump = None
                         else:
@@ -835,17 +837,14 @@ class DevServer:
                     return await openai_executor.execute_sync(request)
 
                 # Route to local Agent Framework executor (original behavior)
-                raw_body = await raw_request.body()
-                logger.info(f"Raw request body: {raw_body.decode()}")
-                logger.info(f"Parsed request: metadata={request.metadata}")
-
                 # Get entity_id from metadata
                 entity_id = request.get_entity_id()
-                logger.info(f"Extracted entity_id: {entity_id}")
 
                 if not entity_id:
                     error = OpenAIError.create("Missing entity_id in metadata. Provide metadata.entity_id in request.")
                     return JSONResponse(status_code=400, content=error.to_dict())
+
+                logger.info("Extracted entity_id: %s", entity_id)
 
                 # Get executor and validate entity exists
                 executor = await self._ensure_executor()
@@ -942,7 +941,6 @@ class DevServer:
 
                     try:
                         metadata = request_data.get("metadata")
-                        logger.debug(f"Creating OpenAI conversation with metadata: {metadata}")
                         conversation = await client.conversations.create(metadata=metadata)
                         logger.info(f"Created OpenAI conversation: {conversation.id}")
                         return conversation.model_dump()
@@ -1252,16 +1250,16 @@ class DevServer:
                 # IMPORTANT: Check model_dump_json FIRST because to_json() can have newlines (pretty-printing)
                 # which breaks SSE format. model_dump_json() returns single-line JSON.
                 if hasattr(event, "model_dump_json"):
-                    payload = event.model_dump_json()  # type: ignore[attr-defined]
+                    payload = event.model_dump_json()
                 elif hasattr(event, "to_json") and callable(getattr(event, "to_json", None)):
-                    payload = event.to_json()  # type: ignore[attr-defined]
+                    payload = event.to_json()
                     # Strip newlines from pretty-printed JSON for SSE compatibility
                     payload = payload.replace("\n", "").replace("\r", "")
                 elif isinstance(event, dict):
                     # Handle plain dict events (e.g., error events from executor)
                     payload = json.dumps(event)
                 elif hasattr(event, "to_dict") and callable(getattr(event, "to_dict", None)):
-                    payload = json.dumps(event.to_dict())  # type: ignore[attr-defined]
+                    payload = json.dumps(event.to_dict())
                 else:
                     payload = json.dumps(str(event))
                 yield f"data: {payload}\n\n"
@@ -1322,7 +1320,7 @@ class DevServer:
 
                 # OpenAI SDK events have model_dump_json() - use it for single-line JSON
                 if hasattr(event, "model_dump_json"):
-                    payload = event.model_dump_json()  # type: ignore[attr-defined]
+                    payload = event.model_dump_json()
                     yield f"data: {payload}\n\n"
                 else:
                     # Fallback (shouldn't happen with OpenAI SDK)

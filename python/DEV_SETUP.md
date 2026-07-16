@@ -61,7 +61,7 @@ uv python install 3.10 3.11 3.12 3.13
 PYTHON_VERSION="3.10"
 uv venv --python $PYTHON_VERSION
 # Install AF and all dependencies
-uv sync --dev
+uv sync --all-groups
 # Install all the tools and dependencies
 uv run poe install
 # Install prek hooks
@@ -215,7 +215,7 @@ uv venv
 
 and then you can run the following tasks:
 ```bash
-uv sync --all-extras --dev
+uv sync --all-extras --all-groups
 ```
 
 After this initial setup, you can use the following tasks to manage your development environment. It is advised to use the following setup command since that also installs the prek hooks.
@@ -229,13 +229,17 @@ uv run poe setup -P 3.12
 ```
 
 #### `install`
-Install all dependencies (including extras and dev dependencies) from the lockfile using frozen resolution:
+Install all dependencies (including extras and dependency groups) from the lockfile using frozen resolution:
 ```bash
 uv run poe install
 ```
+The root `dev` group contains shared tooling and source/type-check support. Package-specific test fixtures use
+`test` groups, while dependencies needed for a locally executable optional feature may use a feature-named group
+such as the lab package's `tau2` group.
 For intentional dependency upgrades, run `uv lock --upgrade-package <dependency-name>` and then run `uv run poe install`.
 
-For repo-wide dev tooling refreshes, run `uv run poe upgrade-dev-dependencies` to repin dev dependencies, refresh `uv.lock`, and rerun validation, typing, and tests.
+For repo-wide development dependency refreshes, run `uv run poe upgrade-dev-dependencies` to repin exact
+dependencies in development groups, refresh `uv.lock`, and rerun validation, typing, and tests.
 
 #### `venv`
 Create a virtual environment with specified Python version or switch python version:
@@ -289,23 +293,36 @@ uv run poe <command> -A           # aggregate sweep where supported
 ```
 
 #### `pyright`
-Run Pyright type checking:
+Run Pyright type checking. Pyright is the **strict source-code type checker**, and also runs
+in a relaxed `basic` profile over the tests + samples (as one of the `test-typing` checkers):
 ```bash
 uv run poe pyright
 uv run poe pyright -P core
 uv run poe pyright -A
 ```
 
+#### `test-typing`
+Run the **tests + samples** type checkers. Source code is owned by strict Pyright; the tests
+and samples are checked by `pyright` (relaxed), `mypy`, `pyrefly`, `ty`, and `zuban` in a
+deliberately relaxed/basic profile so real public-API type errors surface without forcing
+test/sample authors to fully annotate their code. All five gate CI:
+```bash
+uv run poe test-typing            # all checkers over every package's tests
+uv run poe test-typing -P core    # one package
+uv run poe test-typing -S         # samples (pyright + pyrefly + ty; mypy/zuban skip script-style samples)
+uv run poe test-typing -P core --checker mypy     # narrow to one checker (repeatable)
+uv run poe test-typing -P core --checker pyright  # relaxed pyright over the tests
+```
+
 #### `mypy`
-Run MyPy type checking:
+Convenience alias that runs MyPy over the test suite (MyPy no longer runs on source):
 ```bash
 uv run poe mypy
 uv run poe mypy -P core
-uv run poe mypy -A
 ```
 
 #### `typing`
-Run both Pyright and MyPy:
+Run Pyright over source **and** the tests/samples checkers:
 ```bash
 uv run poe typing
 uv run poe typing -P core
@@ -379,11 +396,11 @@ uv run poe add-dependency-and-validate-bounds -P core -D "<dependency-spec>"
 ```
 
 #### `upgrade-dev-dependencies`
-Refresh exact dev dependency pins across the workspace, run `uv lock --upgrade`, reinstall from the frozen lockfile, then rerun validation, typing, and tests:
+Refresh exact development dependency pins across the workspace, run `uv lock --upgrade`, reinstall from the frozen lockfile, then rerun validation, typing, and tests:
 ```bash
 uv run poe upgrade-dev-dependencies
 ```
-Use this for repo-wide dev tooling refreshes. For targeted runtime dependency upgrades, prefer `uv lock --upgrade-package <dependency-name>` plus the package-scoped bound validation tasks above.
+Use this for repo-wide development tooling and dependency-group refreshes. For targeted runtime dependency upgrades, prefer `uv lock --upgrade-package <dependency-name>` plus the package-scoped bound validation tasks above.
 
 ### Building and Publishing
 

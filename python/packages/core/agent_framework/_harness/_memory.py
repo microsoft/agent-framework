@@ -1066,7 +1066,7 @@ class MemoryContextProvider(HistoryProvider):
             return override
         client: object = getattr(agent, "client", None)
         if isinstance(client, SupportsChatGetResponse):
-            return cast(SupportsChatGetResponse[Any], client)  # type: ignore[redundant-cast]
+            return cast(SupportsChatGetResponse[Any], client)
         return None
 
     @staticmethod
@@ -1306,6 +1306,19 @@ class MemoryContextProvider(HistoryProvider):
         )
         if recent_history_messages:
             context.extend_messages(self.source_id, recent_history_messages)
+
+        # Surface every cross-session origin so downstream context observers
+        # can distinguish injected memory from content native to the current
+        # session. Loaded topic files may carry contributions from multiple
+        # earlier sessions, tracked in ``MemoryTopicRecord.session_ids``.
+        current_session_id = context.session_id
+        cross_session_origins = [
+            contributor
+            for record in selected_topics
+            for contributor in record.session_ids
+            if contributor and contributor != current_session_id
+        ]
+
         context.extend_messages(
             self.source_id,
             [
@@ -1322,6 +1335,7 @@ class MemoryContextProvider(HistoryProvider):
                     ],
                 )
             ],
+            origin_session_ids=cross_session_origins,
         )
 
     async def after_run(

@@ -49,7 +49,7 @@ public sealed class TestConfiguration
     /// <summary>Represents the configuration settings required to interact with the Azure AI service.</summary>
     public sealed class AzureAIConfig
     {
-        /// <summary>Gets or sets the endpoint of Azure AI Foundry project.</summary>
+        /// <summary>Gets or sets the endpoint of Microsoft Foundry project.</summary>
         public string? Endpoint { get; set; }
 
         /// <summary>Gets or sets the name of the model deployment.</summary>

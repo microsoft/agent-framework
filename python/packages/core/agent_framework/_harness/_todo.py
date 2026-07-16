@@ -24,15 +24,19 @@ DEFAULT_TODO_SOURCE_ID = "todo"
 DEFAULT_TODO_INSTRUCTIONS = (
     "## Todo Items\n\n"
     "You have access to a todo list for tracking work items.\n"
-    "While planning, make sure that you break down complex tasks into manageable todo items "
-    "and add them to the list.\n"
+    "When a user asks you to perform a task, follow these steps to manage your work:\n"
+    "1. Determine whether the ask requires multiple steps to complete (complex) or can be completed "
+    "using a single step (simple).\n"
+    "2. If complex, turn the task into manageable todo items and add them to the list.\n"
+    "3. If simple, don't add a todo item, but rather just complete the task directly.\n\n"
+    "### General TODO Guidelines\n"
     "Ask questions from the user where clarification is needed to create effective todos.\n"
     "If the user provides feedback on your plan, adjust your todos accordingly by adding new items "
     "or removing irrelevant ones.\n"
     "During execution, use the todo list to keep track of what needs to be done, "
     "mark items as complete when finished, and remove any items that are no longer needed.\n"
-    "When a user changes the topic or changes their mind, ensure that you update the todo list accordingly "
-    "by removing irrelevant items or adding new ones as needed.\n\n"
+    "When a user changes the topic, changes their mind or switches to a new request, ensure that you update "
+    "the todo list accordingly by removing irrelevant/old items, clearing the list, or adding new ones as needed.\n\n"
     "Use these tools to manage your tasks:\n"
     "- Use todos_add to break down complex work into trackable items (supports adding one or many at once).\n"
     "- Use todos_complete to mark items as done when finished (supports one or many at once). "
@@ -43,7 +47,6 @@ DEFAULT_TODO_INSTRUCTIONS = (
 )
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoItem(SerializationMixin):
     """Represent one todo item tracked for the current session."""
 
@@ -102,7 +105,6 @@ class TodoItem(SerializationMixin):
         )
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoInput(SerializationMixin):
     """Describe one todo item to create."""
 
@@ -138,7 +140,6 @@ class TodoInput(SerializationMixin):
         return cls(title=title, description=description)
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoCompleteInput(SerializationMixin):
     """Describe one todo item to mark as complete."""
 
@@ -223,7 +224,6 @@ def _safe_next_id(items: list[TodoItem], next_id: int) -> int:
     return max(next_id, max((item.id for item in items), default=0) + 1)
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoStore(ABC):
     """Abstract backing store for session todo items."""
 
@@ -241,7 +241,6 @@ class TodoStore(ABC):
         return items
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoSessionStore(TodoStore):
     """Store todo state inside ``AgentSession.state``."""
 
@@ -443,7 +442,6 @@ class TodoFileStore(TodoStore):
                 temp_path.unlink(missing_ok=True)
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoProvider(ContextProvider):
     """Provide todo management tools and instructions to an agent.
 

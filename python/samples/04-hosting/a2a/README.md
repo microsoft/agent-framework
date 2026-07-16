@@ -1,37 +1,28 @@
-# A2A Agent Examples
+# A2A Server Hosting Examples
 
-This sample demonstrates how to host and consume agents using the [A2A (Agent2Agent) protocol](https://a2a-protocol.org/latest/) with the `agent_framework` package. There are three runnable entry points:
+This sample demonstrates how to **host** Agent Framework agents as A2A-compliant servers using the [A2A (Agent2Agent) protocol](https://a2a-protocol.org/latest/).
+
+> **Looking for client samples?** See [`samples/02-agents/a2a/`](../../02-agents/a2a/) for consuming remote A2A agents.
+
+## Server Samples
 
 | Run this file | To... |
 |---------------|-------|
-| **[`a2a_server.py`](a2a_server.py)** | Host an Agent Framework agent as an A2A-compliant server. |
-| **[`agent_with_a2a.py`](agent_with_a2a.py)** | Connect to an A2A server and send requests (non-streaming and streaming). |
-| **[`a2a_agent_as_function_tools.py`](a2a_agent_as_function_tools.py)** | Convert A2A agent skills into function tools for a host agent. |
+| **[`a2a_server.py`](a2a_server.py)** | Host an Agent Framework agent as an A2A-compliant server (multi-agent). |
+| **[`agent_framework_to_a2a.py`](agent_framework_to_a2a.py)** | Minimal example: expose a single agent as an A2A server. |
 
-The remaining files are supporting modules used by the server:
+## Supporting Modules
 
 | File | Description |
 |------|-------------|
-| [`agent_framework_to_a2a.py`](agent_framework_to_a2a.py) | Exposes an agent_framework agent as an A2A-compliant server. Demonstrates how to wrap an agent_framework agent and expose it as an A2A service that other A2A clients can discover and communicate with. |
 | [`agent_definitions.py`](agent_definitions.py) | Agent and AgentCard factory definitions for invoice, policy, and logistics agents. |
-| [`agent_executor.py`](agent_executor.py) | Bridges the a2a-sdk `AgentExecutor` interface to Agent Framework agents. |
 | [`invoice_data.py`](invoice_data.py) | Mock invoice data and tool functions for the invoice agent. |
 | [`a2a_server.http`](a2a_server.http) | REST Client requests for testing the server directly from VS Code. |
 
 ## Environment Variables
 
-Make sure to set the following environment variables before running the examples:
-
 ### Required (Server)
-- `FOUNDRY_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
-- `FOUNDRY_MODEL` — Model deployment name (e.g. `gpt-4o`)
-
-### Required (Client)
-- `A2A_AGENT_HOST` — URL of the A2A server (e.g. `http://localhost:5001/`)
-
-### Required (Function Tools Sample)
-- `A2A_AGENT_HOST` — URL of the A2A server (e.g. `http://localhost:5000/`)
-- `FOUNDRY_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
+- `FOUNDRY_PROJECT_ENDPOINT` — Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL` — Model deployment name (e.g. `gpt-4o`)
 
 ## Quick Start
@@ -67,7 +58,7 @@ uv run python a2a_server.py --agent-type policy
 
 ### 1. Start the A2A Server
 
-> **Note (Option A — pip users):** Replace `uv run python` with `python` in all `uv run` commands below (e.g. `python a2a_server.py ...`). `uv` is not required once the virtual environment is activated.
+> **Note (Option A — pip users):** Replace `uv run python` with `python` in all `uv run` commands below. `uv` is not required once the virtual environment is activated.
 
 Pick an agent type and start the server (each in its own terminal):
 
@@ -79,25 +70,25 @@ uv run python a2a_server.py --agent-type logistics --port 5002
 
 You can run one agent or all three — each listens on its own port.
 
-### 2. Run the A2A Client
+### 2. Run a Client
 
-In a separate terminal (from the same directory), point the client at a running server:
+Once a server is running, use any of the client samples in [`samples/02-agents/a2a/`](../../02-agents/a2a/):
 
 ```powershell
+cd python/samples/02-agents/a2a
 $env:A2A_AGENT_HOST = "http://localhost:5001/"
 uv run python agent_with_a2a.py
-
-# A2A server exposing an agent_framework agent
-uv run python agent_framework_to_a2a.py
 ```
 
-### 3. Run the Function Tools Sample
+## Security considerations for multi-tenant hosting
 
-This sample resolves the remote agent's skills and registers each one as a function tool
-on a host Foundry-backed agent. The host agent then autonomously selects the right skill
-to handle the user's request.
+The default `a2a-sdk` task/push-config stores scope ownership by `user_name` only. **Any host that mounts tenant-bearing routes must pass a tenant-aware `owner_resolver`** to the stores, e.g.:
 
-```powershell
-$env:A2A_AGENT_HOST = "http://localhost:5000/"
-uv run python a2a_agent_as_function_tools.py
+```python
+from a2a.server.tasks import InMemoryTaskStore
+
+def resolve_tenant_user_scope(context):
+    # Derive tenant + user identity from your host's auth/session context.
+    return f"{context.tenant}:{context.user.user_name}"
+task_store = InMemoryTaskStore(owner_resolver=resolve_tenant_user_scope)
 ```

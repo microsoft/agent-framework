@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -27,6 +29,16 @@ internal sealed class InvokeMcpToolExecutor(
     WorkflowFormulaState state) :
     DeclarativeActionExecutor<InvokeMcpTool>(model, state)
 {
+    private const string ApprovalSnapshotStateKey = nameof(_approvalSnapshots);
+    private const string LegacyApprovalSnapshotStateKey = "_approvalSnapshot";
+
+    /// <summary>
+    /// Snapshots of evaluated parameters captured at approval-request time, keyed by
+    /// per-invocation request id. Each pending approval lives here until the matching
+    /// response is captured.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, ApprovalSnapshot> _approvalSnapshots = new(StringComparer.Ordinal);
+
     /// <summary>
     /// Step identifiers for the MCP tool invocation workflow.
     /// </summary>
@@ -75,15 +87,22 @@ internal sealed class InvokeMcpToolExecutor(
 
         if (requireApproval)
         {
+            // Per-invocation request id stamped on the outbound content.
+            string requestId = Guid.NewGuid().ToString("N");
+
+            // Capture the evaluated parameters keyed by request id; the matching response
+            // resumes from this snapshot.
+            this._approvalSnapshots[requestId] = new ApprovalSnapshot(serverUrl, serverLabel, toolName, arguments, connectionName);
+
             // Create tool call content for approval request.
             // Transport headers (e.g. Authorization) are intentionally excluded from the
             // approval event: they must not cross into the externally-surfaced approval request.
-            McpServerToolCallContent toolCall = new(this.Id, toolName, serverLabel ?? serverUrl)
+            McpServerToolCallContent toolCall = new(requestId, toolName, serverLabel ?? serverUrl)
             {
                 Arguments = arguments
             };
 
-            ToolApprovalRequestContent approvalRequest = new(this.Id, toolCall);
+            ToolApprovalRequestContent approvalRequest = new(requestId, toolCall);
 
             ChatMessage requestMessage = new(ChatRole.Assistant, [approvalRequest]);
             AgentResponse agentResponse = new([requestMessage]);
@@ -128,30 +147,38 @@ internal sealed class InvokeMcpToolExecutor(
         ToolApprovalResponseContent? approvalResponse = response.Messages
             .SelectMany(m => m.Contents)
             .OfType<ToolApprovalResponseContent>()
-            .FirstOrDefault(r => r.RequestId == this.Id);
+            .FirstOrDefault(r => this._approvalSnapshots.ContainsKey(r.RequestId));
 
-        if (approvalResponse?.Approved != true)
+        if (approvalResponse is null)
         {
-            // Tool call was rejected
+            await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
+            return;
+        }
+
+        if (!approvalResponse.Approved)
+        {
+            this._approvalSnapshots.TryRemove(approvalResponse.RequestId, out _);
             await this.AssignErrorAsync(context, "MCP tool invocation was not approved by user.").ConfigureAwait(false);
             return;
         }
 
-        // Approved - now invoke the tool
-        string serverUrl = this.GetServerUrl();
-        string? serverLabel = this.GetServerLabel();
-        string toolName = this.GetToolName();
-        Dictionary<string, object?>? arguments = this.GetArguments();
+        // Source invocation fields from the snapshot captured at approval-request time.
+        // Headers are re-evaluated (they may contain auth secrets not persisted to state).
+        if (!this._approvalSnapshots.TryRemove(approvalResponse.RequestId, out ApprovalSnapshot? snapshot))
+        {
+            await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
+            return;
+        }
+
         Dictionary<string, string>? headers = this.GetHeaders();
-        string? connectionName = this.GetConnectionName();
 
         McpServerToolResultContent resultContent = await mcpToolHandler.InvokeToolAsync(
-            serverUrl,
-            serverLabel,
-            toolName,
-            arguments,
+            snapshot.ServerUrl,
+            snapshot.ServerLabel,
+            snapshot.ToolName,
+            snapshot.Arguments,
             headers,
-            connectionName,
+            snapshot.ConnectionName,
             cancellationToken).ConfigureAwait(false);
 
         await this.ProcessResultAsync(context, resultContent, cancellationToken).ConfigureAwait(false);
@@ -163,6 +190,56 @@ internal sealed class InvokeMcpToolExecutor(
     public async ValueTask CompleteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
     {
         await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public override ValueTask ResetAsync()
+    {
+        this._approvalSnapshots.Clear();
+        return default;
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Persists pending approval snapshots to workflow state so they survive
+    /// checkpoint/restore cycles.
+    /// </remarks>
+    protected override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        Dictionary<string, ApprovalSnapshot> snapshotCopy = this._approvalSnapshots.ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.Ordinal);
+        await context.QueueStateUpdateAsync(ApprovalSnapshotStateKey, snapshotCopy, null, cancellationToken).ConfigureAwait(false);
+        await base.OnCheckpointingAsync(context, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Restores pending approval snapshots from workflow state after a checkpoint restore.
+    /// </remarks>
+    protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
+
+        this._approvalSnapshots.Clear();
+        Dictionary<string, ApprovalSnapshot>? snapshots = await context.ReadStateAsync<Dictionary<string, ApprovalSnapshot>>(
+            ApprovalSnapshotStateKey, null, cancellationToken).ConfigureAwait(false);
+        if (snapshots is not null)
+        {
+            foreach (KeyValuePair<string, ApprovalSnapshot> entry in snapshots)
+            {
+                this._approvalSnapshots[entry.Key] = entry.Value;
+            }
+        }
+
+        // Migrate a single ApprovalSnapshot at the legacy key under this.Id so the
+        // legacy approval response matches the per-invocation map; clear the legacy key.
+        ApprovalSnapshot? legacy = await context.ReadStateAsync<ApprovalSnapshot>(
+            LegacyApprovalSnapshotStateKey, null, cancellationToken).ConfigureAwait(false);
+        if (legacy is not null)
+        {
+            this._approvalSnapshots.TryAdd(this.Id, legacy);
+            await context.QueueStateUpdateAsync<ApprovalSnapshot?>(
+                LegacyApprovalSnapshotStateKey, null, null, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async ValueTask ProcessResultAsync(IWorkflowContext context, McpServerToolResultContent resultContent, CancellationToken cancellationToken)
@@ -225,17 +302,7 @@ internal sealed class InvokeMcpToolExecutor(
                     using JsonDocument jsonDocument = JsonDocument.Parse(jsonString);
 
                     // Handle different JSON value kinds
-                    object? parsedValue = jsonDocument.RootElement.ValueKind switch
-                    {
-                        JsonValueKind.Object => jsonDocument.ParseRecord(VariableType.RecordType),
-                        JsonValueKind.Array => jsonDocument.ParseList(jsonDocument.RootElement.GetListTypeFromJson()),
-                        JsonValueKind.String => jsonDocument.RootElement.GetString(),
-                        JsonValueKind.Number => jsonDocument.RootElement.TryGetInt64(out long l) ? l : jsonDocument.RootElement.GetDouble(),
-                        JsonValueKind.True => true,
-                        JsonValueKind.False => false,
-                        JsonValueKind.Null => null,
-                        _ => jsonString,
-                    };
+                    object? parsedValue = jsonDocument.ParseJsonValue(jsonString);
 
                     parsedResults.Add(parsedValue);
                     continue;
@@ -365,4 +432,15 @@ internal sealed class InvokeMcpToolExecutor(
 
         return result;
     }
+
+    /// <summary>
+    /// Captured invocation parameters used by <see cref="CaptureResponseAsync"/> on
+    /// resume so the approved values are invoked regardless of subsequent state changes.
+    /// </summary>
+    internal sealed record ApprovalSnapshot(
+        string ServerUrl,
+        string? ServerLabel,
+        string ToolName,
+        Dictionary<string, object?>? Arguments,
+        string? ConnectionName);
 }

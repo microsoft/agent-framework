@@ -107,6 +107,92 @@ class TestSessionContext:
         stored = ctx.context_messages["rag"][0]
         assert stored.additional_properties["_attribution"] == {"source_id": "rag", "source_type": "MyProvider"}
 
+    def test_extend_messages_origin_session_ids_default_omits_field(self) -> None:
+        ctx = SessionContext(input_messages=[])
+        msg = Message(role="system", contents=["ctx"])
+        ctx.extend_messages("rag", [msg])
+        stored = ctx.context_messages["rag"][0]
+        # Default (no origin_session_ids passed) preserves the historical attribution shape
+        # so observers can distinguish "no origin info" from "explicit cross-session marker."
+        assert "origin_session_ids" not in stored.additional_properties["_attribution"]
+
+    def test_extend_messages_origin_session_ids_recorded_on_attribution(self) -> None:
+        ctx = SessionContext(session_id="current", input_messages=[])
+        msg = Message(role="system", contents=["loaded from a prior session"])
+        ctx.extend_messages(
+            "memory_provider",
+            [msg],
+            origin_session_ids=["prior-session-id", "another-session", "prior-session-id"],
+        )
+        stored = ctx.context_messages["memory_provider"][0]
+        assert stored.additional_properties["_attribution"] == {
+            "source_id": "memory_provider",
+            "origin_session_ids": ["prior-session-id", "another-session"],
+        }
+
+    def test_extend_messages_origin_session_ids_with_provider_object(self) -> None:
+        class MyMemoryProvider:
+            source_id = "memory"
+
+        ctx = SessionContext(session_id="current", input_messages=[])
+        msg = Message(role="assistant", contents=["consolidated memory content"])
+        ctx.extend_messages(MyMemoryProvider(), [msg], origin_session_ids=["prior"])
+        stored = ctx.context_messages["memory"][0]
+        assert stored.additional_properties["_attribution"] == {
+            "source_id": "memory",
+            "source_type": "MyMemoryProvider",
+            "origin_session_ids": ["prior"],
+        }
+
+    def test_extend_messages_applies_all_origins_to_each_message(self) -> None:
+        ctx = SessionContext(session_id="current", input_messages=[])
+        messages = [
+            Message(role="assistant", contents=["first composed memory"]),
+            Message(role="assistant", contents=["second composed memory"]),
+        ]
+
+        ctx.extend_messages("memory_provider", messages, origin_session_ids=["session-a", "session-b"])
+
+        stored_messages = ctx.context_messages["memory_provider"]
+        assert [message.additional_properties["_attribution"] for message in stored_messages] == [
+            {
+                "source_id": "memory_provider",
+                "origin_session_ids": ["session-a", "session-b"],
+            },
+            {
+                "source_id": "memory_provider",
+                "origin_session_ids": ["session-a", "session-b"],
+            },
+        ]
+
+    def test_extend_messages_adds_origin_to_existing_attribution(self) -> None:
+        ctx = SessionContext(session_id="current", input_messages=[])
+        msg = Message(
+            role="system",
+            contents=["loaded from a prior session"],
+            additional_properties={
+                "_attribution": {
+                    "source_id": "custom",
+                    "custom_key": "value",
+                    "origin_session_ids": ["existing", "prior"],
+                }
+            },
+        )
+
+        ctx.extend_messages("memory_provider", [msg], origin_session_ids=["prior", "new"])
+
+        stored = ctx.context_messages["memory_provider"][0]
+        assert stored.additional_properties["_attribution"] == {
+            "source_id": "custom",
+            "custom_key": "value",
+            "origin_session_ids": ["existing", "prior", "new"],
+        }
+        assert msg.additional_properties["_attribution"] == {
+            "source_id": "custom",
+            "custom_key": "value",
+            "origin_session_ids": ["existing", "prior"],
+        }
+
     def test_extend_instructions_string(self) -> None:
         ctx = SessionContext(input_messages=[])
         ctx.extend_instructions("sys", "Be helpful")
@@ -174,7 +260,7 @@ class TestSessionContext:
         ctx = SessionContext(input_messages=[])
         ctx.extend_messages("a", [Message(role="user", contents=["a"])])
         ctx.extend_messages("b", [Message(role="user", contents=["b"])])
-        result = ctx.get_messages(sources=["a"])
+        result = ctx.get_messages(sources=["a"])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         assert len(result) == 1
         assert result[0].text == "a"
 
@@ -182,7 +268,7 @@ class TestSessionContext:
         ctx = SessionContext(input_messages=[])
         ctx.extend_messages("a", [Message(role="user", contents=["a"])])
         ctx.extend_messages("b", [Message(role="user", contents=["b"])])
-        result = ctx.get_messages(exclude_sources=["a"])
+        result = ctx.get_messages(exclude_sources=["a"])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         assert len(result) == 1
         assert result[0].text == "b"
 
@@ -233,13 +319,13 @@ class TestContextProvider:
         session = AgentSession()
         ctx = SessionContext(input_messages=[])
         # Should not raise
-        await provider.before_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]
+        await provider.before_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     async def test_after_run_is_noop(self) -> None:
         provider = ContextProvider(source_id="test")
         session = AgentSession()
         ctx = SessionContext(input_messages=[])
-        await provider.after_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]
+        await provider.after_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +375,7 @@ class TestHistoryProviderBase:
         provider = ConcreteHistoryProvider("mem", stored_messages=msgs)
         session = AgentSession()
         ctx = SessionContext(session_id="s1", input_messages=[])
-        await provider.before_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]
+        await provider.before_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         assert len(ctx.context_messages["mem"]) == 1
         assert ctx.context_messages["mem"][0].text == "history"
 
@@ -302,10 +388,67 @@ class TestHistoryProviderBase:
         resp_msg = Message(role="assistant", contents=["hi"])
         ctx = SessionContext(session_id="s1", input_messages=[input_msg])
         ctx._response = AgentResponse(messages=[resp_msg])
-        await provider.after_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]
+        await provider.after_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         assert len(provider.stored) == 2
         assert provider.stored[0].text == "hello"
         assert provider.stored[1].text == "hi"
+
+    async def test_after_run_stores_coalesced_code_interpreter_chunks(self) -> None:
+        from agent_framework import AgentResponse, AgentResponseUpdate, Content
+
+        provider = ConcreteHistoryProvider("mem", store_inputs=False)
+        updates = [
+            AgentResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_code_interpreter_tool_result(
+                        call_id="ci_123",
+                        outputs=[],
+                    )
+                ],
+            ),
+            AgentResponseUpdate(
+                contents=[
+                    Content.from_code_interpreter_tool_call(
+                        call_id="ci_123",
+                        inputs=[Content.from_text(text="import")],
+                        additional_properties={"sequence_number": 1},
+                    )
+                ],
+            ),
+            AgentResponseUpdate(
+                contents=[
+                    Content.from_code_interpreter_tool_call(
+                        call_id="ci_123",
+                        inputs=[Content.from_text(text=" pandas")],
+                        additional_properties={"sequence_number": 2},
+                    )
+                ],
+            ),
+            AgentResponseUpdate(
+                contents=[
+                    Content.from_code_interpreter_tool_call(
+                        call_id="ci_123",
+                        inputs=[Content.from_text(text="import pandas as pd")],
+                        additional_properties={"sequence_number": 3},
+                    )
+                ],
+            ),
+        ]
+        ctx = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["make a sheet"])])
+        ctx._response = AgentResponse.from_updates(updates)
+
+        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+
+        assert len(provider.stored) == 1
+        stored_contents = provider.stored[0].contents
+        calls = [content for content in stored_contents if content.type == "code_interpreter_tool_call"]
+        results = [content for content in stored_contents if content.type == "code_interpreter_tool_result"]
+        assert len(calls) == 1
+        assert len(results) == 1
+        assert calls[0].inputs is not None
+        assert len(calls[0].inputs) == 1
+        assert calls[0].inputs[0].text == "import pandas as pd"
 
     async def test_after_run_skips_inputs_when_disabled(self) -> None:
         from agent_framework import AgentResponse
@@ -313,7 +456,7 @@ class TestHistoryProviderBase:
         provider = ConcreteHistoryProvider("mem", store_inputs=False)
         ctx = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["hello"])])
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hi"])])
-        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]
+        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         assert len(provider.stored) == 1
         assert provider.stored[0].text == "hi"
 
@@ -323,7 +466,7 @@ class TestHistoryProviderBase:
         provider = ConcreteHistoryProvider("mem", store_outputs=False)
         ctx = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["hello"])])
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hi"])])
-        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]
+        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         assert len(provider.stored) == 1
         assert provider.stored[0].text == "hello"
 
@@ -334,7 +477,7 @@ class TestHistoryProviderBase:
         ctx = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["hello"])])
         ctx.extend_messages("rag", [Message(role="system", contents=["context"])])
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hi"])])
-        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]
+        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         # Should store: context from rag + input + response
         texts = [m.text for m in provider.stored]
         assert "context" in texts
@@ -351,7 +494,7 @@ class TestHistoryProviderBase:
         ctx.extend_messages("rag", [Message(role="system", contents=["rag-context"])])
         ctx.extend_messages("other", [Message(role="system", contents=["other-context"])])
         ctx._response = AgentResponse(messages=[])
-        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]
+        await provider.after_run(agent=None, session=AgentSession(), context=ctx, state={})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         texts = [m.text for m in provider.stored]
         assert "rag-context" in texts
         assert "other-context" not in texts
@@ -379,6 +522,11 @@ class TestAgentSession:
     def test_service_session_id(self) -> None:
         session = AgentSession(service_session_id="svc-456")
         assert session.service_session_id == "svc-456"
+
+    def test_service_session_id_accepts_structured_mapping(self) -> None:
+        service_session_id = {"context_id": "ctx-123", "task_id": "task-456", "task_state": "working"}
+        session = AgentSession(service_session_id=service_session_id)
+        assert session.service_session_id == service_session_id
 
     def test_to_dict(self) -> None:
         session = AgentSession(session_id="s1", service_session_id="svc1")
@@ -409,6 +557,14 @@ class TestAgentSession:
         assert restored.session_id == "rt-1"
         assert restored.state == {"messages": ["a", "b"], "count": 42}
 
+    def test_roundtrip_with_structured_service_session_id(self) -> None:
+        service_session_id = {"context_id": "ctx-123", "task_id": "task-456", "task_state": "working"}
+        session = AgentSession(session_id="rt-2", service_session_id=service_session_id)
+        json_str = json.dumps(session.to_dict())
+        restored = AgentSession.from_dict(json.loads(json_str))
+        assert restored.session_id == "rt-2"
+        assert restored.service_session_id == service_session_id
+
     def test_from_dict_missing_state(self) -> None:
         data = {"session_id": "s1"}
         session = AgentSession.from_dict(data)
@@ -426,7 +582,7 @@ class TestInMemoryHistoryProvider:
         session = AgentSession()
         ctx = SessionContext(session_id="s1", input_messages=[])
         await provider.before_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=ctx,
             state=session.state.setdefault(provider.source_id, {}),
@@ -444,14 +600,14 @@ class TestInMemoryHistoryProvider:
         resp_msg = Message(role="assistant", contents=["hi there"])
         ctx1 = SessionContext(session_id="s1", input_messages=[input_msg])
         await provider.before_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=ctx1,
             state=session.state.setdefault(provider.source_id, {}),
         )
         ctx1._response = AgentResponse(messages=[resp_msg])
         await provider.after_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=ctx1,
             state=session.state.setdefault(provider.source_id, {}),
@@ -460,7 +616,7 @@ class TestInMemoryHistoryProvider:
         # Second run: should load previous messages
         ctx2 = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["again"])])
         await provider.before_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=ctx2,
             state=session.state.setdefault(provider.source_id, {}),
@@ -479,14 +635,14 @@ class TestInMemoryHistoryProvider:
         input_msg = Message(role="user", contents=["test"])
         ctx = SessionContext(session_id="s1", input_messages=[input_msg])
         await provider.before_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=ctx,
             state=session.state.setdefault(provider.source_id, {}),
         )
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["reply"])])
         await provider.after_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=ctx,
             state=session.state.setdefault(provider.source_id, {}),
@@ -516,8 +672,8 @@ class TestInMemoryHistoryProvider:
 
 class TestFileHistoryProvider:
     def test_is_marked_experimental(self) -> None:
-        assert FileHistoryProvider.__feature_stage__ == "experimental"
-        assert FileHistoryProvider.__feature_id__ == ExperimentalFeature.FILE_HISTORY.value
+        assert FileHistoryProvider.__feature_stage__ == "experimental"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert FileHistoryProvider.__feature_id__ == ExperimentalFeature.FILE_HISTORY.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert FileHistoryProvider.__doc__ is not None
         assert ".. warning:: Experimental" in FileHistoryProvider.__doc__
 
@@ -532,14 +688,14 @@ class TestFileHistoryProvider:
         first_context = SessionContext(session_id=session.session_id, input_messages=[input_message])
 
         await provider.before_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=first_context,
             state={},
         )
         first_context._response = AgentResponse(messages=[response_message])
         await provider.after_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=first_context,
             state={},
@@ -558,7 +714,7 @@ class TestFileHistoryProvider:
             session_id=session.session_id, input_messages=[Message(role="user", contents=["again"])]
         )
         await provider.before_run(  # type: ignore[arg-type]
-            agent=None,
+            agent=None,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             session=session,
             context=second_context,
             state={},
@@ -685,7 +841,7 @@ class TestFileHistoryProvider:
             def __init__(self, wrapped: Any) -> None:
                 self._wrapped = wrapped
 
-            def __enter__(self) -> "_TrackingFile":
+            def __enter__(self) -> "_TrackingFile":  # type: ignore[name-defined]
                 self._wrapped.__enter__()
                 return self
 

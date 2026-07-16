@@ -14,7 +14,8 @@ from agent_framework import (  # Core chat primitives used to build requests
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to declare a Python function as a workflow executor
 )
-from agent_framework.foundry import FoundryChatClient  # Thin client wrapper for Azure OpenAI chat models
+from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions  # Thin client wrapper for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from dotenv import load_dotenv
 from pydantic import BaseModel  # Structured outputs for safer parsing
@@ -36,7 +37,7 @@ Purpose:
 - Illustrate how to transform one agent's structured result into a new AgentExecutorRequest for a downstream agent.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - You understand the basics of WorkflowBuilder, executors, and events in this framework.
 - You know the concept of edge conditions and how they gate routes using a predicate function.
 - Azure OpenAI access is configured for FoundryChatClient. You should be logged in with Azure CLI (AzureCliCredential)
@@ -148,7 +149,7 @@ def create_spam_detector_agent() -> Agent:
             "Include the original email content in email_content."
         ),
         name="spam_detection_agent",
-        default_options={"response_format": DetectionResult},
+        default_options=OpenAIChatOptions[Any](response_format=DetectionResult),
     )
 
 
@@ -167,7 +168,7 @@ def create_email_assistant_agent() -> Agent:
             "Return JSON with a single field 'response' containing the drafted reply."
         ),
         name="email_assistant_agent",
-        default_options={"response_format": EmailResponse},
+        default_options=OpenAIChatOptions[Any](response_format=EmailResponse),
     )
 
 

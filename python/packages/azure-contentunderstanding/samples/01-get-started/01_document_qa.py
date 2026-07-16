@@ -30,7 +30,7 @@ markdown with table preservation — superior to LLM-only vision for
 scanned PDFs, handwritten content, and complex layouts.
 
 Environment variables:
-  FOUNDRY_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
+  FOUNDRY_PROJECT_ENDPOINT                — Microsoft Foundry project endpoint
   FOUNDRY_MODEL             — Model deployment name (e.g. gpt-4.1)
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 """

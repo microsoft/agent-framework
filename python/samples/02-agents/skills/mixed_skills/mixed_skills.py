@@ -4,11 +4,6 @@ import asyncio
 import json
 import os
 import sys
-
-# Uncomment this filter to suppress the experimental Skills warning before
-# using the sample's Skills APIs.
-# import warnings
-# warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from pathlib import Path
 from textwrap import dedent
 from typing import Any
@@ -23,6 +18,7 @@ from agent_framework import (
     InMemorySkillsSource,
     SkillFrontmatter,
     SkillsProvider,
+    ToolApprovalMiddleware,
 )
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
@@ -33,7 +29,7 @@ _SKILLS_ROOT = str(Path(__file__).resolve().parent.parent)
 if _SKILLS_ROOT not in sys.path:
     sys.path.insert(0, _SKILLS_ROOT)
 
-from subprocess_script_runner import subprocess_script_runner  # noqa: E402
+from subprocess_script_runner import subprocess_script_runner  # pyrefly: ignore[missing-import]  # noqa: E402
 
 """
 Mixed Skills — Code, class, and file skills in a single agent
@@ -213,20 +209,25 @@ async def main() -> None:
         )
     )
 
-    # Run the agent
+    # Run the agent. All skill tools require approval by default; auto-approve
+    # them so the sample runs unattended. See the script_approval /
+    # skills_auto_approval samples for approval handling.
     async with Agent(
         client=client,
         instructions="You are a helpful assistant that can convert units, volumes, and temperatures.",
         context_providers=[skills_provider],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[SkillsProvider.all_tools_auto_approval_rule])],
     ) as agent:
         # Ask the agent to use all three skills
         print("Converting with mixed skills (file + code + class)")
         print("-" * 60)
+        session = agent.create_session()
         response = await agent.run(
             "I need three conversions: "
             "1) How many kilometers is a marathon (26.2 miles)? "
             "2) How many liters is a 5-gallon bucket? "
-            "3) What is 98.6°F in Celsius?"
+            "3) What is 98.6°F in Celsius?",
+            session=session,
         )
         print(f"Agent: {response}\n")
 

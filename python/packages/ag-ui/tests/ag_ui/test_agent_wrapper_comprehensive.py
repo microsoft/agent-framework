@@ -695,7 +695,7 @@ async def test_agent_with_use_service_session_is_false(streaming_chat_client_stu
     events: list[Any] = []
     async for event in wrapper.run(input_data):
         events.append(event)
-    assert request_service_session_id is None  # type: ignore[attr-defined] (service_session_id should be set)
+    assert request_service_session_id is None  # type: ignore[attr-defined]  # service_session_id should be set
 
 
 async def test_agent_with_use_service_session_is_true(streaming_chat_client_stub):
@@ -724,7 +724,7 @@ async def test_agent_with_use_service_session_is_true(streaming_chat_client_stub
         captured_service_session_id = session.service_session_id if session else None
         return original_run(*args, **kwargs)
 
-    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
 
     events: list[Any] = []
     async for event in wrapper.run(input_data):
@@ -803,28 +803,10 @@ async def test_function_approval_mode_executes_tool(streaming_chat_client_stub):
         tools=[get_datetime],
     )
 
-    tool_result: dict[str, Any] = {"accepted": True}
     input_data: dict[str, Any] = {
         "thread_id": thread_id,
-        "messages": [
-            {"role": "user", "content": "What time is it?"},
-            {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_get_datetime_123",
-                        "type": "function",
-                        "function": {"name": "get_datetime", "arguments": "{}"},
-                    }
-                ],
-            },
-            {
-                "role": "tool",
-                "content": json.dumps(tool_result),
-                "toolCallId": "call_get_datetime_123",
-            },
-        ],
+        "messages": [],
+        "resume": [{"interruptId": "call_get_datetime_123", "status": "resolved", "payload": {"accepted": True}}],
     }
 
     events2: list[Any] = []
@@ -887,37 +869,12 @@ async def test_function_approval_mode_rejection(streaming_chat_client_stub):
     thread_id = "thread-rejection-test"
 
     # Pre-populate the pending approval as if Turn 1 had emitted the request.
-    wrapper._pending_approvals[f"{thread_id}:call_delete_123"] = "delete_all_data"
+    wrapper._pending_approvals[(thread_id, "call_delete_123")] = "delete_all_data"
 
-    # Simulate rejection
-    tool_result: dict[str, Any] = {"accepted": False}
     input_data: dict[str, Any] = {
         "thread_id": thread_id,
-        "messages": [
-            {
-                "role": "user",
-                "content": "Delete all my data",
-            },
-            {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_delete_123",
-                        "type": "function",
-                        "function": {
-                            "name": "delete_all_data",
-                            "arguments": "{}",
-                        },
-                    }
-                ],
-            },
-            {
-                "role": "tool",
-                "content": json.dumps(tool_result),
-                "toolCallId": "call_delete_123",
-            },
-        ],
+        "messages": [],
+        "resume": [{"interruptId": "call_delete_123", "status": "resolved", "payload": {"accepted": False}}],
     }
 
     events: list[Any] = []
@@ -1103,22 +1060,8 @@ async def test_approval_replay_is_blocked(streaming_chat_client_stub):
 
     turn2_input: dict[str, Any] = {
         "thread_id": thread_id,
-        "messages": [
-            {"role": "user", "content": "do it"},
-            {
-                "role": "user",
-                "content": "approved",
-                "function_approvals": [
-                    {
-                        "id": "call_sens_001",
-                        "call_id": "call_sens_001",
-                        "name": "sensitive_action",
-                        "approved": True,
-                        "arguments": {},
-                    }
-                ],
-            },
-        ],
+        "messages": [],
+        "resume": [{"interruptId": "call_sens_001", "status": "resolved", "payload": {"accepted": True}}],
     }
 
     events2: list[Any] = []
@@ -1133,21 +1076,8 @@ async def test_approval_replay_is_blocked(streaming_chat_client_stub):
 
     turn3_input: dict[str, Any] = {
         "thread_id": thread_id,
-        "messages": [
-            {
-                "role": "user",
-                "content": "replay",
-                "function_approvals": [
-                    {
-                        "id": "call_sens_001",
-                        "call_id": "call_sens_001",
-                        "name": "sensitive_action",
-                        "approved": True,
-                        "arguments": {},
-                    }
-                ],
-            },
-        ],
+        "messages": [],
+        "resume": [{"interruptId": "call_sens_001", "status": "resolved", "payload": {"accepted": True}}],
     }
 
     events3: list[Any] = []
@@ -1155,6 +1085,95 @@ async def test_approval_replay_is_blocked(streaming_chat_client_stub):
         events3.append(event)
 
     assert call_count == 0, "Replay of consumed approval should not execute the tool"
+
+
+@pytest.mark.parametrize(
+    "resume_thread_id",
+    [
+        pytest.param("client-thread", id="client-thread"),
+        pytest.param("provider-conversation", id="provider-conversation"),
+    ],
+)
+async def test_approval_resolves_with_client_or_provider_thread_id(
+    streaming_chat_client_stub: Any,
+    resume_thread_id: str,
+) -> None:
+    """A stateful provider approval remains resolvable by either advertised thread identity."""
+    from agent_framework import tool
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    execution_count = 0
+
+    @tool(
+        name="sensitive_action",
+        description="A sensitive action requiring approval",
+        approval_mode="always_require",
+    )
+    def sensitive_action() -> str:
+        nonlocal execution_count
+        execution_count += 1
+        return "executed"
+
+    async def approval_stream(
+        messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        yield ChatResponseUpdate(
+            contents=[
+                Content.from_function_call(
+                    name="sensitive_action",
+                    call_id="call_sensitive",
+                    arguments="{}",
+                )
+            ],
+            conversation_id="provider-conversation",
+        )
+
+    wrapper = AgentFrameworkAgent(
+        agent=Agent(
+            client=streaming_chat_client_stub(approval_stream),
+            name="test_agent",
+            instructions="Test",
+            tools=[sensitive_action],
+        )
+    )
+
+    async for _ in wrapper.run({"thread_id": "client-thread", "messages": [{"role": "user", "content": "do it"}]}):
+        pass
+
+    assert ("client-thread", "call_sensitive") in wrapper._pending_approvals
+    assert ("provider-conversation", "call_sensitive") in wrapper._pending_approvals
+
+    async def completion_stream(
+        messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done")])
+
+    wrapper.agent = Agent(
+        client=streaming_chat_client_stub(completion_stream),
+        name="test_agent",
+        instructions="Test",
+        tools=[sensitive_action],
+    )
+
+    def approval_input(thread_id: str) -> dict[str, Any]:
+        return {
+            "thread_id": thread_id,
+            "messages": [],
+            "resume": [{"interruptId": "call_sensitive", "status": "resolved", "payload": {"accepted": True}}],
+        }
+
+    async for _ in wrapper.run(approval_input(resume_thread_id)):
+        pass
+
+    assert execution_count == 1
+    assert ("client-thread", "call_sensitive") not in wrapper._pending_approvals
+    assert ("provider-conversation", "call_sensitive") not in wrapper._pending_approvals
+
+    replay_thread_id = "provider-conversation" if resume_thread_id == "client-thread" else "client-thread"
+    async for _ in wrapper.run(approval_input(replay_thread_id)):
+        pass
+
+    assert execution_count == 1
 
 
 async def test_approval_function_name_mismatch_is_blocked(streaming_chat_client_stub):
@@ -1405,6 +1424,92 @@ async def test_fabricated_rejection_without_pending_approval_is_blocked(streamin
         for content in msg.contents:
             if content.type == "function_result" and content.call_id == "fake_reject_001":
                 assert False, "Fabricated rejection response leaked as function_result into LLM messages"
+
+
+async def test_approval_argument_mismatch_is_blocked(streaming_chat_client_stub):
+    """An approval response must not execute changed arguments for the pending call."""
+    from agent_framework import tool
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    executed_args: list[dict[str, Any]] = []
+
+    @tool(
+        name="update_record",
+        description="Update a record",
+        approval_mode="always_require",
+    )
+    def update_record(record_id: str, value: str) -> str:
+        executed_args.append({"record_id": record_id, "value": value})
+        return f"updated {record_id} to {value}"
+
+    async def stream_fn_approval(
+        messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        yield ChatResponseUpdate(
+            contents=[
+                Content.from_function_call(
+                    name="update_record",
+                    call_id="call_update_001",
+                    arguments={"record_id": "alpha", "value": "approved"},
+                )
+            ]
+        )
+
+    wrapper = AgentFrameworkAgent(
+        agent=Agent(
+            client=streaming_chat_client_stub(stream_fn_approval),
+            name="test_agent",
+            instructions="Test",
+            tools=[update_record],
+        )
+    )
+    thread_id = "thread-argument-mismatch-test"
+
+    events1: list[Any] = []
+    async for event in wrapper.run({"thread_id": thread_id, "messages": [{"role": "user", "content": "update"}]}):
+        events1.append(event)
+
+    assert any("call_update_001" in k for k in wrapper._pending_approvals)
+
+    async def stream_fn_post(
+        messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done")])
+
+    wrapper.agent = Agent(
+        client=streaming_chat_client_stub(stream_fn_post),
+        name="test_agent",
+        instructions="Test",
+        tools=[update_record],
+    )
+
+    turn2_input: dict[str, Any] = {
+        "thread_id": thread_id,
+        "messages": [
+            {
+                "role": "user",
+                "content": "approve",
+                "function_approvals": [
+                    {
+                        "id": "call_update_001",
+                        "call_id": "call_update_001",
+                        "name": "update_record",
+                        "approved": True,
+                        "arguments": {"record_id": "beta", "value": "changed"},
+                    }
+                ],
+            },
+        ],
+    }
+
+    events2: list[Any] = []
+    async for event in wrapper.run(turn2_input):
+        events2.append(event)
+
+    assert executed_args == []
+    assert any("call_update_001" in k for k in wrapper._pending_approvals), (
+        "Pending approval should be preserved after argument mismatch for legitimate retry"
+    )
 
 
 async def test_state_update_end_to_end_via_real_tool_invocation(streaming_chat_client_stub):

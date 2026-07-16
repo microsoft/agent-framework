@@ -1,11 +1,11 @@
-# What this sample demonstrates
+﻿# What this sample demonstrates
 
-This sample demonstrates how to use a `HarnessAgent` with the default `FileAccessProvider` to give an agent access to a folder of data files for reading, analyzing, and writing results. The `HarnessAgent` pre-configures function invocation, per-service-call chat history persistence, in-loop compaction, tool approval, and OpenTelemetry — so the sample only needs to supply the chat client, token limits, custom instructions, and opt out of unused features.
+This sample demonstrates how to use a `HarnessAgent` with the `FileAccessProvider` to give an agent access to a folder of data files for reading, analyzing, and writing results. The `HarnessAgent` pre-configures function invocation, per-service-call chat history persistence, in-loop compaction, tool approval, and OpenTelemetry — so the sample only needs to supply the chat client, token limits, custom instructions, a `FileAccessStore`, and opt out of unused features.
 
 Key features showcased:
 
 - **HarnessAgent** — a pre-configured agent that wraps a `ChatClientAgent` with function invocation, per-service-call persistence, and context-window compaction
-- **FileAccessProvider** — the HarnessAgent's default file access provider uses `{cwd}/working` as its working directory, matching this sample's `working/` folder
+- **FileAccessProvider** — file access is opt-in; setting `HarnessAgentOptions.FileAccessStore` to the sample's `working/` folder enables the provider's read/write tools
 - **CSV data processing** — the agent reads sales transaction data and performs analysis on demand
 - **Output file creation** — the agent can write summaries, filtered data, or reports back to the data folder
 - **Streaming output** — responses are streamed token-by-token for a natural experience
@@ -15,7 +15,7 @@ Key features showcased:
 
 Before running this sample, ensure you have:
 
-1. An Azure AI Foundry project with a deployed model (e.g., `gpt-5.4`)
+1. A Microsoft Foundry project with a deployed model (e.g., `gpt-5.4`)
 2. Azure CLI installed and authenticated (`az login`)
 
 ## Environment Variables
@@ -23,11 +23,11 @@ Before running this sample, ensure you have:
 Set the following environment variables:
 
 ```bash
-# Required: Your Azure AI Foundry OpenAI endpoint
+# Required: Your Microsoft Foundry OpenAI endpoint
 export AZURE_FOUNDRY_OPENAI_ENDPOINT="https://your-project.services.ai.azure.com/openai/v1/"
 
 # Optional: Model deployment name (defaults to gpt-5.4)
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4"
+export FOUNDRY_MODEL="gpt-5.4"
 ```
 
 ## Running the Sample
@@ -50,6 +50,15 @@ You can ask the agent to:
 5. **Type `exit`** — to end the session
 
 E.g. try the following prompt `Please process the sales.csv file by first filtering it to only North region sales, and then calculating the sum of sales by person. I'd like to write the results of the processing to north_region_totals.csv`.
+
+## ⚠️ Security: avoid tool-name collisions
+
+This sample uses `FileAccessProvider.ReadOnlyToolsAutoApprovalRule` to auto-approve read-only file
+access tools. Built-in auto-approval rules match tool calls **solely by tool name**, so any other
+registered tool that shares one of the approved names (`file_access_read`, `file_access_ls`,
+`file_access_grep`) would be **silently auto-approved**, bypassing the
+human approval boundary. Ensure no other tool's name collides with the reserved names an
+auto-approval rule approves.
 
 ## Sample Data
 

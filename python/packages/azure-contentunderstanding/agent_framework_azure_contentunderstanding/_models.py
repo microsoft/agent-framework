@@ -43,7 +43,13 @@ class DocumentEntry(TypedDict):
     analyzed_at: str | None
     analysis_duration_s: float | None
     upload_duration_s: float | None
-    result: dict[str, object] | None
+    result: str | None
+    """LLM-ready text rendered by ``azure.ai.contentunderstanding.to_llm_input``.
+
+    Stored as a string (YAML front matter + markdown body) so every consumer
+    (LLM context injection, vector store upload) can use it without re-rendering.
+    ``None`` until analysis completes successfully.
+    """
     error: str | None
 
 
@@ -101,7 +107,7 @@ class FileSearchConfig:
         vector_store_id: str,
         file_search_tool: Any,
     ) -> FileSearchConfig:
-        """Create a config for Azure AI Foundry (``FoundryChatClient``).
+        """Create a config for Microsoft Foundry (``FoundryChatClient``).
 
         Args:
             client: The OpenAI-compatible client from ``FoundryChatClient.client``.

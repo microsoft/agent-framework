@@ -5,30 +5,29 @@
 // The TextSearchProvider runs a search against the vector store via the TextSearchStore before each model invocation and injects the results into the model context.
 // The TextSearchStore is a sample store implementation that hardcodes a storage schema and uses the vector store to store and retrieve documents.
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Samples;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.VectorData;
 using Microsoft.SemanticKernel.Connectors.InMemory;
-using OpenAI.Chat;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
-var embeddingDeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-3-large";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
+var embeddingDeploymentName = Environment.GetEnvironmentVariable("FOUNDRY_EMBEDDING_MODEL") ?? "text-embedding-3-large";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AzureOpenAIClient azureOpenAIClient = new(
+AIProjectClient aiProjectClient = new(
     new Uri(endpoint),
     new DefaultAzureCredential());
 
-// Create an In-Memory vector store that uses the Azure OpenAI embedding model to generate embeddings.
+// Create an In-Memory vector store that uses the Microsoft Foundry embedding model to generate embeddings.
 VectorStore vectorStore = new InMemoryVectorStore(new()
 {
-    EmbeddingGenerator = azureOpenAIClient.GetEmbeddingClient(embeddingDeploymentName).AsIEmbeddingGenerator()
+    EmbeddingGenerator = aiProjectClient.GetProjectOpenAIClient().GetEmbeddingClient(embeddingDeploymentName).AsIEmbeddingGenerator()
 });
 
 // Create a store that defines a storage schema, and uses the vector store to store and retrieve documents.
@@ -60,11 +59,10 @@ TextSearchProviderOptions textSearchOptions = new()
 };
 
 // Create the AI agent with the TextSearchProvider as the AI context provider.
-AIAgent agent = azureOpenAIClient
-    .GetChatClient(deploymentName)
+AIAgent agent = aiProjectClient
     .AsAIAgent(new ChatClientAgentOptions
     {
-        ChatOptions = new() { Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available." },
+        ChatOptions = new() { ModelId = deploymentName, Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available." },
         AIContextProviders = [new TextSearchProvider(SearchAdapter, textSearchOptions)],
         // Since we are using ChatCompletion which stores chat history locally, we can also add a message filter
         // that removes messages produced by the TextSearchProvider before they are added to the chat history, so that

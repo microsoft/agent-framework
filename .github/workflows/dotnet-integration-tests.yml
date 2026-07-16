@@ -9,16 +9,31 @@ on:
   workflow_call:
     inputs:
       checkout-ref:
-        description: "Git ref to checkout (e.g., refs/pull/123/head)"
+        description: "Immutable commit SHA to check out"
         required: true
         type: string
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+      AZUREAI__ENDPOINT:
+        required: true
+      COPILOT_GITHUB_TOKEN:
+        required: true
+      OPENAI__APIKEY:
+        required: true
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   dotnet-integration-tests:
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -88,6 +103,7 @@ jobs:
         env:
           COSMOSDB_ENDPOINT: https://localhost:8081
           COSMOSDB_KEY: C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           OpenAI__ApiKey: ${{ secrets.OPENAI__APIKEY }}
           OpenAI__ChatModelId: ${{ vars.OPENAI__CHATMODELID }}
           OpenAI__ChatReasoningModelId: ${{ vars.OPENAI__CHATREASONINGMODELID }}

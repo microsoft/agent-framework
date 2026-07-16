@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Agents.AI.Compaction;
 #if NET
 using Microsoft.Agents.AI.Tools.Shell;
 #endif
@@ -30,6 +31,68 @@ public sealed class HarnessAgentOptions
     /// Gets or sets the agent description.
     /// </summary>
     public string? Description { get; set; }
+
+    /// <summary>
+    /// Gets or sets the maximum number of tokens the model's context window supports (e.g., 1,050,000 for gpt-5.4).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When both <see cref="MaxContextWindowTokens"/> and <see cref="MaxOutputTokens"/> are provided (and no
+    /// custom <see cref="CompactionStrategy"/> is set), a default <see cref="ContextWindowCompactionStrategy"/>
+    /// is constructed from these values to prevent function-invocation loops from overflowing the context window.
+    /// </para>
+    /// <para>
+    /// Ignored when <see cref="CompactionStrategy"/> is provided or when <see cref="DisableCompaction"/> is
+    /// <see langword="true"/>.
+    /// </para>
+    /// </remarks>
+    public int? MaxContextWindowTokens { get; set; }
+
+    /// <summary>
+    /// Gets or sets the maximum number of output tokens the model can generate per response (e.g., 128,000 for gpt-5.4).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When set, this value is used as the default for <see cref="ChatOptions"/>.<see cref="ChatOptions.MaxOutputTokens"/>
+    /// when not explicitly configured.
+    /// </para>
+    /// <para>
+    /// For compaction purposes, this value is used together with <see cref="MaxContextWindowTokens"/> to construct a
+    /// default <see cref="ContextWindowCompactionStrategy"/> — but only when no custom <see cref="CompactionStrategy"/>
+    /// is provided and <see cref="DisableCompaction"/> is <see langword="false"/>.
+    /// </para>
+    /// </remarks>
+    public int? MaxOutputTokens { get; set; }
+
+    /// <summary>
+    /// Gets or sets a custom <see cref="Compaction.CompactionStrategy"/> to use for in-loop context-window compaction.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When provided, this strategy is used directly and <see cref="MaxContextWindowTokens"/> and
+    /// <see cref="MaxOutputTokens"/> are ignored for compaction purposes (<see cref="MaxOutputTokens"/> is still
+    /// used as the default for <see cref="ChatOptions"/>.<see cref="ChatOptions.MaxOutputTokens"/> if set).
+    /// </para>
+    /// <para>
+    /// When <see langword="null"/> and both <see cref="MaxContextWindowTokens"/> and <see cref="MaxOutputTokens"/>
+    /// are provided, a default <see cref="ContextWindowCompactionStrategy"/> is constructed from those values.
+    /// </para>
+    /// <para>
+    /// This property is ignored when <see cref="DisableCompaction"/> is <see langword="true"/>.
+    /// </para>
+    /// </remarks>
+    public CompactionStrategy? CompactionStrategy { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether in-loop compaction is disabled.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="true"/>, compaction is disabled regardless of <see cref="CompactionStrategy"/>,
+    /// <see cref="MaxContextWindowTokens"/>, or <see cref="MaxOutputTokens"/> settings. No
+    /// <see cref="CompactionProvider"/> is added to the chat client pipeline, and the default
+    /// <see cref="InMemoryChatHistoryProvider"/> is configured without a chat reducer.
+    /// </remarks>
+    public bool DisableCompaction { get; set; }
 
     /// <summary>
     /// Gets or sets additional chat options such as tools for the agent to use.
@@ -68,9 +131,9 @@ public sealed class HarnessAgentOptions
     /// Gets or sets the <see cref="ChatHistoryProvider"/> to use for storing chat history.
     /// </summary>
     /// <remarks>
-    /// When <see langword="null"/>, the agent defaults to an <see cref="InMemoryChatHistoryProvider"/>
-    /// configured with a compaction-based chat reducer derived from the <c>maxContextWindowTokens</c>
-    /// and <c>maxOutputTokens</c> constructor parameters of <see cref="HarnessAgent"/>.
+    /// When <see langword="null"/>, the agent defaults to an <see cref="InMemoryChatHistoryProvider"/>.
+    /// If <see cref="MaxContextWindowTokens"/> and <see cref="MaxOutputTokens"/> are both provided,
+    /// the default provider is configured with a compaction-based chat reducer; otherwise, no reducer is applied.
     /// </remarks>
     public ChatHistoryProvider? ChatHistoryProvider { get; set; }
 
@@ -84,6 +147,33 @@ public sealed class HarnessAgentOptions
     public IEnumerable<AIContextProvider>? AIContextProviders { get; set; }
 
     /// <summary>
+    /// Gets or sets the ordered collection of <see cref="LoopEvaluator"/> instances that, when supplied, cause the
+    /// <see cref="HarnessAgent"/> to be wrapped in a <see cref="LoopAgent"/> decorator.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When this collection is non-<see langword="null"/> and contains at least one evaluator, the harness agent is
+    /// wrapped in a <see cref="LoopAgent"/> that re-invokes the agent until the evaluators are satisfied. The loop is
+    /// applied as the outermost decorator, so each iteration is a complete agent run (including tool approval and
+    /// OpenTelemetry instrumentation).
+    /// </para>
+    /// <para>
+    /// When <see langword="null"/> or empty (the default), no <see cref="LoopAgent"/> is added and the agent behaves
+    /// as a single-shot agent.
+    /// </para>
+    /// </remarks>
+    public IEnumerable<LoopEvaluator>? LoopEvaluators { get; set; }
+
+    /// <summary>
+    /// Gets or sets optional configuration for the <see cref="LoopAgent"/> created from <see cref="LoopEvaluators"/>.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="null"/>, the <see cref="LoopAgent"/> uses its default settings. This property is ignored
+    /// when <see cref="LoopEvaluators"/> is <see langword="null"/> or empty.
+    /// </remarks>
+    public LoopAgentOptions? LoopAgentOptions { get; set; }
+
+    /// <summary>
     /// Gets or sets the maximum number of function-invocation loop iterations per request.
     /// </summary>
     /// <remarks>
@@ -93,13 +183,38 @@ public sealed class HarnessAgentOptions
     public int? MaximumIterationsPerRequest { get; set; }
 
     /// <summary>
-    /// Gets or sets a value indicating whether the <see cref="ToolApprovalAgent"/> wrapper is disabled.
+    /// Gets or sets a value indicating whether the <see cref="ToolApprovalAgent"/> auto-approval middleware is disabled.
     /// </summary>
     /// <remarks>
-    /// When <see langword="false"/> (the default), the agent is wrapped with tool approval middleware
-    /// that supports "don't ask again" auto-approval rules.
+    /// This disables the tool auto-approval functionality only, keeping the tool approval flow requiring approval (for example,
+    /// <see cref="ApprovalRequiredAIFunction"/> tools). This setting controls whether the agent is wrapped with the
+    /// <see cref="ToolApprovalAgent"/> middleware that supports "don't ask again" and auto-approval rules.
+    /// When <see langword="false"/> (the default), the middleware is added.
     /// </remarks>
-    public bool DisableToolApproval { get; set; }
+    public bool DisableToolAutoApproval { get; set; }
+
+    /// <summary>
+    /// Gets or sets the options for the <see cref="ToolApprovalAgent"/> middleware.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="null"/>, the <see cref="ToolApprovalAgent"/> uses default settings.
+    /// This property has no effect when <see cref="DisableToolAutoApproval"/> is <see langword="true"/>.
+    /// </remarks>
+    public ToolApprovalAgentOptions? ToolApprovalAgentOptions { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether bypassing of approval requests for tools that do not
+    /// require approval is disabled.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="false"/> (the default), the underlying chat client pipeline includes the decorator
+    /// added by <see cref="ChatClientBuilderExtensions.UseApprovalNotRequiredFunctionBypassing"/> above the
+    /// function invocation middleware.
+    /// This stores automatically approved function calls for tools that do not require approval in the session
+    /// state when they are returned alongside tools that do, so that only tools that truly require human
+    /// approval are surfaced to the caller.
+    /// </remarks>
+    public bool DisableApprovalNotRequiredFunctionBypassing { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether the <see cref="FileMemoryProvider"/> is disabled.
@@ -122,24 +237,24 @@ public sealed class HarnessAgentOptions
     public AgentFileStore? FileMemoryStore { get; set; }
 
     /// <summary>
-    /// Gets or sets a value indicating whether the <see cref="FileAccessProvider"/> is disabled.
+    /// Gets or sets the <see cref="AgentFileStore"/> that enables the <see cref="FileAccessProvider"/>.
     /// </summary>
     /// <remarks>
-    /// When <see langword="false"/> (the default), a <see cref="FileAccessProvider"/> is included in the
-    /// agent's context providers, using either <see cref="FileAccessStore"/> or a default
-    /// <see cref="FileSystemAgentFileStore"/> rooted at <c>{cwd}/working</c>.
-    /// </remarks>
-    public bool DisableFileAccess { get; set; }
-
-    /// <summary>
-    /// Gets or sets a custom <see cref="AgentFileStore"/> for the <see cref="FileAccessProvider"/>.
-    /// </summary>
-    /// <remarks>
-    /// When <see langword="null"/> and <see cref="DisableFileAccess"/> is <see langword="false"/>,
-    /// a default <see cref="FileSystemAgentFileStore"/> is created.
-    /// This property is ignored when <see cref="DisableFileAccess"/> is <see langword="true"/>.
+    /// File access is opt-in. When <see langword="null"/> (the default), no <see cref="FileAccessProvider"/>
+    /// is added and the agent has no file access tools. When set, a <see cref="FileAccessProvider"/> is
+    /// included in the agent's context providers, backed by the supplied store and configured with
+    /// <see cref="FileAccessProviderOptions"/> when provided.
     /// </remarks>
     public AgentFileStore? FileAccessStore { get; set; }
+
+    /// <summary>
+    /// Gets or sets the <see cref="FileAccessProviderOptions"/> used to configure the <see cref="FileAccessProvider"/>.
+    /// </summary>
+    /// <remarks>
+    /// This property is only used when <see cref="FileAccessStore"/> is set (file access is opt-in).
+    /// When <see langword="null"/>, the provider uses its default options.
+    /// </remarks>
+    public FileAccessProviderOptions? FileAccessProviderOptions { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether the <see cref="HostedWebSearchTool"/> is disabled.
@@ -255,6 +370,54 @@ public sealed class HarnessAgentOptions
     /// When <see langword="null"/> (the default), no shell features are enabled.
     /// </remarks>
     public ShellExecutor? ShellExecutor { get; set; }
+
+    /// <summary>
+    /// Gets or sets the name of the shell execution tool exposed to the model.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When <see langword="null"/> (the default), the shell executor's default tool name (<c>run_shell</c>) is used.
+    /// This property is ignored when <see cref="ShellExecutor"/> is <see langword="null"/>.
+    /// </para>
+    /// <para>
+    /// <b>Security warning:</b> auto-approval rules may match tool calls solely by name. Pay attention to
+    /// the tool names approved by auto-approval rules for other features. Setting this property to a
+    /// value that collides with a tool name that is approved by an auto-approval rule for another feature will cause
+    /// the shell tool to also be auto-approved, bypassing the human approval boundary. Choose a unique
+    /// name that no other registered tool uses.
+    /// </para>
+    /// </remarks>
+    public string? ShellToolName { get; set; }
+
+    /// <summary>
+    /// Gets or sets the description of the shell execution tool shown to the model.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="null"/> (the default), the shell executor's built-in description is used.
+    /// This property is ignored when <see cref="ShellExecutor"/> is <see langword="null"/>.
+    /// </remarks>
+    public string? ShellToolDescription { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether approval is disabled for the shell execution tool.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When <see langword="false"/> (the default), the shell tool is wrapped in an <see cref="ApprovalRequiredAIFunction"/>
+    /// so every command requires explicit approval before executing. When <see langword="true"/>, the tool can be invoked
+    /// without approval. This property is ignored when <see cref="ShellExecutor"/> is <see langword="null"/>.
+    /// </para>
+    /// <para>
+    /// Setting this to <see langword="true"/> also requires the underlying <see cref="ShellExecutor"/> to permit
+    /// unapproved use. The inverse of this value is forwarded as the <c>requireApproval</c> argument to
+    /// <see cref="ShellExecutor.AsAIFunction"/>, and some executors enforce their own security boundary:
+    /// <see cref="LocalShellExecutor"/> throws an <see cref="System.InvalidOperationException"/> unless it was
+    /// constructed with <see cref="LocalShellExecutorOptions.AcknowledgeUnsafe"/> set to <see langword="true"/>,
+    /// because running unapproved commands directly on the host is inherently unsafe. Sandboxed executors such as
+    /// <see cref="DockerShellExecutor"/> impose no such requirement.
+    /// </para>
+    /// </remarks>
+    public bool DisableShellToolApproval { get; set; }
 
     /// <summary>
     /// Gets or sets optional configuration for the <see cref="ShellEnvironmentProvider"/>.

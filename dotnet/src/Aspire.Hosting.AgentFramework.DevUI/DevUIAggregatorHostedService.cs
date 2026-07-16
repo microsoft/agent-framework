@@ -30,6 +30,7 @@ namespace Aspire.Hosting.AgentFramework;
 internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 {
     private static readonly FileExtensionContentTypeProvider s_contentTypeProvider = new();
+    private static readonly string[] s_preferredBackendEndpointNames = ["https", "http"];
 
     private WebApplication? _app;
     private readonly DevUIResource _resource;
@@ -283,7 +284,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
     /// Resolves backend URLs from the resource's <see cref="AgentServiceAnnotation"/> annotations.
     /// This method does not cache results to ensure late-allocated backends are always discovered.
     /// </summary>
-    private Dictionary<string, string> ResolveBackends()
+    internal Dictionary<string, string> ResolveBackends()
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -296,21 +297,39 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
             var prefix = annotation.EntityIdPrefix ?? annotation.AgentService.Name;
 
-            try
+            var endpointUrl = this.ResolveBackendUrl(rwe, prefix);
+            if (endpointUrl is not null)
             {
-                var endpoint = rwe.GetEndpoint("http");
-                if (endpoint.IsAllocated)
-                {
-                    result[prefix] = endpoint.Url;
-                }
-            }
-            catch (Exception ex)
-            {
-                this._logger.LogDebug(ex, "Backend '{Prefix}' endpoint not yet available", prefix);
+                result[prefix] = endpointUrl;
             }
         }
 
         return result;
+    }
+
+    private string? ResolveBackendUrl(IResourceWithEndpoints resource, string prefix)
+    {
+        foreach (var endpointName in s_preferredBackendEndpointNames)
+        {
+            try
+            {
+                var endpoint = resource.GetEndpoint(endpointName);
+                if (endpoint.IsAllocated)
+                {
+                    return endpoint.Url;
+                }
+            }
+            catch (InvalidOperationException ex)
+            {
+                this._logger.LogDebug(
+                    ex,
+                    "Backend '{Prefix}' {EndpointName} endpoint not yet available",
+                    prefix,
+                    endpointName);
+            }
+        }
+
+        return null;
     }
 
     private async Task<IResult> AggregateEntitiesAsync(HttpContext context)
@@ -672,7 +691,14 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         var httpClientFactory = context.RequestServices.GetRequiredService<IHttpClientFactory>();
         using var client = httpClientFactory.CreateClient("devui-proxy");
 
-        var targetUri = new Uri(new Uri(backendUrl), path);
+        var targetUri = ValidateProxyTarget(backendUrl, path);
+        if (targetUri is null)
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            await context.Response.WriteAsync("Invalid proxy target.", context.RequestAborted).ConfigureAwait(false);
+            return;
+        }
+
         using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method), targetUri);
 
         foreach (var header in context.Request.Headers)
@@ -775,5 +801,28 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             || headerName.Equals("Connection", StringComparison.OrdinalIgnoreCase)
             || headerName.Equals("Keep-Alive", StringComparison.OrdinalIgnoreCase)
             || headerName.Equals("Host", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Validates that constructing a proxy target URI from <paramref name="backendUrl"/> and
+    /// <paramref name="path"/> does not redirect the request to an unintended host.
+    /// Returns the validated <see cref="Uri"/> if safe, or <c>null</c> if the target is invalid.
+    /// </summary>
+    internal static Uri? ValidateProxyTarget(string backendUrl, string path)
+    {
+        if (!Uri.TryCreate(backendUrl, UriKind.Absolute, out var baseUri) ||
+            !Uri.TryCreate(baseUri, path, out var targetUri))
+        {
+            return null;
+        }
+
+        if (!string.Equals(targetUri.Host, baseUri.Host, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(targetUri.Scheme, baseUri.Scheme, StringComparison.OrdinalIgnoreCase) ||
+            targetUri.Port != baseUri.Port)
+        {
+            return null;
+        }
+
+        return targetUri;
     }
 }

@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -28,6 +29,7 @@ from agent_framework import (
 )
 from agent_framework._sessions import AgentSession
 from agent_framework._settings import load_settings
+from azure.ai.contentunderstanding import to_llm_input
 from azure.ai.contentunderstanding.aio import ContentUnderstandingClient
 from azure.ai.contentunderstanding.models import AnalysisInput, AnalysisResult
 from azure.core.credentials import AzureKeyCredential
@@ -39,7 +41,6 @@ if TYPE_CHECKING:
 from ._detection import (
     detect_and_strip_files,
 )
-from ._extraction import extract_sections, format_result
 from ._models import AnalysisSection, DocumentEntry, DocumentStatus, FileSearchConfig
 
 if sys.version_info >= (3, 11):
@@ -59,6 +60,27 @@ MEDIA_TYPE_ANALYZER_MAP: dict[str, str] = {
 }
 DEFAULT_ANALYZER: str = "prebuilt-documentSearch"
 
+# Matches the leading YAML front-matter block emitted by ``to_llm_input``.
+# A rendered text with no markdown body (e.g. when the CU result has empty
+# ``markdown`` and no fields) is recognised by an empty tail after this match.
+# Accept both LF and CRLF line endings so body detection works cross-platform.
+_FRONT_MATTER_RE: re.Pattern[str] = re.compile(r"\A---\r?\n.*?\r?\n---(?:\r?\n|\Z)", flags=re.DOTALL)
+
+
+def _has_renderable_body(text: str) -> bool:
+    """Return True when ``text`` has any non-whitespace content beyond YAML front matter.
+
+    Used to skip ``file_search`` uploads when CU produced a result with no
+    markdown content — uploading a front-matter-only stub would pollute the
+    vector store without giving the LLM anything searchable.
+    """
+    if not text:
+        return False
+    match = _FRONT_MATTER_RE.match(text)
+    if match is None:
+        return bool(text.strip())
+    return bool(text[match.end() :].strip())
+
 
 class ContentUnderstandingSettings(TypedDict, total=False):
     """Settings for ContentUnderstandingContextProvider with auto-loading from environment.
@@ -68,7 +90,7 @@ class ContentUnderstandingSettings(TypedDict, total=False):
     ``AZURE_CONTENTUNDERSTANDING_``.
 
     Keys:
-        endpoint: Azure AI Foundry endpoint URL.
+        endpoint: Microsoft Foundry endpoint URL.
             Can be set via environment variable ``AZURE_CONTENTUNDERSTANDING_ENDPOINT``.
     """
 
@@ -86,7 +108,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
     support it.
 
     Args:
-        endpoint: Azure AI Foundry endpoint URL
+        endpoint: Microsoft Foundry endpoint URL
             (e.g., ``"https://<your-foundry-resource>.services.ai.azure.com/"``).
             Can also be set via environment variable
             ``AZURE_CONTENTUNDERSTANDING_ENDPOINT``.
@@ -263,8 +285,8 @@ class ContentUnderstandingContextProvider(ContextProvider):
         pending_tokens: dict[str, dict[str, str]] = state.setdefault("_pending_tokens", {})
         pending_uploads: list[tuple[str, DocumentEntry]] = state.setdefault("_pending_uploads", [])
 
-        # 1. Resolve pending background analyses via continuation tokens
-        await self._resolve_pending_tokens(pending_tokens, pending_uploads, documents, context)
+        # Resolve pending Content Understanding analysis from its continuation tokens
+        await self._resolve_pending_analysis(pending_tokens, pending_uploads, documents, context)
 
         # 1b. Upload any documents that completed in the background (file_search mode)
         if pending_uploads:
@@ -415,7 +437,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     context.extend_messages(
                         self,
                         [
-                            Message(role="user", contents=[format_result(entry["filename"], entry["result"])]),
+                            Message(role="user", contents=[entry["result"] or ""]),
                         ],
                     )
                     context.extend_messages(
@@ -428,7 +450,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                                         f"The user just uploaded '{entry['filename']}'."
                                         " It has been analyzed using Azure Content Understanding."
                                         " The document content (markdown) and extracted fields"
-                                        " (JSON) are provided above."
+                                        " (YAML front matter) are provided above."
                                         " If the user's question is ambiguous,"
                                         " prioritize this most recently uploaded document."
                                         " Use specific field values and cite page numbers"
@@ -561,7 +583,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
 
             # Analysis completed within timeout
             analysis_duration = round(time.monotonic() - t0, 2)
-            extracted = self._extract_sections(result)
+            rendered = self._render_for_llm(result, filename)
             logger.info("Analyzed '%s' with analyzer '%s' in %.1fs.", filename, resolved_analyzer, analysis_duration)
             return DocumentEntry(
                 status=DocumentStatus.READY,
@@ -571,7 +593,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                 analyzed_at=datetime.now(tz=timezone.utc).isoformat(),
                 analysis_duration_s=analysis_duration,
                 upload_duration_s=None,
-                result=extracted,
+                result=rendered,
                 error=None,
             )
 
@@ -596,10 +618,10 @@ class ContentUnderstandingContextProvider(ContextProvider):
             )
 
     # ------------------------------------------------------------------
-    # Pending Token Resolution
+    # Pending Analysis Resolution
     # ------------------------------------------------------------------
 
-    async def _resolve_pending_tokens(
+    async def _resolve_pending_analysis(
         self,
         pending_tokens: dict[str, dict[str, str]],
         pending_uploads: list[tuple[str, DocumentEntry]],
@@ -632,7 +654,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
             try:
                 poller = await self._client.begin_analyze(  # type: ignore[call-overload, reportUnknownVariableType]
                     token_info["analyzer_id"],
-                    continuation_token=token_info["continuation_token"],  # pyright: ignore[reportCallIssue]
+                    continuation_token=token_info["continuation_token"],
                 )
                 # Use wait_for to avoid blocking before_run indefinitely.
                 # poller.done() always returns False for resumed pollers (stale
@@ -649,7 +671,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     result: AnalysisResult = await asyncio.wait_for(
                         poller.result(),  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
                         timeout=resolution_timeout,
-                    )  # pyright: ignore[reportUnknownVariableType]
+                    )
                 except asyncio.TimeoutError:
                     # Still running — update token and keep for next turn
                     new_token: str = poller.continuation_token()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
@@ -658,10 +680,10 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     continue
 
                 completed_keys.append(doc_key)
-                extracted = self._extract_sections(result)  # pyright: ignore[reportUnknownArgumentType]
+                rendered = self._render_for_llm(result, entry["filename"])
                 entry["status"] = DocumentStatus.READY
                 entry["analyzed_at"] = datetime.now(tz=timezone.utc).isoformat()
-                entry["result"] = extracted
+                entry["result"] = rendered
                 entry["error"] = None
                 logger.info("Background analysis of '%s' completed.", entry["filename"])
 
@@ -672,7 +694,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     context.extend_messages(
                         self,
                         [
-                            Message(role="user", contents=[format_result(entry["filename"], extracted)]),
+                            Message(role="user", contents=[rendered]),
                         ],
                     )
                 context.extend_messages(
@@ -708,11 +730,36 @@ class ContentUnderstandingContextProvider(ContextProvider):
             del pending_tokens[key]
 
     # ------------------------------------------------------------------
-    # Output Extraction & Formatting (delegates to _extraction module)
+    # LLM Input Rendering (delegates to azure.ai.contentunderstanding.to_llm_input)
     # ------------------------------------------------------------------
 
-    def _extract_sections(self, result: AnalysisResult) -> dict[str, object]:
-        return extract_sections(result, self.output_sections)
+    def _render_for_llm(
+        self,
+        result: AnalysisResult,
+        filename: str,
+    ) -> str:
+        """Render a CU ``AnalysisResult`` into LLM-friendly text.
+
+        Maps the MAF ``output_sections`` list to ``to_llm_input`` kwargs:
+
+        - ``"markdown" in output_sections`` -> ``include_markdown=True``
+        - ``"fields" in output_sections``  -> ``include_fields=True``
+
+        Args:
+            result: The CU analysis result.
+            filename: Document filename, surfaced to the LLM via the
+                ``source`` front matter key.
+
+        Returns:
+            A YAML-front-matter-prefixed text block ready for direct LLM
+            consumption or vector store upload.
+        """
+        return to_llm_input(
+            result,
+            include_markdown="markdown" in self.output_sections,
+            include_fields="fields" in self.output_sections,
+            metadata={"source": filename},
+        )
 
     # ------------------------------------------------------------------
     # Tool Registration
@@ -801,10 +848,10 @@ class ContentUnderstandingContextProvider(ContextProvider):
         if not result:
             return False
 
-        # Upload the full formatted content (markdown + fields + segments),
-        # not just raw markdown — consistent with what non-file_search mode injects.
-        formatted = format_result(entry["filename"], result)
-        if not formatted:
+        if not _has_renderable_body(result):
+            # Empty CU result (e.g. blank markdown, no fields) — skip the
+            # upload so the vector store stays clean. The DocumentEntry still
+            # records the front-matter-only ``result`` so callers can introspect.
             return False
 
         entry["status"] = DocumentStatus.UPLOADING
@@ -812,7 +859,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
 
         try:
             upload_coro = self.file_search.backend.upload_file(
-                self.file_search.vector_store_id, f"{doc_key}.md", formatted.encode("utf-8")
+                self.file_search.vector_store_id, f"{doc_key}.md", result.encode("utf-8")
             )
             file_id = await asyncio.wait_for(upload_coro, timeout=timeout)
             upload_duration = round(time.monotonic() - t0, 2)
@@ -822,7 +869,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
             self._all_uploaded_file_ids.append(file_id)
             entry["status"] = DocumentStatus.READY
             entry["upload_duration_s"] = upload_duration
-            logger.info("Uploaded '%s' to vector store in %.1fs (%s bytes).", doc_key, upload_duration, len(formatted))
+            logger.info("Uploaded '%s' to vector store in %.1fs (%s bytes).", doc_key, upload_duration, len(result))
             return True
 
         except asyncio.TimeoutError:

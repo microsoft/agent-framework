@@ -1,24 +1,25 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use Image Multi-Modality with an AI agent.
+// Using Images — Multimodal input with an AI agent
+//
+// This sample shows how to send image content to an AI agent
+// for vision-based analysis.
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
-using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-var agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
+var agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
     .AsAIAgent(
-        name: "VisionAgent",
-        instructions: "You are a helpful agent that can analyze images");
+        model: deploymentName,
+        instructions: "You are a helpful agent that can analyze images",
+        name: "VisionAgent");
 
 ChatMessage message = new(ChatRole.User, [
     new TextContent("What do you see in this image?"),

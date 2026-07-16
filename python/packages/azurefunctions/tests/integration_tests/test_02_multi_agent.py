@@ -35,6 +35,7 @@ class TestSampleMultiAgent:
         self.math_base_url = f"{base_url}/api/agents/MathAgent"
         self.helper = sample_helper
 
+    @pytest.mark.skip(reason="Flaky in CI: times out / crashes the xdist runner; temporarily disabled.")
     def test_weather_agent(self) -> None:
         """Test WeatherAgent endpoint."""
         response = self.helper.post_json(

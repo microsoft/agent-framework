@@ -1,6 +1,8 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
+#     "agent-framework-openai",
+#     "agent-framework-orchestrations",
 #     "semantic-kernel",
 # ]
 # ///
@@ -78,12 +80,14 @@ async def sk_agent_response_callback(
 async def run_agent_framework_example(prompt: str) -> list[Message]:
     client = OpenAIChatCompletionClient(credential=AzureCliCredential())
 
-    writer = Agent(client=client,
+    writer = Agent(
+        client=client,
         instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),
         name="writer",
     )
 
-    reviewer = Agent(client=client,
+    reviewer = Agent(
+        client=client,
         instructions=("You are a thoughtful reviewer. Give brief feedback on the previous assistant message."),
         name="reviewer",
     )

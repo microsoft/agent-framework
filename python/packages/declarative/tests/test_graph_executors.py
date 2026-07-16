@@ -2,7 +2,7 @@
 
 """Tests for the graph-based declarative workflow executors."""
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -1299,16 +1299,17 @@ class TestPowerFxConditionalImport:
         import agent_framework_declarative._workflows._declarative_base as base_mod
 
         mock_state = MagicMock()
-        mock_state._data: dict[str, Any] = {}
-        mock_state.get = MagicMock(side_effect=lambda k, d=None: mock_state._data.get(k, d))
-        mock_state.set = MagicMock(side_effect=lambda k, v: mock_state._data.__setitem__(k, v))
+        data: dict[str, Any] = {}
+        mock_state._data = data
+        mock_state.get = MagicMock(side_effect=lambda k, d=None: data.get(k, d))
+        mock_state.set = MagicMock(side_effect=lambda k, v: data.__setitem__(k, v))
 
         state = DeclarativeWorkflowState(mock_state)
         state.initialize({"name": "test"})
 
         original_engine = base_mod.Engine
         try:
-            base_mod.Engine = None
+            base_mod.Engine = cast(Any, None)
             with pytest.raises(RuntimeError, match="PowerFx is not available"):
                 state.eval("=Local.counter + 1")
         finally:
@@ -1319,19 +1320,20 @@ class TestPowerFxConditionalImport:
         import agent_framework_declarative._workflows._declarative_base as base_mod
 
         mock_state = MagicMock()
-        mock_state._data: dict[str, Any] = {}
-        mock_state.get = MagicMock(side_effect=lambda k, d=None: mock_state._data.get(k, d))
-        mock_state.set = MagicMock(side_effect=lambda k, v: mock_state._data.__setitem__(k, v))
+        data: dict[str, Any] = {}
+        mock_state._data = data
+        mock_state.get = MagicMock(side_effect=lambda k, d=None: data.get(k, d))
+        mock_state.set = MagicMock(side_effect=lambda k, v: data.__setitem__(k, v))
 
         state = DeclarativeWorkflowState(mock_state)
         state.initialize()
 
         original_engine = base_mod.Engine
         try:
-            base_mod.Engine = None
+            base_mod.Engine = cast(Any, None)
             assert state.eval("hello world") == "hello world"
             assert state.eval("") == ""
-            assert state.eval(42) == 42
+            assert state.eval(cast("str", 42)) == 42
         finally:
             base_mod.Engine = original_engine
 

@@ -1,6 +1,6 @@
 # Foundry Evals Integration Samples
 
-These samples demonstrate evaluating agent-framework agents using Azure AI Foundry's built-in evaluators.
+These samples demonstrate evaluating agent-framework agents using Microsoft Foundry's built-in evaluators.
 
 ## Available Evaluators
 
@@ -35,6 +35,34 @@ Evaluate what already happened — zero changes to agent code:
 uv run samples/05-end-to-end/evaluation/foundry_evals/evaluate_traces_sample.py
 ```
 
+### Referencing a rubric evaluator created in Foundry
+
+Foundry users can create rubric evaluators in the Foundry portal (or
+through the dedicated SDK / REST surface). Once an evaluator exists,
+agent-framework consumes it like any other evaluator: pass a
+`GeneratedEvaluatorRef(name=..., version=...)` in the `evaluators=`
+list and pin the version for reproducible runs.
+
+```python
+from agent_framework.foundry import FoundryEvals, GeneratedEvaluatorRef
+
+evals = FoundryEvals(
+    evaluators=[
+        GeneratedEvaluatorRef(name="reservation-policy-rubric", version="3"),
+        "relevance",
+        "coherence",
+    ],
+)
+```
+
+Quality gates on rubric output use the standard `EvalResults` helpers,
+including `assert_dimension_score_at_least(...)` for per-dimension
+thresholds.
+
+See [`evaluate_with_rubric_sample.py`](./evaluate_with_rubric_sample.py)
+for a runnable end-to-end example that combines a rubric evaluator with
+built-in evaluators and gates a per-dimension threshold.
+
 ## Setup
 
 Create a `.env` file with configuration as in the `.env.example` file in this folder.
@@ -44,3 +72,4 @@ Create a `.env` file with configuration as in the `.env.example` file in this fo
 - **"I want to test my agent during development"** → `evaluate_agent_sample.py`, Pattern 1
 - **"I want to evaluate past agent runs"** → `evaluate_traces_sample.py`
 - **"I want to inspect/modify eval data before submitting"** → `evaluate_agent_sample.py`, Pattern 2
+- **"I want to score against a custom rubric I created in Foundry"** → `evaluate_with_rubric_sample.py`

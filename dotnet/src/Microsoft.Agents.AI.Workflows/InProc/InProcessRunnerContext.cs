@@ -154,6 +154,20 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
         async ValueTask PrepareExternalDeliveryAsync()
         {
+            if (!this._externalRequests.TryGetValue(response.RequestId, out ExternalRequest? pendingRequest))
+            {
+                throw new InvalidOperationException($"No pending request with ID {response.RequestId} found in the workflow context.");
+            }
+
+            // Reject responses whose PortInfo.PortId does not match the originating request's port to
+            // prevent forged routing into unrelated port-specific execution paths.
+            if (!string.Equals(pendingRequest.PortInfo.PortId, response.PortInfo.PortId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Response port id '{response.PortInfo.PortId}' does not match the originating port id for request {response.RequestId}.");
+            }
+
+            // Consume only after validation so a rejected response leaves the legitimate one able to complete.
             if (!this.CompleteRequest(response.RequestId))
             {
                 throw new InvalidOperationException($"No pending request with ID {response.RequestId} found in the workflow context.");
@@ -409,6 +423,20 @@ internal sealed class InProcessRunnerContext : IRunnerContext
                                      outstandingRequests: [.. this._externalRequests.Values]);
 
         return new(result);
+    }
+
+    internal ValueTask<Dictionary<EdgeId, PortableValue>> ExportEdgeStateAsync()
+    {
+        this.CheckEnded();
+
+        return this._edgeMap.ExportStateAsync();
+    }
+
+    internal ValueTask ImportEdgeStateAsync(Dictionary<EdgeId, PortableValue> edgeStateData)
+    {
+        this.CheckEnded();
+
+        return this._edgeMap.ImportStateAsync(edgeStateData);
     }
 
     internal async ValueTask RepublishUnservicedRequestsAsync(CancellationToken cancellationToken = default)

@@ -18,7 +18,7 @@ namespace WorkflowMagenticOrchestrationSample;
 /// </summary>
 /// <remarks>
 /// Pre-requisites:
-/// - An Azure AI Foundry project endpoint and model deployment must be configured.
+/// - A Microsoft Foundry project endpoint and model deployment must be configured.
 /// - Run <c>az login</c> before executing the sample.
 /// </remarks>
 public static class Program
@@ -33,9 +33,9 @@ public static class Program
 
     private static async Task Main()
     {
-        string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-            ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-        string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+        string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+            ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+        string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
         // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
         // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid

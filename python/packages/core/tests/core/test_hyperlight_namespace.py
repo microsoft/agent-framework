@@ -24,7 +24,7 @@ def test_hyperlight_namespace_dir_lists_lazy_exports() -> None:
 def test_hyperlight_namespace_lazy_loads_known_attribute(monkeypatch: pytest.MonkeyPatch) -> None:
     sentinel = object()
     fake_module = ModuleType("agent_framework_hyperlight")
-    fake_module.HyperlightCodeActProvider = sentinel  # type: ignore[attr-defined]
+    fake_module.HyperlightCodeActProvider = sentinel  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     monkeypatch.setitem(sys.modules, "agent_framework_hyperlight", fake_module)
 
     assert hyperlight.HyperlightCodeActProvider is sentinel
