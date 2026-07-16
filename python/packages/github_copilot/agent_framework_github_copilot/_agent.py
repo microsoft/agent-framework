@@ -1001,7 +1001,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
     def _build_session_hooks(
         self,
         all_tools: Sequence[ToolTypes | CopilotTool],
-        opts: Mapping[str, Any],
+        options: Mapping[str, Any],
     ) -> SessionHooks | None:
         """Build the ``SessionHooks`` to pass to the Copilot SDK for this session.
 
@@ -1009,11 +1009,14 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         ``approval_mode="always_require"`` is delegated to the Copilot SDK's native
         ``on_pre_tool_use`` hook:
 
-        - If the caller supplies their own ``on_pre_tool_use`` (via per-run ``options``
-          or ``default_options``), it takes precedence and is returned unchanged. A
+        - If the caller supplies their own session hooks -- either the SDK-native
+          ``hooks`` dict or the convenience ``on_pre_tool_use`` handler (via per-run
+          ``options`` or ``default_options``) -- those take precedence and are used
+          as-is. When both are given, the explicit ``hooks`` dict wins for any key it
+          defines and the ``on_pre_tool_use`` shortcut fills in that key otherwise. A
           warning is logged naming any approval-required tool that will therefore not
-          be automatically gated, since the caller's hook is responsible for enforcing
-          approval.
+          be automatically gated, since the caller's hooks are responsible for
+          enforcing approval.
         - Otherwise, when any approval-required tool is present, a default hook is
           installed that returns ``"ask"`` for those tools (routing the decision to
           ``on_permission_request``) and defers (``None``) for all other tools.
@@ -1021,32 +1024,43 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
           ``on_function_approval`` callback is configured: in that case approval is
           enforced inside the tool handler (see :meth:`_tool_to_copilot_tool`) to
           preserve backward-compatible behavior.
-        - When there are no approval-required tools and no caller hook, ``None`` is
+        - When there are no approval-required tools and no caller hooks, ``None`` is
           returned so no hooks are registered.
 
         Args:
             all_tools: The full set of tools resolved for the session.
-            opts: Runtime options that take precedence over ``default_options``.
+            options: The merged session options (``default_options`` overlaid with
+                per-run ``options``).
 
         Returns:
             The hooks to register for the session, or ``None`` if none are needed.
         """
-        user_hook: PreToolUseHandler | None = opts.get("on_pre_tool_use") or self._on_pre_tool_use
+        user_hook: PreToolUseHandler | None = options.get("on_pre_tool_use") or self._on_pre_tool_use
+        caller_hooks: Mapping[str, Any] | None = options.get("hooks")
+
+        # Combine caller-provided hooks: the SDK-native ``hooks`` dict plus the
+        # convenience ``on_pre_tool_use`` shortcut. The explicit dict wins for the
+        # keys it defines; the shortcut only fills in ``on_pre_tool_use`` otherwise.
+        combined: dict[str, Any] = {}
+        if user_hook is not None:
+            combined["on_pre_tool_use"] = user_hook
+        if caller_hooks:
+            combined.update(caller_hooks)
 
         approval_required_names = {
             tool.name for tool in all_tools if isinstance(tool, FunctionTool) and tool.approval_mode == "always_require"
         }
 
-        if user_hook is not None:
+        if combined:
             if approval_required_names:
                 logger.warning(
-                    "A custom 'on_pre_tool_use' hook is configured, so %d approval-required tool(s) (%s) "
-                    "will not be automatically gated by GitHubCopilotAgent. The custom hook is responsible "
+                    "Custom session hooks are configured, so %d approval-required tool(s) (%s) "
+                    "will not be automatically gated by GitHubCopilotAgent. The custom hooks are responsible "
                     "for enforcing approval (for example, by returning a 'deny' or 'ask' decision).",
                     len(approval_required_names),
                     ", ".join(sorted(approval_required_names)),
                 )
-            return {"on_pre_tool_use": user_hook}
+            return cast("SessionHooks", combined)
 
         if not approval_required_names:
             return None
@@ -1137,8 +1151,9 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         # Passthrough layer: agent defaults first, per-run options override.
         kwargs: dict[str, Any] = {**self._default_options, **opts}
 
-        # Merge agent-level and per-run tools, then convert to SDK tools.
-        all_tools = list(self._tools or []) + list(opts.get("tools") or [])
+        # Merge agent-level tools with any caller-supplied tools (from default_options
+        # or per-run options, the latter winning) and convert to SDK tools.
+        all_tools = list(self._tools or []) + list(kwargs.get("tools") or [])
         kwargs["tools"] = self._prepare_tools(all_tools) if all_tools else None
 
         kwargs["streaming"] = streaming
@@ -1146,7 +1161,13 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         kwargs["on_permission_request"] = (
             opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
         )
-        kwargs["hooks"] = self._build_session_hooks(all_tools, opts)
+        kwargs["hooks"] = self._build_session_hooks(all_tools, kwargs)
+
+        # Strip agent-internal and client-level keys that are consumed here or in the
+        # run methods (and settings) but are NOT valid create_session parameters, so
+        # they don't leak through the passthrough layer and raise TypeError.
+        for key in ("on_pre_tool_use", "on_function_approval", "timeout", "cli_path", "log_level", "base_directory"):
+            kwargs.pop(key, None)
 
         return kwargs
 
