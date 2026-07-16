@@ -67,7 +67,7 @@ dev = [
     "rich>=13.7.1,<15.0.0",
     "tomli==2.4.1",
     "tomli-w==1.2.0",
-    "prek==0.4.8",
+    "prek==0.4.10",
 ]
 # tau2 is an executable optional feature fetched from source because it is not available on PyPI.
 tau2 = [
