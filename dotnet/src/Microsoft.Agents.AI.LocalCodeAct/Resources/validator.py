@@ -281,6 +281,7 @@ class _CodeValidator(ast.NodeVisitor):
             raise CodeValidationError(f"Syntax error in generated code: {exc}") from exc
 
         self._errors = []
+        self._os_aliases = {"os"}
         self.visit(tree)
 
         if self._errors:
@@ -331,10 +332,8 @@ class _CodeValidator(ast.NodeVisitor):
 
     def visit_Assign(self, node: ast.Assign) -> None:
         """Track re-bindings of the ``os`` module."""
-        if isinstance(node.value, ast.Name) and node.value.id in self._os_aliases:
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    self._os_aliases.add(target.id)
+        for target in node.targets:
+            self._track_os_alias_targets(target, node.value)
         self.generic_visit(node)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
@@ -346,6 +345,16 @@ class _CodeValidator(ast.NodeVisitor):
         ):
             self._os_aliases.add(node.target.id)
         self.generic_visit(node)
+
+    def _track_os_alias_targets(self, target: ast.AST, value: ast.AST) -> None:
+        if isinstance(target, ast.Starred):
+            target = target.value
+
+        if isinstance(target, ast.Name) and isinstance(value, ast.Name) and value.id in self._os_aliases:
+            self._os_aliases.add(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List)):
+            for target_item, value_item in zip(target.elts, value.elts):
+                self._track_os_alias_targets(target_item, value_item)
 
     def visit_Call(self, node: ast.Call) -> None:
         """Validate function calls.

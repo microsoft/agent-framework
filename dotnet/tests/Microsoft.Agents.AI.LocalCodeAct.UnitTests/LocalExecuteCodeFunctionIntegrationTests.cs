@@ -70,6 +70,9 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
     [InlineData("import os\n_o = os\n_o.system('id')")]
     [InlineData("import os as x\na = x\nb = a\nb.popen('id')")]
     [InlineData("import os.path\nos.system('id')")]
+    [InlineData("import os\na, _ = (os, 1)\na.system('id')")]
+    [InlineData("import os\n[a, _] = [os, 1]\na.system('id')")]
+    [InlineData("import os\nx: object = os\nx.system('id')")]
     public async Task ExecuteCode_ValidationBlocksDisallowedOsAccessAsync(string code)
     {
         SkipIfNoPython();
