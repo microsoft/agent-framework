@@ -14,9 +14,9 @@ are required.
 
 ## Private preview wheel setup
 
-The private AgentServer preview wheels currently use the same package versions
-as older public artifacts. Installing by package name or running the repository
-workspace sync can therefore replace the preview build with the public build.
+The private AgentServer preview versions are newer than the packages currently
+available from PyPI. Running the repository workspace sync can still replace
+them with the public versions recorded in the workspace lock.
 
 Create an isolated environment and install the local wheel files explicitly.
 The Agent Framework wheel directory must contain

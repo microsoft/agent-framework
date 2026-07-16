@@ -1,12 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Copy and validate the private preview wheels used by the deployment."""
+"""Copy the private preview wheels used by the deployment."""
 
 from __future__ import annotations
 
 import argparse
 import shutil
-import zipfile
 from pathlib import Path
 
 EXPECTED_WHEELS = (
@@ -24,18 +23,6 @@ def _find_one(pattern: str, directories: list[Path]) -> Path:
         locations = ", ".join(str(path) for path in directories)
         raise RuntimeError(f"Expected exactly one {pattern!r} wheel in {locations}; found {len(matches)}.")
     return matches[0]
-
-
-def _validate_responses_preview(path: Path) -> None:
-    with zipfile.ZipFile(path) as wheel:
-        exposes_durability = any(
-            b"resilient_background" in wheel.read(name) for name in wheel.namelist() if name.endswith(".py")
-        )
-    if not exposes_durability:
-        raise RuntimeError(
-            f"{path} does not expose the private durability API. "
-            "The public and private artifacts use the same version; select the wheel from the private build."
-        )
 
 
 def main() -> None:
@@ -64,10 +51,7 @@ def main() -> None:
     sources: list[Path] = []
     for index, pattern in enumerate(EXPECTED_WHEELS):
         directories = [agent_framework_directory] if index == 0 else [agent_server_directory]
-        source = _find_one(pattern, directories)
-        if pattern == "azure_ai_agentserver_responses-*.whl":
-            _validate_responses_preview(source)
-        sources.append(source)
+        sources.append(_find_one(pattern, directories))
 
     destination = Path(__file__).parent / "src" / "resilient-translation-workflow" / "wheelhouse"
     destination.mkdir(parents=True, exist_ok=True)

@@ -39,8 +39,8 @@ validates `agent.yaml` against the Agent Manifest schema.
    - `azure_ai_agentserver_invocations-*.whl`
    - `azure_ai_agentserver_responses-*.whl`
 
-The AgentServer preview uses the same package versions as public artifacts.
-The wheels must therefore be installed by file, not resolved by package name.
+The AgentServer preview versions are newer than the packages currently
+available from PyPI, so the wheels must be installed by file.
 
 ## Prepare the deployment
 
@@ -52,15 +52,13 @@ python .\prepare_wheels.py `
   --agent-server-wheels C:\path\to\agent-server-wheels
 ```
 
-The script requires exactly one matching wheel for each package, verifies that
-the Responses wheel contains the private durability API, copies the four files
-into the container build context, and generates `wheelhouse/private-wheels.txt`
-with their actual filenames. This rejects the same-version public Responses
-wheel before deployment. The generated files are intentionally gitignored, but
-`.agentignore` explicitly includes them in the Foundry code deployment ZIP.
-`requirements.txt` includes the generated requirements fragment, so code
-deployment does not fall back to public packages or depend on one build's wheel
-filenames.
+The script requires exactly one matching wheel for each package, copies the four
+files into the container build context, and generates
+`wheelhouse/private-wheels.txt` with their actual filenames. The generated files
+are intentionally gitignored, but `.agentignore` explicitly includes them in
+the Foundry code deployment ZIP. `requirements.txt` includes the generated
+requirements fragment, so code deployment installs the unpublished preview
+versions without depending on one build's wheel filenames.
 
 Initialize or select an `azd` environment, then provision:
 
