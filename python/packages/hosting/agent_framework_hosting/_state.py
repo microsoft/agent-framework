@@ -51,6 +51,15 @@ class SessionStore:
     database, ...), you are responsible for that store's own TTL/eviction
     policy; this in-memory reference implementation does not model that
     concern.
+
+    The ``get`` method creates a copy of the session in order to ensure multiple
+    callers using the same response id can continue the session.
+    The behavior for that is controlled by the developer.
+
+    So if there should be branching, then make sure to store the session with the new
+    session id, if the conversation should continue, then store them with the same ID.
+    Ensuring that multiple callers cannot simultaneously overwrite the same session is
+    the responsibility of the developer.
     """
 
     def __init__(self) -> None:
@@ -59,6 +68,8 @@ class SessionStore:
 
     async def get(self, session_id: str) -> AgentSession | None:
         """Return a copy of the stored session for ``session_id``, or ``None`` if absent.
+
+        When overriding this method ensure the semantics stay the same and a copy is returned.
 
         Args:
             session_id: Opaque app-selected session id.
