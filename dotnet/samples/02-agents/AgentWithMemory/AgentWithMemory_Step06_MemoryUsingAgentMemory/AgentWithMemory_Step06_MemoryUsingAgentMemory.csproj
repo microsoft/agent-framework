@@ -45,6 +45,11 @@
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.5.1" />
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.17" />
+    <!-- Transitive dependency of Microsoft.Agents.AI; pinned explicitly (CPM is off here) because the
+         version it would otherwise resolve to, 1.12.0, has a known moderate severity vulnerability
+         (GHSA-g94r-2vxg-569j) that fails the repo's NuGet audit (NU1902 as error). Matches the version
+         pinned in dotnet/Directory.Packages.props. -->
+    <PackageReference Include="OpenTelemetry.Api" Version="1.15.3" />
   </ItemGroup>
 
   <ItemGroup>

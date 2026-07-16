@@ -2,8 +2,8 @@
 
 using System.ComponentModel;
 using System.Text;
-using Microsoft.Extensions.AI;
 using AgentMemory.Neo4j.Infrastructure;
+using Microsoft.Extensions.AI;
 using Neo4j.Driver;
 
 namespace AgentMemoryShoppingAssistant;
@@ -21,7 +21,7 @@ public sealed class ProductCatalog(INeo4jTransactionRunner runner)
 {
     private readonly INeo4jTransactionRunner _runner = runner;
 
-    private static readonly (string Name, string Category, string Brand, double Price, bool InStock, int Inventory, string Description, int Popularity)[] Seed =
+    private static readonly (string Name, string Category, string Brand, double Price, bool InStock, int Inventory, string Description, int Popularity)[] s_seed =
     [
         ("Nike Air Zoom Pegasus 40", "shoes",       "Nike",   130, true,  40, "Everyday running shoe with responsive cushioning.",   95),
         ("Nike Revolution 7",        "shoes",       "Nike",    70, true,  60, "Lightweight, budget-friendly running shoe.",          80),
@@ -36,7 +36,7 @@ public sealed class ProductCatalog(INeo4jTransactionRunner runner)
     ];
 
     /// <summary>Seeds the sample product graph (idempotent — safe to run every start).</summary>
-    public Task SeedAsync(CancellationToken ct = default) => _runner.WriteAsync(async r =>
+    public Task SeedAsync(CancellationToken ct = default) => this._runner.WriteAsync(async r =>
     {
         await r.RunAsync(
             """
@@ -52,7 +52,7 @@ public sealed class ProductCatalog(INeo4jTransactionRunner runner)
             """,
             new
             {
-                products = Seed.Select(p => (object)new Dictionary<string, object>
+                products = s_seed.Select(p => (object)new Dictionary<string, object>
                 {
                     ["name"] = p.Name, ["category"] = p.Category, ["brand"] = p.Brand, ["price"] = p.Price,
                     ["in_stock"] = p.InStock, ["inventory"] = p.Inventory, ["description"] = p.Description,
@@ -69,9 +69,9 @@ public sealed class ProductCatalog(INeo4jTransactionRunner runner)
         [Description("Optional category filter: shoes, electronics, apparel.")] string? category = null,
         [Description("Optional brand filter, e.g. 'Nike'.")] string? brand = null,
         [Description("Optional maximum price.")] double? maxPrice = null,
-        CancellationToken ct = default) => _runner.ReadAsync(async r =>
+        CancellationToken ct = default) => this._runner.ReadAsync(async r =>
     {
-        var cypher =
+        const string Cypher =
             """
             MATCH (p:Product)
             WHERE ANY(w IN split(toLower($query), ' ') WHERE
@@ -84,7 +84,7 @@ public sealed class ProductCatalog(INeo4jTransactionRunner runner)
             ORDER BY p.popularity DESC
             LIMIT 10
             """;
-        var cursor = await r.RunAsync(cypher, new { query, category, brand, maxPrice });
+        var cursor = await r.RunAsync(Cypher, new { query, category, brand, maxPrice });
         return Render("Matches", await cursor.ToListAsync());
     }, ct);
 
@@ -93,9 +93,9 @@ public sealed class ProductCatalog(INeo4jTransactionRunner runner)
         [Description("The customer's preferred brand (from their saved preferences), if known.")] string? preferredBrand = null,
         [Description("Optional category to recommend within.")] string? category = null,
         [Description("How many recommendations to return.")] int limit = 5,
-        CancellationToken ct = default) => _runner.ReadAsync(async r =>
+        CancellationToken ct = default) => this._runner.ReadAsync(async r =>
     {
-        var cypher =
+        const string Cypher =
             """
             MATCH (p:Product)
             WHERE p.in_stock = true
@@ -105,7 +105,7 @@ public sealed class ProductCatalog(INeo4jTransactionRunner runner)
             ORDER BY onBrand DESC, p.popularity DESC
             LIMIT $limit
             """;
-        var cursor = await r.RunAsync(cypher, new { preferredBrand, category, limit });
+        var cursor = await r.RunAsync(Cypher, new { preferredBrand, category, limit });
         var header = preferredBrand is null ? "Recommended for you" : $"Recommended for you (favoring {preferredBrand})";
         return Render(header, await cursor.ToListAsync());
     }, ct);
@@ -113,9 +113,9 @@ public sealed class ProductCatalog(INeo4jTransactionRunner runner)
     [Description("Find products related to a given product — same category or same brand — via graph traversal.")]
     public Task<string> GetRelatedProductsAsync(
         [Description("The exact product name to find related items for.")] string productName,
-        CancellationToken ct = default) => _runner.ReadAsync(async r =>
+        CancellationToken ct = default) => this._runner.ReadAsync(async r =>
     {
-        var cypher =
+        const string Cypher =
             """
             MATCH (p:Product {name: $productName})
             CALL (p) {
@@ -132,20 +132,24 @@ public sealed class ProductCatalog(INeo4jTransactionRunner runner)
             ORDER BY popularity DESC
             LIMIT 5
             """;
-        var cursor = await r.RunAsync(cypher, new { productName });
+        var cursor = await r.RunAsync(Cypher, new { productName });
         return Render($"Related to {productName}", await cursor.ToListAsync());
     }, ct);
 
     [Description("Check whether a product is in stock and how many units are available.")]
     public Task<string> CheckInventoryAsync(
         [Description("The exact product name to check.")] string productName,
-        CancellationToken ct = default) => _runner.ReadAsync(async r =>
+        CancellationToken ct = default) => this._runner.ReadAsync(async r =>
     {
         var cursor = await r.RunAsync(
             "MATCH (p:Product {name: $productName}) RETURN p.name AS name, p.in_stock AS inStock, p.inventory AS inventory",
             new { productName });
         var rows = await cursor.ToListAsync();
-        if (rows.Count == 0) return $"'{productName}' was not found in the catalog.";
+        if (rows.Count == 0)
+        {
+            return $"'{productName}' was not found in the catalog.";
+        }
+
         var rec = rows[0];
         var inStock = rec["inStock"].As<bool>();
         return inStock
@@ -156,19 +160,23 @@ public sealed class ProductCatalog(INeo4jTransactionRunner runner)
     /// <summary>The retail tools as MAF/MEAI <see cref="AIFunction"/>s (attach to the agent's ChatOptions.Tools).</summary>
     public IReadOnlyList<AIFunction> CreateAIFunctions() =>
     [
-        AIFunctionFactory.Create(SearchProductsAsync, "search_products",
+        AIFunctionFactory.Create(this.SearchProductsAsync, "search_products",
             "Search the product catalog with optional category/brand/price filters."),
-        AIFunctionFactory.Create(GetRecommendationsAsync, "get_recommendations",
+        AIFunctionFactory.Create(this.GetRecommendationsAsync, "get_recommendations",
             "Get personalized recommendations, optionally favoring a preferred brand/category."),
-        AIFunctionFactory.Create(GetRelatedProductsAsync, "get_related_products",
+        AIFunctionFactory.Create(this.GetRelatedProductsAsync, "get_related_products",
             "Find products related to a given product via the graph."),
-        AIFunctionFactory.Create(CheckInventoryAsync, "check_inventory",
+        AIFunctionFactory.Create(this.CheckInventoryAsync, "check_inventory",
             "Check stock/availability for a product."),
     ];
 
-    private static string Render(string header, IReadOnlyList<IRecord> rows)
+    private static string Render(string header, List<IRecord> rows)
     {
-        if (rows.Count == 0) return $"{header}: (no matches)";
+        if (rows.Count == 0)
+        {
+            return $"{header}: (no matches)";
+        }
+
         var sb = new StringBuilder().Append(header).Append(':').AppendLine();
         foreach (var rec in rows)
         {

@@ -26,6 +26,12 @@
 
 using System.ClientModel;
 using System.ClientModel.Primitives;
+using AgentMemory.Abstractions.Services;
+using AgentMemory.AgentFramework;
+using AgentMemory.Core;
+using AgentMemory.Core.Stubs;
+using AgentMemory.Neo4j.Infrastructure;
+using AgentMemoryShoppingAssistant;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -34,12 +40,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OpenAI;
-using AgentMemory.Abstractions.Services;
-using AgentMemory.AgentFramework;
-using AgentMemory.Core;
-using AgentMemory.Core.Stubs;
-using AgentMemory.Neo4j.Infrastructure;
-using AgentMemoryShoppingAssistant;
 
 // ── Model + credentials (Azure OpenAI / Foundry, via env vars) ───────────────────────────────────
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
@@ -67,8 +67,8 @@ builder.Logging.SetMinimumLevel(LogLevel.Warning);
 
 builder.Services.AddNeo4jAgentMemory(options =>
 {
-    options.Uri      = Environment.GetEnvironmentVariable("NEO4J_URI")      ?? "bolt://localhost:7687";
-    options.Username = Environment.GetEnvironmentVariable("NEO4J_USER")     ?? "neo4j";
+    options.Uri = Environment.GetEnvironmentVariable("NEO4J_URI") ?? "bolt://localhost:7687";
+    options.Username = Environment.GetEnvironmentVariable("NEO4J_USER") ?? "neo4j";
     options.Password = Environment.GetEnvironmentVariable("NEO4J_PASSWORD") ?? "password";
 });
 builder.Services.AddAgentMemoryCore(_ => { });
@@ -78,9 +78,9 @@ builder.Services.TryAddSingleton(chatClient);
 builder.Services.TryAddSingleton(embeddingGenerator);
 builder.Services.AddAgentMemoryFramework(options =>
 {
-    options.AutoExtractOnPersist             = true;
-    options.ContextFormat.IncludeEntities    = true;
-    options.ContextFormat.IncludeFacts       = true;
+    options.AutoExtractOnPersist = true;
+    options.ContextFormat.IncludeEntities = true;
+    options.ContextFormat.IncludeFacts = true;
     options.ContextFormat.IncludePreferences = true;
     options.ExposeMemoryToolsFromContextProvider = true;
 });
@@ -99,7 +99,7 @@ Console.WriteLine("Neo4j schema ready; sample products loaded.\n");
 
 // ── The shopping assistant: context provider (recall + memory tools) + product tools ─────────────
 var memoryProvider = sp.GetRequiredService<Neo4jMemoryContextProvider>();
-var productTools   = catalog.CreateAIFunctions();
+var productTools = catalog.CreateAIFunctions();
 
 // WithMemoryOwnerScoping(sp) scopes the whole invocation (recall, tool calls, persistence) to the
 // owner set via WithMemoryIdentity below — no manual BeginOwnerScope wrapping needed per turn.
@@ -121,12 +121,12 @@ AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions
     AIContextProviders = [memoryProvider],
 }).WithMemoryOwnerScoping(sp);
 
-const string shopper = "shopper-amelia";
+const string Shopper = "shopper-amelia";
 
 // ── Session A — the customer shops; the model calls the tools and remembers preferences ──────────
 Console.WriteLine(">> Session A\n");
 var sessionA = (await agent.CreateSessionAsync())
-    .WithMemoryIdentity(userId: shopper, sessionId: "cart-a", applicationId: "retail-demo");
+    .WithMemoryIdentity(userId: Shopper, sessionId: "cart-a", applicationId: "retail-demo");
 
 foreach (var turn in new[]
 {
@@ -140,7 +140,7 @@ foreach (var turn in new[]
 // ── Session B — a NEW session for the same shopper still recalls her preferences ─────────────────
 Console.WriteLine(">> Session B — a brand-new session; memory is durable\n");
 var sessionB = (await agent.CreateSessionAsync())
-    .WithMemoryIdentity(userId: shopper, sessionId: "cart-b", applicationId: "retail-demo");
+    .WithMemoryIdentity(userId: Shopper, sessionId: "cart-b", applicationId: "retail-demo");
 
 await SayAsync(agent, sessionB, "I'm back — remind me what I like and suggest something new.");
 
