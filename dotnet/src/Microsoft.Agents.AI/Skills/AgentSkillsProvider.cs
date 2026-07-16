@@ -105,8 +105,8 @@ public sealed partial class AgentSkillsProvider : AIContextProvider, IDisposable
     /// human approval boundary. Ensure no other tool collides with these reserved names.
     /// </para>
     /// </remarks>
-    public static Func<FunctionCallContent, ValueTask<bool>> ReadOnlyToolsAutoApprovalRule { get; } =
-        functionCall => new ValueTask<bool>(s_readOnlyToolNames.Contains(functionCall.Name));
+    public static Func<ToolAutoApprovalRuleContext, ValueTask<bool>> ReadOnlyToolsAutoApprovalRule { get; } =
+        context => new ValueTask<bool>(s_readOnlyToolNames.Contains(context.FunctionCallContent.Name));
 
     /// <summary>
     /// Gets an auto-approval rule that approves all skill tools, including the script execution tool
@@ -138,8 +138,8 @@ public sealed partial class AgentSkillsProvider : AIContextProvider, IDisposable
     /// human approval boundary. Ensure no other tool collides with these reserved names.
     /// </para>
     /// </remarks>
-    public static Func<FunctionCallContent, ValueTask<bool>> AllToolsAutoApprovalRule { get; } =
-        functionCall => new ValueTask<bool>(s_allToolNames.Contains(functionCall.Name));
+    public static Func<ToolAutoApprovalRuleContext, ValueTask<bool>> AllToolsAutoApprovalRule { get; } =
+        context => new ValueTask<bool>(s_allToolNames.Contains(context.FunctionCallContent.Name));
 
     /// <summary>
     /// Placeholder token for the generated skills list in the prompt template.

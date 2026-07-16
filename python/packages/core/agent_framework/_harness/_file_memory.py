@@ -40,7 +40,6 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
-from .._feature_stage import ExperimentalFeature, experimental
 from .._sessions import AgentSession, ContextProvider, SessionContext
 from .._tools import tool
 from .._types import Message
@@ -218,7 +217,6 @@ class _SearchFilesInput(BaseModel):
     ] = None
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class FileMemoryProvider(ContextProvider):
     """Context provider that gives an agent session-scoped, file-based memory.
 
