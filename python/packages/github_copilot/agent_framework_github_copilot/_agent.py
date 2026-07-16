@@ -162,7 +162,16 @@ class GitHubCopilotSettings(TypedDict, total=False):
 
 
 class GitHubCopilotOptions(TypedDict, total=False):
-    """GitHub Copilot-specific options."""
+    """GitHub Copilot-specific options.
+
+    The keys below have first-class typing and inline documentation because they are
+    the commonly used options. They are **not** an exhaustive list: any other
+    parameter accepted by the Copilot SDK's ``create_session`` (for example
+    ``reasoning_effort``, ``context_tier``, ``enable_citations``, ``available_tools``,
+    ``memory``, ...) may also be supplied and is forwarded verbatim to the SDK. An
+    unrecognized parameter name surfaces as a ``TypeError`` from the SDK, so typos are
+    caught rather than silently ignored.
+    """
 
     system_message: SystemMessageConfig
     """System message configuration for the session. Use mode 'append' to add to the default
@@ -355,11 +364,6 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         timeout = opts.pop("timeout", None)
         log_level = opts.pop("log_level", None)
         on_permission_request: PermissionHandlerType | None = opts.pop("on_permission_request", None)
-        mcp_servers: dict[str, MCPServerConfig] | None = opts.pop("mcp_servers", None)
-        provider: ProviderConfig | None = opts.pop("provider", None)
-        instruction_directories: list[str] | None = opts.pop("instruction_directories", None)
-        skill_directories: list[str] | None = opts.pop("skill_directories", None)
-        disabled_skills: list[str] | None = opts.pop("disabled_skills", None)
         on_pre_tool_use: PreToolUseHandler | None = opts.pop("on_pre_tool_use", None)
         on_function_approval: FunctionApprovalCallback | None = opts.pop("on_function_approval", None)
         base_directory = opts.pop("base_directory", None)
@@ -397,11 +401,9 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self._permission_handler = on_permission_request
         self._on_pre_tool_use: PreToolUseHandler | None = on_pre_tool_use
         self._function_approval_handler: FunctionApprovalCallback | None = on_function_approval
-        self._mcp_servers = mcp_servers
-        self._provider = provider
-        self._instruction_directories = instruction_directories
-        self._skill_directories = skill_directories
-        self._disabled_skills = disabled_skills
+        # Remaining options (e.g. mcp_servers, provider, instruction_directories,
+        # skill_directories, disabled_skills, and any other create_session parameter)
+        # are forwarded verbatim to the Copilot SDK by _build_session_kwargs.
         self._default_options = opts
         self._started = False
 
@@ -1107,6 +1109,47 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         except Exception as ex:
             raise AgentException(f"Failed to create GitHub Copilot session: {ex}") from ex
 
+    def _build_session_kwargs(
+        self,
+        streaming: bool,
+        runtime_options: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Assemble keyword arguments for ``create_session`` / ``resume_session``.
+
+        Options are layered: the agent's ``default_options`` first, then per-run
+        ``runtime_options`` which override them. Every key is forwarded verbatim to
+        the Copilot SDK, so any ``create_session`` parameter is supported without a
+        dedicated mapping here (an unknown name surfaces as a ``TypeError`` from the
+        SDK). A few keys are handled specially because they need a secure default
+        (``on_permission_request`` defaults to denying all requests) or transforming:
+        ``tools`` are merged with the agent's tools and converted to SDK tools, and
+        approval callbacks are turned into ``hooks``.
+
+        Args:
+            streaming: Whether to enable streaming for the session.
+            runtime_options: Runtime options that take precedence over default_options.
+
+        Returns:
+            The keyword arguments to splat into the SDK session factory.
+        """
+        opts = runtime_options or {}
+
+        # Passthrough layer: agent defaults first, per-run options override.
+        kwargs: dict[str, Any] = {**self._default_options, **opts}
+
+        # Merge agent-level and per-run tools, then convert to SDK tools.
+        all_tools = list(self._tools or []) + list(opts.get("tools") or [])
+        kwargs["tools"] = self._prepare_tools(all_tools) if all_tools else None
+
+        kwargs["streaming"] = streaming
+        kwargs["model"] = opts.get("model") or self._settings.get("model") or None
+        kwargs["on_permission_request"] = (
+            opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
+        )
+        kwargs["hooks"] = self._build_session_hooks(all_tools, opts)
+
+        return kwargs
+
     async def _create_session(
         self,
         streaming: bool,
@@ -1121,34 +1164,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         if not self._client:
             raise RuntimeError("GitHub Copilot client not initialized. Call start() first.")
 
-        opts = runtime_options or {}
-        model = opts.get("model") or self._settings.get("model") or None
-        system_message = opts.get("system_message") or self._default_options.get("system_message") or None
-        permission_handler: PermissionHandlerType = (
-            opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
-        )
-        mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
-        provider = opts.get("provider") or self._provider or None
-        instruction_directories = opts.get("instruction_directories", self._instruction_directories)
-        skill_directories = opts.get("skill_directories", self._skill_directories)
-        disabled_skills = opts.get("disabled_skills", self._disabled_skills)
-        all_tools = list(self._tools or []) + list(opts.get("tools") or [])
-        tools = self._prepare_tools(all_tools) if all_tools else None
-        hooks = self._build_session_hooks(all_tools, opts)
-
-        return await self._client.create_session(
-            on_permission_request=permission_handler,
-            streaming=streaming,
-            model=model or None,
-            system_message=system_message or None,
-            tools=tools or None,
-            mcp_servers=mcp_servers or None,
-            provider=provider or None,
-            instruction_directories=instruction_directories,
-            skill_directories=skill_directories,
-            disabled_skills=disabled_skills,
-            hooks=hooks,
-        )
+        return await self._client.create_session(**self._build_session_kwargs(streaming, runtime_options))
 
     async def _resume_session(
         self,
@@ -1166,35 +1182,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         if not self._client:
             raise RuntimeError("GitHub Copilot client not initialized. Call start() first.")
 
-        opts = runtime_options or {}
-        model = opts.get("model") or self._settings.get("model") or None
-        system_message = opts.get("system_message") or self._default_options.get("system_message") or None
-        permission_handler: PermissionHandlerType = (
-            opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
-        )
-        mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
-        provider = opts.get("provider") or self._provider or None
-        instruction_directories = opts.get("instruction_directories", self._instruction_directories)
-        skill_directories = opts.get("skill_directories", self._skill_directories)
-        disabled_skills = opts.get("disabled_skills", self._disabled_skills)
-        all_tools = list(self._tools or []) + list(opts.get("tools") or [])
-        tools = self._prepare_tools(all_tools) if all_tools else None
-        hooks = self._build_session_hooks(all_tools, opts)
-
-        return await self._client.resume_session(
-            session_id,
-            on_permission_request=permission_handler,
-            streaming=streaming,
-            model=model or None,
-            system_message=system_message or None,
-            tools=tools or None,
-            mcp_servers=mcp_servers or None,
-            provider=provider or None,
-            instruction_directories=instruction_directories,
-            skill_directories=skill_directories,
-            disabled_skills=disabled_skills,
-            hooks=hooks,
-        )
+        return await self._client.resume_session(session_id, **self._build_session_kwargs(streaming, runtime_options))
 
 
 class GitHubCopilotAgent(  # type: ignore[misc]
