@@ -60,7 +60,7 @@ dev = [
     "uv==0.11.28",
     "ruff==0.15.20",
     "pytest==9.1.1",
-    "mypy==2.2.0",
+    "mypy==2.3.0",
     "pyright==1.1.411",
     #tasks
     "poethepoet==0.48.0",
