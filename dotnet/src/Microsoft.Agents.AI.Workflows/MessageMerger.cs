@@ -61,36 +61,18 @@ internal sealed class MessageMerger
 
         public List<AgentResponse> ComputeMerged()
         {
-            // Message buckets keep their first-seen order. Grouping updates into messages is otherwise
-            // delegated to M.E.AI (ToAgentResponse), which coalesces contiguous updates by message id
-            // exactly like a directly-invoked agent. In addition, an id-less segment that is immediately
-            // followed by an id'd message of the same role is folded into that message. This keeps a
-            // reasoning summary that streams without a message id in the same assistant message as the
-            // text that follows it (see https://github.com/microsoft/agent-framework/issues/6329),
-            // while still separating id-less segments that belong to a different role.
+            // Message buckets keep their first-seen order. Grouping updates into messages is delegated
+            // to M.E.AI (ToAgentResponse), which coalesces contiguous updates by message id exactly like
+            // a directly-invoked agent. Folding an id-less segment (e.g. a streamed reasoning summary)
+            // into the following id'd message of the same role is handled once, at the flattened-message
+            // level in MessageMerger.ComputeMerged, so it works both within a single response bucket and
+            // across buckets (see https://github.com/microsoft/agent-framework/issues/6329).
             List<MessageMergeState> ordered = this._messageStatesInOrder;
             List<AgentResponse> responses = new(ordered.Count);
 
-            int index = 0;
-            while (index < ordered.Count)
+            foreach (MessageMergeState current in ordered)
             {
-                MessageMergeState current = ordered[index];
-
-                if (current.MessageId is null &&
-                    index + 1 < ordered.Count &&
-                    ordered[index + 1].MessageId is not null &&
-                    current.Role == ordered[index + 1].Role)
-                {
-                    MessageMergeState next = ordered[index + 1];
-                    List<AgentResponseUpdate> merged = [.. current.Updates, .. next.Updates];
-                    responses.Add(merged.ToAgentResponse());
-                    index += 2;
-                }
-                else
-                {
-                    responses.Add(current.Updates.ToAgentResponse());
-                    index += 1;
-                }
+                responses.Add(current.Updates.ToAgentResponse());
             }
 
             return responses;
@@ -159,6 +141,34 @@ internal sealed class MessageMerger
         }
 
         messages.AddRange(this._danglingState.ComputeFlattened());
+
+        // Fold an id-less message that is immediately followed by an id'd message of the same role
+        // into that message. A streamed reasoning summary often arrives without a message id and, when
+        // an agent is hosted inside a workflow, can land in a different response bucket than the answer
+        // text that follows it. The per-response fold cannot merge across buckets, so we also fold here
+        // at the flattened-message level to keep the reasoning and the answer in a single assistant
+        // message (see https://github.com/microsoft/agent-framework/issues/6329).
+        for (int i = 0; i < messages.Count - 1; i++)
+        {
+            ChatMessage current = messages[i];
+            ChatMessage next = messages[i + 1];
+
+            if (current.MessageId is null && next.MessageId is not null && current.Role == next.Role)
+            {
+                messages[i + 1] = new ChatMessage
+                {
+                    Role = next.Role,
+                    AuthorName = next.AuthorName ?? current.AuthorName,
+                    Contents = [.. current.Contents, .. next.Contents],
+                    MessageId = next.MessageId,
+                    CreatedAt = current.CreatedAt ?? next.CreatedAt,
+                    RawRepresentation = next.RawRepresentation,
+                    AdditionalProperties = next.AdditionalProperties,
+                };
+                messages.RemoveAt(i);
+                i--;
+            }
+        }
 
         // Remove any empty text contents or messages that are now empty.
         foreach (var m in messages)

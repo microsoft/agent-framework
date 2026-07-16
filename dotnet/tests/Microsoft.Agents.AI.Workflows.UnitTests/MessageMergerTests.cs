@@ -202,6 +202,79 @@ public class MessageMergerTests
         response.Messages.Select(message => message.Text).Should().Equal("AB", "X", "Y");
     }
 
+    [Fact]
+    public void Test_MessageMerger_FoldsIdentifierlessReasoningIntoFollowingMessage()
+    {
+        // Arrange - a streamed reasoning summary arrives without a message id, immediately
+        // followed by the actual answer that carries a message id (same assistant role).
+        // See https://github.com/microsoft/agent-framework/issues/6329.
+        const string ResponseId = "response";
+        const string MessageId = "msg_answer";
+        MessageMerger merger = new();
+
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = ResponseId,
+            Role = ChatRole.Assistant,
+            Contents = [new TextReasoningContent("thinking about the question")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = ResponseId,
+            MessageId = MessageId,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("The reformulated question.")],
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(ResponseId);
+
+        // Assert - reasoning and answer should be folded into a single message with two contents,
+        // adopting the following message's id.
+        response.Messages.Should().HaveCount(1);
+        ChatMessage message = response.Messages[0];
+        message.Role.Should().Be(ChatRole.Assistant);
+        message.MessageId.Should().Be(MessageId);
+        message.Contents.Should().HaveCount(2);
+        message.Contents[0].Should().BeOfType<TextReasoningContent>()
+            .Which.Text.Should().Be("thinking about the question");
+        message.Contents[1].Should().BeOfType<TextContent>()
+            .Which.Text.Should().Be("The reformulated question.");
+        message.Text.Should().Be("The reformulated question.");
+    }
+
+    [Fact]
+    public void Test_MessageMerger_DoesNotFoldIdentifierlessReasoningIntoDifferentRole()
+    {
+        // Arrange - an id-less segment is only folded when the following message shares its role.
+        const string ResponseId = "response";
+        const string MessageId = "msg_tool";
+        MessageMerger merger = new();
+
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = ResponseId,
+            Role = ChatRole.Assistant,
+            Contents = [new TextReasoningContent("thinking")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = ResponseId,
+            MessageId = MessageId,
+            Role = ChatRole.Tool,
+            Contents = [new FunctionResultContent("call", "done")],
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(ResponseId);
+
+        // Assert - different roles must remain separate messages.
+        response.Messages.Should().HaveCount(2);
+        response.Messages[0].Role.Should().Be(ChatRole.Assistant);
+        response.Messages[0].Contents.Should().ContainSingle().Which.Should().BeOfType<TextReasoningContent>();
+        response.Messages[1].Role.Should().Be(ChatRole.Tool);
+    }
+
     private static void AddTextMessage(MessageMerger merger, string responseId, string text, DateTimeOffset? createdAt = null)
     {
         merger.AddUpdate(new AgentResponseUpdate
@@ -330,5 +403,52 @@ public class MessageMergerTests
 
         message.Contents[1].Should().BeOfType<TextContent>()
             .Which.Text.Should().Be("Here is the answer.");
+    }
+
+    [Fact]
+    public void Test_MessageMerger_FoldsIdentifierlessReasoningIntoFollowingMessageAcrossResponseBuckets()
+    {
+        // Arrange: this reproduces the workflow-as-agent repro where a reasoning summary and the
+        // answer text end up in DIFFERENT response buckets (distinct response ids). The per-response
+        // fold cannot merge across buckets, so this exercises the flattened-message fold in the outer
+        // ComputeMerged. See https://github.com/microsoft/agent-framework/issues/6329.
+        const string ReasoningResponseId = "resp_reasoning";
+        const string TextResponseId = "resp_text";
+        const string TextMessageId = "msg_answer";
+
+        MessageMerger merger = new();
+
+        // Reasoning summary: id-less update in its own response bucket, seen first.
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            ResponseId = ReasoningResponseId,
+            MessageId = null,
+            Contents = [new TextReasoningContent("thinking about the question")],
+        });
+
+        // Final answer: text update carrying a real message id in a different response bucket.
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            ResponseId = TextResponseId,
+            MessageId = TextMessageId,
+            Contents = [new TextContent("The reformulated question.")],
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(TextResponseId);
+
+        // Assert - a single assistant message adopting the answer's id, reasoning first then text.
+        response.Messages.Should().ContainSingle();
+        ChatMessage message = response.Messages[0];
+        message.Role.Should().Be(ChatRole.Assistant);
+        message.MessageId.Should().Be(TextMessageId);
+        message.Contents.Should().HaveCount(2);
+        message.Contents[0].Should().BeOfType<TextReasoningContent>()
+            .Which.Text.Should().Be("thinking about the question");
+        message.Contents[1].Should().BeOfType<TextContent>()
+            .Which.Text.Should().Be("The reformulated question.");
+        message.Text.Should().Be("The reformulated question.");
     }
 }
