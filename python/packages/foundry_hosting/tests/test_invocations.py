@@ -53,8 +53,8 @@ class _FakeAgent:
         stream_updates: list[AgentResponseUpdate] | None = None,
     ) -> None:
         self.id = "fake-agent"
-        self.name = "Fake Agent"
-        self.description = "A fake agent for testing"
+        self.name: str | None = "Fake Agent"
+        self.description: str | None = "A fake agent for testing"
         self._response = response
         self._stream_updates = stream_updates or []
         self.calls: list[dict[str, Any]] = []
@@ -135,7 +135,7 @@ async def _collect_stream(response: StreamingResponse) -> str:
     """Concatenate the string chunks produced by a StreamingResponse."""
     chunks: list[str] = []
     async for chunk in response.body_iterator:
-        chunks.append(chunk if isinstance(chunk, str) else chunk.decode())
+        chunks.append(chunk if isinstance(chunk, str) else bytes(chunk).decode())
     return "".join(chunks)
 
 
@@ -150,10 +150,6 @@ class TestInit:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         assert server._agent is not None  # pyright: ignore[reportPrivateUsage]
         assert server._sessions == {}  # pyright: ignore[reportPrivateUsage]
-
-    def test_rejects_non_supports_agent_run(self) -> None:
-        with pytest.raises(TypeError, match="SupportsAgentRun"):
-            InvocationsHostServer(object())  # type: ignore[arg-type]
 
 
 # endregion
@@ -239,7 +235,7 @@ class TestHandleInvoke:
 
         assert isinstance(response, Response)
         assert response.status_code == 200
-        assert response.body.decode() == "Hello!"
+        assert bytes(response.body).decode() == "Hello!"
         # Agent is called with the message wrapped in a list and the cached session.
         assert agent.calls[0]["messages"] == ["Hi"]
         assert agent.calls[0]["stream"] is False

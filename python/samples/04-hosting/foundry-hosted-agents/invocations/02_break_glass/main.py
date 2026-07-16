@@ -9,7 +9,7 @@ from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.responses import Response, StreamingResponse
 
 # Load environment variables from .env file
 load_dotenv()
@@ -67,7 +67,7 @@ async def handle_invoke(request: Request):
         )
 
     response = await agent.run([user_message], session=session, stream=stream)
-    return JSONResponse({"response": response.text})
+    return Response(content=response.text)
 
 
 if __name__ == "__main__":

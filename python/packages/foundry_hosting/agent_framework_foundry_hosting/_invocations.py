@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from agent_framework import AgentSession, BaseAgent, SupportsAgentRun
+from agent_framework import AgentSession, SupportsAgentRun
 from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from starlette.requests import Request
@@ -13,7 +13,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
 
     def __init__(
         self,
-        agent: BaseAgent,
+        agent: SupportsAgentRun,
         *,
         openapi_spec: dict[str, Any] | None = None,
         **kwargs: Any,
@@ -30,9 +30,6 @@ class InvocationsHostServer(InvocationAgentServerHost):
         the agent's response and a "session_id" field containing the session ID.
         """
         super().__init__(openapi_spec=openapi_spec, **kwargs)
-
-        if not isinstance(agent, SupportsAgentRun):
-            raise TypeError("Agent must support the SupportsAgentRun interface")
 
         self._agent = agent
         self._sessions: dict[str, AgentSession] = {}
