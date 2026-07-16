@@ -15,8 +15,6 @@
 //     recall) itself through AIContext.Tools
 //   • ProductCatalog.CreateAIFunctions()                  — retail tools over a Neo4j :Product graph
 //
-// This is a STANDALONE sample consuming the published AgentMemory NuGet packages.
-//
 // Configuration (environment variables, matching the other Foundry samples):
 //   AZURE_OPENAI_ENDPOINT     (required)  — your Azure OpenAI / Foundry endpoint
 //   AZURE_OPENAI_API_KEY      (optional)  — API key; if unset, DefaultAzureCredential (az login) is used

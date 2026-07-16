@@ -1,10 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Standalone sample: it consumes the *published* AgentMemory NuGet packages (which target
-    Microsoft.Agents.AI 1.9.0), so it is intentionally self-contained and does NOT integrate into the
-    agent-framework repo's .NET 10 / Central-Package-Management / source-reference build. Run it with
-    `dotnet run` from this folder.
+    This project is part of the repo's solution and targets .NET 10 like the rest of the repo, but it
+    intentionally opts out of Central Package Management and source-referencing Microsoft.Agents.AI:
+    it consumes the *published* AgentMemory NuGet packages (which target Microsoft.Agents.AI 1.9.0)
+    instead. Run it with `dotnet run` from this folder.
 
     ManagePackageVersionsCentrally is off, but dotnet/Directory.Packages.props still unconditionally
     merges its repo-wide analyzer PackageReference items (no Version, resolved via CPM) into every

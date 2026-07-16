@@ -13,8 +13,9 @@ its Microsoft Agent Framework adapter.
 ## Features Demonstrated
 
 - **`Neo4jMemoryContextProvider`** (an `AIContextProvider`) — recalls relevant memory before each run,
-  persists new memory after (the same bidirectional pattern as the official provider).
-- **`MemoryToolFactory.CreateAIFunctions()`** — memory tools the model can call (search / remember / recall).
+  persists new memory after (the same bidirectional pattern as the official provider), and — via
+  `ExposeMemoryToolsFromContextProvider = true` — surfaces the memory tools (search / remember / recall)
+  itself through `AIContext.Tools`.
 - **`ProductCatalog.CreateAIFunctions()`** — retail tools over a Neo4j `:Product` graph (search /
   recommend / related / inventory).
 - Preference learning that persists across a brand-new `AgentSession` for the same shopper.
@@ -22,7 +23,7 @@ its Microsoft Agent Framework adapter.
 
 ## Prerequisites
 
-- [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
 - A **Neo4j 5.x** instance (the sample bootstraps the schema and seeds sample products)
 - An **Azure OpenAI / Foundry** deployment (a chat model + an embedding model)
 
@@ -67,8 +68,8 @@ dotnet run
 
 ## Note on packaging
 
-This is a **standalone** sample: it consumes the **published** `AgentMemory` NuGet packages (which
-target `Microsoft.Agents.AI` 1.9.0), so it deliberately does **not** integrate into the agent-framework
-repo's .NET 10 / Central-Package-Management / source-reference build. A version that references the
-repo's current `Microsoft.Agents.AI` source would require AgentMemory to be rebuilt against that
-version first.
+This sample is part of the repo's solution and targets .NET 10 like every other sample, but it
+deliberately opts out of **Central Package Management** and does **not** reference `Microsoft.Agents.AI`
+via the repo's in-source project — it consumes the **published** `AgentMemory` NuGet packages instead
+(which target `Microsoft.Agents.AI` 1.9.0). A version that references the repo's current
+`Microsoft.Agents.AI` source would require AgentMemory to be rebuilt against that version first.

@@ -14,7 +14,8 @@ namespace AgentMemoryShoppingAssistant;
 /// linked to <c>:ProductCategory</c> / <c>:ProductBrand</c> nodes, so recommendations and "related
 /// products" come from graph traversals. Cypher runs through the public <see cref="INeo4jTransactionRunner"/>
 /// seam. Exposed as <see cref="AIFunction"/>s so a real chat model can call them during a run — the same
-/// way <c>MemoryToolFactory.CreateAIFunctions()</c> exposes the memory tools.
+/// way <c>Neo4jMemoryContextProvider</c> surfaces the memory tools through <c>AIContext.Tools</c> when
+/// <c>ExposeMemoryToolsFromContextProvider</c> is enabled.
 /// </summary>
 public sealed class ProductCatalog(INeo4jTransactionRunner runner)
 {
