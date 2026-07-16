@@ -64,6 +64,47 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
             await function.InvokeAsync(args, CancellationToken.None));
     }
 
+    [Theory]
+    [InlineData("import os\nos.system('id')")]
+    [InlineData("import os as x\nx.system('id')")]
+    [InlineData("import os\n_o = os\n_o.system('id')")]
+    [InlineData("import os as x\na = x\nb = a\nb.popen('id')")]
+    [InlineData("import os.path\nos.system('id')")]
+    public async Task ExecuteCode_ValidationBlocksDisallowedOsAccessAsync(string code)
+    {
+        SkipIfNoPython();
+
+        var function = new LocalExecuteCodeFunction(s_python!);
+
+        var args = new AIFunctionArguments
+        {
+            ["code"] = code,
+        };
+
+        var ex = await Assert.ThrowsAsync<CodeValidationException>(async () =>
+            await function.InvokeAsync(args, CancellationToken.None));
+        Assert.Contains("os.", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("import os\nprint(os.environ.get('PATH') is not None)")]
+    [InlineData("import os as x\nprint(x.path.join('a', 'b'))")]
+    [InlineData("import os.path as p\nprint(p.join('a', 'b'))")]
+    public async Task ExecuteCode_AllowsPermittedOsAccessAsync(string code)
+    {
+        SkipIfNoPython();
+
+        var function = new LocalExecuteCodeFunction(s_python!);
+
+        var args = new AIFunctionArguments
+        {
+            ["code"] = code,
+        };
+
+        var result = await function.InvokeAsync(args, CancellationToken.None);
+        Assert.NotNull(result);
+    }
+
     [Fact]
     public async Task ExecuteCode_CapturesFilesInWritableMountAsync()
     {
