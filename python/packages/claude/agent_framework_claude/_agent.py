@@ -71,7 +71,6 @@ logger = logging.getLogger("agent_framework.claude")
 FINISH_REASON_MAP: dict[str, str] = {
     "end_turn": "stop",
     "stop_sequence": "stop",
-    "pause_turn": "stop",
     "max_tokens": "length",
     "tool_use": "tool_calls",
     "refusal": "content_filter",
