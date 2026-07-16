@@ -43,10 +43,11 @@ async def responses(body: dict = Body(...)) -> JSONResponse:
         session=session,
         options=run["options"],
     )
-    await state.set_session(response_id, session)
     if body.get("conversation_id") == session_id:
         # The app must serialize writers that advance this stable id.
         await state.set_session(session_id, session)
+    else:
+        await state.set_session(response_id, session)
     return JSONResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
 ```
 

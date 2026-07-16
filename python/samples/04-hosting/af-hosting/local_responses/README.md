@@ -24,9 +24,9 @@ What the route demonstrates:
   turn.
 - Produces the AF messages, options, and session id that the route passes to
   `agent.run(...)`.
-- **Stores** each newly minted response id for the session it was just
-  resolved from, via `state.set_session(response_id, session)` after
-  `agent.run(...)` has updated the session.
+- **Stores** each newly minted response id for response-keyed continuation,
+  via `state.set_session(response_id, session)` after `agent.run(...)` has
+  updated the session.
   OpenAI's `previous_response_id` rotates every turn *by design* — it lets a
   caller continue from any earlier response, not just the latest one — so
   every response id needs to stay independently resolvable, not just the
@@ -37,7 +37,8 @@ What the route demonstrates:
 - Explicitly advances a supplied `conversation_id` after each completed run.
   A conversation id is a mutable head, so only one caller should advance it at
   a time. The sample and `AgentState` do not provide that locking; production
-  apps must serialize writers or use optimistic concurrency.
+  apps must serialize writers or use optimistic concurrency. These requests
+  store the updated session only under the stable conversation id.
 - Treats each `previous_response_id` as an immutable snapshot. Multiple callers
   can branch from the same response concurrently because each receives a
   session copy and stores its result under a newly minted response id.

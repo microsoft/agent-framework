@@ -152,15 +152,15 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
             ):
                 yield event
             # `agent.run(..., stream=True)` updates the session while the stream
-            # is consumed/finalized. Store it under the newly minted response id
-            # after finalization so a later `previous_response_id` can restore
-            # this exact continuation point.
-            await state.set_session(response_id, session)
+            # is consumed/finalized. Persist the selected continuation only
+            # after finalization.
             if conversation_id is not None:
                 # A stable conversation id is a mutable head. Apps must ensure
                 # only one caller advances it at a time; AgentState does not
                 # serialize concurrent runs for the same id.
                 await state.set_session(conversation_id, session)
+            else:
+                await state.set_session(response_id, session)
 
         return StreamingResponse(
             stream_events(),
@@ -172,14 +172,14 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
         session=session,
         options=options_for_run,
     )
-    # `agent.run(...)` updates the session. Store it under the newly minted
-    # response id after the run so `previous_response_id=response_id` continues
-    # from this exact point.
-    await state.set_session(response_id, session)
+    # `agent.run(...)` updates the session. Persist the selected continuation
+    # only after the run completes.
     if conversation_id is not None:
         # Preserve sequential conversation continuity. Production apps must
         # provide their own per-conversation single-writer coordination.
         await state.set_session(conversation_id, session)
+    else:
+        await state.set_session(response_id, session)
     return JSONResponse(
         responses_from_run(
             result,
