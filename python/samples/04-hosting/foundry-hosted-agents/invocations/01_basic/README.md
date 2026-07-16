@@ -28,6 +28,12 @@ Send a POST request to the server with a JSON body containing a "message" field 
 curl -X POST http://localhost:8088/invocations -i -H "Content-Type: application/json" -d '{"message": "Hi"}'
 ```
 
+Or with streaming:
+
+```bash
+curl -X POST http://localhost:8088/invocations -i -H "Content-Type: application/json" -d '{"message": "Hi", "stream": true}'
+```
+
 The server will respond with a JSON object containing the response text. The `-i` flag in the `curl` command includes the HTTP response headers in the output, which includes the session ID that can be used for multi-turn conversations. Here is an example of the response:
 
 ```
