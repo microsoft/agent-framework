@@ -14,10 +14,6 @@ internal sealed class MessageMerger
         public string? MessageId { get; } = messageId;
 
         public List<AgentResponseUpdate> Updates { get; } = [];
-
-        // The role of the message is taken from its first update. Buckets always contain at least
-        // one update by the time they are read.
-        public ChatRole? Role => this.Updates.Count > 0 ? this.Updates[0].Role : null;
     }
 
     private sealed class ResponseMergeState(string? responseId)
@@ -128,12 +124,12 @@ internal sealed class MessageMerger
         {
             if (response.AgentId is not null)
             {
-                agentIds.Add(response.AgentId);
+                _ = agentIds.Add(response.AgentId);
             }
 
             if (response.FinishReason.HasValue)
             {
-                finishReasons.Add(response.FinishReason.Value);
+                _ = finishReasons.Add(response.FinishReason.Value);
             }
 
             usage = MergeUsage(usage, response.Usage);
@@ -182,7 +178,8 @@ internal sealed class MessageMerger
                 }
             }
         }
-        messages.RemoveAll(m => m.Contents.Count == 0);
+
+        _ = messages.RemoveAll(m => m.Contents.Count == 0);
 
         return new AgentResponse(messages)
         {
