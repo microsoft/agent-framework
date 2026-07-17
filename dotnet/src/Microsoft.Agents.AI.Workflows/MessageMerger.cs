@@ -144,14 +144,17 @@ internal sealed class MessageMerger
         // text that follows it. The per-response fold cannot merge across buckets, so we also fold here
         // at the flattened-message level to keep the reasoning and the answer in a single assistant
         // message (see https://github.com/microsoft/agent-framework/issues/6329).
-        for (int i = 0; i < messages.Count - 1; i++)
+        // We iterate backward so that a run of consecutive id-less messages preceding an id'd message
+        // all cascade into that message: once folded, the merged message adopts next.MessageId, so a
+        // forward pass would never re-examine the preceding id-less entry.
+        for (int i = messages.Count - 1; i > 0; i--)
         {
-            ChatMessage current = messages[i];
-            ChatMessage next = messages[i + 1];
+            ChatMessage current = messages[i - 1];
+            ChatMessage next = messages[i];
 
             if (current.MessageId is null && next.MessageId is not null && current.Role == next.Role)
             {
-                messages[i + 1] = new ChatMessage
+                messages[i] = new ChatMessage
                 {
                     Role = next.Role,
                     AuthorName = next.AuthorName ?? current.AuthorName,
@@ -161,8 +164,7 @@ internal sealed class MessageMerger
                     RawRepresentation = next.RawRepresentation,
                     AdditionalProperties = next.AdditionalProperties,
                 };
-                messages.RemoveAt(i);
-                i--;
+                messages.RemoveAt(i - 1);
             }
         }
 
