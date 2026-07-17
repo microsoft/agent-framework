@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
     from agent_framework import Skill
     from azure.core.credentials import TokenCredential
+    from mcp.client.session import ClientSession
 
 logger = logging.getLogger(__name__)
 
@@ -285,14 +286,17 @@ class _FoundryToolboxSkillsSource(SkillsSource):
     """Discovers skills from a connected :class:`FoundryToolbox` MCP session.
 
     The toolbox's MCP ``session`` is established lazily when the toolbox connects
-    (via the agent or an ``async with`` block), so the session is resolved at
-    discovery time rather than captured at construction.
+    (via the agent or an ``async with`` block) and is **replaced** with a new
+    object whenever the toolbox reconnects. Skills are therefore bound to a
+    ``session_provider`` that resolves the toolbox's current session on every
+    fetch, so cached skills keep using the live session instead of a closed one.
     """
 
     def __init__(self, toolbox: FoundryToolbox) -> None:
         self._toolbox = toolbox
 
-    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
+    def _require_session(self) -> ClientSession:
+        """Return the toolbox's current MCP session, or raise if not connected."""
         session = self._toolbox.session
         if session is None:
             raise RuntimeError(
@@ -300,4 +304,10 @@ class _FoundryToolboxSkillsSource(SkillsSource):
                 "Pass the toolbox to the agent (tools=...) or enter it as an async "
                 "context manager before the agent runs."
             )
-        return await MCPSkillsSource(client=session).get_skills(context)
+        return session
+
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
+        # Fail fast at discovery if not connected, then hand the source a provider
+        # (not a fixed session) so skills survive a reconnect that swaps the session.
+        self._require_session()
+        return await MCPSkillsSource(session_provider=self._require_session).get_skills(context)

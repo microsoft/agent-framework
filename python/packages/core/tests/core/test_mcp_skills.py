@@ -350,6 +350,47 @@ class TestMCPSkill:
     def test_compute_skill_root_uri_no_suffix_adds_slash(self) -> None:
         assert MCPSkill._compute_skill_root_uri("skill://unit-converter") == "skill://unit-converter/"
 
+    @pytest.mark.asyncio
+    async def test_session_provider_resolves_live_session(self) -> None:
+        # A session_provider is resolved on every fetch, so a skill built against
+        # one session follows a reconnect that swaps the session object.
+        from agent_framework import SkillFrontmatter
+
+        old_client = _make_client(**{"skill://unit-converter/SKILL.md": _make_text_result("# Old\nold body")})
+        new_client = _make_client(**{"skill://unit-converter/SKILL.md": _make_text_result("# New\nnew body")})
+        current = {"session": old_client}
+
+        fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
+        skill = MCPSkill(
+            frontmatter=fm,
+            skill_md_uri="skill://unit-converter/SKILL.md",
+            session_provider=lambda: current["session"],
+        )
+
+        # Swap the session (as a reconnect would) before the first fetch.
+        current["session"] = new_client
+        content = await skill.get_content()
+
+        assert "new body" in content
+        old_client.read_resource.assert_not_called()
+        new_client.read_resource.assert_called_once()
+
+    def test_requires_exactly_one_of_client_or_session_provider(self) -> None:
+        from agent_framework import SkillFrontmatter
+
+        fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
+        client = _make_client()
+
+        with pytest.raises(ValueError, match="exactly one"):
+            MCPSkill(frontmatter=fm, skill_md_uri="skill://x/SKILL.md")
+        with pytest.raises(ValueError, match="exactly one"):
+            MCPSkill(
+                frontmatter=fm,
+                skill_md_uri="skill://x/SKILL.md",
+                client=client,
+                session_provider=lambda: client,
+            )
+
 
 # ---------------------------------------------------------------------------
 # MCPSkillsSource tests
@@ -506,6 +547,37 @@ class TestMCPSkillsSource:
         assert resource is not None
         content = await resource.read()
         assert content == data
+
+    @pytest.mark.asyncio
+    async def test_session_provider_resolves_live_session(self) -> None:
+        # Discovery and the resulting skills' on-demand fetches both resolve the
+        # provider, so a source built before a reconnect follows the swapped session.
+        old_client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            "skill://unit-converter/SKILL.md": _make_text_result("# Old\nold body"),
+        })
+        new_client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            "skill://unit-converter/SKILL.md": _make_text_result("# New\nnew body"),
+        })
+        current = {"session": old_client}
+
+        source = MCPSkillsSource(session_provider=lambda: current["session"])
+        skills = await source.get_skills(_SOURCE_CTX)
+        assert len(skills) == 1
+
+        # A reconnect swaps the session; the already-discovered skill must fetch
+        # its content from the new session, not the closed one.
+        current["session"] = new_client
+        content = await skills[0].get_content()
+        assert "new body" in content
+
+    def test_requires_exactly_one_of_client_or_session_provider(self) -> None:
+        client = _make_client()
+        with pytest.raises(ValueError, match="exactly one"):
+            MCPSkillsSource()
+        with pytest.raises(ValueError, match="exactly one"):
+            MCPSkillsSource(client=client, session_provider=lambda: client)
 
 
 # ---------------------------------------------------------------------------

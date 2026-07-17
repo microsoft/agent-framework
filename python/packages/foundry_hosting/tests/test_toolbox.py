@@ -218,8 +218,8 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     captured: dict[str, object] = {}
 
     class _StubSkillsSource:
-        def __init__(self, *, client: object) -> None:
-            captured["client"] = client
+        def __init__(self, *, session_provider: object) -> None:
+            captured["session_provider"] = session_provider
 
         async def get_skills(self, context: SkillsSourceContext) -> list[str]:
             return ["skill-a"]
@@ -229,7 +229,28 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     result = await _FoundryToolboxSkillsSource(toolbox).get_skills(_source_context())
 
     assert result == ["skill-a"]
-    assert captured["client"] is sentinel_session
+    # The source hands MCPSkillsSource a provider (not a fixed session) that resolves
+    # the toolbox's current session, so it survives a reconnect that swaps it.
+    provider = captured["session_provider"]
+    assert callable(provider)
+    assert provider() is sentinel_session
+    new_session = object()
+    toolbox.session = new_session  # type: ignore
+    assert provider() is new_session
+
+
+async def test_skills_source_requires_connection_via_provider() -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/tb/mcp",
+    )
+    toolbox.session = object()  # type: ignore
+    source = _FoundryToolboxSkillsSource(toolbox)
+    # Discovery captures the bound provider; a later reconnect gap (session is None)
+    # surfaces the same clear error when the provider is resolved.
+    toolbox.session = None  # type: ignore
+    with pytest.raises(RuntimeError, match="not connected"):
+        source._require_session()  # pyright: ignore[reportPrivateUsage]
 
 
 class _FakeSkill:
@@ -248,8 +269,8 @@ def _patch_counting_mcp_source(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     read_count = [0]
 
     class _CountingSkillsSource:
-        def __init__(self, *, client: object) -> None:
-            self._client = client
+        def __init__(self, *, session_provider: object) -> None:
+            self._session_provider = session_provider
 
         async def get_skills(self, context: SkillsSourceContext) -> list[_FakeSkill]:
             read_count[0] += 1
