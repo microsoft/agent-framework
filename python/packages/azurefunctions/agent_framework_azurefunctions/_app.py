@@ -57,6 +57,7 @@ from agent_framework_durabletask._workflows.serialization import strip_pickle_ma
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._orchestration import AgentOrchestrationContextType, AgentTask, AzureFunctionsAgentExecutor
+from ._routes import build_workflow_respond_url, build_workflow_status_url, split_request_url
 from ._workflow import run_workflow_orchestrator
 
 logger = logging.getLogger("agent_framework.azurefunctions")
@@ -506,14 +507,16 @@ class AgentFunctionApp(DFAppBase):
 
             instance_id = await client.start_new(orchestrator_name, client_input=client_input)
 
-            base_url = self._build_base_url(req.url)
-            status_url = f"{base_url}/api/workflow/{workflow_name}/status/{instance_id}"
+            base_url, route_prefix = split_request_url(req.url)
+            status_url = build_workflow_status_url(base_url, workflow_name, instance_id, prefix=route_prefix)
 
             return func.HttpResponse(
                 json.dumps({
                     "instanceId": instance_id,
                     "statusQueryGetUri": status_url,
-                    "respondUri": f"{base_url}/api/workflow/{workflow_name}/respond/{instance_id}/{{requestId}}",
+                    "respondUri": build_workflow_respond_url(
+                        base_url, workflow_name, instance_id, "{requestId}", prefix=route_prefix
+                    ),
                     "message": "Workflow started",
                 }),
                 status_code=202,
@@ -566,7 +569,7 @@ class AgentFunctionApp(DFAppBase):
             if isinstance(custom_status, dict):
                 gathered = await self._gather_pending_hitl_requests(client, cast("dict[str, Any]", custom_status))
                 if gathered:
-                    base_url = self._build_base_url(req.url)
+                    base_url, route_prefix = split_request_url(req.url)
                     pending_requests: list[dict[str, Any]] = [
                         {
                             "requestId": qualified_id,
@@ -574,8 +577,8 @@ class AgentFunctionApp(DFAppBase):
                             "requestData": req_data.get("data"),
                             "requestType": req_data.get("request_type"),
                             "responseType": req_data.get("response_type"),
-                            "respondUrl": (
-                                f"{base_url}/api/workflow/{workflow_name}/respond/{instance_id}/{qualified_id}"
+                            "respondUrl": build_workflow_respond_url(
+                                base_url, workflow_name, instance_id, qualified_id, prefix=route_prefix
                             ),
                         }
                         for qualified_id, req_data in gathered
@@ -739,13 +742,6 @@ class AgentFunctionApp(DFAppBase):
         if not isinstance(child_instance_id, str):
             return None
         return await self._resolve_hitl_target(client, child_instance_id, remainder)
-
-    def _build_base_url(self, request_url: str) -> str:
-        """Extract the base URL from a request URL."""
-        base_url, _, _ = request_url.partition("/api/")
-        if not base_url:
-            base_url = request_url.rstrip("/")
-        return base_url
 
     def _is_owned_orchestration(self, status: Any, workflow_name: str) -> bool:
         """Return whether a durable orchestration status belongs to the named workflow.
