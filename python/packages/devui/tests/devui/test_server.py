@@ -4,6 +4,7 @@
 
 import asyncio
 import inspect
+import logging
 import sys
 import tempfile
 from pathlib import Path
@@ -15,7 +16,11 @@ from fastapi.testclient import TestClient
 
 import agent_framework_devui
 from agent_framework_devui import DevServer
-from agent_framework_devui._utils import extract_executor_message_types, select_primary_input_type
+from agent_framework_devui._utils import (
+    extract_executor_message_types,
+    parse_input_for_type,
+    select_primary_input_type,
+)
 from agent_framework_devui.models._openai_custom import AgentFrameworkRequest
 
 
@@ -141,6 +146,140 @@ def test_select_primary_input_type_prefers_string_and_dict():
     assert string_first is str
     assert dict_first is dict
     assert fallback is int
+
+
+def test_select_primary_input_type_returns_list_message_for_declarative_entry():
+    """Regression test for #6533: declarative entry JoinExecutor union contains list[Message].
+
+    select_primary_input_type must return list[Message] (not the bare Message)
+    so that parse_input_for_type can wrap the user's text in a list before
+    dispatching to the entry executor, avoiding "cannot handle Message" errors.
+    """
+    from typing import get_args, get_origin
+
+    from agent_framework import Message
+
+    # Mirrors the entry JoinExecutor's handler union from #5521
+    executor_types: list[Any] = [dict, str, list[Message]]
+    selected = select_primary_input_type(executor_types)
+
+    assert get_origin(selected) is list
+    assert get_args(selected)[0] is Message
+
+
+def test_select_primary_input_type_bare_message_unchanged():
+    """Bare Message (not list[Message]) in the union still returns Message."""
+    from agent_framework import Message
+
+    selected = select_primary_input_type([dict, str, Message])
+    assert selected is Message
+
+
+def test_parse_input_for_type_wraps_string_in_list_message():
+    """parse_input_for_type wraps a plain string as list[Message] for declarative entry."""
+    from agent_framework import Message
+
+    result = parse_input_for_type("hello", list[Message])
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert isinstance(result[0], Message)
+    assert result[0].role == "user"
+
+
+def test_parse_input_for_type_wraps_message_in_list():
+    """Single Message input is wrapped in a list when target_type is list[Message]."""
+    from agent_framework import Message
+
+    msg = Message(role="user", contents=["hi"])
+    result = parse_input_for_type(msg, list[Message])
+
+    assert result == [msg]
+
+
+def test_parse_input_for_type_list_message_passthrough():
+    """Already-correct list[Message] is returned unchanged."""
+    from agent_framework import Message
+
+    msgs = [
+        Message(role="user", contents=["a"]),
+        Message(role="assistant", contents=["b"]),
+    ]
+    result = parse_input_for_type(msgs, list[Message])
+
+    assert result == msgs
+
+
+def test_parse_input_for_type_list_of_dicts_converted_to_list_message():
+    """Regression for #6533: a JSON array of role/content dicts is converted per-item."""
+    from agent_framework import Message
+
+    payload = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi there"},
+    ]
+    result = parse_input_for_type(payload, list[Message])
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert all(isinstance(m, Message) for m in result)
+
+
+def test_parse_input_for_type_native_framework_message_dict_converted():
+    """Regression for #6533: native {"role":…,"contents":[…]} dict is converted to list[Message]."""
+    from agent_framework import Message
+
+    payload = {"role": "user", "contents": ["hello world"]}
+    result = parse_input_for_type(payload, list[Message])
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert isinstance(result[0], Message)
+    assert result[0].role == "user"
+
+
+def test_parse_input_for_type_message_to_dict_roundtrip():
+    """Message.to_dict() output (includes 'type' discriminator) must roundtrip via list[Message]."""
+    from agent_framework import Message
+
+    original = Message(role="user", contents=["ping"])
+    serialized = original.to_dict()
+    result = parse_input_for_type(serialized, list[Message])
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert isinstance(result[0], Message)
+    assert result[0].role == "user"
+
+
+def test_parse_input_for_type_structured_dict_with_extra_keys_not_converted():
+    """Structured workflow inputs with non-Message keys must pass through unchanged."""
+    from agent_framework import Message
+
+    payload = {"input": "hello", "customer_id": 42}
+    result = parse_input_for_type(payload, list[Message])
+
+    assert result == payload
+
+
+def test_parse_input_for_type_data_only_dict_not_converted():
+    """{"data":"blob"} has no message signature — must pass through unchanged."""
+    from agent_framework import Message
+
+    payload = {"data": "blob"}
+    result = parse_input_for_type(payload, list[Message])
+
+    assert result == payload
+
+
+def test_parse_input_for_type_arbitrary_type_discriminator_not_converted():
+    """{"type":"SomeType"} passes through unchanged (type discriminator != "message")."""
+    from agent_framework import Message
+
+    payload = {"type": "SomeType"}
+    result = parse_input_for_type(payload, list[Message])
+
+    assert result == payload
 
 
 @pytest.mark.asyncio
@@ -467,13 +606,22 @@ def test_cors_default_does_not_allow_arbitrary_origin_even_on_localhost():
                 "Access-Control-Request-Method": "GET",
             },
         )
-        assert preflight.headers.get("access-control-allow-origin") not in ("*", "https://evil.example")
+        assert preflight.headers.get("access-control-allow-origin") not in (
+            "*",
+            "https://evil.example",
+        )
 
         actual = client.get(
             "/v1/entities",
-            headers={"Origin": "https://evil.example", "Authorization": "Bearer s3cret"},
+            headers={
+                "Origin": "https://evil.example",
+                "Authorization": "Bearer s3cret",
+            },
         )
-        assert actual.headers.get("access-control-allow-origin") not in ("*", "https://evil.example")
+        assert actual.headers.get("access-control-allow-origin") not in (
+            "*",
+            "https://evil.example",
+        )
 
 
 def test_devserver_requires_auth_by_default(monkeypatch):
@@ -504,6 +652,33 @@ def test_devserver_auth_can_be_explicitly_disabled(monkeypatch):
         response = client.get("/v1/entities")
 
     assert response.status_code == 200
+
+
+def test_responses_endpoint_does_not_log_request_content(caplog):
+    """Request input and metadata must not be written to server logs."""
+    server = _server_with_mock_agent(host="127.0.0.1", auth_enabled=False)
+    app = server.get_app()
+    input_marker = "private-input-marker"
+    metadata_marker = "private-metadata-marker"
+    caplog.set_level(logging.DEBUG, logger="agent_framework_devui._server")
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        response = client.post(
+            "/v1/responses",
+            json={
+                "input": input_marker,
+                "metadata": {"entity_id": "mock", "private_value": metadata_marker},
+                "stream": False,
+            },
+        )
+
+    assert response.status_code == 404
+    assert any(
+        record.name == "agent_framework_devui._server" and record.getMessage() == "Extracted entity_id: mock"
+        for record in caplog.records
+    )
+    assert input_marker not in caplog.text
+    assert metadata_marker not in caplog.text
 
 
 def test_devserver_rejects_non_loopback_no_auth(monkeypatch):

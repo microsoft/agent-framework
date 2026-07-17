@@ -4,157 +4,121 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
 
 internal sealed class MessageMerger
 {
-    private sealed class ResponseMergeState(string? responseId)
+    private sealed class MessageMergeState(string? messageId)
     {
-        public string? ResponseId { get; } = responseId;
+        public string? MessageId { get; } = messageId;
 
-        public Dictionary<string, List<AgentResponseUpdate>> UpdatesByMessageId { get; } = [];
-        public List<AgentResponseUpdate> DanglingUpdates { get; } = [];
+        public List<AgentResponseUpdate> Updates { get; } = [];
 
-        public void AddUpdate(AgentResponseUpdate update)
+        public AgentResponse ComputeMerged(string? responseId)
         {
-            if (update.MessageId is null)
+            if (this.Updates.Count == 0)
             {
-                this.DanglingUpdates.Add(update);
-            }
-            else
-            {
-                if (!this.UpdatesByMessageId.TryGetValue(update.MessageId, out List<AgentResponseUpdate>? updates))
-                {
-                    this.UpdatesByMessageId[update.MessageId] = updates = [];
-                }
-
-                updates.Add(update);
-            }
-        }
-
-        public AgentResponse ComputeMerged(string messageId)
-        {
-            if (this.UpdatesByMessageId.TryGetValue(Throw.IfNull(messageId), out List<AgentResponseUpdate>? updates))
-            {
-                return updates.ToAgentResponse();
+                throw new InvalidOperationException($"No updates found for message ID '{this.MessageId}' in response '{responseId}'.");
             }
 
-            throw new KeyNotFoundException($"No updates found for message ID '{messageId}' in response '{this.ResponseId}'.");
-        }
-
-        public AgentResponse ComputeDangling()
-        {
-            if (this.DanglingUpdates.Count == 0)
-            {
-                throw new InvalidOperationException("No dangling updates to compute a response from.");
-            }
-
-            return this.DanglingUpdates.ToAgentResponse();
-        }
-
-        public List<ChatMessage> ComputeFlattened()
-        {
-            List<ChatMessage> result = this.UpdatesByMessageId.Keys.SelectMany(AggregateUpdatesToMessage).ToList();
-            if (this.DanglingUpdates.Count > 0)
-            {
-                result.AddRange(this.ComputeDangling().Messages);
-            }
-
-            return result;
-
-            IList<ChatMessage> AggregateUpdatesToMessage(string messageId)
-            {
-                List<AgentResponseUpdate> updates = this.UpdatesByMessageId[messageId];
-                if (updates.Count == 0)
-                {
-                    throw new InvalidOperationException($"No updates found for message ID '{messageId}' in response '{this.ResponseId}'.");
-                }
-
-                return updates.Select(oldUpdate => oldUpdate.AsChatResponseUpdate()).ToChatResponse().Messages;
-            }
+            return this.Updates.ToAgentResponse();
         }
     }
 
+    private sealed class ResponseMergeState(string? responseId)
+    {
+        private readonly Dictionary<string, MessageMergeState> _messageStates = [];
+        private readonly List<MessageMergeState> _messageStatesInOrder = [];
+        private MessageMergeState? _lastObservedState;
+
+        public string? ResponseId { get; } = responseId;
+
+        public void AddUpdate(AgentResponseUpdate update)
+        {
+            MessageMergeState state = this.GetOrCreateMessageState(update.MessageId);
+            state.Updates.Add(update);
+            this._lastObservedState = state;
+        }
+
+        private MessageMergeState GetOrCreateMessageState(string? messageId)
+        {
+            if (messageId is null)
+            {
+                if (this._lastObservedState is { MessageId: null })
+                {
+                    return this._lastObservedState;
+                }
+
+                MessageMergeState state = new(null);
+                this._messageStatesInOrder.Add(state);
+                return state;
+            }
+
+            if (!this._messageStates.TryGetValue(messageId, out MessageMergeState? existingState))
+            {
+                existingState = new(messageId);
+                this._messageStates[messageId] = existingState;
+                this._messageStatesInOrder.Add(existingState);
+            }
+
+            return existingState;
+        }
+
+        public List<AgentResponse> ComputeMerged()
+            => this._messageStatesInOrder.ConvertAll(state => state.ComputeMerged(this.ResponseId));
+
+        public List<ChatMessage> ComputeFlattened()
+            => this.ComputeMerged().SelectMany(response => response.Messages).ToList();
+    }
+
     private readonly Dictionary<string, ResponseMergeState> _mergeStates = [];
+    private readonly List<string> _responseIdsInOrder = [];
     private readonly ResponseMergeState _danglingState = new(null);
 
     public void AddUpdate(AgentResponseUpdate update)
     {
         if (update.ResponseId is null)
         {
-            this._danglingState.DanglingUpdates.Add(update);
+            this._danglingState.AddUpdate(update);
         }
         else
         {
             if (!this._mergeStates.TryGetValue(update.ResponseId, out ResponseMergeState? state))
             {
                 this._mergeStates[update.ResponseId] = state = new ResponseMergeState(update.ResponseId);
+                this._responseIdsInOrder.Add(update.ResponseId);
             }
 
             state.AddUpdate(update);
         }
     }
 
-    private int CompareByDateTimeOffset(AgentResponse left, AgentResponse right)
-    {
-        const int LESS = -1, EQ = 0, GREATER = 1;
-
-        if (left.CreatedAt == right.CreatedAt)
-        {
-            return EQ;
-        }
-
-        if (!left.CreatedAt.HasValue)
-        {
-            return GREATER;
-        }
-
-        if (!right.CreatedAt.HasValue)
-        {
-            return LESS;
-        }
-
-        return left.CreatedAt.Value.CompareTo(right.CreatedAt.Value);
-    }
-
     public AgentResponse ComputeMerged(string primaryResponseId, string? primaryAgentId = null, string? primaryAgentName = null)
     {
         List<ChatMessage> messages = [];
-        Dictionary<string, AgentResponse> responses = [];
+        List<AgentResponse> responses = [];
         HashSet<string> agentIds = [];
         HashSet<ChatFinishReason> finishReasons = [];
 
-        foreach (string responseId in this._mergeStates.Keys)
+        foreach (string responseId in this._responseIdsInOrder)
         {
             ResponseMergeState mergeState = this._mergeStates[responseId];
 
-            List<AgentResponse> responseList = mergeState.UpdatesByMessageId.Keys.Select(mergeState.ComputeMerged).ToList();
-            if (mergeState.DanglingUpdates.Count > 0)
-            {
-                responseList.Add(mergeState.ComputeDangling());
-            }
-
-            responseList.Sort(this.CompareByDateTimeOffset);
-            responses[responseId] = responseList.Aggregate(MergeResponses);
-            messages.AddRange(GetMessagesWithCreatedAt(responses[responseId]));
+            List<AgentResponse> responseList = mergeState.ComputeMerged();
+            AgentResponse response = responseList.Aggregate(MergeResponses);
+            responses.Add(response);
+            messages.AddRange(GetMessagesWithCreatedAt(response));
         }
 
         UsageDetails? usage = null;
         AdditionalPropertiesDictionary? additionalProperties = null;
-        HashSet<DateTimeOffset> createdTimes = [];
 
-        foreach (AgentResponse response in responses.Values)
+        foreach (AgentResponse response in responses)
         {
             if (response.AgentId is not null)
             {
                 agentIds.Add(response.AgentId);
-            }
-
-            if (response.CreatedAt.HasValue)
-            {
-                createdTimes.Add(response.CreatedAt.Value);
             }
 
             if (response.FinishReason.HasValue)
@@ -242,8 +206,9 @@ internal sealed class MessageMerger
                     AuthorName = message.AuthorName,
                     Contents = message.Contents,
                     MessageId = message.MessageId,
-                    CreatedAt = createdAt,
-                    RawRepresentation = message.RawRepresentation
+                    CreatedAt = message.CreatedAt ?? createdAt,
+                    RawRepresentation = message.RawRepresentation,
+                    AdditionalProperties = message.AdditionalProperties
                 });
         }
 

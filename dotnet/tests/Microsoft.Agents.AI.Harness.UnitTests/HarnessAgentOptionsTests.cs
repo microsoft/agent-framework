@@ -30,9 +30,8 @@ public class HarnessAgentOptionsTests
         Assert.Null(options.LoopEvaluators);
         Assert.Null(options.LoopAgentOptions);
         Assert.False(options.DisableToolAutoApproval);
-        Assert.False(options.DisableNonApprovalRequiredFunctionBypassing);
+        Assert.False(options.DisableApprovalNotRequiredFunctionBypassing);
         Assert.False(options.DisableFileMemory);
-        Assert.False(options.DisableFileAccess);
         Assert.False(options.DisableWebSearch);
         Assert.False(options.DisableTodoProvider);
         Assert.False(options.DisableAgentModeProvider);
@@ -42,6 +41,7 @@ public class HarnessAgentOptionsTests
         Assert.Null(options.MaximumIterationsPerRequest);
         Assert.Null(options.FileMemoryStore);
         Assert.Null(options.FileAccessStore);
+        Assert.Null(options.FileAccessProviderOptions);
         Assert.Null(options.AgentModeProviderOptions);
         Assert.Null(options.AgentSkillsSource);
         Assert.Null(options.BackgroundAgents);
@@ -63,6 +63,7 @@ public class HarnessAgentOptionsTests
         var contextProviders = new AIContextProvider[] { new TodoProvider() };
         var fileMemoryStore = new Mock<AgentFileStore>().Object;
         var fileAccessStore = new Mock<AgentFileStore>().Object;
+        var fileAccessOptions = new FileAccessProviderOptions();
         var agentModeOptions = new AgentModeProviderOptions();
         var skillsSource = new Mock<AgentSkillsSource>().Object;
         var backgroundAgents = new AIAgent[] { new Mock<AIAgent>().Object };
@@ -86,11 +87,11 @@ public class HarnessAgentOptionsTests
             AIContextProviders = contextProviders,
             MaximumIterationsPerRequest = 42,
             DisableToolAutoApproval = true,
-            DisableNonApprovalRequiredFunctionBypassing = true,
+            DisableApprovalNotRequiredFunctionBypassing = true,
             DisableFileMemory = true,
             FileMemoryStore = fileMemoryStore,
-            DisableFileAccess = true,
             FileAccessStore = fileAccessStore,
+            FileAccessProviderOptions = fileAccessOptions,
             DisableWebSearch = true,
             DisableTodoProvider = true,
             DisableAgentModeProvider = true,
@@ -121,11 +122,11 @@ public class HarnessAgentOptionsTests
         Assert.Same(contextProviders, options.AIContextProviders);
         Assert.Equal(42, options.MaximumIterationsPerRequest);
         Assert.True(options.DisableToolAutoApproval);
-        Assert.True(options.DisableNonApprovalRequiredFunctionBypassing);
+        Assert.True(options.DisableApprovalNotRequiredFunctionBypassing);
         Assert.True(options.DisableFileMemory);
         Assert.Same(fileMemoryStore, options.FileMemoryStore);
-        Assert.True(options.DisableFileAccess);
         Assert.Same(fileAccessStore, options.FileAccessStore);
+        Assert.Same(fileAccessOptions, options.FileAccessProviderOptions);
         Assert.True(options.DisableWebSearch);
         Assert.True(options.DisableTodoProvider);
         Assert.True(options.DisableAgentModeProvider);

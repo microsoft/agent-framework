@@ -11,7 +11,6 @@ from agent_framework import (
     Agent,
     AgentModeProvider,
     AgentSession,
-    ExperimentalFeature,
     Message,
     SupportsChatGetResponse,
     get_agent_mode,
@@ -61,22 +60,62 @@ def test_agent_mode_helpers_reject_non_dict_provider_state() -> None:
     assert session.state[DEFAULT_MODE_SOURCE_ID] == "unrelated state"
 
 
-def test_agent_mode_context_provider_validates_configuration_and_is_experimental() -> None:
-    """Mode provider should validate configuration and expose HARNESS experimental metadata."""
+def test_agent_mode_context_provider_validates_configuration() -> None:
+    """Mode provider should validate configuration; graduated types carry no experimental metadata."""
     with pytest.raises(ValueError, match="at least one mode"):
-        AgentModeProvider(mode_descriptions={})
+        AgentModeProvider(mode_instructions={})
 
     with pytest.raises(ValueError, match="Invalid mode"):
         AgentModeProvider(default_mode="ship")
 
-    assert AgentModeProvider.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert get_agent_mode.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert set_agent_mode.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert ".. warning:: Experimental" in AgentModeProvider.__doc__  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
-    assert get_agent_mode.__doc__ is not None
-    assert ".. warning:: Experimental" in get_agent_mode.__doc__
-    assert set_agent_mode.__doc__ is not None
-    assert ".. warning:: Experimental" in set_agent_mode.__doc__
+    for graduated in (AgentModeProvider, get_agent_mode, set_agent_mode):
+        assert not hasattr(graduated, "__feature_id__")
+    assert AgentModeProvider.__doc__ is not None
+    assert ".. warning:: Experimental" not in AgentModeProvider.__doc__
+
+
+async def test_external_read_with_provider_config_preserves_nondefault_mode(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A pre-run external mode read must honor the provider's configured default, not the built-in one.
+
+    Regression test for the harness console bug where ``configure_run_options`` read the mode with a
+    bare ``get_agent_mode(session)`` before the agent ran. Because ``get_agent_mode`` persists the
+    resolved default into session state, the built-in ``plan`` default was stored and the provider —
+    configured with ``default_mode="execute"`` — then read back ``plan``, so the agent ran in plan
+    mode while the console showed execute. Threading the provider's configuration into the read keeps
+    the two in sync.
+    """
+    provider = AgentModeProvider(default_mode="execute")
+
+    # A bare read (the original buggy call) would resolve and persist the built-in ``plan`` default,
+    # which does not match the provider's configured ``execute`` default.
+    poisoned_session = AgentSession(session_id="poisoned")
+    assert get_agent_mode(poisoned_session) == "plan"
+    agent = Agent(client=chat_client_base, context_providers=[provider])
+    _, poisoned_options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=poisoned_session,
+        input_messages=[Message(role="user", contents=["Go"])],
+    )
+    assert "You are currently operating in the plan mode." in poisoned_options["instructions"]
+
+    # Reading with the provider's own configuration resolves and persists ``execute``, so the
+    # provider injects execute-mode instructions on the run.
+    session = AgentSession(session_id="configured")
+    assert (
+        get_agent_mode(
+            session,
+            source_id=provider.source_id,
+            default_mode=provider.default_mode,
+            available_modes=provider.available_modes,
+        )
+        == "execute"
+    )
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Go"])],
+    )
+    assert "You are currently operating in the execute mode." in options["instructions"]
 
 
 async def test_agent_mode_context_provider_normalizes_custom_modes(
@@ -85,7 +124,7 @@ async def test_agent_mode_context_provider_normalizes_custom_modes(
     """Mode provider should accept differently-cased custom modes and display configured names."""
     session = AgentSession(session_id="session-1")
     provider = AgentModeProvider(
-        default_mode="Draft", mode_descriptions={"Draft": "Draft it.", "Final": "Finalize it."}
+        default_mode="Draft", mode_instructions={"Draft": "Draft it.", "Final": "Finalize it."}
     )
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
@@ -118,7 +157,7 @@ async def test_agent_mode_context_provider_serializes_tool_outputs_as_json(
     """Mode tools should serialize JSON correctly for mode names with quotes."""
     session = AgentSession(session_id="session-1")
     mode_name = 'edit "preview"'
-    provider = AgentModeProvider(default_mode=mode_name, mode_descriptions={mode_name: "Preview edits."})
+    provider = AgentModeProvider(default_mode=mode_name, mode_instructions={mode_name: "Preview edits."})
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
     _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
@@ -177,7 +216,7 @@ def test_default_mode_falls_back_to_first_available_mode() -> None:
 
     assert get_agent_mode(session, available_modes=("draft", "final")) == "draft"
 
-    provider = AgentModeProvider(mode_descriptions={"Draft": "Draft it.", "Final": "Finalize it."})
+    provider = AgentModeProvider(mode_instructions={"Draft": "Draft it.", "Final": "Finalize it."})
     assert provider.default_mode == "draft"
 
 

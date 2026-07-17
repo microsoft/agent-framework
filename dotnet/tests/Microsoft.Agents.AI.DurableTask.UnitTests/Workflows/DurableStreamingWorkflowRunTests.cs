@@ -374,6 +374,55 @@ public sealed class DurableStreamingWorkflowRunTests
     }
 
     [Fact]
+    public async Task WatchStreamAsync_EventTypeNameHasMutatedAssemblyVersion_StillDeserializesAsync()
+    {
+        // Arrange — model what happens after a package upgrade: the persisted TypedPayload.TypeName
+        // carries an assembly Version= that no longer matches any loaded assembly.
+        DurableHaltRequestedEvent haltEvent = new("exec-1");
+        Type eventType = haltEvent.GetType();
+        string outerSimpleName = eventType.Assembly.GetName().Name!;
+        string mutatedTypeName = $"{eventType.FullName}, {outerSimpleName}, Version=99.0.0.0, Culture=neutral, PublicKeyToken=null";
+        TypedPayload wrapper = new()
+        {
+            TypeName = mutatedTypeName,
+            Data = JsonSerializer.Serialize(haltEvent, eventType, DurableSerialization.Options)
+        };
+        string serializedEvent = JsonSerializer.Serialize(wrapper, DurableWorkflowJsonContext.Default.TypedPayload);
+        string customStatus = SerializeCustomStatus([serializedEvent]);
+        string serializedOutput = SerializeWorkflowResult("final", []);
+
+        int callCount = 0;
+        Mock<DurableTaskClient> mockClient = new("test");
+        mockClient.Setup(c => c.GetInstanceAsync(InstanceId, true, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    return CreateMetadata(OrchestrationRuntimeStatus.Running, serializedCustomStatus: customStatus);
+                }
+
+                return CreateMetadata(OrchestrationRuntimeStatus.Completed, serializedOutput: serializedOutput);
+            });
+
+        DurableStreamingWorkflowRun run = new(mockClient.Object, InstanceId, CreateTestWorkflow());
+
+        // Act
+        List<WorkflowEvent> events = [];
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Equal(2, events.Count);
+        DurableHaltRequestedEvent haltResult = Assert.IsType<DurableHaltRequestedEvent>(events[0]);
+        Assert.Equal("exec-1", haltResult.ExecutorId);
+        DurableWorkflowCompletedEvent completedResult = Assert.IsType<DurableWorkflowCompletedEvent>(events[1]);
+        Assert.Equal("final", completedResult.Result);
+    }
+
+    [Fact]
     public async Task WatchStreamAsync_IncrementalEvents_YieldsOnlyNewEventsPerPollAsync()
     {
         // Arrange — simulate 3 poll cycles where events accumulate in custom status,

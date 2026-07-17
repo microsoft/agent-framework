@@ -21,8 +21,15 @@ from ._callbacks import AgentResponseCallbackProtocol
 from ._entities import AgentEntity, DurableTaskEntityStateProvider
 from ._workflows.activity import execute_workflow_activity
 from ._workflows.dt_context import DurableTaskWorkflowContext
-from ._workflows.orchestrator import WORKFLOW_ORCHESTRATOR_NAME, run_workflow_orchestrator
-from ._workflows.registration import plan_workflow_registration
+from ._workflows.naming import (
+    validate_executor_id,
+    validate_workflow_name,
+    workflow_executor_activity_name,
+    workflow_orchestrator_name,
+    workflow_scoped_executor_id,
+)
+from ._workflows.orchestrator import run_workflow_orchestrator
+from ._workflows.registration import collect_hosted_workflows, plan_workflow_registration
 
 logger = logging.getLogger("agent_framework.durabletask")
 
@@ -81,7 +88,12 @@ class DurableAIAgentWorker:
         self._worker = worker
         self._callback = callback
         self._registered_agents: dict[str, SupportsAgentRun] = {}
-        self._workflow: Workflow | None = None
+        self._workflows: dict[str, Workflow] = {}
+        # Every workflow whose orchestration has been registered (top-level plus nested
+        # sub-workflows), keyed by case-folded name -> the registered instance, so a
+        # sub-workflow shared across the tree is registered once while two different
+        # workflows whose names collide (including case-only differences) are rejected.
+        self._registered_orchestrations: dict[str, Workflow] = {}
         logger.debug("[DurableAIAgentWorker] Initialized with worker type: %s", type(worker).__name__)
 
     def add_agent(
@@ -165,6 +177,16 @@ class DurableAIAgentWorker:
         """
         return list(self._registered_agents.keys())
 
+    @property
+    def registered_workflow_names(self) -> list[str]:
+        """Get the names of all workflows configured on this worker.
+
+        Returns:
+            List of workflow names (the identities used to derive each workflow's
+            ``dafx-{name}`` orchestration).
+        """
+        return list(self._workflows.keys())
+
     # -----------------------------------------------------------------
     # Workflow support
     # -----------------------------------------------------------------
@@ -180,43 +202,122 @@ class DurableAIAgentWorker:
         entities, registers non-agent executors as activities, and creates an
         orchestrator function that drives the workflow graph.
 
-        Args:
-            workflow: The MAF :class:`Workflow` to register.
-            callback: Optional callback for agent response notifications.
-        """
-        self._workflow = workflow
+        Multiple workflows can be hosted on one worker: call this method once per
+        workflow. Each workflow is keyed by its :attr:`Workflow.name`, and its
+        durable primitives are scoped by that name (orchestration
+        ``dafx-{name}``; activities/entities ``dafx-{name}-{executorId}``) so two
+        co-hosted workflows that reuse an executor id do not collide.
 
-        # The "what to register" decision (agent -> entity, non-agent -> activity)
-        # is shared with the Azure Functions host via plan_workflow_registration.
+        Sub-workflows nest: if the workflow contains
+        :class:`~agent_framework.WorkflowExecutor` nodes, each inner workflow's
+        orchestration/agents/activities are registered too (deduped by name) so the
+        parent can drive them as durable child orchestrations.
+
+        Args:
+            workflow: The MAF :class:`Workflow` to register. Must have an explicit,
+                stable :attr:`Workflow.name` (an auto-generated
+                ``WorkflowBuilder-<uuid>`` name is rejected because it is not stable
+                across restarts and would break durable resume). Every nested
+                sub-workflow must likewise be named.
+            callback: Optional callback for agent response notifications.
+
+        Raises:
+            ValueError: If the workflow (or a nested sub-workflow) name is missing,
+                invalid, or auto-generated, or if the top-level workflow name is
+                already registered on this worker.
+        """
+        workflow_name = workflow.name
+        validate_workflow_name(workflow_name)
+        if any(name.casefold() == workflow_name.casefold() for name in self._workflows):
+            raise ValueError(
+                f"Workflow '{workflow_name}' is already registered on this worker "
+                "(workflow names are compared case-insensitively)."
+            )
+
+        # Validate the whole composition (top-level plus every nested sub-workflow)
+        # up front, so an invalid/auto-generated nested name (or an executor id that
+        # would break durable naming / nested-HITL addressing) fails before any
+        # registration side effects leave the worker partially configured.
+        hosted_workflows = list(collect_hosted_workflows(workflow))
+        for hosted in hosted_workflows:
+            validate_workflow_name(hosted.name)
+            for executor_id in hosted.executors:
+                validate_executor_id(executor_id)
+
+        # Check every cross-call collision *before* mutating any state, so a clash
+        # between a nested sub-workflow and an already-registered orchestration cannot
+        # leave the worker partially configured (e.g. the top-level name added to
+        # ``_workflows`` while a later child fails). Registration below is then a pure
+        # commit step.
+        for hosted in hosted_workflows:
+            existing = self._registered_orchestrations.get(hosted.name.casefold())
+            if existing is not None and existing is not hosted:
+                raise ValueError(
+                    f"A different workflow named '{hosted.name}' collides with already-registered "
+                    f"'{existing.name}' on this worker. A workflow name maps to a single durable "
+                    f"orchestration ('dafx-{hosted.name}'), compared case-insensitively; rename one "
+                    "of them."
+                )
+
+        self._workflows[workflow_name] = workflow
+
+        # Commit: register the top-level workflow and every nested sub-workflow (deduped
+        # by name), so the parent can drive sub-workflows as durable child orchestrations.
+        for hosted in hosted_workflows:
+            if hosted.name.casefold() in self._registered_orchestrations:
+                continue
+            self._register_single_workflow(hosted, callback)
+
+    def _register_single_workflow(
+        self,
+        workflow: Workflow,
+        callback: AgentResponseCallbackProtocol | None,
+    ) -> None:
+        """Register one workflow's durable primitives (no recursion into sub-workflows).
+
+        The "what to register" decision (agent -> entity, non-agent -> activity,
+        sub-workflow -> child orchestration) is shared with the Azure Functions host
+        via ``plan_workflow_registration``.
+        """
+        validate_workflow_name(workflow.name)
+        self._registered_orchestrations[workflow.name.casefold()] = workflow
         plan = plan_workflow_registration(workflow)
 
-        # Register agent executors as durable entities. Each entity is keyed by
-        # the executor's id (the identity the orchestrator dispatches to) so
-        # AgentExecutor(agent, id=...) works even when the id differs from the
-        # agent's name.
+        # Register agent executors as durable entities, scoped by workflow name so
+        # two workflows that reuse an executor id register distinct entities. The
+        # entity is keyed by the scoped identity (the same identity the orchestrator
+        # dispatches to); the entity *key* at run time is the orchestration instance
+        # id, which keeps conversation state isolated per run.
         for agent_executor in plan.agent_executors:
-            if agent_executor.id not in self._registered_agents:
-                self.add_agent(agent_executor.agent, callback=callback, entity_id=agent_executor.id)
+            scoped_id = workflow_scoped_executor_id(workflow.name, agent_executor.id)
+            if scoped_id not in self._registered_agents:
+                self.add_agent(agent_executor.agent, callback=callback, entity_id=scoped_id)
 
-        # Register non-agent executors as durable activities.
+        # Register non-agent executors as durable activities, scoped by workflow name.
+        # WorkflowExecutor nodes are intentionally not registered as activities: their
+        # inner workflows are registered separately (above, via collect_hosted_workflows)
+        # and driven as child orchestrations.
         for executor in plan.activity_executors:
-            self._register_executor_activity(executor)
+            self._register_executor_activity(workflow, executor)
 
-        # Register the workflow orchestrator.
-        self._register_workflow_orchestrator()
+        # Register this workflow's orchestrator under its per-workflow name.
+        self._register_workflow_orchestrator(workflow)
 
         logger.info(
-            "[DurableAIAgentWorker] Workflow configured with %d executors (%d agents, %d activities)",
+            "[DurableAIAgentWorker] Workflow '%s' configured with %d executors "
+            "(%d agents, %d activities, %d sub-workflows)",
+            workflow.name,
             len(workflow.executors),
             len(plan.agent_executors),
             len(plan.activity_executors),
+            len(plan.subworkflow_executors),
         )
 
-    def _register_executor_activity(self, executor: Any) -> None:
-        """Register a non-agent executor as a durabletask activity."""
+    def _register_executor_activity(self, workflow: Workflow, executor: Any) -> None:
+        """Register a non-agent executor as a durabletask activity (workflow-scoped)."""
         captured_executor = executor
-        captured_workflow = self._workflow
-        activity_name = f"dafx-{executor.id}"
+        captured_workflow = workflow
+        activity_name = workflow_executor_activity_name(workflow.name, executor.id)
 
         def executor_activity(ctx: ActivityContext, input_data: str) -> str:
             return execute_workflow_activity(captured_executor, input_data, captured_workflow)
@@ -228,14 +329,12 @@ class DurableAIAgentWorker:
         self._worker.add_activity(executor_activity)
         logger.debug("[DurableAIAgentWorker] Registered activity: %s", activity_name)
 
-    def _register_workflow_orchestrator(self) -> None:
-        """Register the workflow orchestrator function with the worker."""
-        captured_workflow = self._workflow
+    def _register_workflow_orchestrator(self, workflow: Workflow) -> None:
+        """Register a workflow's orchestrator function under its per-workflow name."""
+        captured_workflow = workflow
+        orchestrator_name = workflow_orchestrator_name(workflow.name)
 
         def workflow_orchestrator(context: OrchestrationContext, input_data: Any) -> Any:
-            if captured_workflow is None:
-                raise RuntimeError("Workflow not configured")
-
             # Pass the deserialized client input straight to the shared engine, which
             # reconstructs the start executor's declared type (see _coerce_initial_input).
             initial_message = input_data
@@ -245,11 +344,11 @@ class DurableAIAgentWorker:
             outputs = yield from run_workflow_orchestrator(dt_ctx, captured_workflow, initial_message, shared_state)
             return outputs  # noqa: B901
 
-        workflow_orchestrator.__name__ = WORKFLOW_ORCHESTRATOR_NAME
-        workflow_orchestrator.__qualname__ = WORKFLOW_ORCHESTRATOR_NAME
+        workflow_orchestrator.__name__ = orchestrator_name
+        workflow_orchestrator.__qualname__ = orchestrator_name
 
         self._worker.add_orchestrator(workflow_orchestrator)
-        logger.debug("[DurableAIAgentWorker] Registered workflow orchestrator")
+        logger.debug("[DurableAIAgentWorker] Registered workflow orchestrator: %s", orchestrator_name)
 
     def __create_agent_entity(
         self,

@@ -139,7 +139,7 @@ public class TodoCompletionLoopEvaluatorTests
         var todoProvider = new TodoProvider();
         var modeProvider = new AgentModeProvider();
         var session = new ChatClientAgentSession();
-        modeProvider.SetMode(session, "execute");
+        await modeProvider.SetModeAsync(session, "execute");
         SeedTodos(session, (1, "Work item", null, false));
         AIAgent agent = CreateAgent(todoProvider, modeProvider);
         var evaluator = new TodoCompletionLoopEvaluator(new TodoCompletionLoopEvaluatorOptions { Modes = ["execute"] });
@@ -163,7 +163,7 @@ public class TodoCompletionLoopEvaluatorTests
         var todoProvider = new TodoProvider();
         var modeProvider = new AgentModeProvider();
         var session = new ChatClientAgentSession();
-        modeProvider.SetMode(session, "execute");
+        await modeProvider.SetModeAsync(session, "execute");
         SeedTodos(session, (1, "Already done", null, true));
         AIAgent agent = CreateAgent(todoProvider, modeProvider);
         var evaluator = new TodoCompletionLoopEvaluator(new TodoCompletionLoopEvaluatorOptions { Modes = ["execute"] });
@@ -187,7 +187,7 @@ public class TodoCompletionLoopEvaluatorTests
         var todoProvider = new TodoProvider();
         var modeProvider = new AgentModeProvider();
         var session = new ChatClientAgentSession();
-        modeProvider.SetMode(session, "plan");
+        await modeProvider.SetModeAsync(session, "plan");
         SeedTodos(session, (1, "Still open", null, false));
         AIAgent agent = CreateAgent(todoProvider, modeProvider);
         var evaluator = new TodoCompletionLoopEvaluator(new TodoCompletionLoopEvaluatorOptions { Modes = ["execute"] });

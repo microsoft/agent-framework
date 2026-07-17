@@ -2,13 +2,11 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -25,7 +23,6 @@ namespace Microsoft.Agents.AI;
 /// resources and scripts before registering the skill with an
 /// <see cref="AgentSkillsProvider"/> or <see cref="AgentSkillsProviderBuilder"/>.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentInlineSkill : AgentSkill
 {
     private readonly string _instructions;

@@ -227,6 +227,16 @@ def test_raw_openai_chat_client_accepts_preconfigured_client_with_timeout() -> N
     assert client is not None
 
 
+def test_agent_accepts_openai_chat_clients() -> None:
+    raw_client = RawOpenAIChatClient(api_key="test-api-key", model="test-model")
+    raw_agent = Agent(client=raw_client, instructions="test agent")
+    assert raw_agent.client is raw_client
+
+    client = OpenAIChatClient(api_key="test-api-key", model="test-model")
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
+
+
 def test_openai_chat_client_supports_all_tool_protocols() -> None:
     assert isinstance(OpenAIChatClient, SupportsCodeInterpreterTool)  # pyrefly: ignore[unsafe-overlap]
     assert isinstance(OpenAIChatClient, SupportsWebSearchTool)  # pyrefly: ignore[unsafe-overlap]
@@ -1248,8 +1258,8 @@ def test_response_content_creation_with_code_interpreter() -> None:
 def test_get_shell_tool_basic() -> None:
     """Test get_shell_tool returns hosted shell config with default auto environment."""
     tool = OpenAIChatClient.get_shell_tool()
-    assert tool.type == "shell"
-    assert tool.environment.type == "container_auto"
+    assert tool["type"] == "shell"
+    assert tool["environment"]["type"] == "container_auto"
 
 
 def test_get_shell_tool_rejects_local_without_func() -> None:
@@ -1286,8 +1296,34 @@ def test_get_shell_tool_local_executor_maps_to_shell_tool() -> None:
     assert isinstance(local_shell_tool, FunctionTool)
     response_tools = client._prepare_tools_for_openai([local_shell_tool])
     assert len(response_tools) == 1
-    assert response_tools[0].type == "shell"
-    assert response_tools[0].environment.type == "local"
+    assert response_tools[0]["type"] == "shell"
+    assert response_tools[0]["environment"]["type"] == "local"
+
+
+def test_prepared_local_shell_tool_survives_make_tools() -> None:
+    """Regression: the prepared shell tool must be a subscriptable dict.
+
+    The OpenAI SDK's ``_make_tools`` helper (used by the structured-output /
+    ``responses.parse``/``responses.stream`` path) indexes each tool with
+    ``tool["type"]``. A pydantic model is not subscriptable and previously
+    raised ``TypeError: 'FunctionShellTool' object is not subscriptable``.
+    """
+    from openai.resources.responses.responses import _make_tools
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIChatClient.get_shell_tool(
+        func=local_exec,
+        approval_mode="never_require",
+    )
+    response_tools = client._prepare_tools_for_openai([local_shell_tool])
+
+    # Must not raise TypeError (the bug); shell tool flows through unchanged.
+    made = cast("list[dict[str, Any]]", _make_tools(response_tools))  # type: ignore[arg-type]
+    assert {"type": "shell", "environment": {"type": "local"}} in made
 
 
 def test_get_shell_tool_reuses_function_tool_instance() -> None:
@@ -1739,6 +1775,74 @@ def test_response_content_creation_with_function_call() -> None:
     assert function_call.call_id == "call_123"
     assert function_call.name == "get_weather"
     assert function_call.arguments == '{"location": "Seattle"}'
+    assert function_call.informational_only is False
+
+
+def test_parse_response_from_openai_with_custom_tool_call_is_informational_only() -> None:
+    """Custom tool calls are hosted Responses items, not local Agent Framework function calls."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+
+    mock_custom_call_item = MagicMock()
+    mock_custom_call_item.type = "custom_tool_call"
+    mock_custom_call_item.id = "ctc_456"
+    mock_custom_call_item.call_id = "call_123"
+    mock_custom_call_item.name = "code_exec"
+    mock_custom_call_item.input = "print('hello')"
+    mock_custom_call_item.namespace = None
+
+    mock_response.output = [mock_custom_call_item]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages[0].contents) == 1
+    function_call = response.messages[0].contents[0]
+    assert function_call.type == "function_call"
+    assert function_call.call_id == "call_123"
+    assert function_call.name == "code_exec"
+    assert function_call.arguments == "print('hello')"
+    assert function_call.informational_only is True
+
+
+def test_parse_response_from_openai_with_tool_search_call_is_informational_only() -> None:
+    """Hosted tool-search calls are transcript items and must not be invoked locally."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+
+    mock_tool_search_item = MagicMock()
+    mock_tool_search_item.type = "tool_search_call"
+    mock_tool_search_item.id = "ts_456"
+    mock_tool_search_item.call_id = "call_123"
+    mock_tool_search_item.arguments = {"query": "weather tools"}
+    mock_tool_search_item.status = "completed"
+    mock_tool_search_item.execution = "server"
+    mock_tool_search_item.created_by = None
+
+    mock_response.output = [mock_tool_search_item]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages[0].contents) == 1
+    function_call = response.messages[0].contents[0]
+    assert function_call.type == "function_call"
+    assert function_call.call_id == "call_123"
+    assert function_call.name == "tool_search"
+    assert function_call.arguments == {"query": "weather tools"}
+    assert function_call.informational_only is True
 
 
 def test_parse_response_from_openai_with_web_search_call() -> None:
@@ -1998,6 +2102,67 @@ def test_parse_chunk_from_openai_with_web_search_call_added() -> None:
     assert content.arguments == {"type": "search", "query": "weather in Seattle"}
 
 
+def test_parse_chunk_from_openai_function_call_is_actionable() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    added_event = MagicMock()
+    added_event.type = "response.output_item.added"
+    added_event.output_index = 0
+    added_item = MagicMock()
+    added_item.type = "function_call"
+    added_item.call_id = "call_123"
+    added_item.name = "get_weather"
+    added_event.item = added_item
+
+    delta_event = MagicMock()
+    delta_event.type = "response.function_call_arguments.delta"
+    delta_event.output_index = 0
+    delta_event.delta = '{"location": "Seattle"}'
+    delta_event.item_id = "fc_456"
+
+    client._parse_chunk_from_openai(
+        added_event,
+        options=chat_options,
+        function_call_ids=function_call_ids,
+    )
+    update = client._parse_chunk_from_openai(
+        delta_event,
+        options=chat_options,
+        function_call_ids=function_call_ids,
+    )
+
+    assert len(update.contents) == 1
+    assert update.contents[0].type == "function_call"
+    assert update.contents[0].informational_only is False
+
+
+def test_parse_chunk_from_openai_custom_tool_call_done_is_informational_only() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+
+    mock_item = MagicMock()
+    mock_item.type = "custom_tool_call"
+    mock_item.id = "ctc_456"
+    mock_item.call_id = "call_123"
+    mock_item.name = "code_exec"
+    mock_item.input = "print('hello')"
+    mock_item.namespace = None
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options=chat_options, function_call_ids=function_call_ids)
+
+    assert len(update.contents) == 1
+    assert update.contents[0].type == "function_call"
+    assert update.contents[0].name == "code_exec"
+    assert update.contents[0].informational_only is True
+
+
 def test_parse_chunk_from_openai_with_file_search_call_done() -> None:
     """Test that response.output_item.done for file_search_call emits search tool result content."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -2023,6 +2188,190 @@ def test_parse_chunk_from_openai_with_file_search_call_done() -> None:
     assert content.tool_name == "file_search"
     assert content.status == "completed"
     assert content.result == {"results": [{"file_id": "file_1", "text": "Seattle was cloudy."}]}
+
+
+def test_parse_chunk_from_openai_shell_call_added_defers_command() -> None:
+    """An in-progress shell_call on output_item.added has no command yet, so it must emit nothing.
+
+    The command is only populated on the completed item (output_item.done); there are no
+    shell-specific streaming delta events. Emitting from the .added skeleton would surface an
+    empty command (see issue: run_shell tool call with empty `command` in the streaming console).
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIChatClient.get_shell_tool(func=local_exec, approval_mode="never_require")
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_action = MagicMock()
+    mock_action.commands = []  # empty on the in-progress skeleton
+    mock_action.timeout_ms = None
+    mock_action.max_output_length = None
+
+    mock_item = MagicMock()
+    mock_item.type = "shell_call"
+    mock_item.id = "sh_1"
+    mock_item.call_id = "shell-call-1"
+    mock_item.action = mock_action
+    mock_item.status = "in_progress"
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.output_index = 0
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(
+        mock_event, options={"tools": [local_shell_tool]}, function_call_ids=function_call_ids
+    )
+
+    assert update.contents == []
+
+
+def test_parse_chunk_from_openai_shell_call_done_emits_command() -> None:
+    """A completed shell_call on output_item.done must emit a function call with the real command."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIChatClient.get_shell_tool(func=local_exec, approval_mode="never_require")
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_action = MagicMock()
+    mock_action.commands = ["ls -la"]
+    mock_action.timeout_ms = 30000
+    mock_action.max_output_length = 4096
+
+    mock_item = MagicMock()
+    mock_item.type = "shell_call"
+    mock_item.id = "sh_1"
+    mock_item.call_id = "shell-call-1"
+    mock_item.action = mock_action
+    mock_item.status = "completed"
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(
+        mock_event, options={"tools": [local_shell_tool]}, function_call_ids=function_call_ids
+    )
+
+    assert len(update.contents) == 1
+    call_content = update.contents[0]
+    assert call_content.type == "function_call"
+    assert call_content.call_id == "shell-call-1"
+    assert call_content.name == local_shell_tool.name
+    assert call_content.parse_arguments() == {"command": "ls -la"}
+
+
+def test_parse_chunk_from_openai_local_shell_call_done_emits_command() -> None:
+    """A completed local_shell_call on output_item.done emits a function call with the command.
+
+    Mirrors the non-streaming local_shell_call mapping: the joined command and the
+    local-shell metadata (item id) must be present on the completed item.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIChatClient.get_shell_tool(func=local_exec, approval_mode="never_require")
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_action = MagicMock()
+    mock_action.command = ["python", "--version"]
+    mock_action.timeout_ms = 30000
+
+    mock_item = MagicMock()
+    mock_item.type = "local_shell_call"
+    mock_item.id = "local-shell-item-1"
+    mock_item.call_id = "local-shell-call-1"
+    mock_item.action = mock_action
+    mock_item.status = "completed"
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(
+        mock_event, options={"tools": [local_shell_tool]}, function_call_ids=function_call_ids
+    )
+
+    assert len(update.contents) == 1
+    call_content = update.contents[0]
+    assert call_content.type == "function_call"
+    assert call_content.call_id == "local-shell-call-1"
+    assert call_content.name == local_shell_tool.name
+    assert call_content.parse_arguments() == {"command": "python --version"}
+    assert call_content.additional_properties[OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY] == "local-shell-item-1"
+
+
+def test_parse_chunk_from_openai_shell_call_output_added_defers_result() -> None:
+    """An in-progress shell_call_output on output_item.added must emit nothing.
+
+    The hosted ``shell_call_output`` item is incremental (it carries a ``status`` field);
+    its stdout/stderr/outcome are only populated on the completed item. Parsing the
+    ``.added`` skeleton would surface an empty result.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_item = MagicMock()
+    mock_item.type = "shell_call_output"
+    mock_item.call_id = "shell-call-1"
+    mock_item.output = []  # empty on the in-progress skeleton
+    mock_item.max_output_length = None
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.output_index = 0
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids=function_call_ids)
+
+    assert update.contents == []
+
+
+def test_parse_chunk_from_openai_shell_call_output_done_emits_result() -> None:
+    """A completed shell_call_output on output_item.done emits a shell tool result with stdout/exit."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_outcome = MagicMock()
+    mock_outcome.type = "exit"
+    mock_outcome.exit_code = 0
+
+    mock_output_entry = MagicMock()
+    mock_output_entry.stdout = "hello world\n"
+    mock_output_entry.stderr = ""
+    mock_output_entry.outcome = mock_outcome
+
+    mock_item = MagicMock()
+    mock_item.type = "shell_call_output"
+    mock_item.call_id = "shell-call-1"
+    mock_item.output = [mock_output_entry]
+    mock_item.max_output_length = 4096
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids=function_call_ids)
+
+    assert len(update.contents) == 1
+    result_content = update.contents[0]
+    assert result_content.type == "shell_tool_result"
+    assert result_content.call_id == "shell-call-1"
+    assert result_content.outputs is not None
+    assert len(result_content.outputs) == 1
+    assert result_content.outputs[0].type == "shell_command_output"
+    assert result_content.outputs[0].stdout == "hello world\n"
+    assert result_content.outputs[0].exit_code == 0
+    assert result_content.outputs[0].timed_out is False
+    assert result_content.max_output_length == 4096
 
 
 @pytest.mark.parametrize(
@@ -5834,6 +6183,90 @@ async def test_prepare_options_auto_without_allowed_tools() -> None:
     assert run_options["tool_choice"] == "auto"
 
 
+async def test_prepare_options_allowed_tools_required() -> None:
+    """Test that _prepare_options converts allowed_tools with required mode to OpenAI API format."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    @tool
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f"Sunny in {city}"
+
+    @tool
+    def search_docs(query: str) -> str:
+        """Search documentation."""
+        return f"Results for {query}"
+
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+    options: dict[str, Any] = {
+        "model": "test-model",
+        "tools": [get_weather, search_docs],
+        "tool_choice": {"mode": "required", "allowed_tools": ["search_docs"]},
+    }
+
+    run_options = await client._prepare_options(messages, options)
+
+    assert run_options["tool_choice"] == {
+        "type": "allowed_tools",
+        "mode": "required",
+        "tools": [{"type": "function", "name": "search_docs"}],
+    }
+
+
+async def test_prepare_options_allowed_tools_required_multiple() -> None:
+    """Test that _prepare_options converts multiple allowed_tools with required mode correctly."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    @tool
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f"Sunny in {city}"
+
+    @tool
+    def search_docs(query: str) -> str:
+        """Search documentation."""
+        return f"Results for {query}"
+
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+    options: dict[str, Any] = {
+        "model": "test-model",
+        "tools": [get_weather, search_docs],
+        "tool_choice": {"mode": "required", "allowed_tools": ["get_weather", "search_docs"]},
+    }
+
+    run_options = await client._prepare_options(messages, options)
+
+    assert run_options["tool_choice"] == {
+        "type": "allowed_tools",
+        "mode": "required",
+        "tools": [
+            {"type": "function", "name": "get_weather"},
+            {"type": "function", "name": "search_docs"},
+        ],
+    }
+
+
+async def test_prepare_options_required_without_allowed_tools() -> None:
+    """Test that required mode without allowed_tools still returns plain 'required' string."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    @tool
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f"Sunny in {city}"
+
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+    options: dict[str, Any] = {
+        "model": "test-model",
+        "tools": [get_weather],
+        "tool_choice": {"mode": "required"},
+    }
+
+    run_options = await client._prepare_options(messages, options)
+
+    assert run_options["tool_choice"] == "required"
+
+
 # endregion
 
 
@@ -6223,6 +6656,63 @@ def test_prepare_messages_for_openai_drops_mcp_call_across_reasoning_messages() 
     assert "reasoning" not in types
     assert "mcp_call" not in types
     assert "function_call_output" not in types
+
+
+def test_prepare_messages_for_openai_keeps_unpaired_mcp_when_reasoning_is_stripped() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_keep",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "dogs"}',
+                )
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_mcp_server_tool_result(
+                    call_id="mcp_keep",
+                    output=[Content.from_text(text="found 5 dogs")],
+                )
+            ],
+        ),
+        Message(
+            role="assistant",
+            contents=[Content.from_text_reasoning(id="rs_abc123", text="Need a tool call.")],
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_drop",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "cats"}',
+                )
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_mcp_server_tool_result(
+                    call_id="mcp_drop",
+                    output=[Content.from_text(text="found 10 cats")],
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
+
+    mcp_items = [item for item in result if isinstance(item, dict) and item.get("type") == "mcp_call"]
+    assert [item["id"] for item in mcp_items] == ["mcp_keep"]
+    assert mcp_items[0]["output"] == "found 5 dogs"
 
 
 def test_prepare_messages_for_openai_drops_orphan_mcp_server_tool_result() -> None:

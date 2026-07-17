@@ -13,7 +13,7 @@ from agent_framework import Agent, Content, FunctionTool, Message
 from google.genai import types
 from pydantic import BaseModel
 
-from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, ThinkingConfig
+from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, RawGeminiChatClient, ThinkingConfig
 
 
 def _has_gemini_integration_credentials() -> bool:
@@ -46,6 +46,8 @@ def _make_part(
     text: str | None = None,
     thought: bool = False,
     function_call: tuple[str | None, str, dict[str, Any]] | None = None,
+    tool_call: tuple[str | None, types.ToolType, dict[str, Any]] | None = None,
+    tool_response: tuple[str | None, types.ToolType, dict[str, Any]] | None = None,
     executable_code: str | None = None,
     code_execution_result: str | None = None,
 ) -> MagicMock:
@@ -55,6 +57,8 @@ def _make_part(
         text: Text content of the part.
         thought: Whether this is a thinking/reasoning part.
         function_call: Tuple of (id, name, args) if this is a function call part.
+        tool_call: Tuple of (id, tool_type, args) if this is a server-side tool call part.
+        tool_response: Tuple of (id, tool_type, response) if this is a server-side tool response part.
         executable_code: Source code string for a code execution part.
         code_execution_result: Output string for a code execution result part.
     """
@@ -62,6 +66,8 @@ def _make_part(
     part.text = text
     part.thought = thought
     part.function_response = None
+    part.tool_call = None
+    part.tool_response = None
     part.executable_code = None
     part.code_execution_result = None
 
@@ -71,6 +77,16 @@ def _make_part(
         part.function_call = mock_function_call
     else:
         part.function_call = None
+
+    if tool_call:
+        mock_tool_call = MagicMock()
+        mock_tool_call.id, mock_tool_call.tool_type, mock_tool_call.args = tool_call
+        part.tool_call = mock_tool_call
+
+    if tool_response:
+        mock_tool_response = MagicMock()
+        mock_tool_response.id, mock_tool_response.tool_type, mock_tool_response.response = tool_response
+        part.tool_response = mock_tool_response
 
     if executable_code is not None:
         mock_exec = MagicMock()
@@ -140,6 +156,20 @@ def _make_gemini_client(
     mock._api_client._http_options.base_url = "https://generativelanguage.googleapis.com/"
     client = GeminiChatClient(client=mock, model=model)
     return client, mock
+
+
+def test_agent_accepts_gemini_chat_clients() -> None:
+    mock = MagicMock()
+    mock._api_client.vertexai = False
+    mock._api_client._http_options.base_url = "https://generativelanguage.googleapis.com/"
+
+    raw_client = RawGeminiChatClient(client=mock, model="gemini-2.5-flash")
+    raw_agent = Agent(client=raw_client, instructions="test agent")
+    assert raw_agent.client is raw_client
+
+    client, _ = _make_gemini_client(model="gemini-2.5-flash")
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
 
 
 def _parts(content: types.Content) -> list[types.Part]:
@@ -711,6 +741,239 @@ def test_function_call_part_preserves_thought_signature_from_raw_part() -> None:
     assert parts[0].function_call.args == {"location": "Paris"}
 
 
+def test_server_side_tool_call_part_is_informational_only() -> None:
+    """Server-side Gemini tool calls are transcript content, not local function invocation requests."""
+    client, _ = _make_gemini_client()
+    raw_part = types.Part(
+        tool_call=types.ToolCall(id="search-1", tool_type=types.ToolType.FILE_SEARCH, args={"query": "docs"})
+    )
+
+    contents = client._parse_parts([raw_part])
+
+    assert len(contents) == 1
+    assert contents[0].type == "function_call"
+    assert contents[0].call_id == "search-1"
+    assert contents[0].name == "FILE_SEARCH"
+    assert contents[0].parse_arguments() == {"query": "docs"}
+    assert contents[0].informational_only is True
+
+
+def test_server_side_tool_call_part_preserves_raw_part_on_replay() -> None:
+    """Informational server-side calls must round-trip as Gemini tool_call parts, not function_call parts."""
+    client, _ = _make_gemini_client()
+    raw_part = types.Part(
+        tool_call=types.ToolCall(id="search-1", tool_type=types.ToolType.FILE_SEARCH, args={"query": "docs"})
+    )
+    content = Content.from_function_call(
+        call_id="search-1",
+        name="FILE_SEARCH",
+        arguments={"query": "docs"},
+        informational_only=True,
+        raw_representation=raw_part,
+    )
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].tool_call is not None
+    assert parts[0].function_call is None
+    assert parts[0].tool_call.id == "search-1"
+    assert parts[0].tool_call.tool_type == types.ToolType.FILE_SEARCH
+    assert parts[0].tool_call.args == {"query": "docs"}
+
+
+def test_server_side_tool_response_part_preserves_raw_part_on_replay() -> None:
+    """Server-side Gemini tool responses stay in their native tool_response representation."""
+    client, _ = _make_gemini_client()
+    raw_part = types.Part(
+        tool_response=types.ToolResponse(
+            id="search-1",
+            tool_type=types.ToolType.FILE_SEARCH,
+            response={"results": ["doc"]},
+        )
+    )
+    content = Content.from_function_result(
+        call_id="search-1",
+        result={"results": ["doc"]},
+        raw_representation=raw_part,
+    )
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].tool_response is not None
+    assert parts[0].function_response is None
+    assert parts[0].tool_response.id == "search-1"
+    assert parts[0].tool_response.tool_type == types.ToolType.FILE_SEARCH
+    assert parts[0].tool_response.response == '{"results": ["doc"]}'
+
+
+def test_server_side_tool_response_part_uses_content_values_on_replay() -> None:
+    """Server-side Gemini tool responses replay the framework call ID and result."""
+    client, _ = _make_gemini_client()
+    raw_part = types.Part(
+        tool_response=types.ToolResponse(
+            id=None,
+            tool_type=types.ToolType.FILE_SEARCH,
+            response={"results": ["raw"]},
+        )
+    )
+    content = Content.from_function_result(
+        call_id="generated-search-id",
+        result={"results": ["content"]},
+        raw_representation=raw_part,
+    )
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].tool_response is not None
+    assert parts[0].function_response is None
+    assert parts[0].tool_response.id == "generated-search-id"
+    assert parts[0].tool_response.tool_type == types.ToolType.FILE_SEARCH
+    assert parts[0].tool_response.response == '{"results": ["content"]}'
+    assert raw_part.tool_response is not None
+    assert raw_part.tool_response.id is None
+    assert raw_part.tool_response.response == {"results": ["raw"]}
+
+
+# multimodal (data/uri) parts
+
+
+def test_data_content_converted_to_inline_data_part() -> None:
+    """Content.from_data is converted to a Gemini inline_data Part so images reach the model."""
+    import base64
+
+    client, _ = _make_gemini_client()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    content = Content.from_data(data=png, media_type="image/png")
+    assert content.type == "data"
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].inline_data is not None
+    assert parts[0].inline_data.mime_type == "image/png"
+    assert parts[0].inline_data.data == png
+
+
+def test_data_uri_content_converted_to_inline_data_part() -> None:
+    """A data URI created via Content.from_uri becomes an inline_data Part with decoded bytes."""
+    import base64
+
+    client, _ = _make_gemini_client()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    content = Content.from_uri(uri=f"data:image/png;base64,{base64.b64encode(png).decode()}")
+    assert content.type == "data"
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].inline_data is not None
+    assert parts[0].inline_data.mime_type == "image/png"
+    assert parts[0].inline_data.data == png
+
+
+def test_external_uri_content_converted_to_file_data_part() -> None:
+    """Content.from_uri with an external URL becomes a Gemini file_data Part."""
+    client, _ = _make_gemini_client()
+    content = Content.from_uri(uri="https://example.com/image.png", media_type="image/png")
+    assert content.type == "uri"
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].file_data is not None
+    assert parts[0].file_data.file_uri == "https://example.com/image.png"
+    assert parts[0].file_data.mime_type == "image/png"
+
+
+def test_text_and_image_content_both_reach_the_model() -> None:
+    """A multimodal message keeps both the text and the image parts."""
+    import base64
+
+    client, _ = _make_gemini_client()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    text = Content.from_text("What is in this image?")
+    image = Content.from_data(data=png, media_type="image/png")
+
+    parts = client._convert_message_contents([text, image], {})
+
+    assert len(parts) == 2
+    assert parts[0].text == "What is in this image?"
+    assert any(p.inline_data is not None for p in parts)
+
+
+def test_non_base64_data_uri_is_skipped(caplog: pytest.LogCaptureFixture) -> None:
+    """A data URI that is not base64-encoded is skipped with a warning rather than crashing."""
+    client, _ = _make_gemini_client()
+    content = Content.from_text("placeholder")
+    content.type = "data"  # type: ignore[assignment]
+    content.uri = "data:text/plain,hello"
+
+    with caplog.at_level(logging.WARNING):
+        parts = client._convert_message_contents([content], {})
+
+    assert parts == []
+    assert any("base64" in r.message for r in caplog.records)
+
+
+def test_data_uri_media_type_parameters_are_stripped() -> None:
+    """Parameters in a data URI media type (e.g. charset) are dropped before reaching Gemini."""
+    client, _ = _make_gemini_client()
+    content = Content.from_uri(uri="data:text/plain;charset=utf-8;base64,aGVsbG8=")
+    assert content.type == "data"
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].inline_data is not None
+    assert parts[0].inline_data.mime_type == "text/plain"
+
+
+def test_data_uri_media_type_detected_from_bytes_when_missing() -> None:
+    """When a data URI has no media_type, it is detected from the decoded bytes' magic bytes."""
+    import base64
+
+    client, _ = _make_gemini_client()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    content = Content.from_text("placeholder")
+    content.type = "data"  # type: ignore[assignment]
+    content.uri = f"data:;base64,{base64.b64encode(png).decode()}"
+    content.media_type = None
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].inline_data is not None
+    assert parts[0].inline_data.mime_type == "image/png"
+
+
+def test_external_uri_without_inferable_media_type_is_passed_through(caplog: pytest.LogCaptureFixture) -> None:
+    """A URI with no media_type and no guessable extension is sent as file_data without crashing."""
+    client, _ = _make_gemini_client()
+    content = Content.from_uri(uri="https://api.example.com/files/123")
+    assert content.type == "uri"
+    assert content.media_type is None
+
+    with caplog.at_level(logging.WARNING):
+        parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].file_data is not None
+    assert parts[0].file_data.file_uri == "https://api.example.com/files/123"
+    assert parts[0].file_data.mime_type is None
+    assert any("media_type" in r.message for r in caplog.records)
+
+
 # code execution parts
 
 
@@ -741,6 +1004,8 @@ async def test_unknown_part_type_is_skipped() -> None:
     unknown_part.text = None
     unknown_part.function_call = None
     unknown_part.function_response = None
+    unknown_part.tool_call = None
+    unknown_part.tool_response = None
     unknown_part.executable_code = None
     unknown_part.code_execution_result = None
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([unknown_part, _make_part(text="Hi")]))
@@ -759,6 +1024,8 @@ async def test_empty_executable_code_part_is_skipped() -> None:
     mock_part.thought = False
     mock_part.function_call = None
     mock_part.function_response = None
+    mock_part.tool_call = None
+    mock_part.tool_response = None
     mock_part.code_execution_result = None
     mock_part.executable_code = MagicMock()
     mock_part.executable_code.code = ""
@@ -1701,6 +1968,8 @@ async def test_function_response_part_in_response_mapped_to_content() -> None:
     part.text = None
     part.thought = False
     part.function_call = None
+    part.tool_call = None
+    part.tool_response = None
     part.function_response = MagicMock()
     part.function_response.id = "call-99"
     part.function_response.response = {"result": "done"}
