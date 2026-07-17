@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import cast
@@ -215,10 +216,10 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     sentinel_session = object()
     toolbox.session = sentinel_session  # type: ignore
 
-    captured: dict[str, object] = {}
+    captured: dict[str, Callable[[], object]] = {}
 
     class _StubSkillsSource:
-        def __init__(self, *, session_provider: object) -> None:
+        def __init__(self, *, session_provider: Callable[[], object]) -> None:
             captured["session_provider"] = session_provider
 
         async def get_skills(self, context: SkillsSourceContext) -> list[str]:
@@ -232,7 +233,6 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     # The source hands MCPSkillsSource a provider (not a fixed session) that resolves
     # the toolbox's current session, so it survives a reconnect that swaps it.
     provider = captured["session_provider"]
-    assert callable(provider)
     assert provider() is sentinel_session
     new_session = object()
     toolbox.session = new_session  # type: ignore
