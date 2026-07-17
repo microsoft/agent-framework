@@ -683,7 +683,7 @@ public class HarnessAgentTests
         options.DisableToolAutoApproval = false;
         options.ToolApprovalAgentOptions = new ToolApprovalAgentOptions
         {
-            AutoApprovalRules = [fcc => new ValueTask<bool>(fcc.Name == "ReadTool")]
+            AutoApprovalRules = [context => new ValueTask<bool>(context.FunctionCallContent.Name == "ReadTool")]
         };
 
         var agent = new HarnessAgent(mockClient.Object, options);

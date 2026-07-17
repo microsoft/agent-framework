@@ -9,7 +9,6 @@ from asyncio import sleep
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, MutableMapping, Sequence
 from typing import Any, Literal, cast
 
-from .._feature_stage import ExperimentalFeature, experimental
 from .._middleware import AgentContext, AgentMiddleware
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession
@@ -83,7 +82,6 @@ def _content_to_state(content: Content) -> dict[str, Any]:
     return content.to_dict()
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class ToolApprovalRule(SerializationMixin):
     """A standing rule for approving future matching tool calls."""
 
@@ -156,7 +154,6 @@ class ToolApprovalRule(SerializationMixin):
         return payload
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class ToolApprovalState(SerializationMixin):
     """Session-backed state used by :class:`ToolApprovalMiddleware`."""
 
@@ -342,7 +339,6 @@ def _clone_without_always_approve_metadata(response: Content) -> Content:
     return cloned
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class ToolApprovalMiddleware(AgentMiddleware):
     """Coordinate standing tool approvals and queued approval prompts for an agent.
 

@@ -75,7 +75,8 @@ agent_framework/
 
 - **`AgentSession`** - Manages conversation state and session metadata
 - **`ServiceSessionId`** - Mapping alias for structured service-owned continuation handles used in `AgentSession.service_session_id`
-- **`SessionContext`** - Context object for session-scoped data during agent runs
+- **`SessionContext`** - Context object for session-scoped data during agent runs. `extend_messages(...)` can attach
+  ordered, deduplicated `origin_session_ids` attribution when a provider injects content from other sessions.
 - **`ContextProvider`** - Base class for context providers (RAG, memory systems)
 - **`HistoryProvider`** - Base class for conversation history storage
 - **`InMemoryHistoryProvider`** - Built-in session-state history provider for local runs
@@ -129,7 +130,7 @@ agent_framework/
 
 ### Tool Approval Harness (`_harness/_tool_approval.py`)
 
-- **`ToolApprovalMiddleware`** - Experimental opt-in agent middleware that coordinates session-backed approval
+- **`ToolApprovalMiddleware`** - Opt-in agent middleware that coordinates session-backed approval
   rules, heuristic `auto_approval_rules`, queued approval requests, collected approval responses, and
   streaming/non-streaming approval prompts. Heuristic callbacks receive the underlying `function_call` content.
 - **`ToolApprovalRule`** / **`ToolApprovalState`** - Serializable state models for standing approvals and queued
