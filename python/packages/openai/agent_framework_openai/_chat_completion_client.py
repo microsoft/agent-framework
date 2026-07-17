@@ -882,8 +882,10 @@ class RawOpenAIChatCompletionClient(
 
     def _prepare_message_for_openai(self, message: Message) -> list[dict[str, Any]]:
         """Prepare a chat message for OpenAI."""
-        # System/developer messages must use plain string content because some
-        # OpenAI-compatible endpoints reject list content for non-user roles.
+        # System/developer messages default to plain string content because some
+        # OpenAI-compatible endpoints reject list content for non-user roles. The
+        # exception is a prompt cache breakpoint on a text part: it can only live on
+        # a typed part, so opting in switches that message to list content.
         if message.role in ("system", "developer"):
             text_contents = [content for content in message.contents if content.type == "text" and content.text]
             if text_contents:
