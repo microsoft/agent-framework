@@ -42,7 +42,9 @@ from opentelemetry import metrics, trace
 from typing_extensions import Sentinel
 
 from . import __version__ as version_info
-from ._serialization import SerializationProtocol
+from ._serialization import (
+    _is_serialization_protocol,  # pyright: ignore[reportPrivateUsage]
+)
 from ._settings import load_settings
 
 if sys.version_info >= (3, 13):
@@ -2423,7 +2425,6 @@ def _build_tool_otel_definition(tool_item: Any) -> dict[str, Any] | None:
     from pydantic import BaseModel
 
     from ._mcp import MCPTool
-    from ._serialization import SerializationMixin
     from ._tools import FunctionTool
 
     if isinstance(tool_item, FunctionTool):
@@ -2444,7 +2445,7 @@ def _build_tool_otel_definition(tool_item: Any) -> dict[str, Any] | None:
     raw: Mapping[str, Any] | None = None
     if isinstance(tool_item, BaseModel):
         raw = tool_item.model_dump(exclude_none=True)
-    elif isinstance(tool_item, (SerializationMixin, SerializationProtocol)):
+    elif _is_serialization_protocol(tool_item):
         raw = tool_item.to_dict()
     elif isinstance(tool_item, Mapping):
         mapping_item = cast("Mapping[str, Any]", tool_item)

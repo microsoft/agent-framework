@@ -224,6 +224,26 @@ class TestSerializationMixin:
         assert data["outer_value"] == "outer_test"
         assert data["inner"]["inner_value"] == "inner_test"
 
+    def test_to_dict_with_nested_structural_serialization_protocol(self):
+        """Test to_dict handles a structural protocol implementation without the mixin."""
+
+        class InnerClass:
+            def __init__(self, inner_value: str):
+                self.inner_value = inner_value
+
+            def to_dict(self, **kwargs: Any) -> dict[str, Any]:
+                return {"inner_value": self.inner_value}
+
+            @classmethod
+            def from_dict(cls, value: dict[str, Any], **kwargs: Any) -> "InnerClass":
+                return cls(value["inner_value"])
+
+        class OuterClass(SerializationMixin):
+            def __init__(self, inner: InnerClass):
+                self.inner = inner
+
+        assert OuterClass(InnerClass("inner_test")).to_dict()["inner"] == {"inner_value": "inner_test"}
+
     def test_to_dict_with_list_of_serialization_protocol(self):
         """Test to_dict handles lists containing SerializationProtocol objects."""
 

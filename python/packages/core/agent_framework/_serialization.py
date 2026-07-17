@@ -9,12 +9,15 @@ import re
 from collections.abc import Mapping, MutableMapping
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
-from typing import Any, ClassVar, Protocol, TypeVar, runtime_checkable
+from functools import cache
+from typing import Any, ClassVar, Protocol, TypeGuard, TypeVar, cast, runtime_checkable
 
 logger = logging.getLogger("agent_framework")
 
 ClassT = TypeVar("ClassT", bound="SerializationMixin")
 ProtocolT = TypeVar("ProtocolT", bound="SerializationProtocol")
+_JSON_SCALAR_TYPES = (str, int, float, bool, type(None))
+_DIRECT_JSON_TYPES = (*_JSON_SCALAR_TYPES, list, dict)
 
 # Regex pattern for converting CamelCase to snake_case
 _CAMEL_TO_SNAKE_PATTERN = re.compile(r"(?<!^)(?=[A-Z])")
@@ -131,7 +134,20 @@ def is_serializable(value: Any) -> bool:
         that implement ``SerializationProtocol`` require conversion via ``to_dict()``
         before JSON serialization.
     """
-    return isinstance(value, (str, int, float, bool, type(None), list, dict))
+    return isinstance(value, _DIRECT_JSON_TYPES)
+
+
+@cache
+def _implements_serialization_protocol(value_type: type[Any]) -> bool:
+    """Check structural serialization support once per concrete type."""
+    return callable(getattr(value_type, "to_dict", None)) and callable(getattr(value_type, "from_dict", None))
+
+
+def _is_serialization_protocol(value: Any) -> TypeGuard[SerializationProtocol]:
+    """Check whether a value structurally supports framework serialization."""
+    if _implements_serialization_protocol(cast(type[Any], type(value))):
+        return True
+    return callable(getattr(value, "to_dict", None)) and callable(getattr(value, "from_dict", None))
 
 
 class SerializationMixin:
@@ -318,22 +334,28 @@ class SerializationMixin:
             if key not in combined_exclude and not key.startswith("_"):
                 if exclude_none and value is None:
                     continue
+                if type(value) in _JSON_SCALAR_TYPES:
+                    result[key] = value
+                    continue
                 # Recursively serialize SerializationProtocol objects
-                if isinstance(value, SerializationProtocol):
+                if _is_serialization_protocol(value):
                     result[key] = value.to_dict(exclude=exclude, exclude_none=exclude_none)
                     continue
                 # Handle lists containing SerializationProtocol objects
                 if isinstance(value, list):
                     value_as_list: list[Any] = []
-                    for item in value:  # pyright: ignore[reportUnknownVariableType]
-                        if isinstance(item, SerializationProtocol):
+                    for item in cast(list[Any], value):
+                        if type(item) in _JSON_SCALAR_TYPES:
+                            value_as_list.append(item)
+                            continue
+                        if _is_serialization_protocol(item):
                             value_as_list.append(item.to_dict(exclude=exclude, exclude_none=exclude_none))
                             continue
                         if is_serializable(item):
                             value_as_list.append(item)
                             continue
                         logger.debug(
-                            f"Skipping non-serializable item in list attribute '{key}' of type {type(item).__name__}"  # pyright: ignore[reportUnknownArgumentType]
+                            f"Skipping non-serializable item in list attribute '{key}' of type {type(item).__name__}"
                         )
                     result[key] = value_as_list
                     continue
@@ -342,14 +364,17 @@ class SerializationMixin:
                     from datetime import date, datetime, time
 
                     serialized_dict: dict[str, Any] = {}
-                    for raw_key, v in value.items():  # pyright: ignore[reportUnknownVariableType]
-                        dict_key = str(raw_key)  # pyright: ignore[reportUnknownArgumentType]
-                        if isinstance(v, SerializationProtocol):
-                            serialized_dict[dict_key] = v.to_dict(exclude=exclude, exclude_none=exclude_none)
-                            continue
+                    for raw_key, v in cast(dict[Any, Any], value).items():
+                        dict_key = str(raw_key)
                         # Convert datetime objects to strings
                         if isinstance(v, (datetime, date, time)):
                             serialized_dict[dict_key] = str(v)
+                            continue
+                        if type(v) in _JSON_SCALAR_TYPES:
+                            serialized_dict[dict_key] = v
+                            continue
+                        if _is_serialization_protocol(v):
+                            serialized_dict[dict_key] = v.to_dict(exclude=exclude, exclude_none=exclude_none)
                             continue
                         # Check if the value is JSON serializable
                         if is_serializable(v):
@@ -357,7 +382,7 @@ class SerializationMixin:
                             continue
                         logger.debug(
                             f"Skipping non-serializable value for key '{dict_key}' in dict attribute '{key}' "
-                            f"of type {type(v).__name__}"  # pyright: ignore[reportUnknownArgumentType]
+                            f"of type {type(v).__name__}"
                         )
                     result[key] = serialized_dict
                     continue
@@ -631,12 +656,16 @@ def make_json_safe(obj: Any) -> Any:
     Returns:
         A JSON-serializable version of the object.
     """
-    if obj is None or isinstance(obj, (str, int, float, bool)):
+    if isinstance(obj, _JSON_SCALAR_TYPES):
         return obj
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
     if is_dataclass(obj) and not isinstance(obj, type):
         return make_json_safe(asdict(obj))
+    if type(obj) is dict:
+        return {str(key): make_json_safe(value) for key, value in obj.items()}  # type: ignore[misc]
+    if type(obj) in (list, tuple):
+        return [make_json_safe(item) for item in obj]  # type: ignore[misc]
     if callable(getattr(obj, "model_dump", None)):
         try:
             return make_json_safe(obj.model_dump())  # type: ignore[no-any-return]
