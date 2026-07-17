@@ -454,6 +454,7 @@ internal sealed class WorkflowSession : AgentSession
 #pragma warning restore CA2007
 
         ResumeDispatchInfo dispatchInfo = resumeResult.DispatchInfo;
+        HashSet<string> streamedResponseExecutors = [];
 
         // Send a TurnToken to the start executor unless the only activity is an external
         // response directed at the start executor itself (which self-emits a TurnToken via
@@ -473,6 +474,7 @@ internal sealed class WorkflowSession : AgentSession
             switch (evt)
             {
                 case AgentResponseUpdateEvent agentUpdate:
+                    streamedResponseExecutors.Add(agentUpdate.ExecutorId);
                     yield return agentUpdate.Update;
                     break;
 
@@ -530,6 +532,13 @@ internal sealed class WorkflowSession : AgentSession
                     goto default;
 
                 case AgentResponseEvent agentResponse:
+                    if (streamedResponseExecutors.Contains(agentResponse.ExecutorId))
+                    {
+                        // Preserve the completion event for observability, but do not materialize
+                        // the response text again after streaming updates from the same executor.
+                        goto default;
+                    }
+
                     // Under Futures.EnableAgentResponseOutputTaggingAndFiltering=true, mirror
                     // AgentResponseUpdateEvent's behavior: always forward, regardless of the
                     // _includeWorkflowOutputsInResponse host flag / "intermediate" tag. Under

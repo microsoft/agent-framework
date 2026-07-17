@@ -858,8 +858,9 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             // the surfaced event for consumers that care to distinguish.
             List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: false);
 
-            updates.Any(u => u.RawRepresentation is AgentResponseEvent are && are.IsIntermediate() && u.Text == InterText)
-                .Should().BeTrue("AgentResponseEvent is forwarded under Futures-on regardless of the include flag");
+            updates.Count(u => u.Text == InterText).Should().Be(1);
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent are && are.IsIntermediate() && u.Contents.Count == 0)
+                .Should().BeTrue("the completion event remains observable without duplicating streamed text");
         }
 
         [Fact]
@@ -876,8 +877,9 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             // asymmetry between AgentResponse and AgentResponseUpdate is gone under Futures-on.
             List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: false);
 
-            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
-                .Should().BeTrue("terminal AgentResponseEvent is forwarded under Futures-on regardless of the include flag");
+            updates.Count(u => u.Text == FinalText).Should().Be(1);
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Contents.Count == 0)
+                .Should().BeTrue("the completion event remains observable without duplicating streamed text");
         }
 
         [Fact]
@@ -899,8 +901,9 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
                 .Should().BeFalse("terminal AgentResponseEvent stays gated under Futures-off");
 
             List<AgentResponseUpdate> included = await RunStreamingAsync(Build(), includeWorkflowOutputsInResponse: true);
-            included.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
-                .Should().BeTrue("opting in via includeWorkflowOutputsInResponse surfaces it");
+            included.Count(u => u.Text == FinalText).Should().Be(1);
+            included.Any(u => u.RawRepresentation is AgentResponseEvent && u.Contents.Count == 0)
+                .Should().BeTrue("opting in preserves the completion event without duplicating streamed text");
         }
 
         [Fact]
@@ -928,8 +931,9 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
 
             List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
 
-            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == InterText)
-                .Should().BeTrue("legacy bypass still emits AgentResponseEvent regardless of designation");
+            updates.Count(u => u.Text == InterText).Should().Be(1);
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Contents.Count == 0)
+                .Should().BeTrue("legacy bypass preserves the completion event without duplicating streamed text");
         }
 
         [Fact]
@@ -944,7 +948,7 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
 
             List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow);
 
-            AgentResponseUpdate progress = updates.First(u => u.RawRepresentation is AgentResponseEvent && u.Text == InterText);
+            AgentResponseUpdate progress = updates.First(u => u.RawRepresentation is AgentResponseEvent);
             AgentResponseEvent raw = (AgentResponseEvent)progress.RawRepresentation!;
             raw.IsIntermediate().Should().BeTrue();
             raw.Tags.Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
