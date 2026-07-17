@@ -30,7 +30,7 @@ dependencies = [
 dev = [
     "uv==0.11.28",
     "flit==3.12.0",
-    "ruff==0.15.20",
+    "ruff==0.15.22",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
