@@ -345,8 +345,10 @@ public class MessageMergerTests
         //
         // Previously the merger bucketed updates per MessageId and appended the id-less reasoning
         // updates last, splitting one assistant message into two ([text], [reasoning]) in reversed
-        // order. Grouping is now delegated to M.E.AI, which keeps the reasoning in the same message
-        // as the text that follows it - exactly as a directly-invoked agent produces.
+        // order. Now M.E.AI (using ToAgentResponse) only groups contiguous updates sharing a MessageId,
+        // while the explicit fold loop in ComputeMerged folds the id-less reasoning into the id'd
+        // text message that follows it - keeping them in a single assistant message, exactly as a
+        // directly-invoked agent produces.
         string responseId = "resp_" + Guid.NewGuid().ToString("N");
         string textMessageId = "msg_" + Guid.NewGuid().ToString("N");
 
