@@ -24,43 +24,29 @@ public sealed class AgentProviderExtensionsTest(ITestOutputHelper output) : Work
     private const string AgentName = "test-agent";
 
     [Fact]
-    public Task AutoSendFalseOnWorkflowConversationEmitsCompletedResponseOnlyAsync() =>
-        this.RunAsync(
-            autoSend: false,
-            conversationId: WorkflowConversationId,
-            expectedUpdateEventCount: 0,
-            expectedResponseEventCount: 1);
+    public Task AutoSendFalseOnWorkflowConversationSuppressesResponseEventsAsync() =>
+        this.RunAsync(autoSend: false, conversationId: WorkflowConversationId, expectResponseEvents: false);
 
     [Fact]
     public Task AutoSendTrueOnWorkflowConversationEmitsResponseEventsAsync() =>
-        this.RunAsync(
-            autoSend: true,
-            conversationId: WorkflowConversationId,
-            expectedUpdateEventCount: 2,
-            expectedResponseEventCount: 1);
+        this.RunAsync(autoSend: true, conversationId: WorkflowConversationId, expectResponseEvents: true);
 
     [Fact]
     public Task AutoSendFalseOnExternalConversationSuppressesResponseEventsAsync() =>
-        this.RunAsync(
-            autoSend: false,
-            conversationId: "other-conv-id",
-            expectedUpdateEventCount: 0,
-            expectedResponseEventCount: 0);
+        this.RunAsync(autoSend: false, conversationId: "other-conv-id", expectResponseEvents: false);
 
     [Fact]
     public Task AutoSendTrueOnExternalConversationEmitsResponseEventsAndCopiesMessagesAsync() =>
         this.RunAsync(
             autoSend: true,
             conversationId: "other-conv-id",
-            expectedUpdateEventCount: 2,
-            expectedResponseEventCount: 1,
+            expectResponseEvents: true,
             expectCrossConversationCopy: true);
 
     private async Task RunAsync(
         bool autoSend,
         string conversationId,
-        int expectedUpdateEventCount,
-        int expectedResponseEventCount,
+        bool expectResponseEvents,
         bool expectCrossConversationCopy = false)
     {
         // Arrange: seed the workflow conversation id so IsWorkflowConversation can recognize it.
@@ -72,8 +58,8 @@ public sealed class AgentProviderExtensionsTest(ITestOutputHelper output) : Work
         MockAgentProvider mockProvider = new();
         AgentResponseUpdate[] updates =
         [
-            new(ChatRole.Assistant, "hello "),
-            new(ChatRole.Assistant, "world"),
+            new(new ChatResponseUpdate(ChatRole.Assistant, "hello ")),
+            new(new ChatResponseUpdate(ChatRole.Assistant, "world")),
         ];
         mockProvider
             .Setup(p => p.InvokeAgentAsync(
@@ -119,8 +105,24 @@ public sealed class AgentProviderExtensionsTest(ITestOutputHelper output) : Work
         int updateEventCount = events.OfType<AgentResponseUpdateEvent>().Count();
         int responseEventCount = events.OfType<AgentResponseEvent>().Count();
 
-        Assert.Equal(expectedUpdateEventCount, updateEventCount);
-        Assert.Equal(expectedResponseEventCount, responseEventCount);
+        if (expectResponseEvents)
+        {
+            Assert.Equal(updates.Length, updateEventCount);
+            Assert.Equal(1, responseEventCount);
+
+            AgentResponseUpdateEvent[] updateEvents = events.OfType<AgentResponseUpdateEvent>().ToArray();
+            string messageId = Assert.IsType<string>(updateEvents[0].Update.MessageId);
+            Assert.NotEmpty(messageId);
+            Assert.All(updateEvents, updateEvent => Assert.Equal(messageId, updateEvent.Update.MessageId));
+
+            AgentResponseEvent responseEvent = Assert.Single(events.OfType<AgentResponseEvent>());
+            Assert.Equal(messageId, Assert.Single(responseEvent.Response.Messages).MessageId);
+        }
+        else
+        {
+            Assert.Equal(0, updateEventCount);
+            Assert.Equal(0, responseEventCount);
+        }
 
         if (expectCrossConversationCopy)
         {

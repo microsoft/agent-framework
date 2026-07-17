@@ -454,7 +454,7 @@ internal sealed class WorkflowSession : AgentSession
 #pragma warning restore CA2007
 
         ResumeDispatchInfo dispatchInfo = resumeResult.DispatchInfo;
-        HashSet<string> streamedResponseExecutors = [];
+        HashSet<(string ExecutorId, string MessageId)> streamedMessageIds = [];
 
         // Send a TurnToken to the start executor unless the only activity is an external
         // response directed at the start executor itself (which self-emits a TurnToken via
@@ -474,7 +474,10 @@ internal sealed class WorkflowSession : AgentSession
             switch (evt)
             {
                 case AgentResponseUpdateEvent agentUpdate:
-                    streamedResponseExecutors.Add(agentUpdate.ExecutorId);
+                    if (agentUpdate.Update.MessageId is { Length: > 0 } messageId)
+                    {
+                        streamedMessageIds.Add((agentUpdate.ExecutorId, messageId));
+                    }
                     yield return agentUpdate.Update;
                     break;
 
@@ -532,13 +535,6 @@ internal sealed class WorkflowSession : AgentSession
                     goto default;
 
                 case AgentResponseEvent agentResponse:
-                    if (streamedResponseExecutors.Contains(agentResponse.ExecutorId))
-                    {
-                        // Preserve the completion event for observability, but do not materialize
-                        // the response text again after streaming updates from the same executor.
-                        goto default;
-                    }
-
                     // Under Futures.EnableAgentResponseOutputTaggingAndFiltering=true, mirror
                     // AgentResponseUpdateEvent's behavior: always forward, regardless of the
                     // _includeWorkflowOutputsInResponse host flag / "intermediate" tag. Under
@@ -553,9 +549,25 @@ internal sealed class WorkflowSession : AgentSession
                     // _includeWorkflowOutputInResponse flag is set. Reason being: The user specifies
                     // exclusion of an event by enabling filtering and then _not_ marking an Executor
                     // as an output executor.
+                    bool emittedMessage = false;
                     foreach (ChatMessage message in agentResponse.Response.Messages)
                     {
+                        bool messageWasStreamed =
+                            message.MessageId is { Length: > 0 } completedMessageId
+                            && streamedMessageIds.Contains((agentResponse.ExecutorId, completedMessageId));
+                        if (messageWasStreamed)
+                        {
+                            continue;
+                        }
+
+                        emittedMessage = true;
                         yield return this.CreateUpdate(this.LastResponseId, evt, message);
+                    }
+                    if (!emittedMessage)
+                    {
+                        // Preserve the completion event for observability after its correlated
+                        // streamed content has already been forwarded.
+                        goto default;
                     }
                     break;
 

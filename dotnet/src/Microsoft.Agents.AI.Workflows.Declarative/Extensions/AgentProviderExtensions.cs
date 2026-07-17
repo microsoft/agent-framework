@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,17 +23,42 @@ internal static class AgentProviderExtensions
     {
         IAsyncEnumerable<AgentResponseUpdate> agentUpdates = agentProvider.InvokeAgentAsync(agentName, null, conversationId, inputMessages, inputArguments, cancellationToken);
 
-        // Determine whether the target conversation is the workflow conversation.
-        // Managed workflow agents rely on the completed response event for agents running
-        // on that conversation. Streaming updates remain controlled by autoSend so hosted
-        // workflow agents can suppress intermediate/raw agent output.
+        // Determine whether the target conversation is the workflow conversation
+        // (used below to decide whether to mirror messages into the workflow conversation
+        // when an agent runs against a different conversation). The caller's autoSend
+        // value is honored as-is — when the workflow.yaml specifies autoSend: false the
+        // raw agent output must not be streamed to the caller, even when the agent is
+        // running on the workflow conversation.
         bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? workflowConversationId);
 
         // Process the agent response updates.
         List<AgentResponseUpdate> updates = [];
+        string? generatedMessageId = null;
+        string? generatedMessageResponseId = null;
+        ChatRole? generatedMessageRole = null;
         await foreach (AgentResponseUpdate update in agentUpdates.ConfigureAwait(false))
         {
             await AssignConversationIdAsync(((ChatResponseUpdate?)update.RawRepresentation)?.ConversationId).ConfigureAwait(false);
+
+            if (update.MessageId is null && update.RawRepresentation is ChatResponseUpdate rawUpdate)
+            {
+                if (generatedMessageId is null
+                    || !string.Equals(generatedMessageResponseId, update.ResponseId, StringComparison.Ordinal)
+                    || generatedMessageRole != update.Role)
+                {
+                    generatedMessageId = Guid.NewGuid().ToString("N");
+                    generatedMessageResponseId = update.ResponseId;
+                    generatedMessageRole = update.Role;
+                }
+                update.MessageId = generatedMessageId;
+                rawUpdate.MessageId = generatedMessageId;
+            }
+            else
+            {
+                generatedMessageId = null;
+                generatedMessageResponseId = null;
+                generatedMessageRole = null;
+            }
 
             updates.Add(update);
 
@@ -44,7 +70,7 @@ internal static class AgentProviderExtensions
 
         AgentResponse response = updates.ToAgentResponse();
 
-        if (autoSend || isWorkflowConversation)
+        if (autoSend)
         {
             await context.AddEventAsync(new AgentResponseEvent(executorId, response), cancellationToken).ConfigureAwait(false);
         }

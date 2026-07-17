@@ -64,9 +64,60 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
         CheckResponseEventsAgainstTestMessages(updates, expectingResponse: executorSetting, agent.GetDescriptiveId());
     }
 
+    [Fact]
+    public async Task Test_AgentHostExecutor_AssignsStableMessageIdToStreamingUpdatesAsync()
+    {
+        // Arrange
+        TestRunContext testContext = new();
+        AIAgentHostExecutor executor =
+            new(
+                new MissingMessageIdAgent(),
+                new()
+                {
+                    EmitAgentUpdateEvents = true,
+                    EmitAgentResponseEvents = true,
+                });
+        testContext.ConfigureExecutor(executor);
+
+        // Act
+        await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
+
+        // Assert
+        AgentResponseUpdateEvent[] updateEvents = testContext.Events.OfType<AgentResponseUpdateEvent>().ToArray();
+        updateEvents.Should().HaveCount(2);
+        string? messageId = updateEvents[0].Update.MessageId;
+        messageId.Should().NotBeNullOrEmpty();
+        updateEvents.Should().OnlyContain(updateEvent => updateEvent.Update.MessageId == messageId);
+
+        AgentResponseEvent responseEvent = testContext.Events.OfType<AgentResponseEvent>().Should().ContainSingle().Subject;
+        responseEvent.Response.Messages.Should().ContainSingle().Which.MessageId.Should().Be(messageId);
+    }
+
     private static ChatMessage UserMessage => new(ChatRole.User, "Hello from User!") { AuthorName = "User" };
     private static ChatMessage AssistantMessage => new(ChatRole.Assistant, "Hello from Assistant!") { AuthorName = "User" };
     private static ChatMessage TestAgentMessage => new(ChatRole.Assistant, $"Hello from {TestAgentName}!") { AuthorName = TestAgentName };
+
+    private sealed class MissingMessageIdAgent : TestReplayAgent
+    {
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            yield return new AgentResponseUpdate(
+                new ChatResponseUpdate(ChatRole.Assistant, "hello ")
+                {
+                    ResponseId = "response-id",
+                });
+            yield return new AgentResponseUpdate(
+                new ChatResponseUpdate(ChatRole.Assistant, "world")
+                {
+                    ResponseId = "response-id",
+                });
+            await Task.CompletedTask;
+        }
+    }
 
     [Theory]
     [InlineData(true, true, false, false)]

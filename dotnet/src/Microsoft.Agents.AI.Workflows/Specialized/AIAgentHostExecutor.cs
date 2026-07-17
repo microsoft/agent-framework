@@ -229,8 +229,31 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
                 cancellationToken: cancellationToken);
 
             List<AgentResponseUpdate> updates = [];
+            string? generatedMessageId = null;
+            string? generatedMessageResponseId = null;
+            ChatRole? generatedMessageRole = null;
             await foreach (AgentResponseUpdate update in agentStream.ConfigureAwait(false))
             {
+                if (update.MessageId is null && update.RawRepresentation is ChatResponseUpdate rawUpdate)
+                {
+                    if (generatedMessageId is null
+                        || !string.Equals(generatedMessageResponseId, update.ResponseId, StringComparison.Ordinal)
+                        || generatedMessageRole != update.Role)
+                    {
+                        generatedMessageId = Guid.NewGuid().ToString("N");
+                        generatedMessageResponseId = update.ResponseId;
+                        generatedMessageRole = update.Role;
+                    }
+                    update.MessageId = generatedMessageId;
+                    rawUpdate.MessageId = generatedMessageId;
+                }
+                else
+                {
+                    generatedMessageId = null;
+                    generatedMessageResponseId = null;
+                    generatedMessageRole = null;
+                }
+
                 await context.YieldOutputAsync(update, cancellationToken).ConfigureAwait(false);
                 collector.ProcessAgentResponseUpdate(update);
                 updates.Add(update);

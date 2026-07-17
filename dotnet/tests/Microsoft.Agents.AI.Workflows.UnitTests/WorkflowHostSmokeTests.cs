@@ -953,5 +953,137 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             raw.IsIntermediate().Should().BeTrue();
             raw.Tags.Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
         }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_DistinctCompletedResponseFromSameExecutorIsForwardedAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: false);
+            Workflow workflow = new WorkflowBuilder(new StreamThenCompleteExecutor()).Build();
+
+            List<AgentResponseUpdate> updates =
+                await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
+
+            updates.Count(u => u.Text == InterText).Should().Be(1);
+            updates.Count(u => u.Text == FinalText).Should().Be(1);
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
+                .Should().BeTrue("a different response from the same executor must not be suppressed");
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_DistinctCompletedMessageFromSameResponseIsForwardedAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: false);
+            Workflow workflow = new WorkflowBuilder(new StreamThenCompleteExecutor(useSameResponseId: true)).Build();
+
+            List<AgentResponseUpdate> updates =
+                await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
+
+            updates.Count(u => u.Text == InterText).Should().Be(1);
+            updates.Count(u => u.Text == FinalText).Should().Be(1);
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
+                .Should().BeTrue("a response ID alone must not suppress a distinct completed message");
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_UnstreamedMessageFromSameResponseIsForwardedAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: false);
+            Workflow workflow = new WorkflowBuilder(new PartiallyStreamedResponseExecutor()).Build();
+
+            List<AgentResponseUpdate> updates =
+                await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
+
+            updates.Count(u => u.Text == InterText).Should().Be(1);
+            updates.Count(u => u.Text == FinalText).Should().Be(1);
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
+                .Should().BeTrue("only the correlated message in a multi-message response should be suppressed");
+        }
+
+        private sealed class StreamThenCompleteExecutor(bool useSameResponseId = false) : Executor("stream-then-complete")
+        {
+            protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
+                protocolBuilder.ConfigureRoutes(
+                    routeBuilder =>
+                        routeBuilder
+                            .AddHandler<IEnumerable<ChatMessage>>(this.HandleMessagesAsync)
+                            .AddHandler<TurnToken, AgentResponse>(this.HandleTurnAsync));
+
+            private ValueTask HandleMessagesAsync(
+                IEnumerable<ChatMessage> messages,
+                IWorkflowContext context,
+                CancellationToken cancellationToken) => default;
+
+            private async ValueTask<AgentResponse> HandleTurnAsync(
+                TurnToken turnToken,
+                IWorkflowContext context,
+                CancellationToken cancellationToken)
+            {
+                AgentResponseUpdate update =
+                    new(ChatRole.Assistant, InterText)
+                    {
+                        MessageId = "streamed-message",
+                        ResponseId = "streamed-response",
+                    };
+                await context.AddEventAsync(
+                    new AgentResponseUpdateEvent(this.Id, update),
+                    cancellationToken);
+
+                ChatMessage message =
+                    new(ChatRole.Assistant, FinalText)
+                    {
+                        MessageId = "completed-message",
+                    };
+                return new AgentResponse([message])
+                {
+                    ResponseId = useSameResponseId ? update.ResponseId : "completed-response",
+                };
+            }
+        }
+
+        private sealed class PartiallyStreamedResponseExecutor() : Executor("partially-streamed-response")
+        {
+            protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
+                protocolBuilder.ConfigureRoutes(
+                    routeBuilder =>
+                        routeBuilder
+                            .AddHandler<IEnumerable<ChatMessage>>(this.HandleMessagesAsync)
+                            .AddHandler<TurnToken, AgentResponse>(this.HandleTurnAsync));
+
+            private ValueTask HandleMessagesAsync(
+                IEnumerable<ChatMessage> messages,
+                IWorkflowContext context,
+                CancellationToken cancellationToken) => default;
+
+            private async ValueTask<AgentResponse> HandleTurnAsync(
+                TurnToken turnToken,
+                IWorkflowContext context,
+                CancellationToken cancellationToken)
+            {
+                const string ResponseId = "shared-response";
+                ChatMessage streamedMessage =
+                    new(ChatRole.Assistant, InterText)
+                    {
+                        MessageId = "streamed-message",
+                    };
+                AgentResponseUpdate streamedUpdate =
+                    new(ChatRole.Assistant, InterText)
+                    {
+                        MessageId = streamedMessage.MessageId,
+                        ResponseId = ResponseId,
+                    };
+                await context.AddEventAsync(
+                    new AgentResponseUpdateEvent(
+                        this.Id,
+                        streamedUpdate),
+                    cancellationToken);
+
+                ChatMessage completedOnlyMessage =
+                    new(ChatRole.Assistant, FinalText)
+                    {
+                        MessageId = "completed-only-message",
+                    };
+                return new AgentResponse([streamedMessage, completedOnlyMessage]) { ResponseId = ResponseId };
+            }
+        }
     }
 }
