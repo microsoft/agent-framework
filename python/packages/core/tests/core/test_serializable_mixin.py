@@ -5,6 +5,8 @@
 import logging
 from typing import Any
 
+from typing_extensions import Self
+
 from agent_framework._serialization import SerializationMixin
 
 
@@ -235,7 +237,7 @@ class TestSerializationMixin:
                 return {"inner_value": self.inner_value}
 
             @classmethod
-            def from_dict(cls, value: dict[str, Any], **kwargs: Any) -> "InnerClass":
+            def from_dict(cls, value: dict[str, Any], **kwargs: Any) -> Self:
                 return cls(value["inner_value"])
 
         class OuterClass(SerializationMixin):

@@ -9,7 +9,7 @@ import re
 from collections.abc import Mapping, MutableMapping
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
-from functools import cache
+from functools import lru_cache
 from typing import Any, ClassVar, Protocol, TypeGuard, TypeVar, cast, runtime_checkable
 
 logger = logging.getLogger("agent_framework")
@@ -137,7 +137,7 @@ def is_serializable(value: Any) -> bool:
     return isinstance(value, _DIRECT_JSON_TYPES)
 
 
-@cache
+@lru_cache(maxsize=128)
 def _implements_serialization_protocol(value_type: type[Any]) -> bool:
     """Check structural serialization support once per concrete type."""
     return callable(getattr(value_type, "to_dict", None)) and callable(getattr(value_type, "from_dict", None))
