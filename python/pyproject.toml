@@ -37,7 +37,7 @@ dev = [
     "pytest-xdist[psutil]==3.8.0",
     "pytest-timeout==2.4.0",
     "pytest-retry==1.7.0",
-    "mypy==2.2.0",
+    "mypy==2.3.0",
     "pyright==1.1.411",
     "pyrefly==1.1.1",
     "ty==0.0.60",
