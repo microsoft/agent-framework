@@ -7067,3 +7067,71 @@ def test_prepare_messages_strips_mcp_items_under_storage() -> None:
 
 
 # endregion
+
+
+# region Prompt cache breakpoints and options
+
+
+def _breakpoint_text_content() -> Content:
+    return Content.from_text(
+        "This is a stable prefix that should be cached.",
+        additional_properties={"prompt_cache_breakpoint": {"mode": "explicit"}},
+    )
+
+
+def test_prepare_messages_for_openai_text_prompt_cache_breakpoint() -> None:
+    """A text part carries an explicit prompt cache breakpoint onto the request."""
+    client = OpenAIChatClient(api_key="test-api-key", model="test-model")
+    items = client._prepare_messages_for_openai(
+        [Message(role="user", contents=[_breakpoint_text_content()])],
+        request_uses_service_side_storage=False,
+    )
+    part = items[0]["content"][0]
+    assert part["type"] == "input_text"
+    assert part["prompt_cache_breakpoint"] == {"mode": "explicit"}
+
+
+def test_prepare_content_for_openai_image_prompt_cache_breakpoint() -> None:
+    """An image part carries an explicit prompt cache breakpoint onto the request."""
+    client = OpenAIChatClient(api_key="test-api-key", model="test-model")
+    image = Content.from_uri(
+        uri="https://example.com/x.png",
+        media_type="image/png",
+        additional_properties={"prompt_cache_breakpoint": {"mode": "explicit"}},
+    )
+    part = client._prepare_content_for_openai("user", image)
+    assert part["type"] == "input_image"
+    assert part["prompt_cache_breakpoint"] == {"mode": "explicit"}
+
+
+def test_prepare_content_for_openai_file_prompt_cache_breakpoint() -> None:
+    """A file part carries an explicit prompt cache breakpoint onto the request."""
+    client = OpenAIChatClient(api_key="test-api-key", model="test-model")
+    file_content = Content.from_uri(
+        uri="data:application/pdf;base64,AAAA",
+        media_type="application/pdf",
+        additional_properties={"prompt_cache_breakpoint": {"mode": "explicit"}},
+    )
+    part = client._prepare_content_for_openai("user", file_content)
+    assert part["type"] == "input_file"
+    assert part["prompt_cache_breakpoint"] == {"mode": "explicit"}
+
+
+def test_prepare_content_for_openai_no_prompt_cache_breakpoint_by_default() -> None:
+    """Parts without the property keep their existing shape."""
+    client = OpenAIChatClient(api_key="test-api-key", model="test-model")
+    part = client._prepare_content_for_openai("user", Content.from_text("hello"))
+    assert part == {"type": "input_text", "text": "hello"}
+
+
+async def test_prepare_options_prompt_cache_options_passthrough() -> None:
+    """Request-level prompt_cache_options reaches the Responses API run options."""
+    client = OpenAIChatClient(api_key="test-api-key", model="test-model")
+    run_options = await client._prepare_options(
+        [Message(role="user", contents=[Content.from_text("hi")])],
+        {"model": "test-model", "prompt_cache_options": {"mode": "explicit", "ttl": "30m"}},
+    )
+    assert run_options["prompt_cache_options"] == {"mode": "explicit", "ttl": "30m"}
+
+
+# endregion

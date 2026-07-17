@@ -2088,3 +2088,74 @@ def test_streaming_chunk_with_null_delta_no_tool_calls_parsed(
 
 
 # endregion
+
+
+# region Prompt cache breakpoints and options
+
+
+def test_prepare_message_text_prompt_cache_breakpoint_keeps_parts() -> None:
+    """A text part with a breakpoint stays in list form and carries the key."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text(
+        "stable prefix",
+        additional_properties={"prompt_cache_breakpoint": {"mode": "explicit"}},
+    )
+    msgs = client._prepare_message_for_openai(Message(role="user", contents=[content]))
+    assert isinstance(msgs[0]["content"], list)
+    assert msgs[0]["content"][0] == {
+        "type": "text",
+        "text": "stable prefix",
+        "prompt_cache_breakpoint": {"mode": "explicit"},
+    }
+
+
+def test_prepare_message_text_without_breakpoint_flattens_to_string() -> None:
+    """Text-only content without a breakpoint keeps the plain-string form."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    msgs = client._prepare_message_for_openai(Message(role="user", contents=[Content.from_text("hello")]))
+    assert msgs[0]["content"] == "hello"
+
+
+def test_prepare_message_system_prompt_cache_breakpoint_keeps_parts() -> None:
+    """A system message with a breakpoint keeps typed content parts."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text(
+        "system prefix",
+        additional_properties={"prompt_cache_breakpoint": {"mode": "explicit"}},
+    )
+    msgs = client._prepare_message_for_openai(Message(role="system", contents=[content]))
+    assert isinstance(msgs[0]["content"], list)
+    assert msgs[0]["content"][0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+
+
+def test_prepare_message_system_without_breakpoint_keeps_string_form() -> None:
+    """System messages without a breakpoint keep the joined-string form."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    msgs = client._prepare_message_for_openai(Message(role="system", contents=[Content.from_text("plain system")]))
+    assert msgs[0]["content"] == "plain system"
+
+
+def test_prepare_content_for_openai_image_prompt_cache_breakpoint() -> None:
+    """An image part carries an explicit prompt cache breakpoint onto the request."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    image = Content.from_uri(
+        uri="https://example.com/x.png",
+        media_type="image/png",
+        additional_properties={"prompt_cache_breakpoint": {"mode": "explicit"}},
+    )
+    part = client._prepare_content_for_openai(image)
+    assert part["type"] == "image_url"
+    assert part["prompt_cache_breakpoint"] == {"mode": "explicit"}
+
+
+def test_prepare_options_prompt_cache_options_passthrough() -> None:
+    """Request-level prompt_cache_options reaches the Chat Completions run options."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    run_options = client._prepare_options(
+        [Message(role="user", contents=[Content.from_text("hi")])],
+        {"model": "test-model", "prompt_cache_options": {"mode": "explicit", "ttl": "30m"}},
+    )
+    assert run_options["prompt_cache_options"] == {"mode": "explicit", "ttl": "30m"}
+
+
+# endregion

@@ -88,6 +88,8 @@ from pydantic import BaseModel
 from ._exceptions import OpenAIContentFilterException
 from ._shared import (
     AzureTokenProvider,
+    PromptCacheOptions,
+    attach_prompt_cache_breakpoint,
     load_openai_service_settings,
     maybe_append_azure_endpoint_guidance,
 )
@@ -231,6 +233,12 @@ class OpenAIChatOptions(ChatOptions[ResponseFormatT], Generic[ResponseFormatT], 
 
     prompt_cache_retention: Literal["24h"]
     """Retention policy for prompt cache. Set to '24h' for extended caching."""
+
+    prompt_cache_options: PromptCacheOptions
+    """Request-wide prompt cache policy for GPT-5.6 and later models.
+    Set mode to 'explicit' to use only the breakpoints set on content parts via
+    ``Content.additional_properties["prompt_cache_breakpoint"]``.
+    See: https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints"""
 
     reasoning: ReasoningOptions
     """Configuration for reasoning models (gpt-5, o-series).
@@ -1655,10 +1663,13 @@ class RawOpenAIChatClient(
                         "text": content.text,
                         "annotations": _annotations_to_output_text(getattr(content, "annotations", None)),
                     }
-                return {
-                    "type": "input_text",
-                    "text": content.text,
-                }
+                return attach_prompt_cache_breakpoint(
+                    {
+                        "type": "input_text",
+                        "text": content.text,
+                    },
+                    content,
+                )
             case "text_reasoning":
                 ret: dict[str, Any] = {"type": "reasoning", "summary": []}
                 if content.id:
@@ -1686,7 +1697,7 @@ class RawOpenAIChatClient(
                     file_id = content.additional_properties.get("file_id") if content.additional_properties else None
                     if file_id is not None:
                         result["file_id"] = file_id
-                    return result
+                    return attach_prompt_cache_breakpoint(result, content)
                 if content.has_top_level_media_type("audio"):
                     if content.media_type and "wav" in content.media_type:
                         format = "wav"
@@ -1714,7 +1725,7 @@ class RawOpenAIChatClient(
                     }
                     if filename:
                         file_obj["filename"] = filename
-                    return file_obj
+                    return attach_prompt_cache_breakpoint(file_obj, content)
                 return {}
             case "function_call":
                 if not content.call_id:

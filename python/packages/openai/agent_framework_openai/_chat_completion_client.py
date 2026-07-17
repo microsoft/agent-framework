@@ -59,7 +59,10 @@ from pydantic import BaseModel
 
 from ._exceptions import OpenAIContentFilterException
 from ._shared import (
+    PROMPT_CACHE_BREAKPOINT_KEY,
     AzureTokenProvider,
+    PromptCacheOptions,
+    attach_prompt_cache_breakpoint,
     load_openai_service_settings,
     maybe_append_azure_endpoint_guidance,
 )
@@ -156,6 +159,12 @@ class OpenAIChatCompletionOptions(ChatOptions[ResponseModelT], Generic[ResponseM
     verbosity: Literal["low", "medium", "high"]
     """Output verbosity for GPT-5 family models. Lower values yield shorter responses.
     See: https://developers.openai.com/cookbook/examples/gpt-5/gpt-5_new_params_and_tools#1-verbosity-parameter"""
+
+    prompt_cache_options: PromptCacheOptions
+    """Request-wide prompt cache policy for GPT-5.6 and later models.
+    Set mode to 'explicit' to use only the breakpoints set on content parts via
+    ``Content.additional_properties["prompt_cache_breakpoint"]``.
+    See: https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints"""
 
 
 OpenAIChatCompletionOptionsT = TypeVar(
@@ -876,9 +885,19 @@ class RawOpenAIChatCompletionClient(
         # System/developer messages must use plain string content because some
         # OpenAI-compatible endpoints reject list content for non-user roles.
         if message.role in ("system", "developer"):
-            texts = [content.text for content in message.contents if content.type == "text" and content.text]
-            if texts:
-                sys_args: dict[str, Any] = {"role": message.role, "content": "\n".join(texts)}
+            text_contents = [content for content in message.contents if content.type == "text" and content.text]
+            if text_contents:
+                # A prompt cache breakpoint lives on a typed part; plain-string content
+                # cannot carry it, so keep the typed list form when one is present.
+                content_value: str | list[dict[str, Any]]
+                if any(
+                    (content.additional_properties or {}).get(PROMPT_CACHE_BREAKPOINT_KEY) is not None
+                    for content in text_contents
+                ):
+                    content_value = [self._prepare_content_for_openai(content) for content in text_contents]
+                else:
+                    content_value = "\n".join(content.text for content in text_contents if content.text)
+                sys_args: dict[str, Any] = {"role": message.role, "content": content_value}
                 if message.author_name:
                     sys_args["name"] = message.author_name
                 return [sys_args]
@@ -969,6 +988,10 @@ class RawOpenAIChatCompletionClient(
                     text_item = cast(Mapping[str, Any], item)
                     if text_item.get("type") != "text":
                         break
+                    if PROMPT_CACHE_BREAKPOINT_KEY in text_item:
+                        # A plain string cannot carry a prompt cache breakpoint;
+                        # keep the typed part form for this message.
+                        break
                     text_items.append(text_item)
                 else:
                     msg["content"] = "\n".join(
@@ -981,6 +1004,11 @@ class RawOpenAIChatCompletionClient(
     def _prepare_content_for_openai(self, content: Content) -> dict[str, Any]:
         """Prepare content for OpenAI."""
         match content.type:
+            case "text":
+                return attach_prompt_cache_breakpoint(
+                    {"type": "text", "text": content.text},
+                    content,
+                )
             case "function_call":
                 args = json.dumps(content.arguments) if isinstance(content.arguments, Mapping) else content.arguments
                 return {
@@ -998,10 +1026,13 @@ class RawOpenAIChatCompletionClient(
                 detail = content.additional_properties.get("detail")
                 if isinstance(detail, str):
                     image_url_obj["detail"] = detail
-                return {
-                    "type": "image_url",
-                    "image_url": image_url_obj,
-                }
+                return attach_prompt_cache_breakpoint(
+                    {
+                        "type": "image_url",
+                        "image_url": image_url_obj,
+                    },
+                    content,
+                )
             case "data" | "uri" if content.has_top_level_media_type("audio"):
                 if content.media_type and "wav" in content.media_type:
                     audio_format = "wav"
@@ -1017,13 +1048,16 @@ class RawOpenAIChatCompletionClient(
                     # Extract just the base64 part after "data:audio/format;base64,"
                     audio_data = audio_data.split(",", 1)[-1]  # type: ignore[union-attr]
 
-                return {
-                    "type": "input_audio",
-                    "input_audio": {
-                        "data": audio_data,
-                        "format": audio_format,
+                return attach_prompt_cache_breakpoint(
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": audio_data,
+                            "format": audio_format,
+                        },
                     },
-                }
+                    content,
+                )
             case "data" | "uri" if content.has_top_level_media_type("application") and content.uri.startswith("data:"):  # type: ignore[union-attr]
                 # All application/* media types should be treated as files for OpenAI
                 filename = getattr(content, "filename", None) or (
@@ -1034,10 +1068,13 @@ class RawOpenAIChatCompletionClient(
                 file_obj = {"file_data": content.uri}
                 if filename:
                     file_obj["filename"] = filename
-                return {
-                    "type": "file",
-                    "file": file_obj,
-                }
+                return attach_prompt_cache_breakpoint(
+                    {
+                        "type": "file",
+                        "file": file_obj,
+                    },
+                    content,
+                )
             case _:
                 # Default fallback for all other content types
                 return content.to_dict(exclude_none=True)
