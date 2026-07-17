@@ -1157,7 +1157,10 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         kwargs["tools"] = self._prepare_tools(all_tools) if all_tools else None
 
         kwargs["streaming"] = streaming
-        kwargs["model"] = opts.get("model") or self._settings.get("model") or None
+        # model may already be present from per-run options (merged above); otherwise fall
+        # back to the resolved setting (which carries the default_options / env model).
+        if not kwargs.get("model"):
+            kwargs["model"] = self._settings.get("model") or None
         kwargs["on_permission_request"] = (
             opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
         )
