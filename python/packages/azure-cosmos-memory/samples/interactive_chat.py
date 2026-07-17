@@ -53,6 +53,8 @@ def create_agent_with_memory() -> tuple[Agent, CosmosMemoryContextProvider]:
         cosmos_endpoint=cosmos_endpoint,
         cosmos_database=os.getenv("COSMOS_DATABASE", "ai_memory"),
         foundry_endpoint=foundry_endpoint,
+        embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-large"),
+        chat_model=os.getenv("CHAT_MODEL", "gpt-4o-mini"),
         credential=credential,
         top_k=5,
         min_confidence=0.7,

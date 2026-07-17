@@ -91,6 +91,8 @@ class TestInit:
                 cosmos_endpoint="https://test.documents.azure.com:443/",
                 cosmos_database="test_db",
                 foundry_endpoint="https://test.ai.azure.com",
+                embedding_model="text-embedding-3-large",
+                chat_model="gpt-4o-mini",
             )
 
             mock_client_class.assert_called_once()
@@ -98,6 +100,9 @@ class TestInit:
             _, kwargs = mock_client_class.call_args
             assert kwargs["use_default_credential"] is True
             assert "cosmos_credential" not in kwargs
+            # The explicitly provided models are forwarded to the toolkit client.
+            assert kwargs["embedding_deployment_name"] == "text-embedding-3-large"
+            assert kwargs["chat_deployment_name"] == "gpt-4o-mini"
             assert provider._should_close_client is True
 
     def test_init_wires_explicit_credential(self) -> None:
@@ -111,6 +116,8 @@ class TestInit:
             CosmosMemoryContextProvider(
                 cosmos_endpoint="https://test.documents.azure.com:443/",
                 foundry_endpoint="https://test.ai.azure.com",
+                embedding_model="text-embedding-3-large",
+                chat_model="gpt-4o-mini",
                 credential=sentinel,
             )
 
@@ -133,6 +140,18 @@ class TestInit:
         with pytest.raises(SettingNotFoundError, match="foundry_endpoint"):
             CosmosMemoryContextProvider(cosmos_endpoint="https://test.documents.azure.com:443/")
 
+    def test_init_raises_without_models(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Raises when the chat/embedding models are not provided (no silent default)."""
+        for var in ("COSMOS_ENDPOINT", "COSMOS_DATABASE", "FOUNDRY_ENDPOINT", "EMBEDDING_MODEL", "CHAT_MODEL"):
+            monkeypatch.delenv(var, raising=False)
+        # Endpoints resolve, but the models do not: rather than defaulting to a model that may not
+        # be deployed, construction must raise so the caller knows to set one.
+        with pytest.raises(SettingNotFoundError, match="embedding_model|chat_model"):
+            CosmosMemoryContextProvider(
+                cosmos_endpoint="https://test.documents.azure.com:443/",
+                foundry_endpoint="https://test.ai.azure.com",
+            )
+
     def test_init_processor_config_forwarded_to_built_client(self) -> None:
         """processor_config is forwarded to the built client via cadence_thresholds."""
         with patch(
@@ -143,6 +162,8 @@ class TestInit:
             CosmosMemoryContextProvider(
                 cosmos_endpoint="https://test.documents.azure.com:443/",
                 foundry_endpoint="https://test.ai.azure.com",
+                embedding_model="text-embedding-3-large",
+                chat_model="gpt-4o-mini",
                 processor_config={"FACT_EXTRACTION_EVERY_N": 10},
             )
 
@@ -159,6 +180,8 @@ class TestInit:
             CosmosMemoryContextProvider(
                 cosmos_endpoint="https://test.documents.azure.com:443/",
                 foundry_endpoint="https://test.ai.azure.com",
+                embedding_model="text-embedding-3-large",
+                chat_model="gpt-4o-mini",
                 auto_extract=False,
             )
 
@@ -179,6 +202,8 @@ class TestInit:
             CosmosMemoryContextProvider(
                 cosmos_endpoint="https://test.documents.azure.com:443/",
                 foundry_endpoint="https://test.ai.azure.com",
+                embedding_model="text-embedding-3-large",
+                chat_model="gpt-4o-mini",
             )
 
             _, kwargs = mock_client_class.call_args
@@ -608,6 +633,8 @@ class TestContextManager:
             provider = CosmosMemoryContextProvider(
                 cosmos_endpoint="https://test.documents.azure.com:443/",
                 foundry_endpoint="https://test.ai.azure.com",
+                embedding_model="text-embedding-3-large",
+                chat_model="gpt-4o-mini",
             )
 
             async with provider:
@@ -695,6 +722,8 @@ class TestFlush:
             provider = CosmosMemoryContextProvider(
                 cosmos_endpoint="https://test.documents.azure.com:443/",
                 foundry_endpoint="https://test.ai.azure.com",
+                embedding_model="text-embedding-3-large",
+                chat_model="gpt-4o-mini",
             )
 
             assert provider._should_close_client is True

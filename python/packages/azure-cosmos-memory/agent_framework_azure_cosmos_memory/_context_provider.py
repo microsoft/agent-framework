@@ -39,8 +39,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_SOURCE_ID = "cosmos_memory"
 DEFAULT_DATABASE = "ai_memory"
 DEFAULT_CONTEXT_PROMPT = "## Relevant Memories\nConsider these memories when responding:"
-DEFAULT_EMBEDDING_MODEL = "text-embedding-3-large"
-DEFAULT_CHAT_MODEL = "gpt-4o-mini"
 
 # The memory categories the toolkit's extraction pipeline classifies and can retrieve.
 MemoryType = Literal["fact", "procedural", "episodic"]
@@ -110,10 +108,14 @@ class CosmosMemoryContextProvider(ContextProvider):
                 Can be set via ``COSMOS_DATABASE``.
             foundry_endpoint: Azure AI Foundry project endpoint for LLM and embeddings.
                 Can be set via ``FOUNDRY_ENDPOINT``.
-            embedding_model: Embedding model deployment name.
-                Can be set via ``EMBEDDING_MODEL``.
-            chat_model: Chat model deployment name.
-                Can be set via ``CHAT_MODEL``.
+            embedding_model: Embedding model deployment name. Required (no default) when the
+                provider builds the client; can be set via ``EMBEDDING_MODEL``. There is no safe
+                long-term default, so an unset value raises rather than silently targeting a model
+                that may not be deployed.
+            chat_model: Chat model deployment name. Required (no default) when the provider builds
+                the client; can be set via ``CHAT_MODEL``. There is no safe long-term default, so
+                an unset value raises rather than silently targeting a model that may not be
+                deployed.
             credential: Azure credential for authentication. When provided it is used for both
                 Cosmos DB and AI Foundry; when ``None`` the toolkit builds (and owns) a
                 ``DefaultAzureCredential``.
@@ -139,8 +141,9 @@ class CosmosMemoryContextProvider(ContextProvider):
                 by the provider or supplied via ``memory_client``.
 
         Raises:
-            SettingNotFoundError: If ``cosmos_endpoint`` or ``foundry_endpoint`` cannot be resolved
-                from arguments or the environment (only when ``memory_client`` is not supplied).
+            SettingNotFoundError: If ``cosmos_endpoint``, ``foundry_endpoint``, ``embedding_model``,
+                or ``chat_model`` cannot be resolved from arguments or the environment (only when
+                ``memory_client`` is not supplied).
         """
         super().__init__(source_id)
 
@@ -190,13 +193,13 @@ class CosmosMemoryContextProvider(ContextProvider):
                 foundry_endpoint=foundry_endpoint,
                 embedding_model=embedding_model,
                 chat_model=chat_model,
-                required_fields=["cosmos_endpoint", "foundry_endpoint"],
+                required_fields=["cosmos_endpoint", "foundry_endpoint", "embedding_model", "chat_model"],
             )
             cosmos_endpoint = settings.get("cosmos_endpoint")
             cosmos_database = settings.get("cosmos_database") or DEFAULT_DATABASE
             foundry_endpoint = settings.get("foundry_endpoint")
-            embedding_model = settings.get("embedding_model") or DEFAULT_EMBEDDING_MODEL
-            chat_model = settings.get("chat_model") or DEFAULT_CHAT_MODEL
+            embedding_model = settings.get("embedding_model")
+            chat_model = settings.get("chat_model")
 
             # Authentication: if the caller supplies a credential, wire it into both the Cosmos
             # and AI Foundry clients and disable the toolkit's default-credential creation.

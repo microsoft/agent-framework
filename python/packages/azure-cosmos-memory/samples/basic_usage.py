@@ -58,6 +58,8 @@ async def user_scoped_memory() -> None:
     provider = CosmosMemoryContextProvider(
         cosmos_endpoint=os.environ["COSMOS_ENDPOINT"],
         foundry_endpoint=os.environ["FOUNDRY_ENDPOINT"],
+        embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-large"),
+        chat_model=os.getenv("CHAT_MODEL", "gpt-4o-mini"),
         credential=credential,
     )
     agent = _build_agent(provider, credential)
@@ -86,6 +88,8 @@ async def session_scoped_memory() -> None:
     provider = CosmosMemoryContextProvider(
         cosmos_endpoint=os.environ["COSMOS_ENDPOINT"],
         foundry_endpoint=os.environ["FOUNDRY_ENDPOINT"],
+        embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-large"),
+        chat_model=os.getenv("CHAT_MODEL", "gpt-4o-mini"),
         credential=credential,
     )
     agent = _build_agent(provider, credential)
