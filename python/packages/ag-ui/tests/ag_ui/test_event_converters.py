@@ -2,7 +2,11 @@
 
 """Tests for AG-UI event converter."""
 
+import logging
 from typing import Any, cast
+
+import pytest
+from agent_framework import ChatResponse
 
 from agent_framework_ag_ui._event_converters import AGUIEventConverter
 
@@ -232,6 +236,83 @@ class TestAGUIEventConverter:
         assert update.additional_properties["interrupt"] == [{"id": "req_1", "value": {"question": "Continue?"}}]
         assert update.additional_properties["result"] == {"status": "paused"}
 
+    def test_run_finished_event_with_canonical_interrupt_outcome(self) -> None:
+        """RUN_FINISHED outcome.interrupts metadata is preserved in additional_properties."""
+        converter = AGUIEventConverter()
+        converter.thread_id = "thread_123"
+        converter.run_id = "run_456"
+
+        outcome = {
+            "type": "interrupt",
+            "interrupts": [
+                {
+                    "id": "req_1",
+                    "reason": "input_required",
+                    "message": "Choose a value",
+                    "responseSchema": {"type": "string"},
+                    "metadata": {"agent_framework": {"request_type": "str"}},
+                }
+            ],
+        }
+        event = {
+            "type": "RUN_FINISHED",
+            "threadId": "thread_123",
+            "runId": "run_456",
+            "outcome": outcome,
+        }
+
+        update = converter.convert_event(event)
+
+        assert update is not None
+        assert update.additional_properties is not None
+        assert update.additional_properties["outcome"] == outcome
+        assert update.additional_properties["interrupts"] == outcome["interrupts"]
+
+    def test_run_finished_event_with_success_outcome_preserves_normal_completion(self) -> None:
+        """Non-interrupt RUN_FINISHED outcome metadata stays a normal stop update."""
+        converter = AGUIEventConverter()
+        converter.thread_id = "thread_123"
+        converter.run_id = "run_456"
+
+        event = {
+            "type": "RUN_FINISHED",
+            "threadId": "thread_123",
+            "runId": "run_456",
+            "outcome": {"type": "success"},
+        }
+
+        update = converter.convert_event(event)
+
+        assert update is not None
+        assert update.finish_reason == "stop"
+        assert update.additional_properties is not None
+        assert update.additional_properties["outcome"] == {"type": "success"}
+        assert "interrupts" not in update.additional_properties
+
+    def test_run_finished_event_with_non_dict_outcome_preserves_and_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Malformed non-object outcome metadata is preserved but logged."""
+        converter = AGUIEventConverter()
+        converter.thread_id = "thread_123"
+        converter.run_id = "run_456"
+
+        event = {
+            "type": "RUN_FINISHED",
+            "threadId": "thread_123",
+            "runId": "run_456",
+            "outcome": "malformed",
+        }
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework_ag_ui._event_converters"):
+            update = converter.convert_event(event)
+
+        assert update is not None
+        assert update.additional_properties is not None
+        assert update.additional_properties["outcome"] == "malformed"
+        assert "interrupts" not in update.additional_properties
+        assert "RUN_FINISHED outcome should be an object" in caplog.text
+
     def test_run_error_event(self) -> None:
         """Test conversion of RUN_ERROR event."""
         converter = AGUIEventConverter()
@@ -342,3 +423,47 @@ class TestAGUIEventConverter:
         assert len(non_none_updates) == 4
         assert non_none_updates[0].contents[0].name == "search"
         assert non_none_updates[2].contents[0].name == "fetch"
+
+    def test_tool_call_args_must_match_current_tool_call_id(self) -> None:
+        """TOOL_CALL_ARGS for another call must not be rebound to the current tool."""
+        converter = AGUIEventConverter()
+
+        events = [
+            {"type": "TOOL_CALL_START", "toolCallId": "safe", "toolName": "safe_tool"},
+            {"type": "TOOL_CALL_START", "toolCallId": "danger", "toolName": "danger_tool"},
+            {"type": "TOOL_CALL_ARGS", "toolCallId": "safe", "delta": '{"amount": 100}'},
+            {"type": "TOOL_CALL_END", "toolCallId": "safe"},
+            {"type": "TOOL_CALL_END", "toolCallId": "danger"},
+        ]
+
+        updates = [update for event in events if (update := converter.convert_event(event)) is not None]
+        response = ChatResponse.from_updates(updates)
+        function_calls = [
+            (content.call_id, content.name, content.arguments)
+            for message in response.messages
+            for content in message.contents
+            if content.type == "function_call"
+        ]
+
+        assert ("danger", "danger_tool", "") in function_calls
+        assert ("danger", "danger_tool", '{"amount": 100}') not in function_calls
+        assert all(call[2] != '{"amount": 100}' for call in function_calls)
+
+    def test_tool_call_end_must_match_current_tool_call_id(self) -> None:
+        """TOOL_CALL_END for another call must not clear the current call state."""
+        converter = AGUIEventConverter()
+
+        converter.convert_event({"type": "TOOL_CALL_START", "toolCallId": "danger", "toolName": "danger_tool"})
+        converter.convert_event({"type": "TOOL_CALL_ARGS", "toolCallId": "danger", "delta": '{"amount":'})
+        update = converter.convert_event({"type": "TOOL_CALL_END", "toolCallId": "safe"})
+
+        assert update is None
+        assert converter.current_tool_call_id == "danger"
+        assert converter.current_tool_name == "danger_tool"
+        assert converter.accumulated_tool_args == '{"amount":'
+
+        converter.convert_event({"type": "TOOL_CALL_END", "toolCallId": "danger"})
+
+        assert converter.current_tool_call_id is None
+        assert converter.current_tool_name is None
+        assert converter.accumulated_tool_args == ""

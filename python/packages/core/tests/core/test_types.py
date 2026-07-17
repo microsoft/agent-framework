@@ -346,6 +346,7 @@ def test_mcp_server_tool_call_and_result():
     call = Content.from_mcp_server_tool_call(call_id="c-1", tool_name="tool", server_name="server", arguments={"x": 1})
     assert call.type == "mcp_server_tool_call"
     assert call.arguments == {"x": 1}
+    assert call.informational_only is True
 
     result = Content.from_mcp_server_tool_result(call_id="c-1", output=[{"type": "text", "text": "done"}])
     assert result.type == "mcp_server_tool_result"
@@ -354,6 +355,17 @@ def test_mcp_server_tool_call_and_result():
     # Empty call_id is allowed, validation happens elsewhere
     call2 = Content.from_mcp_server_tool_call(call_id="", tool_name="tool", server_name="server")
     assert call2.call_id == ""
+
+
+def test_mcp_server_tool_call_is_always_informational_only():
+    direct = Content("mcp_server_tool_call", call_id="c-1", tool_name="tool", informational_only=False)
+    assert direct.informational_only is True
+
+    serialized = direct.to_dict()
+    assert "informational_only" not in serialized
+
+    restored = Content.from_dict({**serialized, "informational_only": False})
+    assert restored.informational_only is True
 
 
 # region: Shell tool content
@@ -510,9 +522,25 @@ def test_function_call_content():
     assert content.type == "function_call"
     assert content.name == "example_function"
     assert content.arguments == {"param1": "value1"}
+    assert content.informational_only is False
 
     # Ensure the instance is of type BaseContent
     assert isinstance(content, Content)
+
+
+def test_function_call_content_informational_only_serialization():
+    content = Content.from_function_call(
+        call_id="1",
+        name="example_function",
+        arguments={"param1": "value1"},
+        informational_only=True,
+    )
+
+    assert content.informational_only is True
+    assert content.to_dict()["informational_only"] is True
+    assert Content.from_dict(content.to_dict()).informational_only is True
+    assert "informational_only" not in Content.from_function_call(call_id="1", name="f").to_dict()
+    assert "informational_only" not in Content.from_text("hello").to_dict(exclude_none=False)
 
 
 def test_function_call_content_parse_arguments():
@@ -537,6 +565,12 @@ def test_function_call_content_add_merging_and_errors():
     c = a + b
     assert c.arguments == {"x": 1, "y": 2}
 
+    # informational_only is preserved across streamed chunks
+    a = Content.from_function_call(call_id="1", name="f", arguments='{"x":', informational_only=True)
+    b = Content.from_function_call(call_id="1", name="f", arguments="1}")
+    c = a + b
+    assert c.informational_only is True
+
     # incompatible argument types
     a = Content.from_function_call(call_id="1", name="f", arguments="abc")
     b = Content.from_function_call(call_id="1", name="f", arguments={"y": 2})
@@ -549,6 +583,21 @@ def test_function_call_content_add_merging_and_errors():
 
     with raises(ContentError):
         _ = a + b
+
+    # name merging: when the first chunk has no name (e.g. a streaming delta where
+    # the function name arrives later), the merged content must keep the name from
+    # whichever side provides it, regardless of order.
+    # A nameless delta is constructed via Content(...) directly (the factory
+    # from_function_call requires name: str); this mirrors how a streaming
+    # function-call delta with no name yet is represented.
+    a = Content("function_call", call_id="1", name=None, arguments='{"a":')
+    b = Content.from_function_call(call_id="1", name="get_weather", arguments="1}")
+    assert (a + b).name == "get_weather"
+    assert (b + a).name == "get_weather"
+    # both sides missing a name stays None
+    a = Content("function_call", call_id="1", name=None, arguments="")
+    b = Content("function_call", call_id="1", name=None, arguments="")
+    assert (a + b).name is None
 
 
 # region FunctionResultContent
@@ -586,35 +635,38 @@ def test_usage_details_addition():
         input_token_count=5,
         output_token_count=10,
         total_token_count=15,
-        test1=10,  # ty: ignore[invalid-key]
-        test2=20,  # ty: ignore[invalid-key]
+        test1=10,
+        test2=20,
     )
     usage2 = UsageDetails(  # type: ignore[typeddict-unknown-key]
         input_token_count=3,
         output_token_count=6,
         total_token_count=9,
-        test1=10,  # ty: ignore[invalid-key]
-        test3=30,  # ty: ignore[invalid-key]
+        test1=10,
+        test3=30,
     )
 
     combined_usage = add_usage_details(usage1, usage2)
     assert combined_usage["input_token_count"] == 8
     assert combined_usage["output_token_count"] == 16
     assert combined_usage["total_token_count"] == 24
-    assert combined_usage["test1"] == 20  # type: ignore[typeddict-item]  # ty: ignore[invalid-key]
-    assert combined_usage["test2"] == 20  # type: ignore[typeddict-item]  # ty: ignore[invalid-key]
-    assert combined_usage["test3"] == 30  # type: ignore[typeddict-item]  # ty: ignore[invalid-key]
+    assert combined_usage["test1"] == 20  # type: ignore[typeddict-item]
+    assert combined_usage["test2"] == 20  # type: ignore[typeddict-item]
+    assert combined_usage["test3"] == 30  # type: ignore[typeddict-item]
 
 
 def test_usage_details_fail():
     # TypedDict doesn't validate types at runtime, so this test no longer applies
     # Creating UsageDetails with wrong types won't raise ValueError
-    usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, wrong_type="42.923")  # type: ignore[typeddict-item, typeddict-unknown-key]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-key]
-    assert usage["wrong_type"] == "42.923"  # type: ignore[typeddict-item]  # ty: ignore[invalid-key]
+    usage = cast(
+        UsageDetails,
+        {"input_token_count": 5, "output_token_count": 10, "total_token_count": 15, "wrong_type": "42.923"},
+    )
+    assert usage["wrong_type"] == "42.923"  # type: ignore[typeddict-item]
 
 
 def test_usage_details_additional_counts():
-    usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, **{"test": 1})  # type: ignore[call-arg, typeddict-unknown-key]  # ty: ignore[invalid-key]
+    usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, **{"test": 1})  # type: ignore[call-arg, typeddict-unknown-key]
     assert usage.get("test") == 1
 
 
@@ -630,8 +682,8 @@ def test_usage_details_add_with_none_and_type_errors():
 
 
 def test_usage_details_add_skips_non_int():
-    u1 = UsageDetails(input_token_count=10, other="test")  # type: ignore[typeddict-item, typeddict-unknown-key]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-key]
-    u2 = UsageDetails(input_token_count=10, another="test")  # type: ignore[typeddict-item, typeddict-unknown-key]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-key]
+    u1 = cast(UsageDetails, {"input_token_count": 10, "other": "test"})
+    u2 = cast(UsageDetails, {"input_token_count": 10, "another": "test"})
     u3 = add_usage_details(u1, u2)
     assert len(u3.keys()) == 1
     assert "input_token_count" in u3
@@ -702,6 +754,7 @@ def test_function_approval_accepts_mcp_call():
 
     assert isinstance(req.function_call, Content)
     assert req.function_call.call_id == "c-mcp"
+    assert req.function_call.informational_only is True
 
 
 # region BaseContent Serialization
@@ -843,6 +896,109 @@ def test_chat_response_with_mapping_response_format() -> None:
     assert response.value is not None
     assert isinstance(response.value, dict)
     assert response.value["response"] == "Hello"
+
+
+def test_chat_response_value_parses_split_structured_text_without_changing_message_text() -> None:
+    """ChatResponse.value should not use Message.text spacing between structured output chunks."""
+    message = Message(role="assistant", contents=[Content.from_text('{ "respon'), Content.from_text('se": "Hello" }')])
+    response = ChatResponse(messages=message, response_format=OutputModel)
+
+    assert message.text == '{ "respon se": "Hello" }'
+    assert response.text == '{ "respon se": "Hello" }'
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_chat_response_value_parses_final_message_with_response_format() -> None:
+    """ChatResponse.value should ignore intermediate messages when parsing structured output."""
+    response = ChatResponse(
+        messages=[
+            Message(role="assistant", contents=['{"skill_name": "building-permit-compliance"}']),
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+        ],
+        response_format=OutputModel,
+    )
+
+    assert response.text == '{"skill_name": "building-permit-compliance"}\n{"response": "Hello"}'
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_agent_response_value_parses_split_structured_text_without_changing_message_text() -> None:
+    """AgentResponse.value should not use Message.text spacing between structured output chunks."""
+    message = Message(role="assistant", contents=[Content.from_text('{"response": "Hel'), Content.from_text('lo"}')])
+    response = AgentResponse(messages=message, response_format=OutputModel)
+
+    assert message.text == '{"response": "Hel lo"}'
+    assert response.text == '{"response": "Hel lo"}'
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_agent_response_value_parses_final_message_with_response_format() -> None:
+    """AgentResponse.value should ignore intermediate messages when parsing structured output."""
+    response = AgentResponse(
+        messages=[
+            Message(role="assistant", contents=['{"skill_name": "building-permit-compliance"}']),
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+        ],
+        response_format=OutputModel,
+    )
+
+    assert response.text == '{"skill_name": "building-permit-compliance"}{"response": "Hello"}'
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_chat_response_value_handles_text_content_without_text() -> None:
+    """ChatResponse.value should ignore text content with no text value."""
+    message = Message(role="assistant", contents=[Content.from_dict({"type": "text"})])
+    response = ChatResponse(messages=message, response_format=OutputModel)
+
+    assert response.value is None
+
+
+def test_agent_response_mapping_value_parses_final_message() -> None:
+    """AgentResponse.value should parse the final message for JSON schema mappings."""
+    response = AgentResponse(
+        messages=[
+            Message(role="assistant", contents=['{"skill_name": "building-permit-compliance"}']),
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+        ],
+        response_format={"type": "object", "properties": {"response": {"type": "string"}}},
+    )
+
+    assert response.value is not None
+    assert isinstance(response.value, dict)
+    assert response.value["response"] == "Hello"
+
+
+def test_chat_response_value_ignores_trailing_non_assistant_message() -> None:
+    """ChatResponse.value should parse the final assistant message when later tool output exists."""
+    response = ChatResponse(
+        messages=[
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+            Message(role="tool", contents=["tool output is not structured JSON"]),
+        ],
+        response_format=OutputModel,
+    )
+
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_agent_response_value_ignores_trailing_non_assistant_message() -> None:
+    """AgentResponse.value should parse the final assistant message when later tool output exists."""
+    response = AgentResponse(
+        messages=[
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+            Message(role="tool", contents=["tool output is not structured JSON"]),
+        ],
+        response_format=OutputModel,
+    )
+
+    assert response.value is not None
+    assert response.value.response == "Hello"
 
 
 def test_parse_structured_response_value_empty_text_with_pydantic_model() -> None:
@@ -1089,6 +1245,37 @@ async def test_chat_response_from_async_generator_mapping_response_format() -> N
     assert resp.value is not None
     assert isinstance(resp.value, dict)
     assert resp.value["response"] == "Hello"
+
+
+def test_chat_response_from_streaming_updates_parses_final_assistant_message() -> None:
+    """Combined streaming updates should parse the final assistant message, not trailing tool output."""
+    updates = [
+        ChatResponseUpdate(
+            role="assistant",
+            message_id="skill-message",
+            contents=[Content.from_text('{"skill_name": "building-permit-compliance"}')],
+        ),
+        ChatResponseUpdate(
+            role="assistant",
+            message_id="final-message",
+            contents=[Content.from_text('{"respon')],
+        ),
+        ChatResponseUpdate(
+            message_id="final-message",
+            contents=[Content.from_text('se": "Hello"}')],
+        ),
+        ChatResponseUpdate(
+            role="tool",
+            message_id="tool-message",
+            contents=[Content.from_text("tool output is not structured JSON")],
+        ),
+    ]
+
+    response = ChatResponse.from_updates(updates, output_format_type=OutputModel)
+
+    assert [message.role for message in response.messages] == ["assistant", "assistant", "tool"]
+    assert response.value is not None
+    assert response.value.response == "Hello"
 
 
 # region ToolMode
@@ -1772,9 +1959,9 @@ def test_comprehensive_to_dict_exclude_options():
     assert "text" in text_dict_exclude
 
     # Test UsageDetails - it's a TypedDict now, not a class with to_dict
-    usage = UsageDetails(input_token_count=5, custom_count=10)  # type: ignore[typeddict-unknown-key]  # ty: ignore[invalid-key]
+    usage = UsageDetails(input_token_count=5, custom_count=10)  # type: ignore[typeddict-unknown-key]
     assert usage["input_token_count"] == 5
-    assert usage["custom_count"] == 10  # type: ignore[typeddict-item]  # ty: ignore[invalid-key]
+    assert usage["custom_count"] == 10  # type: ignore[typeddict-item]
 
     # Test UsageDetails exclude_none behavior isn't applicable to TypedDict
     # TypedDict doesn't have a to_dict method
@@ -1783,8 +1970,8 @@ def test_comprehensive_to_dict_exclude_options():
 def test_usage_details_iadd_edge_cases():
     """Test UsageDetails addition with edge cases for better coverage."""
     # Test with None values
-    u1 = UsageDetails(input_token_count=None, output_token_count=5, custom1=10)  # type: ignore[typeddict-unknown-key]  # ty: ignore[invalid-key]
-    u2 = UsageDetails(input_token_count=3, output_token_count=None, custom2=20)  # type: ignore[typeddict-unknown-key]  # ty: ignore[invalid-key]
+    u1 = UsageDetails(input_token_count=None, output_token_count=5, custom1=10)  # type: ignore[typeddict-unknown-key]
+    u2 = UsageDetails(input_token_count=3, output_token_count=None, custom2=20)  # type: ignore[typeddict-unknown-key]
 
     result = add_usage_details(u1, u2)
     assert result["input_token_count"] == 3
@@ -1793,8 +1980,8 @@ def test_usage_details_iadd_edge_cases():
     assert result.get("custom2") == 20
 
     # Test merging additional counts
-    u3 = UsageDetails(input_token_count=1, shared_count=5)  # type: ignore[typeddict-unknown-key]  # ty: ignore[invalid-key]
-    u4 = UsageDetails(input_token_count=2, shared_count=15)  # type: ignore[typeddict-unknown-key]  # ty: ignore[invalid-key]
+    u3 = UsageDetails(input_token_count=1, shared_count=5)  # type: ignore[typeddict-unknown-key]
+    u4 = UsageDetails(input_token_count=2, shared_count=15)  # type: ignore[typeddict-unknown-key]
 
     result2 = add_usage_details(u3, u4)
     assert result2["input_token_count"] == 3
@@ -2027,7 +2214,7 @@ def test_usage_content_serialization_with_details():
     usage_content = Content(**usage_data)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     assert isinstance(usage_content.usage_details, dict)
     assert usage_content.usage_details["input_token_count"] == 10
-    assert usage_content.usage_details["custom_count"] == 5  # type: ignore[typeddict-item]  # ty: ignore[invalid-argument-type, invalid-key]  # Custom fields go directly in UsageDetails
+    assert usage_content.usage_details["custom_count"] == 5  # type: ignore[typeddict-item]  # Custom fields go directly in UsageDetails
 
     # Test to_dict with UsageDetails object
     usage_dict = usage_content.to_dict()
@@ -2706,6 +2893,7 @@ def test_text_content_with_annotations_serialization():
 
     # Verify reconstruction
     assert len(reconstructed.annotations) == 2  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert reconstructed.annotations is not None
     # Annotation are TypedDicts (dicts at runtime)
     assert all(isinstance(ann, dict) for ann in reconstructed.annotations)  # type: ignore[union-attr]  # pyrefly: ignore[not-iterable]
     assert reconstructed.annotations[0]["title"] == "Citation 1"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]
@@ -3053,19 +3241,20 @@ def test_content_add_usage_content_non_integer_values():
     """Test adding usage content with non-integer values."""
     usage1 = Content(
         type="usage",
-        usage_details={"model": "gpt-4", "count": 10},  # type: ignore[arg-type, typeddict-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type, invalid-key]
+        usage_details=cast(UsageDetails, {"model": "gpt-4", "count": 10}),
     )
     usage2 = Content(
         type="usage",
-        usage_details={"model": "gpt-3.5", "count": 20},  # type: ignore[arg-type, typeddict-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type, invalid-key]
+        usage_details=cast(UsageDetails, {"model": "gpt-3.5", "count": 20}),
     )
 
     result = usage1 + usage2
 
     # Non-integer "model" should take first non-None value
-    assert "model" not in result.usage_details  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert result.usage_details is not None
+    assert "model" not in result.usage_details  # type: ignore[operator]  # pyrefly: ignore[not-iterable]
     # Integer "count" should be summed
-    assert result.usage_details["count"] == 30  # type: ignore[index, typeddict-item]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[invalid-key, not-subscriptable]
+    assert result.usage_details["count"] == 30  # type: ignore[index, typeddict-item]  # pyrefly: ignore[unsupported-operation]
 
 
 # endregion

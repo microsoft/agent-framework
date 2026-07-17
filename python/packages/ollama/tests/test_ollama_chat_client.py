@@ -1,12 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import os
+import uuid
 from collections.abc import AsyncIterable
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
+    Agent,
     BaseChatClient,
     ChatResponseUpdate,
     Content,
@@ -72,6 +74,12 @@ def ollama_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  #
 @fixture
 def chat_history() -> list[Message]:
     return []
+
+
+def test_agent_accepts_ollama_chat_client(ollama_unit_test_env: dict[str, str]) -> None:
+    client = OllamaChatClient()
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
 
 
 @fixture
@@ -256,6 +264,71 @@ async def test_cmc(
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_maps_done_reason_to_finish_reason(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    mock_chat.return_value = OllamaChatResponse(
+        message=OllamaMessage(content="test", role="assistant"),
+        model="test",
+        eval_count=2,
+        prompt_eval_count=3,
+        done_reason="length",
+    )
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient()
+    result = await ollama_client.get_response(messages=chat_history)
+
+    assert result.finish_reason == "length"
+    assert result.usage_details == {
+        "input_token_count": 3,
+        "output_token_count": 2,
+        "total_token_count": 5,
+    }
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_leaves_unknown_done_reason_unset(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    mock_chat.return_value = OllamaChatResponse(
+        message=OllamaMessage(content="test", role="assistant"),
+        model="test",
+        done_reason="load",
+    )
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient()
+    result = await ollama_client.get_response(messages=chat_history)
+
+    assert result.finish_reason is None
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_omits_usage_when_token_counts_are_missing(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    mock_chat.return_value = OllamaChatResponse(
+        message=OllamaMessage(content="test", role="assistant"),
+        model="test",
+        done_reason="stop",
+    )
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient()
+    result = await ollama_client.get_response(messages=chat_history)
+
+    assert result.finish_reason == "stop"
+    assert not result.usage_details
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
 async def test_cmc_response_format_dict(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
@@ -371,6 +444,72 @@ async def test_cmc_streaming(
 
     async for chunk in result:
         assert chunk.text == "test"
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_streaming_maps_done_reason_and_usage(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    response = OllamaChatResponse(
+        message=OllamaMessage(content="test", role="assistant"),
+        model="test",
+        done=True,
+        done_reason="stop",
+        eval_count=4,
+        prompt_eval_count=6,
+        created_at="2024-01-01T00:00:00Z",
+    )
+    stream = MagicMock(spec=AsyncStream)
+    stream.__aiter__.return_value = [response]
+    mock_chat.return_value = stream
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient()
+    result = ollama_client.get_response(messages=chat_history, stream=True)
+    async for _ in result:
+        pass
+    final_response = await result.get_final_response()
+
+    assert final_response.text == "test"
+    assert final_response.finish_reason == "stop"
+    assert final_response.usage_details == {
+        "input_token_count": 6,
+        "output_token_count": 4,
+        "total_token_count": 10,
+    }
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_streaming_ignores_done_reason_and_usage_before_final_chunk(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    response = OllamaChatResponse(
+        message=OllamaMessage(content="test", role="assistant"),
+        model="test",
+        done=False,
+        done_reason="stop",
+        eval_count=4,
+        prompt_eval_count=6,
+        created_at="2024-01-01T00:00:00Z",
+    )
+    stream = MagicMock(spec=AsyncStream)
+    stream.__aiter__.return_value = [response]
+    mock_chat.return_value = stream
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient()
+    result = ollama_client.get_response(messages=chat_history, stream=True)
+    async for _ in result:
+        pass
+    final_response = await result.get_final_response()
+
+    assert final_response.text == "test"
+    assert final_response.finish_reason is None
+    assert final_response.usage_details is None
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
@@ -511,7 +650,7 @@ async def test_cmc_with_invalid_data_content_media_type(
         )
 
         ollama_client = OllamaChatClient()
-        ollama_client.client.chat = AsyncMock(return_value=mock_streaming_chat_completion_response)  # type: ignore[method-assign] # ty: ignore[invalid-assignment]
+        ollama_client.client.chat = AsyncMock(return_value=mock_streaming_chat_completion_response)  # type: ignore[method-assign]
 
         await ollama_client.get_response(messages=chat_history)
 
@@ -612,3 +751,62 @@ async def test_cmc_streaming_integration_with_chat_completion(
         full_text += chunk.text
 
     assert "hello" in full_text.lower() and "world" in full_text.lower()
+
+
+class TestParallelToolCallUniqueness:
+    """Verify that repeated tool calls in one turn get unique call_ids."""
+
+    def test_parse_duplicate_tool_names_get_unique_call_ids(self) -> None:
+        """Two calls to the same tool should have different call_ids."""
+        mock_func_1 = MagicMock()
+        mock_func_1.name = "search"
+        mock_func_1.arguments = {"query": "Azure"}
+
+        mock_func_2 = MagicMock()
+        mock_func_2.name = "search"
+        mock_func_2.arguments = {"query": "AWS"}
+
+        mock_tool_1 = MagicMock()
+        mock_tool_1.function = mock_func_1
+
+        mock_tool_2 = MagicMock()
+        mock_tool_2.function = mock_func_2
+
+        client = OllamaChatClient(host="http://localhost:12345", model="test-model")
+        results = client._parse_tool_calls_from_ollama([mock_tool_1, mock_tool_2])
+
+        assert len(results) == 2
+        id1 = results[0].call_id
+        id2 = results[1].call_id
+
+        assert id1 != id2, f"Parallel tool calls collided on call_id: {id1}"
+
+        assert id1 is not None
+        assert id2 is not None
+        try:
+            uuid.UUID(str(id1))
+            uuid.UUID(str(id2))
+        except ValueError:
+            pytest.fail(f"call_id is not a valid UUID: {id1=}, {id2=}")
+
+    def test_format_tool_message_strips_unique_suffix(self) -> None:
+        """_format_tool_message must send only the bare tool name to Ollama."""
+        client = OllamaChatClient(host="http://localhost:12345", model="test-model")
+
+        # Fake a function_result content item
+        mock_item = MagicMock()
+        mock_item.type = "function_result"
+        mock_item.name = "search:advanced"
+        mock_item.call_id = str(uuid.uuid4())
+        mock_item.result = "found it"
+        mock_item.items = None
+
+        mock_message = MagicMock()
+        mock_message.contents = [mock_item]
+
+        formatted = client._format_tool_message(mock_message)
+
+        assert len(formatted) == 1
+        assert formatted[0].tool_name == "search:advanced", (
+            f"Expected bare name 'search:advanced', got '{formatted[0].tool_name}'"
+        )

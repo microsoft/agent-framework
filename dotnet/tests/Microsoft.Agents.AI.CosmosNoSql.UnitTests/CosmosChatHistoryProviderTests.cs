@@ -290,6 +290,52 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
     [Fact]
     [Trait("Category", "CosmosDB")]
+    public async Task InvokedAsync_WithNullMessageTtl_ShouldPersistWithoutTtlPropertyAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+        var conversationId = Guid.NewGuid().ToString();
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(conversationId))
+        {
+            MessageTtlSeconds = null // Disable TTL. Previously this serialized ttl=null and Cosmos rejected the write.
+        };
+        var message = new ChatMessage(ChatRole.User, "No TTL message");
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, [message], []);
+
+        // Act - must not throw "The input ttl 'null' is invalid ..."
+        await provider.InvokedAsync(context);
+
+        // Wait a moment for eventual consistency
+        await Task.Delay(100);
+
+        // Assert - message persisted and the stored document omits the "ttl" property entirely.
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
+        var messageList = (await provider.InvokingAsync(invokingContext)).ToList();
+        Assert.Single(messageList);
+        Assert.Equal("No TTL message", messageList[0].Text);
+
+        var rawQuery = new QueryDefinition("SELECT * FROM c WHERE c.conversationId = @conversationId")
+            .WithParameter("@conversationId", conversationId);
+        var rawIterator = this._setupClient!.GetDatabase(s_testDatabaseId).GetContainer(TestContainerId)
+            .GetItemQueryIterator<Newtonsoft.Json.Linq.JObject>(rawQuery, requestOptions: new QueryRequestOptions
+            {
+                PartitionKey = new PartitionKey(conversationId)
+            });
+
+        List<Newtonsoft.Json.Linq.JObject> rawDocs = [];
+        while (rawIterator.HasMoreResults)
+        {
+            rawDocs.AddRange(await rawIterator.ReadNextAsync());
+        }
+
+        Assert.Single(rawDocs);
+        Assert.False(rawDocs[0].ContainsKey("ttl"), "The 'ttl' property must be omitted when MessageTtlSeconds is null.");
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
     public async Task InvokedAsync_WithMultipleMessages_ShouldAddAllMessagesAsync()
     {
         // Arrange

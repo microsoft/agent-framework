@@ -22,7 +22,7 @@ This sample demonstrates how to **host** Agent Framework agents as A2A-compliant
 ## Environment Variables
 
 ### Required (Server)
-- `FOUNDRY_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
+- `FOUNDRY_PROJECT_ENDPOINT` — Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL` — Model deployment name (e.g. `gpt-4o`)
 
 ## Quick Start
@@ -78,4 +78,17 @@ Once a server is running, use any of the client samples in [`samples/02-agents/a
 cd python/samples/02-agents/a2a
 $env:A2A_AGENT_HOST = "http://localhost:5001/"
 uv run python agent_with_a2a.py
+```
+
+## Security considerations for multi-tenant hosting
+
+The default `a2a-sdk` task/push-config stores scope ownership by `user_name` only. **Any host that mounts tenant-bearing routes must pass a tenant-aware `owner_resolver`** to the stores, e.g.:
+
+```python
+from a2a.server.tasks import InMemoryTaskStore
+
+def resolve_tenant_user_scope(context):
+    # Derive tenant + user identity from your host's auth/session context.
+    return f"{context.tenant}:{context.user.user_name}"
+task_store = InMemoryTaskStore(owner_resolver=resolve_tenant_user_scope)
 ```

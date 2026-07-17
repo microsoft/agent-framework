@@ -12,6 +12,9 @@ namespace Microsoft.Agents.AI.UnitTests.Harness.FileAccess;
 
 public class FileAccessProviderTests
 {
+    private static ToolAutoApprovalRuleContext CreateRuleContext(FunctionCallContent functionCall) =>
+        new(functionCall, new Mock<AIAgent>().Object, session: null, requestMessages: [], agentRunOptions: null);
+
     #region Constructor Validation
 
     [Fact]
@@ -127,7 +130,7 @@ public class FileAccessProviderTests
         var functionCall = new FunctionCallContent("call1", toolName);
 
         // Act
-        bool approved = await FileAccessProvider.ReadOnlyToolsAutoApprovalRule(functionCall);
+        bool approved = await FileAccessProvider.ReadOnlyToolsAutoApprovalRule(CreateRuleContext(functionCall));
 
         // Assert
         Assert.Equal(expected, approved);
@@ -148,7 +151,7 @@ public class FileAccessProviderTests
         var functionCall = new FunctionCallContent("call1", toolName);
 
         // Act
-        bool approved = await FileAccessProvider.AllToolsAutoApprovalRule(functionCall);
+        bool approved = await FileAccessProvider.AllToolsAutoApprovalRule(CreateRuleContext(functionCall));
 
         // Assert
         Assert.Equal(expected, approved);

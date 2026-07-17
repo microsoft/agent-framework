@@ -27,7 +27,7 @@ Status is grouped into these buckets:
 | `agent-framework-claude` | `python/packages/claude` | `beta` |
 | `agent-framework-copilotstudio` | `python/packages/copilotstudio` | `beta` |
 | `agent-framework-core` | `python/packages/core` | `released` |
-| `agent-framework-declarative` | `python/packages/declarative` | `rc` |
+| `agent-framework-declarative` | `python/packages/declarative` | `released` |
 | `agent-framework-devui` | `python/packages/devui` | `beta` |
 | `agent-framework-durabletask` | `python/packages/durabletask` | `beta` |
 | `agent-framework-foundry` | `python/packages/foundry` | `released` |

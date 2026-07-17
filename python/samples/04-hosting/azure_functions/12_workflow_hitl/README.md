@@ -37,15 +37,41 @@ async def handle_approval_response(
     ...
 ```
 
+### Notifying a reviewer from inside the workflow
+
+This sample also shows how a workflow notifies a human itself (for example to email an approval link) instead of relying on the caller to poll the status endpoint. It uses a two step pattern so the reviewer gets a working respond URL.
+
+```python
+# Pause the workflow. request_info generates the request id internally.
+await ctx.request_info(
+    request_data=HumanApprovalRequest(...),
+    response_type=HumanApprovalResponse,
+)
+
+# Read that id back, then build the respond URL with WorkflowHitlContext.
+request_id = await WorkflowHitlContext.pending_request_id(ctx)
+hitl = WorkflowHitlContext.from_context(ctx)
+if hitl and request_id:
+    respond_url = hitl.build_respond_url(request_id)  # email this to the reviewer
+```
+
+Two things make this safe and worth understanding.
+
+**You never generate the id.** `request_info` already creates one and stores it on the context before it returns, so `pending_request_id(ctx)` reads it straight back. You must call `pending_request_id` immediately after `request_info`, because it returns the newest pending request, which is the one you just emitted. On the durable host this is reliable. Every executor runs in its own Durable Functions activity with its own runner context, so that pending set only ever holds this executor's own requests. If a single executor emits several requests in one turn, read the id after each call, or pass your own `request_id` to `request_info`.
+
+**The notification runs in a separate executor.** The review executor sends the id to a downstream `NotifyExecutor` that builds the URL, rather than emailing from the executor that generated the id. Because activities are at least once, an executor can be retried, and each retry mints a fresh id. Keeping the email in a downstream executor means only the committed attempt's id ever reaches the notifier, so a retried review executor never emails a dead link. `WorkflowHitlContext.from_context(ctx)` returns `None` when the executor is not on the durable host (for example under `--maf` DevUI), so the notify step skips cleanly there.
+
+The base URL comes from the `WEBSITE_HOSTNAME` app setting, which Azure Functions sets automatically in the cloud. For a custom domain or an API Management gateway, pass `base_url=...` to `from_context`, because `WEBSITE_HOSTNAME` still reports the default `*.azurewebsites.net` host.
+
 ### Automatic HITL Endpoints
 
 `AgentFunctionApp` automatically provides all the HTTP endpoints needed for HITL:
 
 | Endpoint | Description |
 |----------|-------------|
-| `POST /api/workflow/run` | Start the workflow |
-| `GET /api/workflow/status/{instanceId}` | Check status and pending HITL requests |
-| `POST /api/workflow/respond/{instanceId}/{requestId}` | Send human response |
+| `POST /api/workflow/content_moderation/run` | Start the workflow |
+| `GET /api/workflow/content_moderation/status/{instanceId}` | Check status and pending HITL requests |
+| `POST /api/workflow/content_moderation/respond/{instanceId}/{requestId}` | Send human response |
 | `GET /api/health` | Health check |
 
 These routes expose workflow status and human-response operations. In production, put them behind your application's authentication and authorization layer and verify that the caller is allowed to inspect or resume the targeted workflow before returning status or accepting a response.
@@ -133,10 +159,10 @@ This launches the DevUI at http://localhost:8096 where you can interact with the
 
 Use the `demo.http` file with the VS Code REST Client extension:
 
-1. **Start workflow** - `POST /api/workflow/run` with content payload
-2. **Check status** - `GET /api/workflow/status/{instanceId}` to see pending HITL requests
-3. **Send response** - `POST /api/workflow/respond/{instanceId}/{requestId}` with approval
-4. **Check result** - `GET /api/workflow/status/{instanceId}` to see final output
+1. **Start workflow** - `POST /api/workflow/content_moderation/run` with content payload
+2. **Check status** - `GET /api/workflow/content_moderation/status/{instanceId}` to see pending HITL requests
+3. **Send response** - `POST /api/workflow/content_moderation/respond/{instanceId}/{requestId}` with approval
+4. **Check result** - `GET /api/workflow/content_moderation/status/{instanceId}` to see final output
 
 ## Related Samples
 

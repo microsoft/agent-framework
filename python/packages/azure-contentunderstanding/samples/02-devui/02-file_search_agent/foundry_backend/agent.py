@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
-"""DevUI Multi-Modal Agent — CU extraction + file_search RAG via Azure AI Foundry.
+"""DevUI Multi-Modal Agent — CU extraction + file_search RAG via Microsoft Foundry.
 
 This agent combines Azure Content Understanding with Foundry's file_search
 for token-efficient RAG over large or multi-modal documents.
@@ -21,7 +21,7 @@ Analyzer auto-detection:
     - Video            → prebuilt-videoSearch
 
 Required environment variables:
-  FOUNDRY_PROJECT_ENDPOINT                 — Azure AI Foundry project endpoint
+  FOUNDRY_PROJECT_ENDPOINT                 — Microsoft Foundry project endpoint
   FOUNDRY_MODEL                            — Model deployment name (e.g. gpt-4.1)
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 

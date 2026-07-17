@@ -19,7 +19,7 @@ using OpenAI.Evals;
 namespace Microsoft.Agents.AI.Foundry;
 
 /// <summary>
-/// Azure AI Foundry evaluator provider that calls the Foundry Evals API.
+/// Microsoft Foundry evaluator provider that calls the Foundry Evals API.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -28,7 +28,7 @@ namespace Microsoft.Agents.AI.Foundry;
 /// (quality, safety, agent behavior, tool usage) are supported.
 /// </para>
 /// <para>
-/// Results appear in the Azure AI Foundry portal with a report URL for detailed analysis.
+/// Results appear in the Microsoft Foundry portal with a report URL for detailed analysis.
 /// </para>
 /// </remarks>
 [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing Dictionary<string, object> for eval API payloads.")]
@@ -55,7 +55,7 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// <summary>
     /// Initializes a new instance of the <see cref="FoundryEvals"/> class.
     /// </summary>
-    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="projectClient">The Microsoft Foundry project client.</param>
     /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
     /// <param name="evaluators">
     /// Evaluator specs to use. Each entry can be a built-in evaluator name (string, for example
@@ -80,7 +80,7 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// <summary>
     /// Initializes a new instance of the <see cref="FoundryEvals"/> class with a conversation splitter.
     /// </summary>
-    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="projectClient">The Microsoft Foundry project client.</param>
     /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
     /// <param name="splitter">
     /// Default conversation splitter for multi-turn conversations.
@@ -104,7 +104,7 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// <summary>
     /// Initializes a new instance of the <see cref="FoundryEvals"/> class with full configuration.
     /// </summary>
-    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="projectClient">The Microsoft Foundry project client.</param>
     /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
     /// <param name="splitter">
     /// Default conversation splitter for multi-turn conversations.
@@ -141,7 +141,7 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// Initializes a new instance of the <see cref="FoundryEvals"/> class using built-in evaluator
     /// names. Preserves source compatibility for callers that pass a <see cref="string"/> array.
     /// </summary>
-    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="projectClient">The Microsoft Foundry project client.</param>
     /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
     /// <param name="evaluators">Built-in evaluator names (for example <see cref="Relevance"/>).</param>
     public FoundryEvals(AIProjectClient projectClient, string model, string[] evaluators)
@@ -153,7 +153,7 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// Initializes a new instance of the <see cref="FoundryEvals"/> class with a splitter and
     /// built-in evaluator names.
     /// </summary>
-    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="projectClient">The Microsoft Foundry project client.</param>
     /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
     /// <param name="splitter">Default conversation splitter for multi-turn conversations.</param>
     /// <param name="evaluators">Built-in evaluator names.</param>
@@ -170,7 +170,7 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// Initializes a new instance of the <see cref="FoundryEvals"/> class with full configuration
     /// and built-in evaluator names.
     /// </summary>
-    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="projectClient">The Microsoft Foundry project client.</param>
     /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
     /// <param name="splitter">Default conversation splitter for multi-turn conversations.</param>
     /// <param name="pollIntervalSeconds">Seconds between status polls.</param>
@@ -355,7 +355,7 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// Source-compat overload of <see cref="EvaluateTracesAsync(AIProjectClient, string, IEnumerable{string}, IEnumerable{string}, string, int, FoundryEvaluatorSpec[], string, double, double, CancellationToken)"/>
     /// that accepts a <see cref="string"/> array of built-in evaluator names.
     /// </summary>
-    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="projectClient">The Microsoft Foundry project client.</param>
     /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
     /// <param name="responseIds">Evaluate specific Responses API response IDs.</param>
     /// <param name="traceIds">Evaluate specific OTel trace IDs from App Insights.</param>
@@ -403,7 +403,7 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// <paramref name="lookbackHours"/> to evaluate recent activity.
     /// </para>
     /// </remarks>
-    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="projectClient">The Microsoft Foundry project client.</param>
     /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
     /// <param name="responseIds">Evaluate specific Responses API response IDs.</param>
     /// <param name="traceIds">Evaluate specific OTel trace IDs from App Insights.</param>
@@ -560,7 +560,7 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// Source-compat overload of <see cref="EvaluateFoundryTargetAsync(AIProjectClient, string, IDictionary{string, object}, IEnumerable{string}, FoundryEvaluatorSpec[], string, double, double, CancellationToken)"/>
     /// that accepts a <see cref="string"/> array of built-in evaluator names.
     /// </summary>
-    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="projectClient">The Microsoft Foundry project client.</param>
     /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
     /// <param name="target">Target configuration (must include a "type" key).</param>
     /// <param name="testQueries">Queries for Foundry to send to the target.</param>
@@ -598,7 +598,7 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// Foundry invokes the target, captures the output, and evaluates it.
     /// Use this for scheduled evaluations, red teaming, and CI/CD quality gates.
     /// </remarks>
-    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="projectClient">The Microsoft Foundry project client.</param>
     /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
     /// <param name="target">Target configuration (must include a "type" key, e.g. "azure_ai_agent").</param>
     /// <param name="testQueries">Queries for Foundry to send to the target.</param>

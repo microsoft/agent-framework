@@ -25,7 +25,7 @@ pip install agent-framework agent-framework-hyperlight --pre
 
 ## Prerequisites
 
-- An Azure AI Foundry project endpoint (`FOUNDRY_PROJECT_ENDPOINT`)
+- A Microsoft Foundry project endpoint (`FOUNDRY_PROJECT_ENDPOINT`)
 - A deployed model (`FOUNDRY_MODEL`)
 - Azure CLI authenticated (`az login`)
 
