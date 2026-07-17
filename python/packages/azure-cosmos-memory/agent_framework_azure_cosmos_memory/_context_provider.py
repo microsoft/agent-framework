@@ -198,8 +198,10 @@ class CosmosMemoryContextProvider(ContextProvider):
             cosmos_endpoint = settings.get("cosmos_endpoint")
             cosmos_database = settings.get("cosmos_database") or DEFAULT_DATABASE
             foundry_endpoint = settings.get("foundry_endpoint")
-            embedding_model = settings.get("embedding_model")
-            chat_model = settings.get("chat_model")
+            # ``required_fields`` guarantees these are present, so narrow away ``None`` for the
+            # toolkit client, whose deployment-name parameters are non-optional ``str``.
+            embedding_model = cast("str", settings.get("embedding_model"))
+            chat_model = cast("str", settings.get("chat_model"))
 
             # Authentication: if the caller supplies a credential, wire it into both the Cosmos
             # and AI Foundry clients and disable the toolkit's default-credential creation.
