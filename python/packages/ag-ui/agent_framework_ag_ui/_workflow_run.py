@@ -62,6 +62,10 @@ _WORKFLOW_EVENT_BASE_FIELDS: set[str] = {
 }
 
 _INTERRUPT_CARD_EVENT_NAME = "WorkflowInterruptEvent"
+# Tool content admitted from streaming updates regardless of role. Approval requests are
+# deliberately excluded: workflow approvals resume through request_info pending state, and an
+# approval interrupt emitted from streamed content would have no pending request to resume against.
+_TOOL_CONTENT_TYPES = {"function_call", "function_result", "mcp_server_tool_call", "mcp_server_tool_result"}
 
 
 def _json_schema_for_response_type(response_type: Any) -> dict[str, Any] | None:
@@ -223,6 +227,19 @@ def _resume_to_workflow_responses(resume_payload: Any) -> dict[str, Any]:
             continue
         value = _coerce_json_value(interrupt.get("value"))
         responses[str(interrupt["id"])] = value
+    return responses
+
+
+def _merge_workflow_response_sources(
+    resume_responses: dict[str, Any],
+    message_responses: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge workflow response sources with explicit resume payloads taking precedence."""
+    if not resume_responses:
+        return dict(message_responses)
+
+    responses = dict(message_responses)
+    responses.update(resume_responses)
     return responses
 
 
@@ -632,6 +649,34 @@ def _latest_assistant_contents(messages: list[Message]) -> list[Content] | None:
     return None
 
 
+def _unemitted_exposed_function_results(response: AgentResponse, flow: FlowState) -> list[Content]:
+    """Return finalized function results that complete calls exposed during this run."""
+    exposed_call_ids = set(flow.tool_calls_by_id)
+    emitted_call_ids = {
+        str(result["toolCallId"]) for result in flow.tool_results if isinstance(result.get("toolCallId"), str)
+    }
+    latest_assistant_result_ids = {
+        str(content.call_id)
+        for content in _latest_assistant_contents(list(response.messages or [])) or []
+        if content.type == "function_result" and content.call_id
+    }
+    results: list[Content] = []
+    for message in response.messages or []:
+        for content in message.contents or []:
+            call_id = content.call_id
+            if (
+                content.type != "function_result"
+                or not call_id
+                or call_id not in exposed_call_ids
+                or call_id in emitted_call_ids
+                or call_id in latest_assistant_result_ids
+            ):
+                continue
+            results.append(content)
+            emitted_call_ids.add(call_id)
+    return results
+
+
 def _text_from_contents(contents: list[Content]) -> str | None:
     """Return normalized assistant text from a content list when present."""
     text_parts: list[str] = []
@@ -662,16 +707,16 @@ def _workflow_payload_to_contents(payload: Any) -> list[Content] | None:
             return None
         return list(payload.contents or [])
     if isinstance(payload, AgentResponseUpdate):
+        contents = list(payload.contents or [])
         role_field = payload.role
-        if role_field is None:
-            return None
         if isinstance(role_field, str):
             role = role_field
         else:
             role = str(getattr(role_field, "value", role_field))
-        if role != "assistant":
-            return None
-        return list(payload.contents or [])
+        if role == "assistant":
+            return contents
+        tool_contents = [content for content in contents if content.type in _TOOL_CONTENT_TYPES]
+        return tool_contents or None
     if isinstance(payload, AgentResponse):
         return _latest_assistant_contents(list(payload.messages or []))
     if isinstance(payload, list):
@@ -773,12 +818,17 @@ async def run_workflow_stream(
             yield resume_error
             return
 
-    responses = (
+    resume_responses = (
         _resume_entries_to_workflow_responses(resume_entries)
         if pending_interrupt_ids
         else _resume_to_workflow_responses(resume_payload)
     )
-    responses.update(_extract_responses_from_messages(messages))
+    message_responses = {
+        request_id: value
+        for request_id, value in _extract_responses_from_messages(messages).items()
+        if request_id in pending_interrupt_ids
+    }
+    responses = _merge_workflow_response_sources(resume_responses, message_responses)
     responses, response_error = _coerce_responses_for_pending_requests_strict(responses, pending_before_run)
     if response_error is not None:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
@@ -956,13 +1006,16 @@ async def run_workflow_stream(
                     for item in output_payload:
                         yield item
                     continue
+                if isinstance(output_payload, AgentResponse):
+                    for result in _unemitted_exposed_function_results(output_payload, flow):
+                        for out_event in _emit_content(result, flow, predictive_handler=None, skip_text=False):
+                            yield out_event
                 contents = _workflow_payload_to_contents(output_payload)
                 if contents:
                     output_text = _text_from_contents(contents)
-                    if output_text and output_text == last_assistant_text:
-                        continue
+                    skip_text = bool(output_text and output_text == last_assistant_text)
                     for content in contents:
-                        for out_event in _emit_content(content, flow, predictive_handler=None, skip_text=False):
+                        for out_event in _emit_content(content, flow, predictive_handler=None, skip_text=skip_text):
                             yield out_event
                     if flow.message_id and flow.accumulated_text:
                         last_assistant_text = flow.accumulated_text.strip() or last_assistant_text

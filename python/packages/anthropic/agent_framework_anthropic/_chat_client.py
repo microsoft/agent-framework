@@ -28,7 +28,7 @@ from agent_framework import (
 )
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent
-from agent_framework._tools import SHELL_TOOL_KIND_VALUE
+from agent_framework._tools import SHELL_TOOL_KIND_VALUE, normalize_tools
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import AsyncAnthropic, AsyncAnthropicFoundry
@@ -579,7 +579,9 @@ class RawAnthropicClient(
         """
         # Start with a copy of options, excluding keys we handle separately
         run_options: dict[str, Any] = {
-            k: v for k, v in options.items() if v is not None and k not in {"instructions", "response_format"}
+            k: v
+            for k, v in options.items()
+            if v is not None and k not in {"instructions", "response_format", "additional_beta_flags"}
         }
         # Framework-level options handled elsewhere; do not forward as raw Anthropic request kwargs.
         run_options.pop("allow_multiple_tool_calls", None)
@@ -592,7 +594,9 @@ class RawAnthropicClient(
         # This includes underscore-prefixed internal objects (like _function_middleware_pipeline)
         # and framework kwargs like 'thread' and 'middleware'.
         filtered_kwargs = {
-            k: v for k, v in kwargs.items() if not k.startswith("_") and k not in {"thread", "middleware"}
+            k: v
+            for k, v in kwargs.items()
+            if not k.startswith("_") and k not in {"thread", "middleware", "additional_beta_flags"}
         }
         _apply_option_translations(filtered_kwargs)
         run_options.update(filtered_kwargs)
@@ -921,6 +925,9 @@ class RawAnthropicClient(
                         ):
                             a_content[-1]["signature"] = content.protected_data
                         continue
+                    if content.id and not content.protected_data:
+                        a_content.append({"type": "text", "text": content.text})
+                        continue
                     thinking_block: dict[str, Any] = {"type": "thinking", "thinking": content.text}
                     if content.protected_data:
                         thinking_block["signature"] = content.protected_data
@@ -955,7 +962,7 @@ class RawAnthropicClient(
             tool_list: list[Any] = []
             mcp_server_list: list[Any] = []
             tool_name_aliases: dict[str, str] = {}
-            for tool in tools:
+            for tool in normalize_tools(tools):
                 if isinstance(tool, FunctionTool) and tool.kind == SHELL_TOOL_KIND_VALUE:
                     api_type = (tool.additional_properties or {}).get("type", "bash_20250124")
                     tool_name_aliases["bash"] = tool.name
@@ -1188,6 +1195,7 @@ class RawAnthropicClient(
                                 call_id=content_block.id,
                                 name=resolved_tool_name,
                                 arguments=content_block.input,
+                                informational_only=content_block.type == "server_tool_use",
                                 raw_representation=content_block,
                             )
                         )

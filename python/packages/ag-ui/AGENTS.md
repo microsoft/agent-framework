@@ -15,7 +15,8 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 ## Types
 
 - **`AGUIRequest`** / **`AGUIChatOptions`** - Request types
-- **`AGUIThreadSnapshot`** / **`AGUIThreadSnapshotStore`** - Replayable thread snapshot model and scoped async store protocol
+- **`AGUIThreadSnapshot`** / **`AGUIThreadSnapshotStore`** - Thread snapshot model with client-replayable data,
+  private Session Continuation State, and a scoped async store protocol
 - **`availableInterrupts` / `resume`** - Optional canonical AG-UI `Interrupt` and `ResumeEntry` protocol data
 - **`AgentState`** / **`RunMetadata`** - State management types
 - **`PredictStateConfig`** - Configuration for state prediction
@@ -28,6 +29,9 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - Multimodal user inputs support both legacy (`text`, `binary`) and draft-style (`image`, `audio`, `video`, `document`) shapes.
 - Interrupted runs complete with `RUN_FINISHED.outcome.type == "interrupt"` and canonical `outcome.interrupts`; do not document or add new flows that depend on the legacy top-level `RUN_FINISHED.interrupt` field.
 - `Interrupt` and `ResumeEntry` come from the `ag-ui-protocol` package (`ag_ui.core`), not from an Agent Framework-specific interrupt model.
+- SSE keepalive is endpoint-owned transport behavior configured through
+  `add_agent_framework_fastapi_endpoint(keepalive_seconds=...)`. It emits SSE comments only; do not add `PING`,
+  `HEARTBEAT`, or `KEEPALIVE` AG-UI events, and do not add runner-level keepalive settings.
 
 ## Usage
 

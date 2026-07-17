@@ -7,7 +7,7 @@ ASGITransport — no real server process is started. The agent talks to a real
 Foundry project endpoint so every test requires valid credentials.
 
 Required environment variables:
-    FOUNDRY_PROJECT_ENDPOINT - The Azure AI Foundry project endpoint URL.
+    FOUNDRY_PROJECT_ENDPOINT - The Microsoft Foundry project endpoint URL.
     FOUNDRY_MODEL            - The model deployment name (e.g. gpt-4o).
 """
 

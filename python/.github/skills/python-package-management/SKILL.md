@@ -42,7 +42,7 @@ uv run poe venv --python 3.12
 # Intentionally upgrade a specific dependency to reduce lockfile conflicts
 uv lock --upgrade-package <dependency-name> && uv run poe install
 
-# Refresh all dev dependency pins, lockfile, and validation in one run
+# Refresh exact development dependency-group pins, lockfile, and validation in one run
 uv run poe upgrade-dev-dependencies
 
 # First, run workspace-wide lower/upper compatibility gates
@@ -69,7 +69,11 @@ uv run poe add-dependency-and-validate-bounds --package core --dependency "<depe
 - For dependency changes, run workspace-wide bound gates first, then `validate-dependency-bounds-project --mode both` for the target package/dependency to keep minimum and maximum constraints current. The same task can also drive repo-wide upper-bound automation by using `--package "*"` and omitting `--dependency`.
 - Prefer targeted lock updates with `uv lock --upgrade-package <dependency-name>` to reduce `uv.lock` merge conflicts.
 - Use `add-dependency-and-validate-bounds` for package-scoped dependency additions plus bound validation in one command.
-- Use `upgrade-dev-dependencies` for repo-wide dev tooling refreshes; it repins dev dependencies, refreshes `uv.lock`, and reruns `check`, `typing`, and `test`.
+- Keep shared tooling and source/type-check support in the root or package `dev` group. Put package-specific test
+  fixtures in a `test` group, and use a feature-named group for local-only executable dependencies that cannot be
+  expressed in published runtime metadata.
+- Use `upgrade-dev-dependencies` for repo-wide development dependency refreshes; it repins exact dependencies
+  across development groups, refreshes `uv.lock`, and reruns `check`, `typing`, and `test`.
 
 ## Lazy Loading Pattern
 
@@ -204,10 +208,13 @@ Move a package to `released` when it no longer carries a prerelease qualifier.
 - If promoting a package changes a dependent package's published dependency metadata, bump the
   dependent package's own version in the correct lifecycle pattern for its current stage
 - Lifecycle version patterns:
-  - `alpha`: `1.0.0a<date>`
-  - `beta`: `1.0.0b<date>`
-  - `rc`: `1.0.0rc<number>`
-  - `released`: `1.0.0`
+  - `alpha`: `1.0.0a<date>` where `<date>` is the current Pacific (US west coast) `YYMMDD`
+  - `beta`: `1.0.0b<date>` where `<date>` is the current Pacific (US west coast) `YYMMDD`
+  - `rc`: `1.0.0rc<number>` where `<number>` increments only when the package has changes
+  - `released`: `X.Y.Z` using semver per package
+- For alpha/beta date stamps, use the current Pacific date as the cutoff, not UTC and not the user's local
+  timezone. Same-Pacific-day re-cuts use a `.postN` suffix. Honor an explicit user-provided date over this
+  default.
 - Keep the `Development Status` classifier in `pyproject.toml` aligned with the lifecycle stage:
   - `alpha` -> `Development Status :: 3 - Alpha`
   - `beta` -> `Development Status :: 4 - Beta`

@@ -1,6 +1,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
+#     "agent-framework-foundry",
 #     "azure-ai-evaluation",
 #     "pyrit==0.9.0"
 # ]

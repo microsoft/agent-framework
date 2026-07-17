@@ -91,9 +91,22 @@ public sealed partial class AgentSkillsProvider : AIContextProvider, IDisposable
     /// The rule matches on the tool name, returning <see langword="true"/> for read-only skill tools
     /// and <see langword="false"/> for all other tool calls so that subsequent rules continue to be evaluated.
     /// </para>
+    /// <para>
+    /// This rule approves calls to exactly the following tool names:
+    /// <list type="bullet">
+    /// <item><description><see cref="LoadSkillToolName"/> (<c>load_skill</c>)</description></item>
+    /// <item><description><see cref="ReadSkillResourceToolName"/> (<c>read_skill_resource</c>)</description></item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// <b>Security note:</b> because matching is by tool name only, any other registered tool that
+    /// shares one of these names — for example a configurable-name tool such as the Harness shell
+    /// tool (<c>HarnessAgentOptions.ShellToolName</c>) that was assigned the same name — will also be auto-approved, bypassing the
+    /// human approval boundary. Ensure no other tool collides with these reserved names.
+    /// </para>
     /// </remarks>
-    public static Func<FunctionCallContent, ValueTask<bool>> ReadOnlyToolsAutoApprovalRule { get; } =
-        functionCall => new ValueTask<bool>(s_readOnlyToolNames.Contains(functionCall.Name));
+    public static Func<ToolAutoApprovalRuleContext, ValueTask<bool>> ReadOnlyToolsAutoApprovalRule { get; } =
+        context => new ValueTask<bool>(s_readOnlyToolNames.Contains(context.FunctionCallContent.Name));
 
     /// <summary>
     /// Gets an auto-approval rule that approves all skill tools, including the script execution tool
@@ -110,9 +123,23 @@ public sealed partial class AgentSkillsProvider : AIContextProvider, IDisposable
     /// The rule matches on the tool name, returning <see langword="true"/> for any skill tool
     /// and <see langword="false"/> for all other tool calls so that subsequent rules continue to be evaluated.
     /// </para>
+    /// <para>
+    /// This rule approves calls to exactly the following tool names:
+    /// <list type="bullet">
+    /// <item><description><see cref="LoadSkillToolName"/> (<c>load_skill</c>)</description></item>
+    /// <item><description><see cref="ReadSkillResourceToolName"/> (<c>read_skill_resource</c>)</description></item>
+    /// <item><description><see cref="RunSkillScriptToolName"/> (<c>run_skill_script</c>)</description></item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// <b>Security note:</b> because matching is by tool name only, any other registered tool that
+    /// shares one of these names — for example a configurable-name tool such as the Harness shell
+    /// tool (<c>HarnessAgentOptions.ShellToolName</c>) that was assigned the same name — will also be auto-approved, bypassing the
+    /// human approval boundary. Ensure no other tool collides with these reserved names.
+    /// </para>
     /// </remarks>
-    public static Func<FunctionCallContent, ValueTask<bool>> AllToolsAutoApprovalRule { get; } =
-        functionCall => new ValueTask<bool>(s_allToolNames.Contains(functionCall.Name));
+    public static Func<ToolAutoApprovalRuleContext, ValueTask<bool>> AllToolsAutoApprovalRule { get; } =
+        context => new ValueTask<bool>(s_allToolNames.Contains(context.FunctionCallContent.Name));
 
     /// <summary>
     /// Placeholder token for the generated skills list in the prompt template.

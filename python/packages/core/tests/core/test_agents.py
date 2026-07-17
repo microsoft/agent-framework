@@ -29,6 +29,7 @@ from agent_framework import (
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
+    MessageInjectionMiddleware,
     ResponseStream,
     ServiceSessionId,
     SessionContext,
@@ -37,6 +38,7 @@ from agent_framework import (
     SupportsChatGetResponse,
     TruncationStrategy,
     chat_middleware,
+    enqueue_messages,
     tool,
 )
 from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_agent_name
@@ -509,6 +511,46 @@ async def test_chat_agent_persists_history_per_service_call(
     assert provider_state["save_call_count"] == 2
     assert stored_messages[-1].text == "It is sunny in Seattle."
     assert session.service_session_id is None
+
+
+async def test_message_injection_persists_each_injected_service_call(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    provider = _RecordingHistoryProvider()
+    session = AgentSession()
+    session.state[provider.source_id] = {"messages": []}
+    captured_messages: list[list[str | None]] = []
+
+    async def fake_get_response(
+        *,
+        messages: Sequence[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        captured_messages.append([message.text for message in messages])
+        if len(captured_messages) == 1:
+            enqueue_messages(session, "queued during first service call")
+            return ChatResponse(messages=Message(role="assistant", contents=["first"]))
+        return ChatResponse(messages=Message(role="assistant", contents=["second"]))
+
+    agent = Agent(
+        client=chat_client_base,
+        context_providers=[provider],
+        middleware=[MessageInjectionMiddleware()],
+        require_per_service_call_history_persistence=True,
+    )
+
+    with patch.object(chat_client_base, "_get_non_streaming_response", side_effect=fake_get_response):
+        result = await agent.run("initial message", session=session)
+
+    provider_state = session.state[provider.source_id]
+    stored_messages = cast(list[Message], provider_state["messages"])
+
+    assert result.text == "second"
+    assert captured_messages == [["initial message"], ["initial message", "first", "queued during first service call"]]
+    assert provider_state["get_call_count"] == 2
+    assert provider_state["save_call_count"] == 2
+    assert stored_messages[-1].text == "second"
 
 
 async def test_per_service_call_history_provider_receives_full_agent_response_metadata(
@@ -1695,10 +1737,14 @@ async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGet
         )
     )
 
-    assert captured_session is parent_session
+    # Child receives a separate AgentSession (not the parent object) to isolate
+    # service_session_id, but shares the same state dict and session_id.
     assert captured_session is not None
+    assert captured_session is not parent_session
     assert captured_session.session_id == "parent-session-123"
+    assert captured_session.state is parent_session.state
     assert captured_session.state["shared_key"] == "shared_value"
+    assert captured_session.service_session_id is None
 
 
 async def test_chat_agent_as_tool_propagate_session_false_by_default(client: SupportsChatGetResponse) -> None:
@@ -1758,6 +1804,106 @@ async def test_chat_agent_as_tool_propagate_session_shares_state(client: Support
     )
 
     assert parent_session.state["counter"] == 1
+
+
+async def test_chat_agent_as_tool_propagate_session_clears_service_session_id(client: SupportsChatGetResponse) -> None:
+    """Test that propagate_session=True gives the child a separate session with cleared service_session_id."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+
+    parent_session = AgentSession(session_id="shared-session")
+    parent_session.service_session_id = "resp_parent_abc123"
+    parent_session.state["data"] = "shared"
+
+    original_run = agent.run
+    captured_session = None
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal captured_session
+        captured_session = kwargs.get("session")
+        # The child gets a different session object with isolated service_session_id
+        assert captured_session is not None
+        assert captured_session is not parent_session
+        assert captured_session.service_session_id is None
+        # But shares the same state dict by reference
+        assert captured_session.state is parent_session.state
+        assert captured_session.state["data"] == "shared"
+        return original_run(*args, **kwargs)
+
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+    await tool.invoke(
+        context=FunctionInvocationContext(
+            function=tool,
+            arguments={"task": "Hello"},
+            session=parent_session,
+        )
+    )
+
+    # Parent's service_session_id is never mutated
+    assert parent_session.service_session_id == "resp_parent_abc123"
+
+
+async def test_chat_agent_as_tool_propagate_session_restores_service_session_id_on_error(
+    client: SupportsChatGetResponse,
+) -> None:
+    """Test that parent's service_session_id is untouched even if the child agent raises."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+
+    parent_session = AgentSession(session_id="shared-session")
+    parent_session.service_session_id = "resp_parent_xyz789"
+
+    def failing_run(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("Child agent failed")
+
+    agent.run = failing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+    with raises(RuntimeError, match="Child agent failed"):
+        await tool.invoke(
+            context=FunctionInvocationContext(
+                function=tool,
+                arguments={"task": "Hello"},
+                session=parent_session,
+            )
+        )
+
+    # Parent's service_session_id is never mutated — child has its own session
+    assert parent_session.service_session_id == "resp_parent_xyz789"
+
+
+async def test_chat_agent_as_tool_propagate_session_no_service_session_id(client: SupportsChatGetResponse) -> None:
+    """Test that child setting service_session_id does not leak back to the parent."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+
+    parent_session = AgentSession(session_id="shared-session")
+    parent_session.service_session_id = None
+
+    original_run = agent.run
+    captured_session = None
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal captured_session
+        captured_session = kwargs.get("session")
+        assert captured_session is not None
+        assert captured_session.service_session_id is None
+        # Simulate the child's run populating service_session_id
+        captured_session.service_session_id = "resp_child_leaked"
+        return original_run(*args, **kwargs)
+
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+    await tool.invoke(
+        context=FunctionInvocationContext(
+            function=tool,
+            arguments={"task": "Hello"},
+            session=parent_session,
+        )
+    )
+
+    # The child's service_session_id must not leak back to the parent
+    assert parent_session.service_session_id is None
 
 
 async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -> None:

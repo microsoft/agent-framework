@@ -123,6 +123,7 @@
     <File Path="samples/02-agents/Harness/README.md" />
     <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step01_MeetYourClaw/Claw_Step01_MeetYourClaw.csproj" />
     <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step02_WorkingWithData/Claw_Step02_WorkingWithData.csproj" />
+    <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step03_ScalingCapabilities/Claw_Step03_ScalingCapabilities.csproj" />
     <Project Path="samples/02-agents/Harness/ConsoleReactiveComponents/ConsoleReactiveComponents.csproj" />
     <Project Path="samples/02-agents/Harness/ConsoleReactiveFramework/ConsoleReactiveFramework.csproj" />
     <Project Path="samples/02-agents/Harness/Harness_Shared_Console/Harness_Shared_Console.csproj" />
@@ -199,6 +200,7 @@
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step03_MemoryUsingValkey_Bedrock/AgentWithMemory_Step03_MemoryUsingValkey_Bedrock.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step04_MemoryUsingFoundry/AgentWithMemory_Step04_MemoryUsingFoundry.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step05_BoundedChatHistory/AgentWithMemory_Step05_BoundedChatHistory.csproj" />
+    <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step06_MemoryUsingAgentMemory/AgentWithMemory_Step06_MemoryUsingAgentMemory.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AgentProviders/openai/">
     <File Path="samples/02-agents/AgentProviders/openai/README.md" />
