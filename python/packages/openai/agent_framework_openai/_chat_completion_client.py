@@ -54,15 +54,14 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import (
     ChatCompletionMessageCustomToolCall,
 )
-from openai.types.chat.completion_create_params import WebSearchOptions
+from openai.types.chat.completion_create_params import PromptCacheOptions, WebSearchOptions
 from pydantic import BaseModel
 
 from ._exceptions import OpenAIContentFilterException
 from ._shared import (
     PROMPT_CACHE_BREAKPOINT_KEY,
     AzureTokenProvider,
-    PromptCacheOptions,
-    attach_prompt_cache_breakpoint,
+    _attach_prompt_cache_breakpoint,  # pyright: ignore[reportPrivateUsage]
     load_openai_service_settings,
     maybe_append_azure_endpoint_guidance,
 )
@@ -1007,7 +1006,7 @@ class RawOpenAIChatCompletionClient(
         """Prepare content for OpenAI."""
         match content.type:
             case "text":
-                return attach_prompt_cache_breakpoint(
+                return _attach_prompt_cache_breakpoint(
                     {"type": "text", "text": content.text},
                     content,
                 )
@@ -1028,7 +1027,7 @@ class RawOpenAIChatCompletionClient(
                 detail = content.additional_properties.get("detail")
                 if isinstance(detail, str):
                     image_url_obj["detail"] = detail
-                return attach_prompt_cache_breakpoint(
+                return _attach_prompt_cache_breakpoint(
                     {
                         "type": "image_url",
                         "image_url": image_url_obj,
@@ -1050,7 +1049,7 @@ class RawOpenAIChatCompletionClient(
                     # Extract just the base64 part after "data:audio/format;base64,"
                     audio_data = audio_data.split(",", 1)[-1]  # type: ignore[union-attr]
 
-                return attach_prompt_cache_breakpoint(
+                return _attach_prompt_cache_breakpoint(
                     {
                         "type": "input_audio",
                         "input_audio": {
@@ -1070,7 +1069,7 @@ class RawOpenAIChatCompletionClient(
                 file_obj = {"file_data": content.uri}
                 if filename:
                     file_obj["filename"] = filename
-                return attach_prompt_cache_breakpoint(
+                return _attach_prompt_cache_breakpoint(
                     {
                         "type": "file",
                         "file": file_obj,

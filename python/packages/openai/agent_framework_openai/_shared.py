@@ -50,26 +50,12 @@ RESPONSE_TYPE = Union[
 AzureTokenProvider = Callable[[], str | Awaitable[str]]
 
 
-class PromptCacheOptions(TypedDict, total=False):
-    """Request-wide prompt cache policy, supported by GPT-5.6 and later models.
-
-    Keys:
-        mode: 'implicit' (default) places an automatic cache breakpoint on the latest
-            message in addition to any explicit ones; 'explicit' uses only the
-            breakpoints set on content parts via ``prompt_cache_breakpoint``.
-        ttl: How long a cache breakpoint stays active; currently only '30m'.
-
-    See: https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints
-    """
-
-    mode: Literal["implicit", "explicit"]
-    ttl: Literal["30m"]
-
-
 PROMPT_CACHE_BREAKPOINT_KEY = "prompt_cache_breakpoint"
 
 
-def attach_prompt_cache_breakpoint(part: dict[str, Any], content: "Content") -> dict[str, Any]:
+def _attach_prompt_cache_breakpoint(  # pyright: ignore[reportUnusedFunction]
+    part: dict[str, Any], content: Content
+) -> dict[str, Any]:
     """Copy a prompt cache breakpoint from content metadata onto an outgoing part.
 
     GPT-5.6 and later models accept an explicit cache breakpoint on supported content
