@@ -190,7 +190,7 @@ public class CopilotStudioAgentTests
     /// including the timestamp, onto the resulting <see cref="ChatMessage"/> in the non-streaming path.
     /// </summary>
     [Fact]
-    public async Task ProcessActivity_NonStreaming_MapsActivityMetadataToChatMessage()
+    public async Task ProcessActivity_NonStreaming_MapsActivityMetadataToChatMessageAsync()
     {
         // Arrange
         var timestamp = new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero);
@@ -215,7 +215,7 @@ public class CopilotStudioAgentTests
     /// Verify that an activity without extra properties does not allocate an empty additional-properties bag.
     /// </summary>
     [Fact]
-    public async Task ProcessActivity_NoActivityProperties_LeavesAdditionalPropertiesNull()
+    public async Task ProcessActivity_NoActivityProperties_LeavesAdditionalPropertiesNullAsync()
     {
         // Arrange
         var timestamp = new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero);
@@ -233,7 +233,7 @@ public class CopilotStudioAgentTests
     /// Verify that the streaming path also maps the activity timestamp onto the <see cref="ChatMessage"/>.
     /// </summary>
     [Fact]
-    public async Task ProcessActivity_Streaming_MapsActivityMetadataToChatMessage()
+    public async Task ProcessActivity_Streaming_MapsActivityMetadataToChatMessageAsync()
     {
         // Arrange
         var timestamp = new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero);
@@ -300,7 +300,7 @@ public class CopilotStudioAgentTests
     /// Verify that streaming updates carry per-update metadata and that the terminal update alone reports a finish reason.
     /// </summary>
     [Fact]
-    public async Task CreateAgentResponseUpdates_SetsFinishReasonOnTerminalUpdateOnly()
+    public async Task CreateAgentResponseUpdates_SetsFinishReasonOnTerminalUpdateOnlyAsync()
     {
         // Arrange
         var firstTimestamp = new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero);
@@ -340,7 +340,7 @@ public class CopilotStudioAgentTests
     /// reason) and that the original exception propagates, preserving the pre-existing streaming behavior.
     /// </summary>
     [Fact]
-    public async Task CreateAgentResponseUpdates_SourceFaultsMidStream_EmitsReceivedContentThenThrows()
+    public async Task CreateAgentResponseUpdates_SourceFaultsMidStream_EmitsReceivedContentThenThrowsAsync()
     {
         // Arrange
         var message = new ChatMessage(ChatRole.Assistant, "partial") { MessageId = "m1" };
@@ -367,7 +367,7 @@ public class CopilotStudioAgentTests
     /// Verify that a single streaming update is treated as the terminal update.
     /// </summary>
     [Fact]
-    public async Task CreateAgentResponseUpdates_SingleMessage_SetsFinishReason()
+    public async Task CreateAgentResponseUpdates_SingleMessage_SetsFinishReasonAsync()
     {
         // Arrange
         var message = new ChatMessage(ChatRole.Assistant, "only") { MessageId = "m1" };
