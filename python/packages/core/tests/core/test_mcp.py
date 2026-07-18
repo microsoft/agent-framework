@@ -2954,6 +2954,62 @@ async def test_mcp_tool_sampling_callback_no_response_and_successful_message_cre
     assert success.content.text == "Hello"
 
 
+async def test_mcp_tool_sampling_callback_returns_tool_use_results():
+    """Test sampling callback returns structured MCP tool-use content from function calls."""
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=_approve)
+
+    mock_chat_client = AsyncMock()
+    mock_chat_client.get_response.return_value = Mock(
+        messages=[
+            Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call-1",
+                        name="Answer",
+                        arguments={"answer": "hello"},
+                    ),
+                ],
+            ),
+            Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call-2",
+                        name="Citations",
+                        arguments={"sources": ["docs"]},
+                    ),
+                ],
+            ),
+        ],
+        model="test-model",
+    )
+    tool.client = mock_chat_client
+
+    params = Mock()
+    params.messages = [types.PromptMessage(role="user", content=types.TextContent(type="text", text="Answer"))]
+    params.temperature = None
+    params.maxTokens = 100
+    params.stopSequences = None
+    params.systemPrompt = None
+    params.tools = [types.Tool(name="Answer", description="Return an answer", inputSchema={"type": "object"})]
+    params.toolChoice = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.CreateMessageResultWithTools)
+    assert result.role == "assistant"
+    assert result.model == "test-model"
+    assert result.stopReason == "toolUse"
+    assert isinstance(result.content, list)
+    tool_use_contents = [content for content in result.content if isinstance(content, types.ToolUseContent)]
+    assert tool_use_contents == result.content
+    assert [(content.id, content.name, content.input) for content in tool_use_contents] == [
+        ("call-1", "Answer", {"answer": "hello"}),
+        ("call-2", "Citations", {"sources": ["docs"]}),
+    ]
+
+
 async def test_mcp_tool_logging_callback_logs_at_requested_level() -> None:
     tool = MCPStdioTool(name="test_tool", command="python")
 

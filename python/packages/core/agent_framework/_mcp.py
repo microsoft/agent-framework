@@ -780,13 +780,28 @@ class MCPTool:
         self,
         content: Content,
     ) -> (
-        types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink | None
+        types.TextContent
+        | types.ImageContent
+        | types.AudioContent
+        | types.EmbeddedResource
+        | types.ResourceLink
+        | types.ToolUseContent
+        | None
     ):
         """Prepare an Agent Framework content type for MCP."""
         from mcp import types
 
         if content.type == "text":
             return types.TextContent(type="text", text=content.text)  # type: ignore[attr-defined]
+        if content.type == "function_call":
+            if not content.call_id or not content.name:
+                return None
+            return types.ToolUseContent(
+                type="tool_use",
+                id=content.call_id,
+                name=content.name,
+                input=content.parse_arguments() or {},
+            )
         if content.type == "data":
             if content.media_type and content.media_type.startswith("image/"):
                 return types.ImageContent(type="image", data=content.uri, mimeType=content.media_type)  # type: ignore[attr-defined]
@@ -822,11 +837,21 @@ class MCPTool:
         self,
         content: Message,
     ) -> list[
-        types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink
+        types.TextContent
+        | types.ImageContent
+        | types.AudioContent
+        | types.EmbeddedResource
+        | types.ResourceLink
+        | types.ToolUseContent
     ]:
         """Prepare a Message for MCP format."""
         messages: list[
-            types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink
+            types.TextContent
+            | types.ImageContent
+            | types.AudioContent
+            | types.EmbeddedResource
+            | types.ResourceLink
+            | types.ToolUseContent
         ] = []
         for item in content.contents:
             mcp_content = self._prepare_content_for_mcp(item)
@@ -1433,7 +1458,7 @@ class MCPTool:
         self,
         context: RequestContext[ClientSession, Any],
         params: types.CreateMessageRequestParams,
-    ) -> types.CreateMessageResult | types.ErrorData:
+    ) -> types.CreateMessageResult | types.CreateMessageResultWithTools | types.ErrorData:
         """Callback function for sampling.
 
         This function is called when the MCP server sends a ``sampling/createMessage``
@@ -1460,8 +1485,8 @@ class MCPTool:
             params: The message creation request parameters.
 
         Returns:
-            Either a CreateMessageResult with the generated message or ErrorData if the request
-            is denied, rate limited, or generation fails.
+            Either a CreateMessageResult/CreateMessageResultWithTools with the generated message or ErrorData if the
+            request is denied, rate limited, or generation fails.
         """
         from mcp import types
 
@@ -1544,7 +1569,21 @@ class MCPTool:
                 code=types.INTERNAL_ERROR,
                 message="Failed to get chat message content.",
             )
-        mcp_contents = self._prepare_message_for_mcp(response.messages[0])
+        mcp_contents = [
+            mcp_content for message in response.messages for mcp_content in self._prepare_message_for_mcp(message)
+        ]
+        tool_use_contents: list[types.SamplingMessageContentBlock] = []
+        for content in mcp_contents:
+            if isinstance(content, types.ToolUseContent):
+                tool_use_contents.append(content)
+        if tool_use_contents:
+            return types.CreateMessageResultWithTools(
+                role="assistant",
+                content=tool_use_contents,
+                model=response.model or "unknown",
+                stopReason="toolUse",
+            )
+
         # grab the first content that is of type TextContent or ImageContent
         mcp_content = next(
             (content for content in mcp_contents if isinstance(content, (types.TextContent, types.ImageContent))),
