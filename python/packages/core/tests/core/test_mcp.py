@@ -2992,7 +2992,10 @@ async def test_mcp_tool_sampling_callback_returns_tool_use_results():
     params.maxTokens = 100
     params.stopSequences = None
     params.systemPrompt = None
-    params.tools = [types.Tool(name="Answer", description="Return an answer", inputSchema={"type": "object"})]
+    params.tools = [
+        types.Tool(name="Answer", description="Return an answer", inputSchema={"type": "object"}),
+        types.Tool(name="Citations", description="Return source citations", inputSchema={"type": "object"}),
+    ]
     params.toolChoice = None
 
     result = await tool.sampling_callback(Mock(), params)
