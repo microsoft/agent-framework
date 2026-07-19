@@ -203,6 +203,49 @@ class ObjectProperty(Property):
         self.properties = converted_properties
 
 
+def _normalize_nested_schemas(node: dict[str, Any]) -> None:
+    """Recursively convert a node's nested schemas to JSON Schema form.
+
+    Nested schemas (array ``items``, object ``properties``) keep the declarative
+    shape after serialization: ``kind`` instead of ``type``, empty ``enum``
+    placeholders, and object properties as a list of ``{"name": ..., ...}``
+    entries. OpenAI rejects schemas whose nested nodes lack a ``type`` key, so
+    apply the same conversion the top-level properties loop performs.
+    """
+    items = node.get("items")
+    if isinstance(items, dict):
+        _normalize_schema_node(items)
+    props = node.get("properties")
+    if isinstance(props, list):
+        # Serialized PropertySchema shape: [{"name": ..., "kind": ..., ...}, ...]
+        new_props: dict[str, Any] = {}
+        required_fields: list[str] = []
+        for prop in props:
+            if not isinstance(prop, dict) or "name" not in prop:
+                return  # unexpected shape; leave untouched
+            prop_name = prop.pop("name")
+            if prop.pop("required", False):
+                required_fields.append(prop_name)
+            _normalize_schema_node(prop)
+            new_props[prop_name] = prop
+        node["properties"] = new_props
+        if required_fields:
+            node["required"] = required_fields
+    elif isinstance(props, dict):
+        for child in props.values():
+            if isinstance(child, dict):
+                _normalize_schema_node(child)
+
+
+def _normalize_schema_node(node: dict[str, Any]) -> None:
+    """Rename ``kind`` -> ``type``, drop empty ``enum``, and recurse into children."""
+    if "kind" in node:
+        node["type"] = node.pop("kind")
+    if not node.get("enum"):
+        node.pop("enum", None)
+    _normalize_nested_schemas(node)
+
+
 class PropertySchema(SerializationMixin):
     """Object representing a property schema."""
 
@@ -251,6 +294,7 @@ class PropertySchema(SerializationMixin):
             # Remove empty enum arrays
             if not prop.get("enum"):
                 prop.pop("enum", None)
+            _normalize_nested_schemas(prop)
             new_props[prop_name] = prop
         json_schema["type"] = "object"
         json_schema["properties"] = new_props

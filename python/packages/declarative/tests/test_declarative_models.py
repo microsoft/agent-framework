@@ -302,6 +302,39 @@ class TestPropertySchema:
         assert "required" not in json_schema["properties"]["language"]
         assert "required" not in json_schema["properties"]["answer"]
 
+    def test_property_schema_array_items_kind_renamed_recursively(self):
+        """Nested array 'items' schemas get kind -> type renamed and empty enums dropped."""
+        schema = PropertySchema.from_dict({
+            "properties": {
+                "issues": {"kind": "array", "items": {"kind": "string"}},
+            },
+        })
+
+        json_schema = schema.to_json_schema()
+
+        assert json_schema["properties"]["issues"]["type"] == "array"
+        assert json_schema["properties"]["issues"]["items"] == {"type": "string"}
+
+    def test_property_schema_nested_object_properties_kind_renamed_recursively(self):
+        """Nested object 'properties' (including arrays of objects) are converted at every depth."""
+        schema = PropertySchema.from_dict({
+            "properties": {
+                "picks": {
+                    "kind": "array",
+                    "items": {
+                        "kind": "object",
+                        "properties": {"ref": {"kind": "number"}},
+                    },
+                },
+            },
+        })
+
+        json_schema = schema.to_json_schema()
+
+        items = json_schema["properties"]["picks"]["items"]
+        assert items["type"] == "object"
+        assert items["properties"]["ref"] == {"type": "number"}
+
 
 class TestConnection:
     """Tests for Connection base class."""
