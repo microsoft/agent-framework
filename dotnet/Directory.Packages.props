@@ -11,7 +11,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
-    <PackageVersion Include="Anthropic" Version="12.35.1" />
+    <PackageVersion Include="Anthropic" Version="12.36.0" />
     <PackageVersion Include="Anthropic.Foundry" Version="0.7.1" />
     <PackageVersion Include="Aspire.Hosting" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.0.0-preview.1.25560.3" />
