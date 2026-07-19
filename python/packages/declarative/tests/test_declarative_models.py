@@ -335,6 +335,23 @@ class TestPropertySchema:
         assert items["type"] == "object"
         assert items["properties"]["ref"] == {"type": "number"}
 
+    def test_property_schema_unexpected_nested_properties_left_untouched(self):
+        """A nested properties list with an unexpected element is left fully unmodified."""
+        from agent_framework_declarative._models import _normalize_nested_schemas
+
+        node = {
+            "type": "object",
+            "properties": [
+                {"name": "ok", "kind": "string"},
+                "not-a-dict",
+            ],
+        }
+
+        _normalize_nested_schemas(node)
+
+        # No partial mutation: the well-formed first element keeps its original shape too.
+        assert node["properties"] == [{"name": "ok", "kind": "string"}, "not-a-dict"]
+
 
 class TestConnection:
     """Tests for Connection base class."""

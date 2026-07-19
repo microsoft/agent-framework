@@ -217,12 +217,14 @@ def _normalize_nested_schemas(node: dict[str, Any]) -> None:
         _normalize_schema_node(items)
     props = node.get("properties")
     if isinstance(props, list):
-        # Serialized PropertySchema shape: [{"name": ..., "kind": ..., ...}, ...]
+        # Serialized PropertySchema shape: [{"name": ..., "kind": ..., ...}, ...].
+        # Validate every element BEFORE mutating any, so an unexpected shape
+        # leaves the node fully untouched rather than half-converted.
+        if not all(isinstance(prop, dict) and "name" in prop for prop in props):
+            return
         new_props: dict[str, Any] = {}
         required_fields: list[str] = []
         for prop in props:
-            if not isinstance(prop, dict) or "name" not in prop:
-                return  # unexpected shape; leave untouched
             prop_name = prop.pop("name")
             if prop.pop("required", False):
                 required_fields.append(prop_name)
