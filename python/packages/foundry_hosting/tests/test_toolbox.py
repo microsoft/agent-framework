@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+# pyright: reportPrivateUsage=false
 
 """Unit tests for FoundryToolbox."""
 
@@ -229,3 +230,61 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
 
     assert result == ["skill-a"]
     assert captured["client"] is sentinel_session
+
+class TestFoundryToolboxReconnection:
+    async def test_close_preserves_credential_for_reconnection(self) -> None:
+        """After close(), get_mcp_client() should recreate an authenticated client."""
+        cred = _FakeCredential("reconnect-token")
+        toolbox = FoundryToolbox(
+            cred,
+            url="https://h/toolboxes/recon/mcp",
+            timeout=60.0,
+        )
+
+        assert toolbox._credential is cred
+        assert toolbox._token_scope == "https://ai.azure.com/.default"
+        assert toolbox._timeout == 60.0
+
+        assert toolbox._httpx_client is not None
+        assert isinstance(toolbox._httpx_client.auth, _ToolboxAuth)
+        original_auth = toolbox._httpx_client.auth
+
+        client = toolbox._httpx_client
+        client.aclose = AsyncMock()
+        await toolbox.close()
+
+        client.aclose.assert_awaited_once()
+        assert toolbox._httpx_client is None
+
+        assert toolbox._credential is cred
+        assert toolbox._timeout == 60.0
+
+        ctx_manager = toolbox.get_mcp_client()
+        assert toolbox._httpx_client is not None
+        assert isinstance(toolbox._httpx_client.auth, _ToolboxAuth)
+
+        new_auth = toolbox._httpx_client.auth
+        assert new_auth is not original_auth
+        assert new_auth._credential is cred
+
+        assert hasattr(ctx_manager, "__aenter__")
+        assert hasattr(ctx_manager, "__aexit__")
+
+        await toolbox.close()
+
+    async def test_close_idempotent_with_reconnection(self) -> None:
+        """Multiple close() calls don't break reconnection."""
+        cred = _FakeCredential()
+        toolbox = FoundryToolbox(
+            cred,
+            url="https://h/toolboxes/idem/mcp",
+        )
+
+        await toolbox.close()
+        await toolbox.close()
+
+        toolbox.get_mcp_client()
+        assert toolbox._httpx_client is not None
+        assert isinstance(toolbox._httpx_client.auth, _ToolboxAuth)
+
+        await toolbox.close()
