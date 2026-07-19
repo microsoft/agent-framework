@@ -694,10 +694,39 @@ class RawOpenAIChatCompletionClient(
         # response format
         if response_format := options.get("response_format"):
             if isinstance(response_format, dict):
-                run_options["response_format"] = response_format
+                run_options["response_format"] = self._normalize_response_format_dict(response_format)
             else:
                 run_options["response_format"] = type_to_response_format_param(response_format)
         return run_options
+
+    @staticmethod
+    def _normalize_response_format_dict(response_format: dict[str, Any]) -> dict[str, Any]:
+        """Wrap raw JSON schemas (e.g. ``{"type": "object", ...}``) in the json_schema envelope.
+
+        Mirrors the Responses client's ``_convert_response_format`` handling of raw
+        schemas so both clients accept the same inputs; dicts already using a valid
+        Chat Completions response_format type pass through unchanged.
+        """
+        format_type = response_format.get("type")
+        if format_type in {"json_schema", "json_object", "text"}:
+            return response_format
+        # Detect raw JSON Schema by primitive type or known schema keywords.
+        json_schema_keywords = {"properties", "anyOf", "oneOf", "allOf", "$ref", "$defs"}
+        json_schema_primitive_types = {"object", "array", "string", "number", "integer", "boolean", "null"}
+        if format_type in json_schema_primitive_types or (
+            format_type is None and any(k in response_format for k in json_schema_keywords)
+        ):
+            schema = dict(response_format)
+            if schema.get("type") == "object" and "additionalProperties" not in schema:
+                schema["additionalProperties"] = False
+            # Pop title from schema since OpenAI strict mode rejects unknown keys;
+            # use it as the schema name in the envelope instead.
+            name = str(schema.pop("title", None) or "response")
+            return {
+                "type": "json_schema",
+                "json_schema": {"name": name, "schema": schema, "strict": True},
+            }
+        return response_format
 
     def _parse_response_from_openai(self, response: ChatCompletion, options: Mapping[str, Any]) -> ChatResponse:
         """Parse a response from OpenAI into a ChatResponse."""
