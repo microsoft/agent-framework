@@ -133,7 +133,7 @@ dependency set using PEP 723 inline script metadata.
 - **No framework choice:** the package does not select FastMCP, Starlette,
   Uvicorn, stdio, or streamable HTTP.
 - **Chat options:** only explicitly selected MCP arguments are passed to the
-  model client. The samples expose `reasoning_effort` as a example, but any option
+  model client. The samples expose `reasoning_effort` as an example, but any option
   valid for the agent can be exposed.
 - **Input shape:** MCP tool arguments are JSON objects and do not define native
   multimodal input content blocks. The samples do not present an

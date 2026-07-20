@@ -165,9 +165,7 @@ class MCPAgentTool(Generic[AgentT]):
         session_id = arguments.get(self.session_id_parameter) if arguments else None
         if not isinstance(session_id, str) or not session_id:
             raise ValueError(f"MCP tool argument '{self.session_id_parameter}' must be a non-empty string.")
-        session = await self.state.session_store.get(session_id)
-        if session is None:
-            session = target.create_session(session_id=session_id)
+        session = await self.state.get_or_create_session(session_id)
         result = cast(
             "AgentResponse[Any]",
             await target.run(  # pyright: ignore[reportCallIssue]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import time
 from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
@@ -92,10 +93,9 @@ async def test_mcp_tool_calls_locally_hosted_agent() -> None:
     uvicorn_server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error", lifespan="on"))
     server_task = asyncio.create_task(uvicorn_server.serve())
     try:
-        for _ in range(100):
-            if uvicorn_server.started:
-                break
-            await asyncio.sleep(0.01)
+        startup_deadline = time.monotonic() + 10
+        while not uvicorn_server.started and time.monotonic() < startup_deadline:  # noqa: ASYNC110
+            await asyncio.sleep(0.05)
         assert uvicorn_server.started
 
         mcp_tool = MCPStreamableHTTPTool(
