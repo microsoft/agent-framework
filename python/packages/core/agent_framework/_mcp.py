@@ -3029,6 +3029,11 @@ class MCPStreamableHTTPTool(MCPTool):
         self.terminate_on_close = terminate_on_close
         self._httpx_client: AsyncClient | None = http_client
         self._header_provider = header_provider
+        # Headers for the in-flight call_tool invocation. The streamable HTTP transport
+        # sends requests from tasks spawned at connect time, whose contexts never observe
+        # ContextVar values set later inside call_tool, so the request hook needs this
+        # instance-level snapshot as a cross-task fallback.
+        self._active_call_headers: dict[str, str] | None = None
 
     def _mcp_base_span_attributes(self) -> dict[str, Any]:
         attrs = super()._mcp_base_span_attributes()
@@ -3071,7 +3076,10 @@ class MCPStreamableHTTPTool(MCPTool):
                 async def _inject_headers(request: Request) -> None:  # noqa: RUF029
                     if _url_origin(request.url) != target_origin:
                         return
-                    headers = _mcp_call_headers.get({})
+                    # The transport may send this request from a task whose context was
+                    # captured before call_tool set the ContextVar; fall back to the
+                    # instance-level snapshot of the active call's headers.
+                    headers = _mcp_call_headers.get({}) or self._active_call_headers or {}
                     for key, value in headers.items():
                         request.headers[key] = value
 
@@ -3090,7 +3098,7 @@ class MCPStreamableHTTPTool(MCPTool):
         When a ``header_provider`` was supplied at construction time, the runtime
         *kwargs* (originating from ``FunctionInvocationContext.kwargs``) are passed
         to the provider.  The returned headers are attached to every HTTP request
-        made during this tool call via a ``contextvars.ContextVar``.
+        made during this tool call via a request hook on the underlying HTTP client.
 
         Args:
             tool_name: The name of the tool to call.
@@ -3104,9 +3112,12 @@ class MCPStreamableHTTPTool(MCPTool):
         if self._header_provider is not None:
             headers = self._header_provider(kwargs)
             token = _mcp_call_headers.set(headers)
+            previous_headers = self._active_call_headers
+            self._active_call_headers = headers
             try:
                 return await super().call_tool(tool_name, **kwargs)
             finally:
+                self._active_call_headers = previous_headers
                 _mcp_call_headers.reset(token)
         return await super().call_tool(tool_name, **kwargs)
 
