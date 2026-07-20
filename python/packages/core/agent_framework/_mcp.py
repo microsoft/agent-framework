@@ -3032,8 +3032,11 @@ class MCPStreamableHTTPTool(MCPTool):
         # Headers for the in-flight call_tool invocation. The streamable HTTP transport
         # sends requests from tasks spawned at connect time, whose contexts never observe
         # ContextVar values set later inside call_tool, so the request hook needs this
-        # instance-level snapshot as a cross-task fallback.
+        # instance-level snapshot as a cross-task fallback. The lock serializes tool calls
+        # when a header_provider is set: parallel invocations on the same instance would
+        # otherwise overwrite each other's snapshot and attach the wrong per-call headers.
         self._active_call_headers: dict[str, str] | None = None
+        self._call_headers_lock = asyncio.Lock()
 
     def _mcp_base_span_attributes(self) -> dict[str, Any]:
         attrs = super()._mcp_base_span_attributes()
@@ -3111,14 +3114,14 @@ class MCPStreamableHTTPTool(MCPTool):
         """
         if self._header_provider is not None:
             headers = self._header_provider(kwargs)
-            token = _mcp_call_headers.set(headers)
-            previous_headers = self._active_call_headers
-            self._active_call_headers = headers
-            try:
-                return await super().call_tool(tool_name, **kwargs)
-            finally:
-                self._active_call_headers = previous_headers
-                _mcp_call_headers.reset(token)
+            async with self._call_headers_lock:
+                token = _mcp_call_headers.set(headers)
+                self._active_call_headers = headers
+                try:
+                    return await super().call_tool(tool_name, **kwargs)
+                finally:
+                    self._active_call_headers = None
+                    _mcp_call_headers.reset(token)
         return await super().call_tool(tool_name, **kwargs)
 
 

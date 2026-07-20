@@ -6144,7 +6144,7 @@ async def test_mcp_streamable_http_tool_header_provider_applies_across_transport
             return httpx.Response(405)
         body = json.loads(request.content.decode())
         method = body.get("method", "")
-        captured_requests.append((request.method, method, dict(request.headers)))
+        captured_requests.append((request.method, method, {k.lower(): v for k, v in request.headers.items()}))
         if method == "initialize":
             result = {
                 "protocolVersion": body["params"]["protocolVersion"],
@@ -6239,6 +6239,67 @@ async def test_mcp_streamable_http_tool_header_provider_snapshot_restored_after_
             await server.call_tool("greet", name="Alice", auth_token="bearer-xyz")
 
     assert observed_snapshots == [{"X-Auth": "bearer-xyz"}]
+    assert server._active_call_headers is None
+
+
+async def test_mcp_streamable_http_tool_header_provider_serializes_concurrent_calls():
+    """Concurrent call_tool invocations on the same tool must not mix per-call headers.
+
+    The framework executes parallel tool invocations concurrently, so a second call
+    must not overwrite the active header snapshot while the first call's requests
+    are still in flight (that would attach the wrong credentials).
+    """
+    release = asyncio.Event()
+    in_call = asyncio.Event()
+
+    async def blocking_call_tool(tool_name, *, arguments=None, meta=None):
+        in_call.set()
+        await release.wait()
+        return types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
+
+    class _TestServer(MCPStreamableHTTPTool):
+        async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="greet",
+                            description="Says hello",
+                            inputSchema={"type": "object", "properties": {"name": {"type": "string"}}},
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(side_effect=blocking_call_tool)
+            self.session.send_ping = AsyncMock()
+            self.is_connected = True
+
+        def get_mcp_client(self):  # pyrefly: ignore[bad-override]
+            return None
+
+    server = _TestServer(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda kw: {"X-Auth": kw.get("auth_token", "")},
+    )
+    async with server:
+        await server.load_tools()
+
+        first = asyncio.create_task(server.call_tool("greet", name="A", auth_token="token-a"))
+        await in_call.wait()
+        assert server._active_call_headers == {"X-Auth": "token-a"}
+
+        second = asyncio.create_task(server.call_tool("greet", name="B", auth_token="token-b"))
+        for _ in range(10):
+            await asyncio.sleep(0)
+        # The second call must be waiting on the first; its headers must not have
+        # replaced the snapshot the request hook reads for the in-flight call.
+        assert server._active_call_headers == {"X-Auth": "token-a"}
+
+        release.set()
+        await asyncio.gather(first, second)
+
     assert server._active_call_headers is None
 
 
