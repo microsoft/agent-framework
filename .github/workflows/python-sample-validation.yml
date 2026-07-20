@@ -564,6 +564,7 @@ jobs:
     env:
       FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
       FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
+      TOOLBOX_ENDPOINT: ${{ vars.TOOLBOX_ENDPOINT }}
       # Foundry hosted agent configuration
       AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.FOUNDRY_MODEL }}
       FOUNDRY_PROJECT_ID: ${{ vars.FOUNDRY_PROJECT_ID }}
