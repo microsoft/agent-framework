@@ -54,7 +54,7 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import (
     ChatCompletionMessageCustomToolCall,
 )
-from openai.types.chat.completion_create_params import PromptCacheOptions, WebSearchOptions
+from openai.types.chat.completion_create_params import WebSearchOptions
 from pydantic import BaseModel
 
 from ._exceptions import OpenAIContentFilterException
@@ -78,6 +78,17 @@ if sys.version_info >= (3, 11):
     from typing import TypedDict  # pragma: no cover
 else:
     from typing_extensions import TypedDict  # pragma: no cover
+
+try:
+    from openai.types.chat.completion_create_params import PromptCacheOptions
+except ImportError:  # pragma: no cover
+
+    class PromptCacheOptions(TypedDict, total=False):
+        """Fallback for openai versions that predate prompt cache options."""
+
+        mode: Literal["implicit", "explicit"]
+        ttl: Literal["30m"]
+
 
 if TYPE_CHECKING:
     from azure.core.credentials import TokenCredential
@@ -163,6 +174,7 @@ class OpenAIChatCompletionOptions(ChatOptions[ResponseModelT], Generic[ResponseM
     """Request-wide prompt cache policy for GPT-5.6 and later models.
     Set mode to 'explicit' to use only the breakpoints set on content parts via
     ``Content.additional_properties["prompt_cache_breakpoint"]``.
+    Sending this option requires openai 2.45.0 or later.
     See: https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints"""
 
 

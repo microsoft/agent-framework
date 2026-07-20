@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.11.0,<2",
-    "openai>=2.45.0,<3",
+    "openai>=2.25.0,<3",
 ]
 
 [tool.uv]

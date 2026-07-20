@@ -72,7 +72,6 @@ from openai.types.responses.parsed_response import (
     ParsedResponse,
 )
 from openai.types.responses.response import Response as OpenAIResponse
-from openai.types.responses.response_create_params import PromptCacheOptions
 from openai.types.responses.response_stream_event import (
     ResponseStreamEvent as OpenAIResponseStreamEvent,
 )
@@ -106,6 +105,17 @@ if sys.version_info >= (3, 11):
     from typing import TypedDict  # pragma: no cover
 else:
     from typing_extensions import TypedDict  # pragma: no cover
+
+try:
+    from openai.types.responses.response_create_params import PromptCacheOptions
+except ImportError:  # pragma: no cover
+
+    class PromptCacheOptions(TypedDict, total=False):
+        """Fallback for openai versions that predate prompt cache options."""
+
+        mode: Literal["implicit", "explicit"]
+        ttl: Literal["30m"]
+
 
 if TYPE_CHECKING:
     from azure.core.credentials import TokenCredential
@@ -238,6 +248,7 @@ class OpenAIChatOptions(ChatOptions[ResponseFormatT], Generic[ResponseFormatT], 
     """Request-wide prompt cache policy for GPT-5.6 and later models.
     Set mode to 'explicit' to use only the breakpoints set on content parts via
     ``Content.additional_properties["prompt_cache_breakpoint"]``.
+    Sending this option requires openai 2.45.0 or later.
     See: https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints"""
 
     reasoning: ReasoningOptions

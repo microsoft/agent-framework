@@ -946,7 +946,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "openai", specifier = ">=2.45.0,<3" },
+    { name = "openai", specifier = ">=2.25.0,<3" },
 ]
 
 [[package]]
