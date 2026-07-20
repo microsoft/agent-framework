@@ -254,12 +254,12 @@ async def test_skills_source_forwards_archive_options(monkeypatch: pytest.Monkey
 
     source = _FoundryToolboxSkillsSource(
         toolbox,
-        archive_options={"archive_skills_directory": "/tmp/skills", "archive_max_file_count": 5},
+        archive_options={"archive_resource_search_depth": 3, "archive_max_file_count": 5},
     )
     await source.get_skills(_source_context())
 
     # Only the explicitly-set archive options are forwarded to MCPSkillsSource.
-    assert captured["kwargs"] == {"archive_skills_directory": "/tmp/skills", "archive_max_file_count": 5}
+    assert captured["kwargs"] == {"archive_resource_search_depth": 3, "archive_max_file_count": 5}
 
 
 def test_as_skills_provider_forwards_only_set_archive_options() -> None:
@@ -275,11 +275,11 @@ def test_as_skills_provider_forwards_only_set_archive_options() -> None:
     source = cast(
         _FoundryToolboxSkillsSource,
         toolbox.as_skills_provider(
-            archive_skills_directory="/tmp/skills",
+            archive_max_size_bytes=2048,
             archive_resource_search_depth=1,
         )._source,  # pyright: ignore[reportPrivateUsage]
     )
     assert source._archive_options == {  # pyright: ignore[reportPrivateUsage]
-        "archive_skills_directory": "/tmp/skills",
+        "archive_max_size_bytes": 2048,
         "archive_resource_search_depth": 1,
     }

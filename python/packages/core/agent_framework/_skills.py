@@ -53,7 +53,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import tarfile
 import time
 import zipfile
@@ -65,7 +64,6 @@ from enum import Enum
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
 from typing import IO, TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
-from uuid import uuid4
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import ContextProvider
@@ -2171,8 +2169,8 @@ class SkillsProvider(ContextProvider):
         skill_paths: str | Path | Sequence[str | Path],
         *,
         script_runner: SkillScriptRunner | None = None,
-        resource_extensions: tuple[str, ...] | None = None,
-        script_extensions: tuple[str, ...] | None = None,
+        resource_extensions: tuple[str, ...] | None = DEFAULT_RESOURCE_EXTENSIONS,
+        script_extensions: tuple[str, ...] | None = DEFAULT_SCRIPT_EXTENSIONS,
         search_depth: int = DEFAULT_SEARCH_DEPTH,
         script_filter: Callable[[str, str], bool] | None = None,
         resource_filter: Callable[[str, str], bool] | None = None,
@@ -2199,8 +2197,12 @@ class SkillsProvider(ContextProvider):
             resource_extensions: File extensions recognized as discoverable
                 resources.  Defaults to
                 ``(".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt")``.
+                ``None`` is treated the same as the default; pass an empty
+                tuple to discover no resources.
             script_extensions: File extensions recognized as discoverable
-                scripts.  Defaults to ``(".py",)``.
+                scripts.  Defaults to ``(".py",)``.  ``None`` is treated the
+                same as the default; pass an empty tuple to disable script
+                discovery entirely.
             search_depth: Maximum depth to search for script and resource
                 files within each skill directory.  A value of ``1`` searches
                 only the skill root; ``2`` (the default) searches the root
@@ -2823,8 +2825,8 @@ class FileSkillsSource(SkillsSource):
         skill_paths: str | Path | Sequence[str | Path],
         *,
         script_runner: SkillScriptRunner | None = None,
-        resource_extensions: tuple[str, ...] | None = None,
-        script_extensions: tuple[str, ...] | None = None,
+        resource_extensions: tuple[str, ...] | None = DEFAULT_RESOURCE_EXTENSIONS,
+        script_extensions: tuple[str, ...] | None = DEFAULT_SCRIPT_EXTENSIONS,
         search_depth: int = DEFAULT_SEARCH_DEPTH,
         script_filter: Callable[[str, str], bool] | None = None,
         resource_filter: Callable[[str, str], bool] | None = None,
@@ -2844,14 +2846,16 @@ class FileSkillsSource(SkillsSource):
                 is attempted without a runner).
             resource_extensions: File extensions recognized as discoverable
                 resources.  Defaults to
-                ``(".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt")``
-                when ``None``.  Pass an empty tuple to discover no resources.
+                ``(".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt")``.
+                ``None`` is treated the same as the default; pass an empty
+                tuple to discover no resources.
             script_extensions: File extensions recognized as discoverable
-                scripts.  Defaults to ``(".py",)`` when ``None``.  Pass an
-                empty tuple to disable script discovery entirely (files that
-                would otherwise be scripts are then only discoverable as
-                resources); this is used to serve untrusted skills whose
-                bundled scripts must never be exposed as runnable.
+                scripts.  Defaults to ``(".py",)``.  ``None`` is treated the
+                same as the default; pass an empty tuple to disable script
+                discovery entirely (files that would otherwise be scripts are
+                then only discoverable as resources); this is used to serve
+                untrusted skills whose bundled scripts must never be exposed as
+                runnable.
             search_depth: Maximum depth to search for script and resource
                 files within each skill directory.  A value of ``1`` searches
                 only the skill root; ``2`` (the default) searches the root
@@ -4012,6 +4016,7 @@ def _mcp_first_blob(result: ReadResourceResult) -> tuple[bytes, str | None] | No
                 data = base64.b64decode(blob)
             except ValueError:
                 # binascii.Error (invalid base64) subclasses ValueError.
+                logger.warning("Failed to base64-decode blob resource content from the MCP server.", exc_info=True)
                 return None
             return data, content.mimeType
     return None
@@ -4281,7 +4286,7 @@ _DEFAULT_ARCHIVE_MAX_SIZE_BYTES: Final[int] = 1 * 1024 * 1024
 _DEFAULT_ARCHIVE_MAX_UNCOMPRESSED_SIZE_BYTES: Final[int] = 1 * 1024 * 1024
 """Default maximum total uncompressed size, in bytes, of all files extracted from an archive skill."""
 
-_ARCHIVE_COPY_BUFFER_SIZE: Final[int] = 81920
+_ARCHIVE_READ_BUFFER_SIZE: Final[int] = 81920
 
 
 class _ArchiveFormat(Enum):
@@ -4332,20 +4337,20 @@ def _detect_archive_format(data: bytes, media_type: str | None, url: str | None)
     return _ArchiveFormat.UNKNOWN
 
 
-def _resolve_archive_destination(target_root: str, entry_path: str) -> str | None:
-    """Resolve an archive entry path to an absolute destination beneath *target_root*.
+def _normalize_archive_member_name(entry_path: str) -> str | None:
+    """Normalize an archive member path to a safe relative POSIX path, or ``None``.
 
-    Guards against path-traversal ("zip-slip") attacks: absolute, rooted, or
-    parent-traversing entry paths, and any entry that resolves outside
-    *target_root*, are rejected.
+    Guards against path-traversal ("zip-slip") shapes: empty, absolute/rooted, or
+    parent-traversing (``..``) member paths are rejected. No filesystem is touched;
+    the returned name is used only as an in-memory resource key, so this is purely a
+    naming-safety check.
 
     Args:
-        target_root: The absolute directory the archive is unpacked into.
-        entry_path: The archive-relative path of the entry.
+        entry_path: The archive-relative path of the member.
 
     Returns:
-        The absolute destination path, or ``None`` when the entry would escape
-        *target_root*.
+        A cleaned forward-slash-separated relative path, or ``None`` when the member
+        path is empty or would escape the skill namespace.
     """
     if not entry_path or not entry_path.strip():
         return None
@@ -4354,96 +4359,93 @@ def _resolve_archive_destination(target_root: str, entry_path: str) -> str | Non
     if not normalized or any(segment == ".." for segment in normalized.split("/")):
         return None
 
-    destination = os.path.abspath(os.path.join(target_root, normalized))
-    if not FileSkillsSource._is_path_within_directory(  # pyright: ignore[reportPrivateUsage]
-        destination, os.path.abspath(target_root)
-    ):
+    parts = [segment for segment in normalized.split("/") if segment not in ("", ".")]
+    if not parts:
         return None
 
-    return destination
+    return "/".join(parts)
 
 
-def _copy_stream_with_limit(source: IO[bytes], destination: IO[bytes], remaining_bytes: int) -> int:
-    """Copy *source* to *destination* in chunks while enforcing an uncompressed-byte budget.
+def _read_member_with_limit(source: IO[bytes], remaining_bytes: int) -> tuple[bytes, int]:
+    """Read one archive member fully into memory within a shared uncompressed-byte budget.
 
-    This is the authoritative defense against decompression bombs because it counts
-    bytes actually produced by the decompressor rather than trusting archive metadata.
-    Peak memory is bounded to a single buffer.
+    Counts bytes actually produced by the decompressor rather than trusting archive
+    metadata, the authoritative defense against decompression bombs. The member is read
+    in chunks so the running budget is enforced before the whole member is materialized.
 
     Args:
-        source: The (possibly decompressing) input stream.
-        destination: The output file stream.
+        source: The (possibly decompressing) input stream for a single member.
         remaining_bytes: The remaining uncompressed-byte budget shared across the archive.
 
     Returns:
-        The remaining budget after copying this stream.
+        A ``(data, remaining_bytes)`` tuple: the member's bytes and the budget left after
+        reading it.
 
     Raises:
         ValueError: If the remaining budget is exhausted.
     """
+    chunks: list[bytes] = []
     while True:
-        chunk = source.read(_ARCHIVE_COPY_BUFFER_SIZE)
+        chunk = source.read(_ARCHIVE_READ_BUFFER_SIZE)
         if not chunk:
             break
         remaining_bytes -= len(chunk)
         if remaining_bytes < 0:
             raise ValueError("Skill archive exceeds the maximum allowed uncompressed size.")
-        destination.write(chunk)
-    return remaining_bytes
+        chunks.append(chunk)
+    return b"".join(chunks), remaining_bytes
 
 
-def _extract_archive(
+def _extract_archive_to_memory(
     data: bytes,
     archive_format: _ArchiveFormat,
-    target_directory: str,
     max_file_count: int,
     max_uncompressed_size_bytes: int,
-) -> None:
-    """Extract *data* into *target_directory* with path-traversal and size guards.
+) -> dict[str, bytes]:
+    """Extract an archive's regular files into an in-memory ``{relative-path: bytes}`` mapping.
 
     Supports ZIP, TAR, and gzip-compressed TAR payloads. Non-regular TAR entries
-    (symbolic links, hard links, device nodes, etc.) are skipped so an archive cannot
-    create links that escape the target directory. Extraction is bounded by a maximum
-    file count and total uncompressed size to mitigate decompression-bomb attacks.
+    (symbolic links, hard links, device nodes, etc.) and unsafe member names (absolute
+    or parent-traversing) are skipped, so an archive cannot smuggle in a link or escape
+    the skill namespace. Extraction is bounded by a maximum file count and total
+    uncompressed size to mitigate decompression-bomb attacks. No filesystem is touched.
 
     Args:
         data: The raw archive bytes.
         archive_format: The detected container format.
-        target_directory: The directory the archive is unpacked into. Created if missing.
         max_file_count: The maximum number of files that may be extracted.
         max_uncompressed_size_bytes: The maximum total uncompressed size, in bytes.
 
+    Returns:
+        A mapping of forward-slash-separated relative paths to file bytes.
+
     Raises:
         ValueError: If the format is unknown or a limit is exceeded.
-        OSError: If a filesystem operation fails.
+        OSError: If the payload cannot be read.
         tarfile.TarError: If a TAR payload is malformed.
         zipfile.BadZipFile: If a ZIP payload is malformed.
         gzip.BadGzipFile: If a gzip payload is malformed.
     """
-    os.makedirs(target_directory, exist_ok=True)
-    full_target = os.path.abspath(target_directory)
-
     if archive_format is _ArchiveFormat.ZIP:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            _extract_zip(archive, full_target, max_file_count, max_uncompressed_size_bytes)
-    elif archive_format is _ArchiveFormat.TAR:
+            return _extract_zip_to_memory(archive, max_file_count, max_uncompressed_size_bytes)
+    if archive_format is _ArchiveFormat.TAR:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
-            _extract_tar(archive, full_target, max_file_count, max_uncompressed_size_bytes)
-    elif archive_format is _ArchiveFormat.TAR_GZ:
+            return _extract_tar_to_memory(archive, max_file_count, max_uncompressed_size_bytes)
+    if archive_format is _ArchiveFormat.TAR_GZ:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
-            _extract_tar(archive, full_target, max_file_count, max_uncompressed_size_bytes)
-    else:
-        raise ValueError(f"Unsupported skill archive format '{archive_format}'.")
+            return _extract_tar_to_memory(archive, max_file_count, max_uncompressed_size_bytes)
+    raise ValueError(f"Unsupported skill archive format '{archive_format}'.")
 
 
-def _extract_zip(
+def _extract_zip_to_memory(
     archive: zipfile.ZipFile,
-    full_target: str,
     max_file_count: int,
     max_uncompressed_size_bytes: int,
-) -> None:
-    """Extract regular files from a ZIP archive. See :func:`_extract_archive`."""
+) -> dict[str, bytes]:
+    """Read regular files from a ZIP archive into memory. See :func:`_extract_archive_to_memory`."""
     remaining_bytes = max_uncompressed_size_bytes
+    files: dict[str, bytes] = {}
     file_count = 0
 
     for info in archive.infolist():
@@ -4454,28 +4456,30 @@ def _extract_zip(
         if file_count > max_file_count:
             raise ValueError(f"Skill archive exceeds the maximum allowed file count ({max_file_count}).")
 
-        destination = _resolve_archive_destination(full_target, info.filename)
-        if destination is None:
+        name = _normalize_archive_member_name(info.filename)
+        if name is None:
             continue
 
-        os.makedirs(os.path.dirname(destination), exist_ok=True)
-        with archive.open(info) as source, open(destination, "wb") as output:
-            remaining_bytes = _copy_stream_with_limit(source, output, remaining_bytes)
+        with archive.open(info) as source:
+            content, remaining_bytes = _read_member_with_limit(source, remaining_bytes)
+        files[name] = content
+
+    return files
 
 
-def _extract_tar(
+def _extract_tar_to_memory(
     archive: tarfile.TarFile,
-    full_target: str,
     max_file_count: int,
     max_uncompressed_size_bytes: int,
-) -> None:
-    """Extract regular files from a TAR archive. See :func:`_extract_archive`."""
+) -> dict[str, bytes]:
+    """Read regular files from a TAR archive into memory. See :func:`_extract_archive_to_memory`."""
     remaining_bytes = max_uncompressed_size_bytes
+    files: dict[str, bytes] = {}
     file_count = 0
 
     for member in archive:
         # Only regular files are materialized. Skipping links/devices avoids both
-        # unsupported entry types and link-based escapes outside the target directory.
+        # unsupported entry types and link-based escapes outside the skill namespace.
         if not member.isreg():
             continue
 
@@ -4483,39 +4487,44 @@ def _extract_tar(
         if file_count > max_file_count:
             raise ValueError(f"Skill archive exceeds the maximum allowed file count ({max_file_count}).")
 
-        destination = _resolve_archive_destination(full_target, member.name)
-        if destination is None:
+        name = _normalize_archive_member_name(member.name)
+        if name is None:
             continue
 
         source = archive.extractfile(member)
         if source is None:
             continue
 
-        os.makedirs(os.path.dirname(destination), exist_ok=True)
-        with source, open(destination, "wb") as output:
-            remaining_bytes = _copy_stream_with_limit(source, output, remaining_bytes)
+        with source:
+            content, remaining_bytes = _read_member_with_limit(source, remaining_bytes)
+        files[name] = content
+
+    return files
 
 
 class _ArchiveEntryLoader:
-    """Loads ``archive``-type ``skill://index.json`` entries.
+    """Loads ``archive``-type ``skill://index.json`` entries entirely in memory.
 
     Each entry's ``url`` points to a single archive resource (ZIP, TAR, or
-    gzip-compressed TAR) whose content unpacks into the skill's namespace.
-    Archives are downloaded, extracted to a local directory, and discovered via
-    an internal :class:`FileSkillsSource` created with **no allowed script
-    extensions and no script runner**, so bundled scripts are surfaced as
-    read-only resources and never as runnable scripts.
+    gzip-compressed TAR). The archive is downloaded and unpacked **in memory** into a
+    :class:`FileSkill` whose ``SKILL.md`` body drives the skill and whose sibling files
+    (matching the configured resource extensions, within the configured depth) become
+    in-memory :class:`InlineSkillResource` resources. Nothing is written to disk, so
+    there are no temporary directories to create, own, or prune.
 
-    The loader owns its extraction directory: on every :meth:`load` it prunes any
-    subdirectory that the MCP server no longer advertises. Two loaders must never
-    share an extraction directory or they would delete each other's skills.
+    Bundled scripts are never surfaced as runnable scripts: only files matching the
+    resource extensions become readable resources; a script file is at most a readable
+    resource, never a :class:`SkillScript`.
+
+    Extraction is hardened against path-traversal ("zip-slip") member names, non-regular
+    TAR members (links/devices), oversized downloads, excessive file counts, and
+    decompression bombs.
     """
 
     def __init__(
         self,
         client: ClientSession,
         *,
-        archive_skills_directory: str | None,
         resource_extensions: tuple[str, ...] | None,
         resource_search_depth: int,
         max_file_count: int,
@@ -4523,57 +4532,57 @@ class _ArchiveEntryLoader:
         max_uncompressed_size_bytes: int,
     ) -> None:
         self._client = client
-        self._configured_directory = archive_skills_directory
-        self._resource_extensions = resource_extensions
+        self._resource_extensions: tuple[str, ...] = (
+            resource_extensions if resource_extensions is not None else DEFAULT_RESOURCE_EXTENSIONS
+        )
         self._resource_search_depth = resource_search_depth
         self._max_file_count = max_file_count
         self._max_size_bytes = max_size_bytes
         self._max_uncompressed_size_bytes = max_uncompressed_size_bytes
-        self._archive_skills_directory: str | None = None
 
     async def load(self, entries: list[_McpSkillIndexEntry], context: SkillsSourceContext) -> list[Skill]:
-        """Download, extract, and discover skills for every valid archive entry.
+        """Download and unpack every valid archive entry into an in-memory skill.
 
         Args:
-            entries: The ``archive`` index entries. May be empty, in which case any
-                previously extracted directories are pruned and an empty list is returned.
-            context: Contextual information forwarded to the internal file source.
+            entries: The ``archive`` index entries. May be empty.
+            context: Accepted for symmetry with the skill-md path; unused, since archive
+                discovery does not depend on the invoking agent or session.
 
         Returns:
-            A list of discovered :class:`FileSkill` instances.
+            A list of discovered :class:`FileSkill` instances (in-memory backed).
         """
-        valid_entries = self._filter_valid_entries(entries)
+        skills: list[Skill] = []
+        seen_names: set[str] = set()
 
-        base_directory = self._archive_skills_directory or self._configured_directory
-        self._reconcile_directories(base_directory, valid_entries)
+        for entry in entries:
+            if not entry.name or not entry.name.strip():
+                logger.debug("Skipping archive entry: missing required 'name' field")
+                continue
+            if not entry.url or not entry.url.strip():
+                logger.debug("Skipping entry '%s': missing required 'url' field", entry.name)
+                continue
 
-        if not valid_entries:
-            return []
-
-        base_directory = self._ensure_base_directory(base_directory)
-        self._archive_skills_directory = base_directory
-
-        skill_directories: list[str] = []
-        for entry in valid_entries:
             downloaded = await self._download(entry)
             if downloaded is None:
                 continue
+
             data, mime_type = downloaded
-            skill_directory = self._extract_entry(entry, base_directory, data, mime_type)
-            if skill_directory is not None:
-                skill_directories.append(skill_directory)
+            skill = self._build_skill(entry, data, mime_type)
+            if skill is None:
+                continue
 
-        if not skill_directories:
-            return []
+            if skill.frontmatter.name in seen_names:
+                logger.warning(
+                    "Duplicate archive skill name '%s': later entry skipped in favor of the first",
+                    skill.frontmatter.name,
+                )
+                continue
 
-        file_source = FileSkillsSource(
-            skill_directories,
-            script_runner=None,
-            resource_extensions=self._resource_extensions,
-            script_extensions=(),
-            search_depth=self._resource_search_depth,
-        )
-        return await file_source.get_skills(context)
+            seen_names.add(skill.frontmatter.name)
+            skills.append(skill)
+            logger.info("Loaded archive skill: %s", skill.frontmatter.name)
+
+        return skills
 
     async def _download(self, entry: _McpSkillIndexEntry) -> tuple[bytes, str | None] | None:
         """Download and decode the binary content of a skill's archive resource.
@@ -4621,138 +4630,120 @@ class _ArchiveEntryLoader:
 
         return data, mime_type
 
-    def _extract_entry(
-        self,
-        entry: _McpSkillIndexEntry,
-        base_directory: str,
-        data: bytes,
-        mime_type: str | None,
-    ) -> str | None:
-        """Detect the format of and extract a single archive entry into its own subdirectory.
+    def _build_skill(self, entry: _McpSkillIndexEntry, data: bytes, mime_type: str | None) -> FileSkill | None:
+        """Detect the format of and unpack one archive entry into an in-memory :class:`FileSkill`.
 
         Returns:
-            The extracted skill directory, or ``None`` when the entry cannot be
-            materialized (path escape, unsupported format, or extraction error).
+            A :class:`FileSkill`, or ``None`` when the archive cannot be materialized
+            (unsupported format, malformed archive, missing/invalid ``SKILL.md``, or a
+            frontmatter name that does not match the advertised entry name).
         """
-        skill_directory = os.path.join(base_directory, cast(str, entry.name))
-
-        # Defense-in-depth: the skill directory is derived from the server-supplied name.
-        # Invalid names are filtered upstream, but verify the resolved path cannot escape.
-        if not FileSkillsSource._is_path_within_directory(  # pyright: ignore[reportPrivateUsage]
-            os.path.abspath(skill_directory), os.path.abspath(base_directory)
-        ):
-            logger.debug(
-                "Skipping skill '%s': resolved skill directory escapes the archive skills directory", entry.name
-            )
-            return None
-
-        # Clean the target directory so content is always freshly extracted.
-        if not self._delete_directory(cast(str, entry.name), skill_directory):
-            return None
-
         archive_format = _detect_archive_format(data, mime_type, entry.url)
         if archive_format is _ArchiveFormat.UNKNOWN:
             logger.debug("Skipping skill '%s': unsupported archive media type '%s'", entry.name, mime_type or "(none)")
             return None
 
         try:
-            _extract_archive(
-                data,
-                archive_format,
-                skill_directory,
-                self._max_file_count,
-                self._max_uncompressed_size_bytes,
+            files = _extract_archive_to_memory(
+                data, archive_format, self._max_file_count, self._max_uncompressed_size_bytes
             )
         except (OSError, ValueError, EOFError, tarfile.TarError, zipfile.BadZipFile, gzip.BadGzipFile):
             logger.warning("Failed to extract archive for skill '%s'.", entry.name, exc_info=True)
-            # Remove partially-extracted content so it is not later mistaken for a valid skill.
-            self._delete_directory(cast(str, entry.name), skill_directory)
             return None
 
-        logger.debug("Extracted archive skill '%s' to '%s'", entry.name, skill_directory)
-        return skill_directory
+        return self._skill_from_files(entry, files)
 
-    def _ensure_base_directory(self, base_directory: str | None) -> str:
-        """Resolve the extraction directory (generating a per-instance one if needed) and create it."""
-        resolved = base_directory or os.path.join(os.getcwd(), uuid4().hex)
-        os.makedirs(resolved, exist_ok=True)
-        return resolved
+    def _skill_from_files(self, entry: _McpSkillIndexEntry, files: dict[str, bytes]) -> FileSkill | None:
+        """Assemble an in-memory :class:`FileSkill` from the archive's extracted files."""
+        skill_md_key = self._find_skill_md(files)
+        if skill_md_key is None:
+            logger.debug("Skipping skill '%s': archive contains no SKILL.md", entry.name)
+            return None
 
-    def _reconcile_directories(self, base_directory: str | None, valid_entries: list[_McpSkillIndexEntry]) -> None:
-        """Prune on-disk skill directories the server no longer advertises."""
-        if not base_directory or not os.path.isdir(base_directory):
-            return
-
-        if not valid_entries:
-            for directory in self._list_subdirectories(base_directory):
-                self._prune_directory(directory)
-            return
-
-        advertised = {os.path.normcase(cast(str, entry.name)) for entry in valid_entries}
-        for directory in self._list_subdirectories(base_directory):
-            if os.path.normcase(os.path.basename(directory)) in advertised:
-                continue
-            self._prune_directory(directory)
-
-    @staticmethod
-    def _list_subdirectories(base_directory: str) -> list[str]:
-        """Return the absolute paths of the immediate subdirectories of *base_directory*."""
         try:
-            return [
-                os.path.join(base_directory, name)
-                for name in os.listdir(base_directory)
-                if os.path.isdir(os.path.join(base_directory, name))
-            ]
-        except OSError:
-            return []
+            content = files[skill_md_key].decode("utf-8")
+        except UnicodeDecodeError:
+            logger.debug("Skipping skill '%s': SKILL.md is not valid UTF-8", entry.name)
+            return None
+
+        frontmatter = FileSkillsSource._extract_frontmatter(  # pyright: ignore[reportPrivateUsage]
+            content, f"{cast(str, entry.name)}/{SKILL_FILE_NAME}"
+        )
+        if frontmatter is None:
+            return None
+
+        if frontmatter.name != entry.name:
+            logger.debug(
+                "Skipping skill '%s': SKILL.md frontmatter name '%s' does not match the advertised entry name",
+                entry.name,
+                frontmatter.name,
+            )
+            return None
+
+        # The SKILL.md's directory within the archive is the skill root; resources are
+        # discovered relative to it, mirroring file-based skill discovery.
+        root_prefix = skill_md_key[: skill_md_key.rfind("/") + 1] if "/" in skill_md_key else ""
+        resources = self._build_resources(files, skill_md_key, root_prefix)
+
+        # ``path`` records the archive's origin URL; it is informational only, as the
+        # skill and its resources are served entirely from memory (no filesystem access).
+        return FileSkill(
+            frontmatter=frontmatter,
+            content=content,
+            path=cast(str, entry.url),
+            resources=resources,
+            scripts=[],
+        )
 
     @staticmethod
-    def _prune_directory(directory: str) -> None:
-        """Recursively delete a stale skill directory, swallowing filesystem errors."""
-        try:
-            shutil.rmtree(directory)
-            logger.debug("Pruned stale archive skill directory '%s'", directory)
-        except OSError:
-            logger.warning("Failed to prune stale archive skill directory '%s'.", directory, exc_info=True)
+    def _find_skill_md(files: dict[str, bytes]) -> str | None:
+        """Return the key of the shallowest ``SKILL.md`` (case-insensitive), or ``None``."""
+        candidates = [key for key in files if key.rsplit("/", 1)[-1].upper() == SKILL_FILE_NAME.upper()]
+        if not candidates:
+            return None
+        # Prefer the shallowest SKILL.md; break ties deterministically by name.
+        return min(candidates, key=lambda key: (key.count("/"), key))
 
-    @staticmethod
-    def _delete_directory(skill_name: str, directory: str) -> bool:
-        """Recursively delete a skill directory. Returns ``False`` on failure."""
-        try:
-            if os.path.isdir(directory):
-                shutil.rmtree(directory)
-            return True
-        except OSError:
-            logger.warning("Failed to clean archive skill directory for '%s'.", skill_name, exc_info=True)
-            return False
+    def _build_resources(self, files: dict[str, bytes], skill_md_key: str, root_prefix: str) -> list[SkillResource]:
+        """Build in-memory resources from archive files under the ``SKILL.md`` directory.
 
-    def _filter_valid_entries(self, entries: list[_McpSkillIndexEntry]) -> list[_McpSkillIndexEntry]:
-        """Filter to entries with a usable directory name and a URL; log and skip the rest."""
-        valid: list[_McpSkillIndexEntry] = []
-        for entry in entries:
-            if not entry.name or not entry.name.strip():
-                logger.debug("Skipping archive entry: missing required 'name' field")
-                continue
-            if not self._is_valid_directory_name(entry.name):
-                logger.debug("Skipping entry '%s': name contains invalid characters for a directory name", entry.name)
-                continue
-            if not entry.url or not entry.url.strip():
-                logger.debug("Skipping entry '%s': missing required 'url' field", entry.name)
-                continue
-            valid.append(entry)
-        return valid
+        A file is included when it sits under *root_prefix*, is not the ``SKILL.md``
+        itself, matches an allowed resource extension, is within the configured search
+        depth, and decodes as UTF-8 text. Scripts are never emitted, so bundled scripts
+        can at most surface as readable resources, never as runnable scripts.
+        """
+        allowed = {ext.lower() for ext in self._resource_extensions}
+        resources: list[SkillResource] = []
 
-    @staticmethod
-    def _is_valid_directory_name(name: str) -> bool:
-        """Return whether *name* is safe to use as a single directory-name segment."""
-        if "/" in name or "\\" in name:
-            return False
-        if any(ch in name for ch in '<>:"|?*'):
-            return False
-        if any(ord(ch) < 32 for ch in name):
-            return False
-        # Names consisting solely of dots or whitespace are invalid directory names.
-        return bool(name.strip().strip("."))
+        for key in sorted(files):
+            if key == skill_md_key:
+                continue
+            if root_prefix and not key.startswith(root_prefix):
+                continue
+
+            rel = key[len(root_prefix) :]
+            if not rel:
+                continue
+
+            # Depth: the skill root is depth 1, one nested directory is depth 2, and so on.
+            if rel.count("/") + 1 > self._resource_search_depth:
+                continue
+
+            basename = rel.rsplit("/", 1)[-1]
+            dot = basename.rfind(".")
+            suffix = basename[dot:].lower() if dot > 0 else ""
+            if suffix not in allowed:
+                continue
+
+            try:
+                text = files[key].decode("utf-8")
+            except UnicodeDecodeError:
+                logger.debug("Skipping resource '%s': not valid UTF-8", rel)
+                continue
+
+            resources.append(InlineSkillResource(name=rel, content=text))
+
+        return resources
 
 
 @experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
@@ -4771,8 +4762,9 @@ class MCPSkillsSource(SkillsSource):
       demand via ``resources/read`` when the skill content is needed.
     * ``archive`` — the entry's ``url`` points to a single archive resource
       (ZIP, TAR, or gzip-compressed TAR) whose content unpacks into the skill's
-      namespace. The archive is downloaded, safely extracted to a local
-      directory, and served like a file-based skill. Scripts bundled inside an
+      namespace. The archive is downloaded and unpacked **in memory** into a
+      skill whose ``SKILL.md`` body drives it and whose sibling files become
+      in-memory resources; nothing is written to disk. Scripts bundled inside an
       archive are surfaced as read-only resources only; MCP-delivered scripts
       are never discovered as runnable.
 
@@ -4780,8 +4772,7 @@ class MCPSkillsSource(SkillsSource):
     are skipped.
 
     If ``skill://index.json`` is absent, unreadable, empty, or fails to
-    parse, this source returns an empty list (archive directories previously
-    extracted by this instance are still pruned).
+    parse, this source returns an empty list.
 
     Archive extraction behavior is configured via the ``archive_*`` constructor
     keyword arguments. Because Python's :class:`CachingSkillsSource` decorator
@@ -4822,7 +4813,6 @@ class MCPSkillsSource(SkillsSource):
         self,
         client: ClientSession,
         *,
-        archive_skills_directory: str | Path | None = None,
         archive_resource_extensions: tuple[str, ...] | None = None,
         archive_resource_search_depth: int = DEFAULT_SEARCH_DEPTH,
         archive_max_file_count: int = _DEFAULT_ARCHIVE_MAX_FILE_COUNT,
@@ -4836,22 +4826,14 @@ class MCPSkillsSource(SkillsSource):
                 exposes Agent Skills resources.
 
         Keyword Args:
-            archive_skills_directory: Base directory that ``archive``-type skills are
-                extracted to and served from. Archives are extracted beneath it as
-                ``{archive_skills_directory}/{skill-name}/``. When ``None`` (the default),
-                a per-instance unique directory ``{cwd}/{uuid}/`` is used so multiple
-                sources never overwrite one another. When set, the directory is treated
-                as exclusively owned by this source: on every discovery, any subdirectory
-                the server no longer advertises is pruned, so two sources must not share
-                one directory.
             archive_resource_extensions: Allowed file extensions for resources discovered
-                in extracted archive skills. When ``None`` (the default), the file-source
+                in ``archive``-type skills. When ``None`` (the default), the file-source
                 default set (``.md``, ``.json``, ``.yaml``, ``.yml``, ``.csv``, ``.xml``,
-                ``.txt``) is used.
+                ``.txt``) is used. Files that would otherwise be scripts are never exposed
+                as runnable.
             archive_resource_search_depth: Maximum depth to search for resource files
-                within each extracted archive skill directory. ``1`` searches only the
-                skill root; ``2`` (the default) searches the root plus one level of
-                subdirectories. Must be >= 1.
+                within each archive skill. ``1`` searches only the skill root; ``2`` (the
+                default) searches the root plus one level of subdirectories. Must be >= 1.
             archive_max_file_count: Maximum number of files that may be extracted from a
                 single archive skill (excessive-file-count DoS guard). Defaults to ``20``.
                 An archive that exceeds the limit is skipped.
@@ -4864,7 +4846,6 @@ class MCPSkillsSource(SkillsSource):
         self._client = client
         self._archive_loader = _ArchiveEntryLoader(
             client,
-            archive_skills_directory=str(archive_skills_directory) if archive_skills_directory is not None else None,
             resource_extensions=archive_resource_extensions,
             resource_search_depth=archive_resource_search_depth,
             max_file_count=archive_max_file_count,
@@ -4918,8 +4899,8 @@ class MCPSkillsSource(SkillsSource):
                     entry.name or "(unnamed)",
                 )
 
-        # Always invoke the archive loader (even with no archive entries) so it can
-        # prune directories the server no longer advertises.
+        # Always invoke the archive loader (even with no archive entries) so the
+        # dispatch mirrors the skill-md path; it simply returns an empty list.
         skills.extend(await self._archive_loader.load(archive_entries, context))
 
         logger.info("Successfully loaded %d skills from MCP server", len(skills))

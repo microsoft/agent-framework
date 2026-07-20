@@ -19,7 +19,6 @@ from azure.ai.agentserver.core import get_request_context
 
 if TYPE_CHECKING:
     from collections.abc import Generator
-    from pathlib import Path
     from typing import Any
 
     from agent_framework import Skill
@@ -200,7 +199,6 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         disable_load_skill_approval: bool = False,
         disable_read_skill_resource_approval: bool = False,
         disable_run_skill_script_approval: bool = False,
-        archive_skills_directory: str | Path | None = None,
         archive_resource_extensions: tuple[str, ...] | None = None,
         archive_resource_search_depth: int | None = None,
         archive_max_file_count: int | None = None,
@@ -220,8 +218,8 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         and no tools -- or by entering it as an ``async with`` context manager.
 
         Skills served as ``archive`` entries (a packaged ZIP / TAR) are downloaded and
-        extracted to a local directory, then served like file-based skills. The
-        ``archive_*`` keyword arguments configure that behavior; see
+        unpacked **in memory** and served like file-based skills; nothing is written to
+        disk. The ``archive_*`` keyword arguments configure that behavior; see
         :class:`~agent_framework.MCPSkillsSource` for their full semantics. Any left
         as ``None`` fall back to the ``MCPSkillsSource`` defaults.
 
@@ -245,16 +243,10 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             disable_run_skill_script_approval: When ``True``, register the provider's
                 ``run_skill_script`` tool with ``approval_mode="never_require"``.
                 Defaults to ``False``.
-            archive_skills_directory: Base directory that ``archive``-type skills are
-                extracted to and served from. When ``None``, a per-instance unique
-                directory under the current working directory is used. Set this to a
-                writable location (for example, a temp directory) when the working
-                directory may be read-only, such as a hosted container.
             archive_resource_extensions: Allowed file extensions for resources
-                discovered in extracted archive skills. ``None`` uses the default set.
+                discovered in archive skills. ``None`` uses the default set.
             archive_resource_search_depth: Maximum depth to search for resource files
-                within each extracted archive skill directory. ``None`` uses the
-                default.
+                within each archive skill. ``None`` uses the default.
             archive_max_file_count: Maximum number of files that may be extracted from
                 a single archive skill (DoS guard). ``None`` uses the default.
             archive_max_size_bytes: Maximum size, in bytes, of a downloaded archive
@@ -286,8 +278,6 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         # Forward only explicitly-set archive options so unset ones fall back to the
         # MCPSkillsSource defaults (avoids duplicating those defaults here).
         archive_options: dict[str, Any] = {}
-        if archive_skills_directory is not None:
-            archive_options["archive_skills_directory"] = archive_skills_directory
         if archive_resource_extensions is not None:
             archive_options["archive_resource_extensions"] = archive_resource_extensions
         if archive_resource_search_depth is not None:
