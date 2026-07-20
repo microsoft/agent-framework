@@ -63,6 +63,7 @@ members = [
     "agent-framework-orchestrations",
     "agent-framework-purview",
     "agent-framework-redis",
+    "agent-framework-tenki",
     "agent-framework-tools",
 ]
 constraints = [
@@ -924,6 +925,15 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.2.6,<3" },
     { name = "redis", specifier = ">=6.4.0,<7.2.1" },
     { name = "redisvl", specifier = ">=0.11.0,<0.16" },
+]
+
+[[package]]
+name = "agent-framework-tenki"
+version = "0.1.0b260716"
+source = { editable = "packages/tenki" }
+dependencies = [
+    { name = "agent-framework-core" },
+    { name = "tenki-sandbox" },
 ]
 
 [[package]]
@@ -7978,6 +7988,20 @@ wheels = [
 ]
 
 [[package]]
+name = "tenki-sandbox"
+version = "0.3.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "protobuf" },
+    { name = "websocket-client" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c8/3e/319d553fb6bd266aed3f5e0ec5d9b1865ee7cb45388c9dc6dac1ee30a51f/tenki_sandbox-0.3.6.tar.gz", hash = "sha256:f4a6e0b7329a7fd42138d5eb582adb1356c084e6f6b3fe046530cbbcd426ffe2", size = 144662, upload-time = "2026-07-10T08:28:16.269Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/4f/860d1ba154200904b493ed4353e1994aa14627f407144d975b21e4cf51be/tenki_sandbox-0.3.6-py3-none-any.whl", hash = "sha256:324fe804a0b561ffa129e6b1b1874e0d7747ebcb566d976e8485c9dd45ef6853", size = 128658, upload-time = "2026-07-10T08:28:14.925Z" },
+]
+
+[[package]]
 name = "termcolor"
 version = "2.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -8524,6 +8548,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/34/74/c6428f875774288bec1396f5bfcbc2d925700a4dad61727fd5f2b12f249d/wcwidth-0.8.2.tar.gz", hash = "sha256:91fbef97204b96a3d4d421609b80340b760cf33e26da123ff243d76b1fda8dda", size = 1466253, upload-time = "2026-06-29T18:11:11.601Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/96/42/3e5985a0a7e57de470b320c6d6a1a67c844f6737a587f3d44dd13d1819e7/wcwidth-0.8.2-py3-none-any.whl", hash = "sha256:d63947694a0539a1d51e01eda7caf800c291020e6cdd7e28ad7b14dd33ad4f85", size = 323166, upload-time = "2026-06-29T18:11:09.888Z" },
+]
+
+[[package]]
+name = "websocket-client"
+version = "1.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/41/aa4bf9664e4cda14c3b39865b12251e8e7d239f4cd0e3cc1b6c2ccde25c1/websocket_client-1.9.0.tar.gz", hash = "sha256:9e813624b6eb619999a97dc7958469217c3176312b3a16a4bd1bc7e08a46ec98", size = 70576, upload-time = "2025-10-07T21:16:36.495Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/34/db/b10e48aa8fff7407e67470363eac595018441cf32d5e1001567a7aeba5d2/websocket_client-1.9.0-py3-none-any.whl", hash = "sha256:af248a825037ef591efbf6ed20cc5faa03d3b47b9e5a2230a529eeee1c1fc3ef", size = 82616, upload-time = "2025-10-07T21:16:34.951Z" },
 ]
 
 [[package]]
