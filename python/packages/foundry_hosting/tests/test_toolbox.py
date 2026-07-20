@@ -57,6 +57,18 @@ class _FakeCredential:
         return _FakeAccessToken(self._token)
 
 
+class _FakeAsyncCredential:
+    """Minimal stand-in for azure.core.credentials_async.AsyncTokenCredential."""
+
+    def __init__(self, token: str = "fake-token") -> None:
+        self._token = token
+        self.scopes: list[str] = []
+
+    async def get_token(self, *scopes: str, **kwargs: object) -> _FakeAccessToken:
+        self.scopes.extend(scopes)
+        return _FakeAccessToken(self._token)
+
+
 def test_resolve_endpoint_prefers_explicit_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TOOLBOX_ENDPOINT", "https://host/toolboxes/tb/mcp?api-version=v1")
     assert _resolve_toolbox_endpoint() == "https://host/toolboxes/tb/mcp?api-version=v1"
@@ -106,36 +118,65 @@ def test_init_derives_name_and_defaults() -> None:
     assert toolbox.load_prompts_flag is False
 
 
-def test_auth_flow_injects_bearer_token() -> None:
+async def test_auth_flow_injects_bearer_token() -> None:
     cred = _FakeCredential("abc123")
     auth = _ToolboxAuth(cred, "https://ai.azure.com/.default")  # type: ignore
     request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
 
-    flow = auth.auth_flow(request)
-    prepared = next(flow)
+    prepared = await anext(auth.async_auth_flow(request))
 
     assert prepared.headers["Authorization"] == "Bearer abc123"
     assert cred.scopes == ["https://ai.azure.com/.default"]
 
 
-def test_auth_flow_forwards_call_id_when_present() -> None:
+async def test_auth_flow_injects_bearer_token_async_credential() -> None:
+    cred = _FakeAsyncCredential("async123")
+    auth = _ToolboxAuth(cred, "https://ai.azure.com/.default")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    prepared = await anext(auth.async_auth_flow(request))
+
+    assert prepared.headers["Authorization"] == "Bearer async123"
+    assert cred.scopes == ["https://ai.azure.com/.default"]
+
+
+def test_sync_auth_flow_injects_bearer_token() -> None:
+    cred = _FakeCredential("sync123")
+    auth = _ToolboxAuth(cred, "https://ai.azure.com/.default")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    prepared = next(auth.sync_auth_flow(request))
+
+    assert prepared.headers["Authorization"] == "Bearer sync123"
+    assert cred.scopes == ["https://ai.azure.com/.default"]
+
+
+def test_sync_auth_flow_rejects_async_credential() -> None:
+    auth = _ToolboxAuth(_FakeAsyncCredential(), "scope")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    with pytest.raises(RuntimeError, match="async credential"):
+        next(auth.sync_auth_flow(request))
+
+
+async def test_auth_flow_forwards_call_id_when_present() -> None:
     auth = _ToolboxAuth(_FakeCredential(), "scope")  # type: ignore
     request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
 
     token = set_request_context(FoundryAgentRequestContext(call_id="call-xyz"))
     try:
-        prepared = next(auth.auth_flow(request))
+        prepared = await anext(auth.async_auth_flow(request))
     finally:
         reset_request_context(token)
 
     assert prepared.headers["x-agent-foundry-call-id"] == "call-xyz"
 
 
-def test_auth_flow_omits_call_id_when_absent() -> None:
+async def test_auth_flow_omits_call_id_when_absent() -> None:
     auth = _ToolboxAuth(_FakeCredential(), "scope")  # type: ignore
     request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
 
-    prepared = next(auth.auth_flow(request))
+    prepared = await anext(auth.async_auth_flow(request))
 
     assert "x-agent-foundry-call-id" not in prepared.headers
 

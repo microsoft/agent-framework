@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 from typing import TYPE_CHECKING
@@ -20,11 +21,12 @@ from agent_framework import (
 from azure.ai.agentserver.core import get_request_context
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import AsyncGenerator, Generator
     from datetime import timedelta
 
     from agent_framework import Skill
-    from azure.core.credentials import TokenCredential
+    from azure.core.credentials import AccessToken, TokenCredential
+    from azure.core.credentials_async import AsyncTokenCredential
     from mcp.client.session import ClientSession
 
 logger = logging.getLogger(__name__)
@@ -74,24 +76,50 @@ def _toolbox_name_from_endpoint(endpoint: str) -> str:
 class _ToolboxAuth(httpx.Auth):
     """Injects a fresh bearer token and the platform call-id on every request.
 
-    ``auth_flow`` runs for *every* outbound request (connection handshake as well
-    as tool calls), so the bearer token is always present. The per-request
-    ``x-agent-foundry-call-id`` is read from the request-scoped context populated
-    by the hosting endpoint; it resolves to a fresh value on each request and is
-    absent (no header) for protocol ``1.0.0`` or local development.
+    Both the synchronous (``sync_auth_flow``) and asynchronous (``async_auth_flow``)
+    httpx auth hooks are implemented, so the same auth works regardless of which
+    transport the toolbox client uses. Each runs for *every* outbound request
+    (connection handshake as well as tool calls), so the bearer token is always
+    present. Both synchronous :class:`~azure.core.credentials.TokenCredential` and
+    asynchronous :class:`~azure.core.credentials_async.AsyncTokenCredential`
+    credentials are supported: the async flow awaits an async credential's
+    ``get_token``, while the sync flow requires a synchronous credential. The
+    per-request ``x-agent-foundry-call-id`` is read from the request-scoped context
+    populated by the hosting endpoint; it resolves to a fresh value on each request
+    and is absent (no header) for protocol ``1.0.0`` or local development.
     """
 
-    def __init__(self, credential: TokenCredential, scope: str) -> None:
+    def __init__(self, credential: TokenCredential | AsyncTokenCredential, scope: str) -> None:
         self._credential = credential
         self._scope = scope
 
-    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
-        # azure-core credentials cache the token internally and only refresh near
-        # expiry, so calling get_token per request is cheap.
-        token = self._credential.get_token(self._scope).token
-        request.headers["Authorization"] = f"Bearer {token}"
+    def _apply_headers(self, request: httpx.Request, token: AccessToken) -> None:
+        request.headers["Authorization"] = f"Bearer {token.token}"
         for key, value in get_request_context().platform_headers().items():
             request.headers[key] = value
+
+    def sync_auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
+        # azure-core credentials cache the token internally and only refresh near
+        # expiry, so calling get_token per request is cheap.
+        token = self._credential.get_token(self._scope)
+        if inspect.isawaitable(token):
+            close = getattr(token, "close", None)
+            if callable(close):
+                close()
+            raise RuntimeError(
+                "An async credential cannot be used with the synchronous auth flow; "
+                "use a synchronous TokenCredential or drive the toolbox with an httpx.AsyncClient."
+            )
+        self._apply_headers(request, token)
+        yield request
+
+    async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
+        # Sync credentials return the token directly; async credentials return an
+        # awaitable to await.
+        token = self._credential.get_token(self._scope)
+        if inspect.isawaitable(token):
+            token = await token
+        self._apply_headers(request, token)
         yield request
 
 
@@ -138,7 +166,7 @@ class FoundryToolbox(MCPStreamableHTTPTool):
 
     def __init__(
         self,
-        credential: TokenCredential,
+        credential: TokenCredential | AsyncTokenCredential,
         *,
         url: str | None = None,
         name: str | None = None,
@@ -150,9 +178,9 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         """Initialize a Foundry toolbox tool.
 
         Args:
-            credential: A Microsoft Entra credential used to obtain bearer tokens for
-                the toolbox endpoint. Tokens are requested per outbound request and
-                cached by the credential.
+            credential: A synchronous or asynchronous Microsoft Entra credential used
+                to obtain bearer tokens for the toolbox endpoint. Tokens are requested
+                per outbound request and cached by the credential.
 
         Keyword Args:
             url: The toolbox MCP endpoint URL. When ``None``, it is resolved from
