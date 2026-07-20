@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from functools import partial
 from inspect import isawaitable
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypedDict, cast
 
 from opentelemetry import propagate
 from opentelemetry import trace as otel_trace
@@ -59,6 +59,18 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    _MCPSamplingContentBlock: TypeAlias = (
+        types.TextContent
+        | types.ImageContent
+        | types.AudioContent
+        | types.EmbeddedResource
+        | types.ResourceLink
+        | types.ToolUseContent
+    )
+else:
+    _MCPSamplingContentBlock = Any
 
 
 class MCPSpecificApproval(TypedDict, total=False):
@@ -779,15 +791,7 @@ class MCPTool:
     def _prepare_content_for_mcp(
         self,
         content: Content,
-    ) -> (
-        types.TextContent
-        | types.ImageContent
-        | types.AudioContent
-        | types.EmbeddedResource
-        | types.ResourceLink
-        | types.ToolUseContent
-        | None
-    ):
+    ) -> _MCPSamplingContentBlock | None:
         """Prepare an Agent Framework content type for MCP."""
         from mcp import types
 
@@ -836,23 +840,9 @@ class MCPTool:
     def _prepare_message_for_mcp(
         self,
         content: Message,
-    ) -> list[
-        types.TextContent
-        | types.ImageContent
-        | types.AudioContent
-        | types.EmbeddedResource
-        | types.ResourceLink
-        | types.ToolUseContent
-    ]:
+    ) -> list[_MCPSamplingContentBlock]:
         """Prepare a Message for MCP format."""
-        messages: list[
-            types.TextContent
-            | types.ImageContent
-            | types.AudioContent
-            | types.EmbeddedResource
-            | types.ResourceLink
-            | types.ToolUseContent
-        ] = []
+        messages: list[_MCPSamplingContentBlock] = []
         for item in content.contents:
             mcp_content = self._prepare_content_for_mcp(item)
             if mcp_content:
