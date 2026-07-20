@@ -1,0 +1,135 @@
+[project]
+name = "agent-framework-azure-cosmos-memory"
+description = "Azure Cosmos DB Agent Memory Toolkit integration for Microsoft Agent Framework - semantic memory with fact extraction and user profiles."
+authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
+readme = "README.md"
+requires-python = ">=3.11"
+version = "1.0.0a260709"
+license-files = ["LICENSE"]
+urls.homepage = "https://aka.ms/agent-framework"
+urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
+urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
+urls.issues = "https://github.com/microsoft/agent-framework/issues"
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Typing :: Typed",
+]
+dependencies = [
+    "agent-framework-core>=1.6.0,<2",
+    "azure-cosmos-agent-memory>=0.2.0b3",
+    # azure-cosmos-agent-memory depends transitively on a prompty pre-release
+    # (prompty>=2.0.0a9, which has no stable 2.x release yet). Declaring it here as a
+    # direct dependency makes the pre-release "explicit" so the workspace's
+    # `prerelease = "if-necessary-or-explicit"` policy permits it (uv only enables
+    # pre-releases for direct dependencies that carry a pre-release specifier).
+    "prompty>=2.0.0a9",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.0.0",
+]
+
+[tool.uv]
+prerelease = "if-necessary-or-explicit"
+environments = [
+    "sys_platform == 'darwin'",
+    "sys_platform == 'linux'",
+    "sys_platform == 'win32'"
+]
+
+[tool.uv-dynamic-versioning]
+fallback-version = "0.0.0"
+
+[tool.pytest.ini_options]
+testpaths = 'tests'
+addopts = "-ra -q -r fEX"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    "ignore:Support for class-based `config` is deprecated:DeprecationWarning:pydantic.*",
+    "ignore:.*telemetry.*:UserWarning",
+]
+timeout = 120
+markers = [
+    "integration: marks tests as integration tests that require external services",
+    "azure: marks integration tests that require a live Azure account (Cosmos DB + AI Foundry)",
+]
+
+[tool.ruff]
+extend = "../../pyproject.toml"
+
+[tool.ruff.lint.extend-per-file-ignores]
+# Samples are illustrative scripts: allow prints and a plain blocking input() loop, and
+# skip docstring/namespace/copyright rules.
+"samples/**" = ["D", "INP", "ERA001", "RUF", "S", "T201", "CPY", "ASYNC250"]
+
+[tool.coverage.run]
+omit = [
+    "**/__init__.py"
+]
+
+[tool.pyright]
+extends = "../../pyproject.toml"
+include = ["agent_framework_azure_cosmos_memory"]
+# The Agent Memory Toolkit (azure-cosmos-agent-memory) ships no type information, so
+# strict ``Unknown`` reporting fires on every toolkit call and on the loosely-typed dict
+# results it returns. Narrowing happens via runtime checks instead. Other type checks
+# remain strict.
+reportUnknownArgumentType = "none"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownParameterType = "none"
+reportOptionalMemberAccess = "none"
+reportOptionalCall = "none"
+
+[tool.mypy]
+plugins = ['pydantic.mypy']
+strict = true
+python_version = "3.11"
+ignore_missing_imports = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+check_untyped_defs = true
+warn_return_any = true
+show_error_codes = true
+warn_unused_ignores = false
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+
+[tool.bandit]
+targets = ["agent_framework_azure_cosmos_memory"]
+exclude_dirs = ["tests"]
+
+[tool.poe]
+executor.type = "uv"
+include = "../../shared_tasks.toml"
+
+[tool.poe.tasks.mypy]
+help = "Run MyPy for this package."
+cmd = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_azure_cosmos_memory"
+
+[tool.poe.tasks.test]
+help = "Run the default unit test suite for this package."
+cmd = 'pytest -m "not integration" --cov=agent_framework_azure_cosmos_memory --cov-report=term-missing:skip-covered tests'
+
+[tool.poe.tasks.integration-tests]
+help = "Run the package integration test suite (emulator-backed, no live Azure)."
+cmd = 'pytest -m "integration and not azure" tests'
+
+[tool.poe.tasks.integration-tests-azure]
+help = "Run the live-Azure integration test suite (requires Cosmos DB + AI Foundry)."
+cmd = 'pytest -m "integration and azure" tests'
+
+[build-system]
+requires = ["flit-core >= 3.11,<4.0"]
+build-backend = "flit_core.buildapi"
