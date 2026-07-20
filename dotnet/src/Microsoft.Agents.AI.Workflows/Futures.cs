@@ -26,7 +26,7 @@ public static class Futures
     /// <c>[Obsolete]</c> in v2.0.0 when the new behavior becomes default, and removed in v3.0.0.
     /// </para>
     /// <para>
-    /// <b>Interaction with <see cref="WorkflowHostingExtensions.AsAIAgent"/>.</b> When this flag
+    /// <b>Interaction with <see cref="WorkflowHostingExtensions.AsAIAgent(Workflow, string?, string?, string?, IWorkflowExecutionEnvironment?, bool, bool)"/>.</b> When this flag
     /// is <see langword="true"/>, <see cref="AgentResponseEvent"/> joins
     /// <see cref="AgentResponseUpdateEvent"/> in being forwarded out of the agent surface
     /// unconditionally — neither honors the host's <c>includeWorkflowOutputsInResponse</c>

@@ -20,11 +20,12 @@ internal sealed class WorkflowHostAgent : AIAgent
     private readonly IWorkflowExecutionEnvironment _executionEnvironment;
     private readonly bool _includeExceptionDetails;
     private readonly bool _includeWorkflowOutputsInResponse;
+    private readonly bool _filterToolCallMessages;
     private readonly Task<ProtocolDescriptor> _describeTask;
 
     private readonly ConcurrentDictionary<string, string> _assignedSessionIds = [];
 
-    public WorkflowHostAgent(Workflow workflow, string? id = null, string? name = null, string? description = null, IWorkflowExecutionEnvironment? executionEnvironment = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false)
+    public WorkflowHostAgent(Workflow workflow, string? id = null, string? name = null, string? description = null, IWorkflowExecutionEnvironment? executionEnvironment = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false, bool filterToolCallMessages = false)
     {
         this._workflow = Throw.IfNull(workflow);
 
@@ -42,6 +43,7 @@ internal sealed class WorkflowHostAgent : AIAgent
 
         this._includeExceptionDetails = includeExceptionDetails;
         this._includeWorkflowOutputsInResponse = includeWorkflowOutputsInResponse;
+        this._filterToolCallMessages = filterToolCallMessages;
 
         this._id = id;
         this.Name = name;
@@ -74,7 +76,7 @@ internal sealed class WorkflowHostAgent : AIAgent
     }
 
     protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
-        => new(new WorkflowSession(this._workflow, this.GenerateNewId(), this._executionEnvironment, this._includeExceptionDetails, this._includeWorkflowOutputsInResponse));
+        => new(new WorkflowSession(this._workflow, this.GenerateNewId(), this._executionEnvironment, this._includeExceptionDetails, this._includeWorkflowOutputsInResponse, this._filterToolCallMessages));
 
     protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
@@ -89,7 +91,7 @@ internal sealed class WorkflowHostAgent : AIAgent
     }
 
     protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => new(new WorkflowSession(this._workflow, serializedState, this._executionEnvironment, this._includeExceptionDetails, this._includeWorkflowOutputsInResponse, jsonSerializerOptions));
+        => new(new WorkflowSession(this._workflow, serializedState, this._executionEnvironment, this._includeExceptionDetails, this._includeWorkflowOutputsInResponse, this._filterToolCallMessages, jsonSerializerOptions));
 
     private async ValueTask<WorkflowSession> UpdateSessionAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, CancellationToken cancellationToken = default)
     {
