@@ -1262,4 +1262,4 @@ def run_workflow_orchestrator(
     # bubble nested progress; a top-level run returns the bare outputs list.
     if is_subworkflow:
         return {SUBWORKFLOW_RESULT_KEY: True, "outputs": workflow_outputs, "events": live_events}
-    return workflow_outputs  # noqa: B901
+    return workflow_outputs  # ruff:ignore[return-in-generator]

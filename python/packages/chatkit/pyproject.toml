@@ -52,7 +52,7 @@ markers = [
 extend = "../../pyproject.toml"
 
 [tool.ruff.lint]
-ignore = ["RUF029"]
+ignore = ["unused-async"]
 
 [tool.coverage.run]
 omit = [

@@ -100,7 +100,7 @@ def resolve_type_annotation(
         try:
             return cast(
                 "type[Any] | UnionType",
-                eval(type_annotation, eval_globalns, localns),  # noqa: S307  # nosec B307
+                eval(type_annotation, eval_globalns, localns),  # ruff:ignore[suspicious-eval-usage]  # nosec B307
             )
         except NameError as e:
             raise NameError(

@@ -45,7 +45,7 @@ def route_prefix() -> str:
 def _read_route_prefix() -> str:
     # AzureWebJobsScriptRoot is the host-set path to the app root (mixed case is the real
     # variable name and is case-sensitive on Linux, so it must not be upper-cased).
-    script_root = os.environ.get("AzureWebJobsScriptRoot") or os.getcwd()  # noqa: SIM112
+    script_root = os.environ.get("AzureWebJobsScriptRoot") or os.getcwd()  # ruff:ignore[uncapitalized-environment-variables]
     host_json_path = os.path.join(script_root, "host.json")
     try:
         with open(host_json_path, encoding="utf-8") as f:
