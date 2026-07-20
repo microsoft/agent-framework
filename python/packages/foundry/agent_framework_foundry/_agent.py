@@ -94,7 +94,7 @@ class FoundryAgentOptions(OpenAIChatOptions, total=False):
     Keyword Args:
         extra_body: Additional request body values sent to the Responses API.
         isolation_key: Isolation key used when lazily creating a hosted-agent
-            session through ``project_client.beta.agents.create_session(...)``.
+            session through the project's agent operations.
     """
 
     extra_body: dict[str, Any]
@@ -758,7 +758,13 @@ class RawFoundryAgent(
 
             create_session_kwargs["version_indicator"] = VersionRefIndicator(agent_version=version)
 
-        service_session = await self.client.project_client.beta.agents.create_session(**create_session_kwargs)
+        session_agents = cast(Any, self.client.project_client.agents)
+        create_session = getattr(session_agents, "create_session", None)
+        if create_session is None:
+            session_agents = cast(Any, self.client.project_client.beta.agents)
+            create_session = session_agents.create_session
+
+        service_session = await create_session(**create_session_kwargs)
         agent_session_id = getattr(service_session, "agent_session_id", None)
         if not isinstance(agent_session_id, str) or not agent_session_id:
             raise ValueError("Hosted Foundry session creation did not return a non-empty agent_session_id.")
