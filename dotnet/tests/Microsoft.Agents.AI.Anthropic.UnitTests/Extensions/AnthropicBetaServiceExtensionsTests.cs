@@ -503,6 +503,10 @@ public sealed class AnthropicBetaServiceExtensionsTests
 
             public global::Anthropic.Services.Beta.IUserProfileService UserProfiles => throw new NotImplementedException();
 
+            public global::Anthropic.Services.Beta.IDreamService Dreams => throw new NotImplementedException();
+
+            public global::Anthropic.Services.Beta.ITunnelService Tunnels => throw new NotImplementedException();
+
             public IBetaService WithOptions(Func<ClientOptions, ClientOptions> modifier)
             {
                 throw new NotImplementedException();
