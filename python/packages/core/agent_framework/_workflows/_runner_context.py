@@ -245,11 +245,11 @@ class RunnerContext(Protocol):
             iteration_count: The current iteration count of the workflow.
             metadata: Optional metadata to associate with the checkpoint.
 
-        Raises:
-            ValueError: If checkpoint storage is not configured.
-
         Returns:
             The ID of the created checkpoint.
+
+        Raises:
+            ValueError: If checkpoint storage is not configured.
         """
         ...
 
