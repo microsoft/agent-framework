@@ -40,7 +40,7 @@ dev = [
     "mypy==2.3.0",
     "pyright==1.1.411",
     "pyrefly==1.1.1",
-    "ty==0.0.60",
+    "ty==0.0.61",
     "zuban==0.9.0",
     "opentelemetry-sdk",
     #tasks
