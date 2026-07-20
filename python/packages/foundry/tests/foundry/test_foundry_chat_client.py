@@ -916,7 +916,7 @@ async def test_integration_web_search() -> None:
 
 @pytest.mark.flaky
 @pytest.mark.integration
-@pytest.mark.xfail(reason="Azure AI Foundry stopped accepting array-format output in function_call_output ~2026-04-03")
+@pytest.mark.xfail(reason="Microsoft Foundry stopped accepting array-format output in function_call_output ~2026-04-03")
 @skip_if_foundry_integration_tests_disabled
 @_with_foundry_debug()
 async def test_integration_tool_rich_content_image() -> None:
@@ -955,6 +955,31 @@ def test_get_code_interpreter_tool_with_file_ids() -> None:
 
     tool_obj = RawFoundryChatClient.get_code_interpreter_tool(file_ids=["file-abc123"])
     assert tool_obj is not None
+
+
+def test_code_interpreter_tool_serializes_to_otel_tool_definitions() -> None:
+    """Hosted code interpreter tools must serialize into OTel tool definitions.
+
+    Regression test: ``CodeInterpreterTool`` is an Azure SDK model (a non-dict ``Mapping``)
+    whose nested ``container`` (``AutoCodeInterpreterToolParam``) is itself a non-dict
+    ``Mapping``. Capturing telemetry for a request carrying this tool previously raised
+    ``TypeError: Object of type AutoCodeInterpreterToolParam is not JSON serializable``.
+    """
+    import json
+
+    from agent_framework.observability import OtelAttr, _get_span_attributes
+
+    tool_obj = RawFoundryChatClient.get_code_interpreter_tool(file_ids=["assistant-abc123"])
+
+    attributes = _get_span_attributes(operation_name="chat", provider_name="foundry", tools=tool_obj)
+
+    definitions = json.loads(attributes[OtelAttr.TOOL_DEFINITIONS])
+    assert definitions == [
+        {
+            "type": "code_interpreter",
+            "name": "code_interpreter",
+        }
+    ]
 
 
 def test_get_file_search_tool() -> None:

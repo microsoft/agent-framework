@@ -19,6 +19,10 @@ stored under the sample's local `storage/` root. Checkpoints are scoped into
 per-continuation buckets so a "latest checkpoint" lookup cannot cross
 conversations.
 
+The sample passes a builder with `cache_target=False`, producing a fresh
+workflow instance for every request. This is required for simultaneous runs
+because one `Workflow` instance intentionally permits only one active run.
+
 ## Production readiness
 
 This is not a full-fledged production deployment. Before exposing this pattern

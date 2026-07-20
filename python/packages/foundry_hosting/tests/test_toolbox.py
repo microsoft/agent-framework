@@ -165,6 +165,35 @@ def test_as_skills_provider_returns_provider() -> None:
     assert provider.source_id == "toolbox-skills"
 
 
+def test_as_skills_provider_requires_approval_by_default() -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/tb/mcp",
+    )
+    provider = toolbox.as_skills_provider()
+    # By default every skill tool keeps its approval requirement.
+    assert provider._disable_load_skill_approval is False  # pyright: ignore[reportPrivateUsage]
+    assert provider._disable_read_skill_resource_approval is False  # pyright: ignore[reportPrivateUsage]
+    assert provider._disable_run_skill_script_approval is False  # pyright: ignore[reportPrivateUsage]
+
+
+def test_as_skills_provider_forwards_approval_overrides() -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/tb/mcp",
+    )
+    provider = toolbox.as_skills_provider(
+        disable_load_skill_approval=True,
+        disable_read_skill_resource_approval=True,
+        disable_run_skill_script_approval=True,
+    )
+    # Overrides flow through to the underlying SkillsProvider so an unattended
+    # host (no AgentSession) can load skills without an approval round-trip.
+    assert provider._disable_load_skill_approval is True  # pyright: ignore[reportPrivateUsage]
+    assert provider._disable_read_skill_resource_approval is True  # pyright: ignore[reportPrivateUsage]
+    assert provider._disable_run_skill_script_approval is True  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_skills_source_requires_connection() -> None:
     toolbox = FoundryToolbox(
         _FakeCredential(),  # type: ignore

@@ -88,7 +88,7 @@ def test_create_harness_agent_with_defaults() -> None:
 
 
 def test_create_harness_agent_includes_all_default_providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Default assembly should include history, compaction, todo, mode, file memory, and file access."""
+    """Default assembly should include history, compaction, todo, mode, and file memory."""
     monkeypatch.chdir(tmp_path)
     agent = create_harness_agent(
         client=_FakeChatClient(),
@@ -103,7 +103,6 @@ def test_create_harness_agent_includes_all_default_providers(tmp_path: Path, mon
     assert TodoProvider in provider_types
     assert AgentModeProvider in provider_types
     assert FileMemoryProvider in provider_types
-    assert FileAccessProvider in provider_types
     assert SkillsProvider not in provider_types
 
 
@@ -132,7 +131,7 @@ def test_create_harness_agent_disable_mode() -> None:
 
 
 def test_create_harness_agent_disable_file_memory() -> None:
-    """disable_file_memory=True should exclude only the FileMemoryProvider."""
+    """disable_file_memory=True should exclude the FileMemoryProvider."""
     agent = create_harness_agent(
         client=_FakeChatClient(),  # type: ignore[arg-type]
         max_context_window_tokens=128_000,
@@ -141,22 +140,28 @@ def test_create_harness_agent_disable_file_memory() -> None:
     )
     provider_types = [type(p) for p in agent.context_providers]
     assert FileMemoryProvider not in provider_types
-    # The file access provider should remain active.
-    assert FileAccessProvider in provider_types
 
 
-def test_create_harness_agent_disable_file_access() -> None:
-    """disable_file_access=True should exclude only the FileAccessProvider."""
-    agent = create_harness_agent(
+def test_create_harness_agent_file_access_is_opt_in() -> None:
+    """FileAccessProvider is absent by default and added only when file_access_store is set."""
+    default_agent = create_harness_agent(
         client=_FakeChatClient(),  # type: ignore[arg-type]
         max_context_window_tokens=128_000,
         max_output_tokens=16_384,
-        disable_file_access=True,
     )
-    provider_types = [type(p) for p in agent.context_providers]
-    assert FileAccessProvider not in provider_types
-    # The file memory provider should remain active.
-    assert FileMemoryProvider in provider_types
+    assert FileAccessProvider not in [type(p) for p in default_agent.context_providers]
+    # The file memory provider should remain active by default.
+    assert FileMemoryProvider in [type(p) for p in default_agent.context_providers]
+
+    access_store = InMemoryAgentFileStore()
+    opt_in_agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        file_access_store=access_store,
+    )
+    access_provider = next(p for p in opt_in_agent.context_providers if isinstance(p, FileAccessProvider))
+    assert access_provider.store is access_store
 
 
 def test_create_harness_agent_uses_custom_file_stores() -> None:
@@ -183,6 +188,7 @@ def test_create_harness_agent_file_access_approval_opt_outs() -> None:
         client=_FakeChatClient(),  # type: ignore[arg-type]
         max_context_window_tokens=128_000,
         max_output_tokens=16_384,
+        file_access_store=InMemoryAgentFileStore(),
         file_access_disable_readonly_tool_approval=True,
         file_access_disable_write_tool_approval=True,
     )
@@ -195,7 +201,7 @@ def test_create_harness_agent_file_access_approval_opt_outs() -> None:
 def test_create_harness_agent_default_file_stores_are_filesystem(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without custom stores, the providers default to FileSystemAgentFileStore rooted in cwd."""
+    """Without a custom store, the FileMemoryProvider defaults to FileSystemAgentFileStore in cwd."""
     monkeypatch.chdir(tmp_path)
     agent = create_harness_agent(
         client=_FakeChatClient(),  # type: ignore[arg-type]
@@ -204,11 +210,8 @@ def test_create_harness_agent_default_file_stores_are_filesystem(
     )
 
     memory_provider = next(p for p in agent.context_providers if isinstance(p, FileMemoryProvider))
-    access_provider = next(p for p in agent.context_providers if isinstance(p, FileAccessProvider))
     assert isinstance(memory_provider.store, FileSystemAgentFileStore)
-    assert isinstance(access_provider.store, FileSystemAgentFileStore)
     assert memory_provider.store.root_path == (tmp_path / "agent-file-memory").resolve()
-    assert access_provider.store.root_path == (tmp_path / "working").resolve()
 
 
 def test_create_harness_agent_skills_paths_adds_provider() -> None:
@@ -390,7 +393,6 @@ async def test_before_strategy_compaction_fires_on_loaded_history_under_per_serv
             disable_todo=True,
             disable_mode=True,
             disable_file_memory=True,
-            disable_file_access=True,
         )
 
     def seeded_session(agent: Any) -> tuple[Any, int]:
@@ -448,7 +450,6 @@ async def test_before_strategy_compaction_multi_turn_keeps_persisted_history_coh
         disable_todo=True,
         disable_mode=True,
         disable_file_memory=True,
-        disable_file_access=True,
     )
 
     session = agent.create_session()
@@ -535,7 +536,6 @@ async def test_harness_chat_client_middleware_execution_order(
         disable_todo=True,
         disable_mode=True,
         disable_file_memory=True,
-        disable_file_access=True,
     )
 
     session = agent.create_session()

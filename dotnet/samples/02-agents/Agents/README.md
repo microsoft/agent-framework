@@ -18,7 +18,7 @@ Before you begin, ensure you have the following prerequisites:
 - Azure CLI installed and authenticated (for Azure credential authentication)
 - User has the required role to invoke models in the Foundry project.
 
-**Note**: These samples use models hosted through Microsoft Foundry. For more information, see [Azure AI Foundry documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/).
+**Note**: These samples use models hosted through Microsoft Foundry. For more information, see [Microsoft Foundry documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/).
 
 **Note**: These samples use Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Foundry project. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
 

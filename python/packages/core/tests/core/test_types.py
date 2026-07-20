@@ -208,6 +208,20 @@ def test_data_content_detect_image_format_from_base64():
         detect_media_type_from_base64(data_str="data", data_uri="data:application/octet-stream;base64,AAA")
 
 
+@mark.parametrize(
+    ("data_uri", "error_message"),
+    [
+        ("data:text/plain,hello", "Data URI must use base64 encoding."),
+        ("data:image/png;base64", "Invalid data URI format."),
+        ("not-a-data-uri", "Invalid data URI format."),
+    ],
+)
+def test_detect_media_type_from_base64_rejects_malformed_data_uri(data_uri: str, error_message: str):
+    """Test malformed data URI inputs raise the documented ValueError."""
+    with raises(ValueError, match=error_message):
+        detect_media_type_from_base64(data_uri=data_uri)
+
+
 def test_data_content_create_data_uri_from_base64():
     """Test the create_data_uri_from_base64 class method."""
     # Test with PNG data
@@ -570,6 +584,21 @@ def test_function_call_content_add_merging_and_errors():
     with raises(ContentError):
         _ = a + b
 
+    # name merging: when the first chunk has no name (e.g. a streaming delta where
+    # the function name arrives later), the merged content must keep the name from
+    # whichever side provides it, regardless of order.
+    # A nameless delta is constructed via Content(...) directly (the factory
+    # from_function_call requires name: str); this mirrors how a streaming
+    # function-call delta with no name yet is represented.
+    a = Content("function_call", call_id="1", name=None, arguments='{"a":')
+    b = Content.from_function_call(call_id="1", name="get_weather", arguments="1}")
+    assert (a + b).name == "get_weather"
+    assert (b + a).name == "get_weather"
+    # both sides missing a name stays None
+    a = Content("function_call", call_id="1", name=None, arguments="")
+    b = Content("function_call", call_id="1", name=None, arguments="")
+    assert (a + b).name is None
+
 
 # region FunctionResultContent
 
@@ -869,6 +898,17 @@ def test_chat_response_with_mapping_response_format() -> None:
     assert response.value["response"] == "Hello"
 
 
+def test_chat_response_value_parses_split_structured_text_without_changing_message_text() -> None:
+    """ChatResponse.value should not use Message.text spacing between structured output chunks."""
+    message = Message(role="assistant", contents=[Content.from_text('{ "respon'), Content.from_text('se": "Hello" }')])
+    response = ChatResponse(messages=message, response_format=OutputModel)
+
+    assert message.text == '{ "respon se": "Hello" }'
+    assert response.text == '{ "respon se": "Hello" }'
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
 def test_chat_response_value_parses_final_message_with_response_format() -> None:
     """ChatResponse.value should ignore intermediate messages when parsing structured output."""
     response = ChatResponse(
@@ -880,6 +920,17 @@ def test_chat_response_value_parses_final_message_with_response_format() -> None
     )
 
     assert response.text == '{"skill_name": "building-permit-compliance"}\n{"response": "Hello"}'
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_agent_response_value_parses_split_structured_text_without_changing_message_text() -> None:
+    """AgentResponse.value should not use Message.text spacing between structured output chunks."""
+    message = Message(role="assistant", contents=[Content.from_text('{"response": "Hel'), Content.from_text('lo"}')])
+    response = AgentResponse(messages=message, response_format=OutputModel)
+
+    assert message.text == '{"response": "Hel lo"}'
+    assert response.text == '{"response": "Hel lo"}'
     assert response.value is not None
     assert response.value.response == "Hello"
 
@@ -897,6 +948,14 @@ def test_agent_response_value_parses_final_message_with_response_format() -> Non
     assert response.text == '{"skill_name": "building-permit-compliance"}{"response": "Hello"}'
     assert response.value is not None
     assert response.value.response == "Hello"
+
+
+def test_chat_response_value_handles_text_content_without_text() -> None:
+    """ChatResponse.value should ignore text content with no text value."""
+    message = Message(role="assistant", contents=[Content.from_dict({"type": "text"})])
+    response = ChatResponse(messages=message, response_format=OutputModel)
+
+    assert response.value is None
 
 
 def test_agent_response_mapping_value_parses_final_message() -> None:

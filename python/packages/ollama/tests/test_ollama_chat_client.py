@@ -290,7 +290,7 @@ async def test_cmc_maps_done_reason_to_finish_reason(
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
-async def test_cmc_leaves_unknown_done_reason_unset(
+async def test_cmc_preserves_unknown_done_reason(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
     chat_history: list[Message],
@@ -305,7 +305,7 @@ async def test_cmc_leaves_unknown_done_reason_unset(
     ollama_client = OllamaChatClient()
     result = await ollama_client.get_response(messages=chat_history)
 
-    assert result.finish_reason is None
+    assert result.finish_reason == "load"
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)

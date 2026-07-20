@@ -49,7 +49,7 @@ Unused harness features (todos, plan/execute mode, web search) are disabled to
 keep this a simple, conversational data-interaction sample.
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint URL
+    FOUNDRY_PROJECT_ENDPOINT — Microsoft Foundry project endpoint URL
     FOUNDRY_MODEL            — Model deployment name
 
 Authentication:

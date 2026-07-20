@@ -17,7 +17,7 @@ This sample demonstrates how to discover **Agent Skills served over MCP** with a
 ### Prerequisites
 
 - Python 3.10+
-- An [Azure AI Foundry](https://ai.azure.com/) project with a deployed model
+- A [Microsoft Foundry](https://ai.azure.com/) project with a deployed model
 - Azure CLI authentication (`az login`)
 - A running MCP server that hosts SEP-2640 skill resources (see "Providing
   an MCP server" below)

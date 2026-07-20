@@ -515,7 +515,9 @@ def _serialize_message(message: Message) -> str:
         "message_id": message.message_id,
         "contents": serialized_contents,
     }
-    return json.dumps(payload, ensure_ascii=True, sort_keys=True, default=str)
+    # ensure_ascii=False so non-ASCII text (e.g. CJK) is token-counted as the
+    # actual characters the model sees, not as inflated ``\uXXXX`` escapes.
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
 
 
 def annotate_token_counts(

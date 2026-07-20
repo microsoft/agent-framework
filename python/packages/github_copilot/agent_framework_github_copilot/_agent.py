@@ -635,8 +635,11 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 parsed_usage_details = self._parse_usage_details_from_copilot(event.data)
                 if parsed_usage_details:
                     usage_details = add_usage_details(usage_details, parsed_usage_details)
-                if event.data.finish_reason:
-                    finish_reason = event.data.finish_reason
+                event_finish_reason = (
+                    "content_filter" if event.data.content_filter_triggered else event.data.finish_reason
+                )
+                if event_finish_reason:
+                    finish_reason = event_finish_reason
                 if event.data.model:
                     model = event.data.model
             else:
@@ -780,7 +783,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     )
                     return
                 usage_details = self._parse_usage_details_from_copilot(event.data)
-                finish_reason = event.data.finish_reason or None
+                finish_reason = "content_filter" if event.data.content_filter_triggered else event.data.finish_reason
                 model = event.data.model or None
                 if usage_details or finish_reason or model:
                     update = AgentResponseUpdate(

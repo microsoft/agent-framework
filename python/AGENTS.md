@@ -82,7 +82,7 @@ python/
 - [anthropic](packages/anthropic/AGENTS.md) - Anthropic Claude API
 - [bedrock](packages/bedrock/AGENTS.md) - AWS Bedrock
 - [claude](packages/claude/AGENTS.md) - Claude Agent SDK
-- [foundry_local](packages/foundry_local/AGENTS.md) - Azure AI Foundry Local
+- [foundry_local](packages/foundry_local/AGENTS.md) - Microsoft Foundry Local
 - [ollama](packages/ollama/AGENTS.md) - Local Ollama inference
 
 ### Azure Integrations
@@ -94,6 +94,7 @@ python/
 
 ### Protocols & UI
 - [a2a](packages/a2a/AGENTS.md) - Agent-to-Agent protocol
+- [hosting-a2a](packages/hosting-a2a/AGENTS.md) - A2A hosting conversion helpers
 - [ag-ui](packages/ag-ui/AGENTS.md) - AG-UI protocol
 - [chatkit](packages/chatkit/AGENTS.md) - OpenAI ChatKit integration
 - [devui](packages/devui/AGENTS.md) - Developer UI for testing

@@ -1,10 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -12,7 +10,6 @@ namespace Microsoft.Agents.AI;
 /// Represents the persisted state of standing tool approval rules,
 /// stored in the session's <see cref="AgentSessionStateBag"/>.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 internal sealed class ToolApprovalState
 {
     /// <summary>

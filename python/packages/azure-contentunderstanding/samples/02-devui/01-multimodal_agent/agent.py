@@ -10,7 +10,7 @@ this agent uses CU for structured extraction — superior for scanned PDFs,
 handwritten content, audio transcription, and video analysis.
 
 Required environment variables:
-  FOUNDRY_PROJECT_ENDPOINT                 — Azure AI Foundry project endpoint
+  FOUNDRY_PROJECT_ENDPOINT                 — Microsoft Foundry project endpoint
   FOUNDRY_MODEL                            — Model deployment name (e.g. gpt-4.1)
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 
