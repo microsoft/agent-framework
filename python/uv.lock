@@ -52,6 +52,7 @@ members = [
     "agent-framework-github-copilot",
     "agent-framework-hosting",
     "agent-framework-hosting-a2a",
+    "agent-framework-hosting-mcp",
     "agent-framework-hosting-responses",
     "agent-framework-hosting-telegram",
     "agent-framework-hyperlight",
@@ -671,6 +672,25 @@ requires-dist = [
     { name = "a2a-sdk", specifier = ">=1.0.0,<2" },
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-hosting", editable = "packages/hosting" },
+]
+
+[[package]]
+name = "agent-framework-hosting-mcp"
+version = "1.0.0a260720"
+source = { editable = "packages/hosting-mcp" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "mcp", extra = ["ws"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "agent-framework-hosting", editable = "packages/hosting" },
+    { name = "mcp", specifier = ">=1.11.0,<2" },
+    { name = "pydantic", specifier = ">=2,<3" },
 ]
 
 [[package]]
