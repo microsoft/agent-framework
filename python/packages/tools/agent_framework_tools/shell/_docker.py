@@ -191,7 +191,7 @@ def build_run_argv(
         "--security-opt",
         "no-new-privileges",
         "--tmpfs",
-        "/tmp:rw,nosuid,nodev,size=64m",  # ruff:ignore[hardcoded-temp-file],  # nosec B108 - tmpfs inside the container, not on the host
+        "/tmp:rw,nosuid,nodev,size=64m",  # ruff:ignore[hardcoded-temp-file]  # nosec B108 - tmpfs inside the container, not on the host
         "--workdir",
         workdir,
     ]
@@ -491,7 +491,7 @@ class DockerShellTool:
             "--security-opt",
             "no-new-privileges",
             "--tmpfs",
-            "/tmp:rw,nosuid,nodev,size=64m",  # ruff:ignore[hardcoded-temp-file],  # nosec B108 - tmpfs inside the container, not on the host
+            "/tmp:rw,nosuid,nodev,size=64m",  # ruff:ignore[hardcoded-temp-file]  # nosec B108 - tmpfs inside the container, not on the host
             "--workdir",
             self._workdir,
         ]

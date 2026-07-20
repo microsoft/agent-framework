@@ -112,10 +112,10 @@ extend-exclude = ["**/data/**"]
 [tool.ruff.lint]
 ignore = [
     "print",  # Allow print statements in experimental/lab code for debugging purposes.
-    "blocking-open-call-in-async-function",  # Allow 'await' outside of async functions in test and experimental code.
+    "blocking-open-call-in-async-function",  # Allow blocking file opens in async experimental code.
     "implicit-namespace-package",  # Ignore missing __init__.py in namespace packages.
-    "unused-async",  # Allow use of 'assert' statements; assertions are used for internal checks in experimental code.
-    "blocking-path-method-in-async-function",  # Allow 'async for' outside of async functions in test and experimental code.
+    "unused-async",  # Allow async functions without await in experimental code.
+    "blocking-path-method-in-async-function",  # Allow blocking pathlib calls in async experimental code.
 ]
 
 [tool.coverage.run]
