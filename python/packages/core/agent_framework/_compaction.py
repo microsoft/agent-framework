@@ -650,6 +650,17 @@ def _included_group_ids(messages: list[Message], ordered_group_ids: list[str]) -
     return included_ids
 
 
+def _minimum_retained_group_ids(
+    messages: list[Message], ordered_group_ids: list[str], kinds: dict[str, GroupKind]
+) -> set[str]:
+    """Return the group ids needed to keep a compaction projection non-empty."""
+    included_ids = _included_group_ids(messages, ordered_group_ids)
+    non_system_ids = [group_id for group_id in included_ids if kinds.get(group_id) != "system"]
+    if non_system_ids:
+        return {non_system_ids[-1]}
+    return {included_ids[-1]} if included_ids else set()
+
+
 def _count_included_messages(messages: list[Message]) -> int:
     return len(included_messages(messages))
 
@@ -713,6 +724,7 @@ class TruncationStrategy:
         protected_ids: set[str] = set()
         if self.preserve_system:
             protected_ids = {group_id for group_id in ordered_group_ids if kinds.get(group_id) == "system"}
+        protected_ids.update(_minimum_retained_group_ids(messages, ordered_group_ids, kinds))
 
         changed = False
         for group_id in ordered_group_ids:
@@ -1191,8 +1203,9 @@ class TokenBudgetComposedStrategy:
         ordered_group_ids = annotate_message_groups(messages)
         grouped = _group_messages_by_id(messages)
         kinds = _group_kind_map(messages)
+        minimum_retained_ids = _minimum_retained_group_ids(messages, ordered_group_ids, kinds)
         for group_id in ordered_group_ids:
-            if kinds.get(group_id) == "system":
+            if kinds.get(group_id) == "system" or group_id in minimum_retained_ids:
                 continue
             for message in grouped.get(group_id, []):
                 changed = set_excluded(message, excluded=True, reason="token_budget_fallback") or changed
@@ -1203,7 +1216,7 @@ class TokenBudgetComposedStrategy:
 
         # Strict budget enforcement fallback: if anchors alone exceed budget, exclude remaining groups.
         for group_id in ordered_group_ids:
-            if kinds.get(group_id) != "system":
+            if kinds.get(group_id) != "system" or group_id in minimum_retained_ids:
                 continue
             for message in grouped.get(group_id, []):
                 changed = set_excluded(message, excluded=True, reason="token_budget_fallback_strict") or changed
