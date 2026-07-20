@@ -12,6 +12,7 @@ unpickler by default:
 """
 
 import base64
+import enum
 import os
 import pickle
 import tempfile
@@ -47,6 +48,37 @@ class FrameworkHelperPayload:
 
     def __reduce__(self) -> tuple[Any, tuple[str]]:
         return (_base64_to_unpickle, (self.nested_payload,))
+
+
+class _NestedTypeContainer:
+    @dataclass
+    class NestedType:
+        value: int
+
+
+class _NestedSetStateContainer:
+    class Evil:
+        setstate_called = False
+
+        def __init__(self) -> None:
+            self.value = 42
+
+        def __setstate__(self, state: dict[str, object]) -> None:
+            type(self).setstate_called = True
+            self.__dict__.update(state)
+
+
+class _NamedPickleColor(enum.Enum):
+    RED = 1
+    BLUE = 2
+    CRIMSON = 1
+
+    __reduce_ex__ = enum.pickle_by_enum_name  # type: ignore[attr-defined]
+
+
+class _EnumNonMemberAttributePayload:
+    def __reduce__(self):
+        return (getattr, (_NamedPickleColor, "__members__"))
 
 
 def test_restricted_decode_blocks_arbitrary_callable():
@@ -298,6 +330,136 @@ def test_restricted_unpickler_raises_pickle_error():
     unpickler = _RestrictedUnpickler(pickled, frozenset())
     with pytest.raises(pickle.UnpicklingError, match="deserialization blocked"):
         unpickler.load()
+
+
+def test_restricted_decode_rejects_non_type_global_in_allowed_types():
+    """Explicit allowed_types entries must resolve to types."""
+    from agent_framework._workflows._checkpoint_encoding import _RestrictedUnpickler
+
+    unpickler = _RestrictedUnpickler(pickle.dumps(object), frozenset({"os:getpid"}))
+    with pytest.raises(pickle.UnpicklingError, match="non-type global"):
+        unpickler.find_class("os", "getpid")
+
+
+def test_restricted_decode_rejects_non_type_global_under_prefix():
+    """Allowed package prefixes must not expose arbitrary module globals."""
+    from agent_framework._workflows._checkpoint_encoding import _RestrictedUnpickler
+
+    unpickler = _RestrictedUnpickler(pickle.dumps(object), frozenset())
+    with pytest.raises(pickle.UnpicklingError, match="non-type global"):
+        unpickler.find_class(
+            "agent_framework._workflows._checkpoint_encoding",
+            "_value_type_to_key",
+        )
+
+
+@pytest.mark.parametrize("protocol", [2, 3])
+def test_restricted_decode_allows_explicitly_listed_nested_type(protocol: int):
+    """Protocol 2/3 nested types load when both the container and nested type are allowed."""
+    original = _NestedTypeContainer.NestedType(42)
+    checkpoint_value = {
+        _PICKLE_MARKER: base64.b64encode(pickle.dumps(original, protocol=protocol)).decode("ascii"),
+        _TYPE_MARKER: f"{type(original).__module__}:{type(original).__qualname__}",
+    }
+    allowed_types = frozenset({
+        f"{_NestedTypeContainer.__module__}:{_NestedTypeContainer.__qualname__}",
+        f"{_NestedTypeContainer.NestedType.__module__}:{_NestedTypeContainer.NestedType.__qualname__}",
+    })
+
+    decoded = decode_checkpoint_value(checkpoint_value, allowed_types=allowed_types)
+
+    assert isinstance(decoded, _NestedTypeContainer.NestedType)
+    assert decoded.value == 42
+
+
+@pytest.mark.parametrize("protocol", [2, 3])
+def test_restricted_decode_blocks_unlisted_nested_type_before_setstate(protocol: int):
+    """Allowing only a container must not allow its nested types or run their state hooks."""
+    original = _NestedSetStateContainer.Evil()
+    checkpoint_value = {
+        _PICKLE_MARKER: base64.b64encode(pickle.dumps(original, protocol=protocol)).decode("ascii"),
+        _TYPE_MARKER: f"{type(original).__module__}:{type(original).__qualname__}",
+    }
+    outer_type_key = f"{_NestedSetStateContainer.__module__}:{_NestedSetStateContainer.__qualname__}"
+    _NestedSetStateContainer.Evil.setstate_called = False
+
+    with pytest.raises(WorkflowCheckpointException, match="nested type"):
+        decode_checkpoint_value(checkpoint_value, allowed_types=frozenset({outer_type_key}))
+
+    assert not _NestedSetStateContainer.Evil.setstate_called
+
+
+@pytest.mark.parametrize("protocol", [2, 3, 4, 5])
+def test_restricted_decode_allows_allowlisted_enum_member_by_name(protocol: int):
+    """Named enum members load only through their allowlisted enum class."""
+    original = _NamedPickleColor.RED
+    checkpoint_value = {
+        _PICKLE_MARKER: base64.b64encode(pickle.dumps(original, protocol=protocol)).decode("ascii"),
+        _TYPE_MARKER: f"{type(original).__module__}:{type(original).__qualname__}",
+    }
+    enum_type_key = f"{_NamedPickleColor.__module__}:{_NamedPickleColor.__qualname__}"
+
+    decoded = decode_checkpoint_value(checkpoint_value, allowed_types=frozenset({enum_type_key}))
+
+    assert decoded is _NamedPickleColor.RED
+
+
+def test_restricted_encoder_round_trips_allowlisted_enum_member_by_name():
+    """The current checkpoint encoder's protocol preserves named enum members."""
+    enum_type_key = f"{_NamedPickleColor.__module__}:{_NamedPickleColor.__qualname__}"
+
+    encoded = encode_checkpoint_value(_NamedPickleColor.RED)
+    decoded = decode_checkpoint_value(encoded, allowed_types=frozenset({enum_type_key}))
+
+    assert decoded is _NamedPickleColor.RED
+
+
+def test_restricted_decode_blocks_non_member_attribute_on_allowlisted_enum():
+    """Allowing an enum class does not expose its other attributes through getattr."""
+    payload = pickle.dumps(_EnumNonMemberAttributePayload(), protocol=pickle.HIGHEST_PROTOCOL)
+    checkpoint_value = {
+        _PICKLE_MARKER: base64.b64encode(payload).decode("ascii"),
+        _TYPE_MARKER: "builtins:dict",
+    }
+    enum_type_key = f"{_NamedPickleColor.__module__}:{_NamedPickleColor.__qualname__}"
+
+    with pytest.raises(WorkflowCheckpointException, match="non-type attribute"):
+        decode_checkpoint_value(checkpoint_value, allowed_types=frozenset({enum_type_key}))
+
+
+def test_restricted_decode_blocks_member_of_unlisted_enum():
+    """Enum member reconstruction still requires the enum class in allowed_types."""
+    original = _NamedPickleColor.RED
+    checkpoint_value = {
+        _PICKLE_MARKER: base64.b64encode(pickle.dumps(original, protocol=pickle.HIGHEST_PROTOCOL)).decode("ascii"),
+        _TYPE_MARKER: f"{type(original).__module__}:{type(original).__qualname__}",
+    }
+
+    with pytest.raises(WorkflowCheckpointException, match="deserialization blocked"):
+        decode_checkpoint_value(checkpoint_value, allowed_types=frozenset())
+
+
+def test_restricted_decode_blocks_getattr_globals_pickle_loads_chain():
+    """Restricted decoding blocks attribute traversal to an inner unrestricted pickle load."""
+    inner_pickle = b"cbuiltins\neval\n(V40 + 2\ntR."
+    escaped_inner_pickle = inner_pickle.decode("ascii").replace("\\", "\\u005c").replace("\n", "\\u000a")
+    # The outer pickle memoizes getattr and walks __init__.__globals__["pickle"].loads.
+    payload = (
+        b"cbuiltins\ngetattr\np0\n0"
+        b"g0\n(cagent_framework._workflows._checkpoint_encoding\n_RestrictedUnpickler\nV__init__\ntRp1\n0"
+        b"g0\n(g1\nV__globals__\ntRp2\n0"
+        b"g0\n(cbuiltins\ndict\nV__getitem__\ntRp3\n0"
+        b"g3\n(g2\nVpickle\ntRp4\n0"
+        b"g0\n(g4\nVloads\ntRp5\n0"
+        b"g5\n(cbuiltins\nbytearray\n(V" + escaped_inner_pickle.encode("ascii") + b"\nVascii\ntRtR."
+    )
+    checkpoint_value = {
+        _PICKLE_MARKER: base64.b64encode(payload).decode("ascii"),
+        _TYPE_MARKER: "builtins:int",
+    }
+
+    with pytest.raises(WorkflowCheckpointException, match="deserialization blocked"):
+        decode_checkpoint_value(checkpoint_value, allowed_types=frozenset())
 
 
 def test_restricted_decode_allows_openai_types():
