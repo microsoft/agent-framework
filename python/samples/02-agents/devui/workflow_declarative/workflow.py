@@ -6,6 +6,7 @@ Run the declarative workflow sample with DevUI.
 Demonstrates conditional branching based on age input using YAML-defined workflow.
 """
 
+import logging
 from pathlib import Path
 
 from agent_framework.declarative import WorkflowFactory
@@ -18,6 +19,7 @@ workflow = factory.create_workflow_from_yaml_path(workflow_path)
 
 def main():
     """Run the declarative workflow with DevUI."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     serve(entities=[workflow], auto_open=True)
 
 
