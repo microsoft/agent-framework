@@ -98,6 +98,9 @@ class _ToolboxAuth(httpx.Auth):
         for key, value in get_request_context().platform_headers().items():
             request.headers[key] = value
 
+    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
+        yield from self.sync_auth_flow(request)
+
     def sync_auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
         # azure-core credentials cache the token internally and only refresh near
         # expiry, so calling get_token per request is cheap.
