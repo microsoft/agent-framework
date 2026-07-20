@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import pytest
 
+from agent_framework import Content, Message
 from agent_framework_declarative._workflows._errors import DeclarativeWorkflowError
 from agent_framework_declarative._workflows._factory import WorkflowFactory
 
@@ -316,6 +317,46 @@ actions:
         )
         assert post_state.get("System", {}).get("LastMessageText") == "turn-2-msg", (
             f"System.LastMessageText not refreshed on turn 2: {post_state.get('System')!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_entry_join_executor_single_message_trigger(self):
+        """Regression test: JoinExecutor must correctly initialize state when passed
+        a single Message (not list[Message]) as the trigger.
+
+        Without the normalization fix in JoinExecutor, a lone Message would bypass
+        the list[Message] path in _ensure_state_initialized, leaving
+        System.LastMessage.Text empty. This caused =Int(System.LastMessage.Text) to
+        evaluate as 0 and age-based conditions to always resolve to the wrong branch.
+        """
+        factory = WorkflowFactory()
+        workflow = factory.create_workflow_from_yaml("""
+name: single-message-trigger-test
+actions:
+  - kind: SetValue
+    path: Local.age
+    value: =Int(System.LastMessage.Text)
+  - kind: If
+    condition: =Local.age < 13
+    then:
+      - kind: SendActivity
+        activity:
+          text: child
+    else:
+      - kind: SendActivity
+        activity:
+          text: adult
+""")
+
+        msg = Message(role="user", contents=[Content.from_text("25")])
+        result = await workflow.run(msg)
+        outputs = result.get_outputs()
+        assert any("adult" in str(o) for o in outputs), (
+            f"Expected 'adult' for age=25 passed as single Message, got: {outputs}. "
+            "JoinExecutor may not be normalizing single Message to list[Message]."
+        )
+        assert not any("child" in str(o) for o in outputs), (
+            f"Did not expect 'child' for age=25 passed as single Message, got: {outputs}"
         )
 
 
