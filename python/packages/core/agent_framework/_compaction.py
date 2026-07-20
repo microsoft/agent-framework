@@ -28,7 +28,7 @@ GROUP_ID_KEY = "id"
 GROUP_KIND_KEY = "kind"
 GROUP_INDEX_KEY = "index"
 GROUP_HAS_REASONING_KEY = "has_reasoning"
-GROUP_TOKEN_COUNT_KEY = "token_count"  # noqa: S105 # nosec B105 - compaction metadata key, not a credential
+GROUP_TOKEN_COUNT_KEY = "token_count"  # ruff:ignore[hardcoded-password-string] # nosec B105 - compaction metadata key, not a credential
 EXCLUDED_KEY = "_excluded"
 EXCLUDE_REASON_KEY = "_exclude_reason"
 SUMMARY_OF_MESSAGE_IDS_KEY = "_summary_of_message_ids"
@@ -515,7 +515,9 @@ def _serialize_message(message: Message) -> str:
         "message_id": message.message_id,
         "contents": serialized_contents,
     }
-    return json.dumps(payload, ensure_ascii=True, sort_keys=True, default=str)
+    # ensure_ascii=False so non-ASCII text (e.g. CJK) is token-counted as the
+    # actual characters the model sees, not as inflated ``\uXXXX`` escapes.
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
 
 
 def annotate_token_counts(

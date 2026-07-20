@@ -207,6 +207,7 @@ FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
     "max_tokens": "length",
     "length": "length",
     "content_filtered": "content_filter",
+    "guardrail_intervened": "content_filter",
     "tool_use": "tool_calls",
 }
 
@@ -760,10 +761,10 @@ class BedrockChatClient(
             logger.debug("Ignoring unsupported Bedrock content block: %s", block)
         return contents
 
-    def _map_finish_reason(self, reason: str | None) -> FinishReasonLiteral | None:
+    def _map_finish_reason(self, reason: str | None) -> str | None:
         if not reason:
             return None
-        return FINISH_REASON_MAP.get(reason.lower())
+        return FINISH_REASON_MAP.get(reason.lower(), reason)
 
     def _prepare_output_config(self, response_format: Any | None) -> dict[str, Any] | None:
         """Convert response_format into the AWS Bedrock outputConfig wire format.

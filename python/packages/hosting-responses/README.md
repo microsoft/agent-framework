@@ -43,9 +43,18 @@ async def responses(body: dict = Body(...)) -> JSONResponse:
         session=session,
         options=run["options"],
     )
-    await state.set_session(response_id, session)
+    if body.get("conversation_id") == session_id:
+        # The app must serialize writers that advance this stable id.
+        await state.set_session(session_id, session)
+    else:
+        await state.set_session(response_id, session)
     return JSONResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
 ```
+
+`previous_response_id` identifies an immutable continuation snapshot: multiple
+requests may branch from it and store their results under distinct new response
+ids. `conversation_id` is a mutable head instead; only one caller should
+advance it at a time. These helpers do not provide per-conversation locking.
 
 The base execution-state helpers live in
 [`agent-framework-hosting`](https://pypi.org/project/agent-framework-hosting/).

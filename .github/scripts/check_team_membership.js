@@ -1,25 +1,38 @@
 // Copyright (c) Microsoft. All rights reserved.
 
 /**
- * Resolve the issue author and check their team membership.
+ * Resolve the issue or pull request author and check their team membership.
  *
  * @param {object} opts
  * @param {object} opts.github - Octokit REST client from actions/github-script
  * @param {object} opts.context - GitHub Actions context
  * @param {object} opts.core - GitHub Actions core toolkit
  * @param {string} opts.teamSlug - Team slug to check membership against
- * @param {string|number} opts.issueNumber - Issue number to resolve author for
+ * @param {string|number} opts.issueNumber - Issue or pull request number to resolve author for
  * @returns {Promise<{author: string|null, isTeamMember: boolean}>}
  */
 async function checkTeamMembership({ github, context, core, teamSlug, issueNumber }) {
-  let author = context.payload.issue?.user?.login;
+  let author =
+    context.payload.issue?.user?.login ??
+    context.payload.pull_request?.user?.login;
+
   if (!author) {
-    const { data: issue } = await github.rest.issues.get({
-      owner: context.repo.owner,
-      repo: context.repo.repo,
-      issue_number: Number(issueNumber),
-    });
-    author = issue.user?.login;
+    const number = Number(issueNumber);
+    if (context.payload.pull_request) {
+      const { data: pr } = await github.rest.pulls.get({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        pull_number: number,
+      });
+      author = pr.user?.login;
+    } else {
+      const { data: issue } = await github.rest.issues.get({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        issue_number: number,
+      });
+      author = issue.user?.login;
+    }
   }
 
   if (!author) {

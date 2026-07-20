@@ -3068,7 +3068,7 @@ class MCPStreamableHTTPTool(MCPTool):
 
             if not hasattr(self, "_inject_headers_hook"):
 
-                async def _inject_headers(request: Request) -> None:  # noqa: RUF029
+                async def _inject_headers(request: Request) -> None:  # ruff:ignore[unused-async]
                     if _url_origin(request.url) != target_origin:
                         return
                     headers = _mcp_call_headers.get({})

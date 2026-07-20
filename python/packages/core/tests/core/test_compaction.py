@@ -35,6 +35,7 @@ from agent_framework import (
     included_token_count,
 )
 from agent_framework._compaction import (
+    _serialize_message,
     append_compaction_message,
     extend_compaction_messages,
 )
@@ -1293,3 +1294,19 @@ def test_context_window_strategy_validates_thresholds() -> None:
             tool_eviction_threshold=0.8,
             truncation_threshold=0.5,
         )
+
+
+def test_serialize_message_preserves_non_ascii_for_token_count() -> None:
+    """Non-ASCII text is token-counted as the characters the model sees, not as
+    inflated ``\\uXXXX`` escapes, so the token estimate isn't skewed (#7022)."""
+    text = "こんにちは、元気ですか"
+    message = Message(role="user", contents=[text])
+    tokenizer = CharacterEstimatorTokenizer()
+
+    serialized = _serialize_message(message)
+    # the same payload as it would serialize with ensure_ascii=True
+    escaped = serialized.encode("ascii", "backslashreplace").decode("ascii")
+
+    assert text in serialized
+    assert "\\u3053" not in serialized
+    assert tokenizer.count_tokens(serialized) < tokenizer.count_tokens(escaped)

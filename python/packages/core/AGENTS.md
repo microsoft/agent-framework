@@ -75,7 +75,8 @@ agent_framework/
 
 - **`AgentSession`** - Manages conversation state and session metadata
 - **`ServiceSessionId`** - Mapping alias for structured service-owned continuation handles used in `AgentSession.service_session_id`
-- **`SessionContext`** - Context object for session-scoped data during agent runs
+- **`SessionContext`** - Context object for session-scoped data during agent runs. `extend_messages(...)` can attach
+  ordered, deduplicated `origin_session_ids` attribution when a provider injects content from other sessions.
 - **`ContextProvider`** - Base class for context providers (RAG, memory systems)
 - **`HistoryProvider`** - Base class for conversation history storage
 - **`InMemoryHistoryProvider`** - Built-in session-state history provider for local runs
@@ -127,6 +128,7 @@ agent_framework/
 - **Descriptions & index** - `file_memory_write` accepts an optional `description`, stored in a companion `<stem>_description.md` sidecar. After each write/delete the provider rebuilds a capped (50-entry) `memories.md` index, and `before_run` injects that index as a `user` context message so the model knows what memories exist. Sidecars and the index are internal files hidden from `file_memory_ls`/`file_memory_grep` and rejected as write targets.
 - **`DEFAULT_FILE_MEMORY_SOURCE_ID`** / **`DEFAULT_FILE_MEMORY_INSTRUCTIONS`** - Public defaults for the provider's source id and instruction banner.
 - **Harness wiring** - `create_harness_agent` includes the `FileMemoryProvider` by default; the `FileAccessProvider` is opt-in and added only when a `file_access_store` is supplied (no implicit `{cwd}/working` store is created). Disable file memory via `disable_file_memory`; override its backing store via `file_memory_store`. When no file-memory store is supplied, the default is `FileSystemAgentFileStore` rooted at `{cwd}/agent-file-memory`. `create_harness_agent` also wires in `MessageInjectionMiddleware` by default (mirroring the .NET harness's `UseMessageInjection`); it is always on with no opt-out because it is a no-op when no messages are queued for the session.
+- **Experimental-feature gating** - `create_harness_agent` itself is released (no longer `@experimental`), but a few features it can wire in remain experimental or pre-release: **background agents** (`background_agents`), **file access** (`file_access_store`), **looping** (`loop_should_continue`), and the **shell tooling** (`shell_executor`, from the pre-release `agent-framework-tools` package). Enabling any of them emits a single `ExperimentalWarning` (naming the responsible parameter). The three experimental harness providers share one `HARNESS` dedup key so the downstream experimental provider does not warn a second time; the shell tooling uses a separate dedup key (it is not a `HARNESS`-decorated feature).
 
 ### Tool Approval Harness (`_harness/_tool_approval.py`)
 

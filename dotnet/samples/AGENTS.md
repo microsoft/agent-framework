@@ -30,7 +30,7 @@ dotnet/samples/
 │   │   └── openai/                    # OpenAI provider samples
 │   ├── AgentOpenTelemetry/            # OpenTelemetry integration
 │   ├── AgentSkills/                   # Agent skills patterns
-│   ├── AgentWithMemory/               # Memory providers (chat history, Mem0, Foundry)
+│   ├── AgentWithMemory/               # Memory providers (chat history, Mem0, Valkey, Foundry, AgentMemory)
 │   ├── AgentWithRAG/                  # RAG patterns (text, vector store, Foundry)
 │   ├── AGUI/                          # AG-UI protocol samples
 │   ├── DeclarativeAgents/             # Declarative agent definitions

@@ -427,6 +427,15 @@ internal static class AgentsSamples
             ],
         },
 
+        new SampleDefinition
+        {
+            Name = "AgentWithMemory_Step06_MemoryUsingAgentMemory",
+            ProjectPath = "samples/02-agents/AgentWithMemory/AgentWithMemory_Step06_MemoryUsingAgentMemory",
+            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
+            OptionalEnvironmentVariables = ["AZURE_OPENAI_API_KEY", "FOUNDRY_MODEL", "FOUNDRY_EMBEDDING_MODEL", "NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD"],
+            SkipReason = "Requires a running Neo4j instance; standalone sample outside the repo's CPM build.",
+        },
+
         // ── AgentWithRAG ────────────────────────────────────────────────────
 
         new SampleDefinition

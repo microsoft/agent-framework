@@ -445,7 +445,7 @@ class InlineSkillScript(SkillScript):
                 f"but received a list. Array-style arguments are only supported "
                 f"for file-based scripts."
             )
-        if self._accepts_kwargs:  # noqa: SIM108
+        if self._accepts_kwargs:  # ruff:ignore[if-else-block-instead-of-if-exp]
             result = self.function(**(args or {}), **kwargs)
         else:
             result = self.function(**(args or {}))
@@ -2326,13 +2326,13 @@ class SkillsProvider(ContextProvider):
             except (KeyError, IndexError, ValueError) as exc:
                 raise ValueError(
                     "The provided instruction_template is not a valid format string. "
-                    "It must contain a '{skills}' placeholder and escape any literal"  # noqa: RUF027
+                    "It must contain a '{skills}' placeholder and escape any literal"  # ruff:ignore[missing-f-string-syntax]
                     " '{' or '}' "
                     "by doubling them ('{{' or '}}')."
                 ) from exc
             if "__PROBE__" not in result:
                 raise ValueError(
-                    "The provided instruction_template must contain a '{skills}' placeholder."  # noqa: RUF027
+                    "The provided instruction_template must contain a '{skills}' placeholder."  # ruff:ignore[missing-f-string-syntax]
                 )
             template = prompt_template
 
@@ -2929,7 +2929,7 @@ class FileSkillsSource(SkillsSource):
             # Discover file-based scripts
             scripts: list[SkillScript] = []
             for sn in self._discover_script_files(skill_path, frontmatter.name):
-                script_full_path = os.path.normpath(os.path.join(skill_path, sn))  # noqa: ASYNC240
+                script_full_path = os.path.normpath(os.path.join(skill_path, sn))  # ruff:ignore[blocking-path-method-in-async-function]
                 scripts.append(FileSkillScript(name=sn, full_path=script_full_path, runner=self._script_runner))
 
             file_skill = FileSkill(
@@ -4017,7 +4017,7 @@ def _mcp_first_blob(result: ReadResourceResult) -> tuple[bytes, str | None] | No
     return None
 
 
-class _McpSkillIndexEntry:  # noqa: B903
+class _McpSkillIndexEntry:  # ruff:ignore[class-as-data-structure]
     """A single entry in the ``skill://index.json`` discovery document.
 
     All fields are optional to support lenient deserialization; callers

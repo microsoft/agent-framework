@@ -55,7 +55,7 @@ timeout = 120
 extend = "../../pyproject.toml"
 
 [tool.ruff.lint.extend-per-file-ignores]
-"samples/**" = ["S", "T201"]
+"samples/**" = ["S", "print"]
 
 [tool.coverage.run]
 omit = [
