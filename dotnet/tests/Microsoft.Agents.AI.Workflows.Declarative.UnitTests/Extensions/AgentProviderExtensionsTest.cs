@@ -58,7 +58,8 @@ public sealed class AgentProviderExtensionsTest(ITestOutputHelper output) : Work
         MockAgentProvider mockProvider = new();
         AgentResponseUpdate[] updates =
         [
-            new(new ChatResponseUpdate(ChatRole.Assistant, "hello ")),
+            new(new ChatResponseUpdate { MessageId = "" }),
+            new(new ChatResponseUpdate(ChatRole.Assistant, "hello ") { MessageId = "" }),
             new(new ChatResponseUpdate(ChatRole.Assistant, "world")),
         ];
         mockProvider
@@ -111,9 +112,11 @@ public sealed class AgentProviderExtensionsTest(ITestOutputHelper output) : Work
             Assert.Equal(1, responseEventCount);
 
             AgentResponseUpdateEvent[] updateEvents = events.OfType<AgentResponseUpdateEvent>().ToArray();
-            string messageId = Assert.IsType<string>(updateEvents[0].Update.MessageId);
+            Assert.Equal("", updateEvents[0].Update.MessageId);
+
+            string messageId = Assert.IsType<string>(updateEvents[1].Update.MessageId);
             Assert.NotEmpty(messageId);
-            Assert.All(updateEvents, updateEvent => Assert.Equal(messageId, updateEvent.Update.MessageId));
+            Assert.All(updateEvents.Skip(1), updateEvent => Assert.Equal(messageId, updateEvent.Update.MessageId));
 
             AgentResponseEvent responseEvent = Assert.Single(events.OfType<AgentResponseEvent>());
             Assert.Equal(messageId, Assert.Single(responseEvent.Response.Messages).MessageId);

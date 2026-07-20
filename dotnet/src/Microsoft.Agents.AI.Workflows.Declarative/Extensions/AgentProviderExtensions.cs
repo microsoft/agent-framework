@@ -31,7 +31,8 @@ internal static class AgentProviderExtensions
         // running on the workflow conversation.
         bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? workflowConversationId);
 
-        // Process the agent response updates.
+        // Assign stable IDs to content-bearing chat updates before emitting and aggregating them.
+        // Contentless updates may carry only metadata and must not become empty messages.
         List<AgentResponseUpdate> updates = [];
         string? generatedMessageId = null;
         string? generatedMessageResponseId = null;
@@ -40,18 +41,21 @@ internal static class AgentProviderExtensions
         {
             await AssignConversationIdAsync(((ChatResponseUpdate?)update.RawRepresentation)?.ConversationId).ConfigureAwait(false);
 
-            if (update.MessageId is null && update.RawRepresentation is ChatResponseUpdate rawUpdate)
+            if (string.IsNullOrEmpty(update.MessageId) && update.RawRepresentation is ChatResponseUpdate rawUpdate)
             {
-                if (generatedMessageId is null
-                    || !string.Equals(generatedMessageResponseId, update.ResponseId, StringComparison.Ordinal)
-                    || generatedMessageRole != update.Role)
+                if (update.Contents.Count > 0)
                 {
-                    generatedMessageId = Guid.NewGuid().ToString("N");
-                    generatedMessageResponseId = update.ResponseId;
-                    generatedMessageRole = update.Role;
+                    if (generatedMessageId is null
+                        || !string.Equals(generatedMessageResponseId, update.ResponseId, StringComparison.Ordinal)
+                        || generatedMessageRole != update.Role)
+                    {
+                        generatedMessageId = Guid.NewGuid().ToString("N");
+                        generatedMessageResponseId = update.ResponseId;
+                        generatedMessageRole = update.Role;
+                    }
+                    update.MessageId = generatedMessageId;
+                    rawUpdate.MessageId = generatedMessageId;
                 }
-                update.MessageId = generatedMessageId;
-                rawUpdate.MessageId = generatedMessageId;
             }
             else
             {

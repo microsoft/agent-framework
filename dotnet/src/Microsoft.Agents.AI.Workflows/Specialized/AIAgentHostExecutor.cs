@@ -234,18 +234,22 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
             ChatRole? generatedMessageRole = null;
             await foreach (AgentResponseUpdate update in agentStream.ConfigureAwait(false))
             {
-                if (update.MessageId is null && update.RawRepresentation is ChatResponseUpdate rawUpdate)
+                // Contentless updates may carry only metadata and must not become empty messages.
+                if (string.IsNullOrEmpty(update.MessageId) && update.RawRepresentation is ChatResponseUpdate rawUpdate)
                 {
-                    if (generatedMessageId is null
-                        || !string.Equals(generatedMessageResponseId, update.ResponseId, StringComparison.Ordinal)
-                        || generatedMessageRole != update.Role)
+                    if (update.Contents.Count > 0)
                     {
-                        generatedMessageId = Guid.NewGuid().ToString("N");
-                        generatedMessageResponseId = update.ResponseId;
-                        generatedMessageRole = update.Role;
+                        if (generatedMessageId is null
+                            || !string.Equals(generatedMessageResponseId, update.ResponseId, StringComparison.Ordinal)
+                            || generatedMessageRole != update.Role)
+                        {
+                            generatedMessageId = Guid.NewGuid().ToString("N");
+                            generatedMessageResponseId = update.ResponseId;
+                            generatedMessageRole = update.Role;
+                        }
+                        update.MessageId = generatedMessageId;
+                        rawUpdate.MessageId = generatedMessageId;
                     }
-                    update.MessageId = generatedMessageId;
-                    rawUpdate.MessageId = generatedMessageId;
                 }
                 else
                 {
