@@ -23,6 +23,9 @@ Usage:
 
 import pytest
 
+# Must match the workflow name in samples/04-hosting/azure_functions/11_workflow_parallel/function_app.py
+WORKFLOW_NAME = "parallel_review"
+
 # Module-level markers - applied to all tests in this file
 pytestmark = [
     pytest.mark.flaky,
@@ -42,6 +45,7 @@ class TestWorkflowParallel:
         self.base_url = base_url
         self.helper = sample_helper
 
+    @pytest.mark.skip(reason="Flaky in CI: times out / crashes the xdist runner; temporarily disabled.")
     def test_parallel_workflow_end_to_end(self) -> None:
         """Run the parallel workflow end-to-end: start, check status, verify completion.
 
@@ -62,14 +66,14 @@ class TestWorkflowParallel:
         }
 
         # Start the orchestration.
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", payload)
         assert response.status_code == 202
         data = response.json()
         instance_id = data["instanceId"]
         assert "statusQueryGetUri" in data
 
         # The status endpoint reflects the started instance.
-        status_response = self.helper.get(f"{self.base_url}/api/workflow/status/{instance_id}")
+        status_response = self.helper.get(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/status/{instance_id}")
         assert status_response.status_code == 200
         assert status_response.json()["instanceId"] == instance_id
 

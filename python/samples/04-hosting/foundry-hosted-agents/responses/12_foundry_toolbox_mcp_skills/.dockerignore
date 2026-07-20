@@ -5,3 +5,5 @@ __pycache__
 *.pyd
 .Python
 .env
+skills
+toolbox.yaml

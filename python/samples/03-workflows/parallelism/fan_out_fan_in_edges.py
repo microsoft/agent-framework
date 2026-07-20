@@ -36,7 +36,7 @@ Show how to construct a parallel branch pattern in workflows. Demonstrate:
 - Fan in by collecting a list of AgentExecutorResponse objects and reducing them to a single result.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
 - Comfort reading AgentExecutorResponse.agent_response.text for assistant output aggregation.

@@ -10,14 +10,14 @@ The agent can plan tasks, manage modes, store memories, read/write files, search
 ## Prerequisites
 
 - .NET 10 SDK
-- An Azure AI Foundry project endpoint
+- A Microsoft Foundry project endpoint
 - KVM-capable host (the Hyperlight sandbox runs code in micro-VMs)
 
 ## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `FOUNDRY_PROJECT_ENDPOINT` | Your Azure AI Foundry project endpoint |
+| `FOUNDRY_PROJECT_ENDPOINT` | Your Microsoft Foundry project endpoint |
 | `FOUNDRY_MODEL` | Model deployment name (default: `gpt-5.4`) |
 
 ## Running

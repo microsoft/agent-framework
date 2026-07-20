@@ -14,6 +14,7 @@ from typing import Any, cast
 from ag_ui.core import (
     BaseEvent,
     CustomEvent,
+    Interrupt,
     ReasoningEncryptedValueEvent,
     ReasoningEndEvent,
     ReasoningMessageContentEvent,
@@ -21,6 +22,7 @@ from ag_ui.core import (
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
     RunFinishedEvent,
+    RunFinishedInterruptOutcome,
     StateSnapshotEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
@@ -69,21 +71,39 @@ def _normalize_resume_interrupts(resume_payload: Any) -> list[dict[str, Any]]:
 
     normalized: list[dict[str, Any]] = []
     for item in candidates:
+        model_dump = getattr(item, "model_dump", None)
+        if callable(model_dump):
+            item = model_dump(by_alias=True, exclude_none=True)
         if not isinstance(item, dict):
             continue
         item_dict = cast(dict[str, Any], item)
-        interrupt_id = item_dict.get("id") or item_dict.get("interruptId") or item_dict.get("toolCallId")
+        interrupt_id = (
+            item_dict.get("id")
+            or item_dict.get("interruptId")
+            or item_dict.get("interrupt_id")
+            or item_dict.get("toolCallId")
+        )
         if not interrupt_id:
             continue
 
-        if "value" in item_dict:
+        if "payload" in item_dict:
+            value = item_dict.get("payload")
+        elif "value" in item_dict:
             value = item_dict.get("value")
         elif "response" in item_dict:
             value = item_dict.get("response")
         else:
-            value = {k: v for k, v in item_dict.items() if k not in {"id", "interruptId", "toolCallId", "type"}}
+            value = {
+                k: v
+                for k, v in item_dict.items()
+                if k not in {"id", "interruptId", "interrupt_id", "toolCallId", "type", "status"}
+            }
 
-        normalized.append({"id": str(interrupt_id), "value": value})
+        normalized_entry = {"id": str(interrupt_id), "value": value}
+        status = item_dict.get("status")
+        if isinstance(status, str) and status:
+            normalized_entry["status"] = status
+        normalized.append(normalized_entry)
 
     return normalized
 
@@ -108,12 +128,324 @@ def _extract_resume_payload(input_data: dict[str, Any]) -> Any:
     return forwarded_props_dict.get("resume")
 
 
+def _strict_resume_entries(resume_payload: Any) -> tuple[list[dict[str, Any]], str | None]:
+    """Parse resume entries for pending interrupt contract validation."""
+    if isinstance(resume_payload, list):
+        candidates = resume_payload
+    elif isinstance(resume_payload, dict):
+        resume_dict = cast(dict[str, Any], resume_payload)
+        if isinstance(resume_dict.get("interrupts"), list):
+            candidates = cast(list[Any], resume_dict["interrupts"])
+        elif isinstance(resume_dict.get("interrupt"), list):
+            candidates = cast(list[Any], resume_dict["interrupt"])
+        else:
+            candidates = [resume_dict]
+    else:
+        return [], "Resume payload must be a list of entries or an object containing interrupt entries."
+
+    if not candidates:
+        return [], "Resume payload must include at least one interrupt entry."
+
+    entries: list[dict[str, Any]] = []
+    for item in candidates:
+        model_dump = getattr(item, "model_dump", None)
+        if callable(model_dump):
+            item = model_dump(by_alias=True, exclude_none=True)
+        if not isinstance(item, dict):
+            return [], "Each resume entry must be an object."
+
+        item_dict = cast(dict[str, Any], item)
+        interrupt_id = (
+            item_dict.get("interruptId")
+            or item_dict.get("interrupt_id")
+            or item_dict.get("id")
+            or item_dict.get("toolCallId")
+        )
+        if not interrupt_id:
+            return [], "Each resume entry must include interruptId."
+
+        status = item_dict.get("status") or "resolved"
+        if status not in {"resolved", "cancelled"}:
+            return [], f"Unsupported resume status '{status}'."
+
+        if "payload" in item_dict:
+            payload = item_dict.get("payload")
+        elif "value" in item_dict:
+            payload = item_dict.get("value")
+        elif "response" in item_dict:
+            payload = item_dict.get("response")
+        else:
+            payload = {
+                key: value
+                for key, value in item_dict.items()
+                if key not in {"id", "interruptId", "interrupt_id", "toolCallId", "type", "status"}
+            }
+
+        entries.append({"interrupt_id": str(interrupt_id), "status": str(status), "payload": payload})
+
+    return entries, None
+
+
+def _resume_contract_error(
+    resume_payload: Any,
+    pending_interrupt_ids: set[str],
+    *,
+    required_code: str,
+    invalid_code: str,
+    unknown_code: str,
+    missing_code: str,
+) -> tuple[list[dict[str, Any]], str | None, str | None]:
+    """Validate that resume entries address every pending interrupt exactly once."""
+    if not pending_interrupt_ids:
+        entries, error = _strict_resume_entries(resume_payload)
+        return entries, error, invalid_code if error else None
+
+    if resume_payload is None:
+        return [], "Pending interrupts require a resume entry for every interruptId.", required_code
+
+    entries, error = _strict_resume_entries(resume_payload)
+    if error is not None:
+        return [], error, invalid_code
+
+    seen: set[str] = set()
+    for entry in entries:
+        interrupt_id = str(entry["interrupt_id"])
+        if interrupt_id in seen:
+            return [], f"Resume includes duplicate interruptId '{interrupt_id}'.", invalid_code
+        seen.add(interrupt_id)
+
+    unknown = seen - pending_interrupt_ids
+    if unknown:
+        interrupt_id = sorted(unknown)[0]
+        return [], f"No pending interrupt found for resume interruptId '{interrupt_id}'.", unknown_code
+
+    missing = pending_interrupt_ids - seen
+    if missing:
+        interrupt_id = sorted(missing)[0]
+        return [], f"Resume omitted pending interruptId '{interrupt_id}'.", missing_code
+
+    return entries, None, None
+
+
+def _canonical_interrupt_message(value: Any) -> str | None:
+    """Extract a human-readable message from legacy interruption metadata."""
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, Mapping):
+        return None
+    value_mapping = cast(Mapping[str, Any], value)
+    for key in ("message", "prompt", "question", "data"):
+        message = value_mapping.get(key)
+        if isinstance(message, str) and message:
+            return message
+    return None
+
+
+def _canonical_interrupt_tool_call_id(interrupt: Mapping[str, Any], value: Any) -> str | None:
+    """Extract a tool call id from canonical fields or legacy interruption metadata."""
+    direct_tool_call_id = interrupt.get("toolCallId") or interrupt.get("tool_call_id")
+    if direct_tool_call_id:
+        return str(direct_tool_call_id)
+
+    if not isinstance(value, Mapping):
+        return None
+    value_mapping = cast(Mapping[str, Any], value)
+    function_call = value_mapping.get("function_call") or value_mapping.get("functionCall")
+    if not isinstance(function_call, Mapping):
+        return None
+    function_call_mapping = cast(Mapping[str, Any], function_call)
+    tool_call_id = function_call_mapping.get("call_id") or function_call_mapping.get("callId")
+    return str(tool_call_id) if tool_call_id else None
+
+
+def _canonical_interrupt_reason(interrupt: Mapping[str, Any], value: Any) -> str:
+    """Infer the canonical AG-UI interrupt reason from existing interruption metadata."""
+    reason = interrupt.get("reason")
+    if isinstance(reason, str) and reason:
+        return reason
+    if isinstance(value, Mapping):
+        value_mapping = cast(Mapping[str, Any], value)
+        if value_mapping.get("type") == "function_approval_request" or value_mapping.get("function_call"):
+            return "tool_call"
+    return "input_required"
+
+
+def _canonical_interrupt_metadata(interrupt: Mapping[str, Any], value: Any) -> dict[str, Any] | None:
+    """Move framework-specific legacy interruption details under metadata."""
+    raw_metadata = interrupt.get("metadata")
+    metadata = dict(cast(Mapping[str, Any], raw_metadata)) if isinstance(raw_metadata, Mapping) else {}
+    if "value" in interrupt:
+        raw_agent_framework = metadata.get("agent_framework")
+        agent_framework = (
+            dict(cast(Mapping[str, Any], raw_agent_framework)) if isinstance(raw_agent_framework, Mapping) else {}
+        )
+        agent_framework.setdefault("value", make_json_safe(value))
+        metadata["agent_framework"] = agent_framework
+    return metadata or None
+
+
+def _canonical_interrupt(interrupt: Mapping[str, Any]) -> Interrupt | None:
+    """Convert a legacy or protocol-compatible interrupt mapping into an AG-UI Interrupt."""
+    interrupt_id = interrupt.get("id") or interrupt.get("interruptId")
+    if not interrupt_id:
+        return None
+
+    value = interrupt.get("value")
+    interrupt_data: dict[str, Any] = {
+        "id": str(interrupt_id),
+        "reason": _canonical_interrupt_reason(interrupt, value),
+    }
+
+    message = interrupt.get("message") or _canonical_interrupt_message(value)
+    if isinstance(message, str) and message:
+        interrupt_data["message"] = message
+
+    tool_call_id = _canonical_interrupt_tool_call_id(interrupt, value)
+    if tool_call_id:
+        interrupt_data["toolCallId"] = tool_call_id
+
+    response_schema = interrupt.get("responseSchema") or interrupt.get("response_schema")
+    if isinstance(response_schema, Mapping):
+        interrupt_data["responseSchema"] = dict(cast(Mapping[str, Any], response_schema))
+
+    expires_at = interrupt.get("expiresAt") or interrupt.get("expires_at")
+    if isinstance(expires_at, str) and expires_at:
+        interrupt_data["expiresAt"] = expires_at
+
+    metadata = _canonical_interrupt_metadata(interrupt, value)
+    if metadata is not None:
+        interrupt_data["metadata"] = metadata
+
+    return Interrupt.model_validate(interrupt_data)
+
+
+def _json_schema_for_value(value: Any) -> dict[str, Any]:
+    """Infer a lightweight JSON schema for an already-serialized value."""
+    if isinstance(value, bool):
+        return {"type": "boolean"}
+    if isinstance(value, int):
+        return {"type": "integer"}
+    if isinstance(value, float):
+        return {"type": "number"}
+    if isinstance(value, str):
+        return {"type": "string"}
+    if isinstance(value, list):
+        return {"type": "array"}
+    if isinstance(value, Mapping):
+        return {"type": "object", "additionalProperties": True}
+    return {}
+
+
+def _approval_response_schema(arguments: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Build the response schema generic AG-UI clients use to render approval input."""
+    properties: dict[str, Any] = {
+        "accepted": {
+            "type": "boolean",
+            "description": "Whether the requested tool call is approved.",
+        }
+    }
+    if arguments:
+        for name, value in arguments.items():
+            argument_schema = _json_schema_for_value(value)
+            argument_schema["description"] = f"Optional edited value for the '{name}' tool argument."
+            properties[str(name)] = argument_schema
+
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": ["accepted"],
+        "additionalProperties": False,
+    }
+
+
+def _approval_steps_response_schema() -> dict[str, Any]:
+    """Build the response schema for step-based confirmation prompts."""
+    return {
+        "type": "object",
+        "properties": {
+            "accepted": {
+                "type": "boolean",
+                "description": "Whether the proposed tool changes are approved.",
+            },
+            "steps": {
+                "type": "array",
+                "description": "The approved and rejected steps.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "description": {"type": "string"},
+                        "status": {"type": "string", "enum": ["enabled", "disabled"]},
+                    },
+                    "required": ["description", "status"],
+                    "additionalProperties": True,
+                },
+            },
+        },
+        "required": ["accepted"],
+        "additionalProperties": False,
+    }
+
+
+def _function_call_interrupt_metadata(function_call: Content) -> dict[str, Any]:
+    """Build Agent Framework metadata for a tool-bound approval interrupt."""
+    parsed_arguments = make_json_safe(function_call.parse_arguments())
+    return {
+        "type": "function_approval_request",
+        "function_call": {
+            "call_id": function_call.call_id,
+            "name": function_call.name,
+            "arguments": parsed_arguments,
+        },
+    }
+
+
+def _approval_interrupt_for_function_call(
+    *,
+    interrupt_id: str,
+    function_call: Content,
+    message: str | None = None,
+    response_schema: Mapping[str, Any] | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    tool_call_id: str | None = None,
+) -> dict[str, Any]:
+    """Build a canonical AG-UI interrupt descriptor for a tool approval pause."""
+    function_metadata = _function_call_interrupt_metadata(function_call)
+    parsed_arguments = function_metadata["function_call"]["arguments"]
+    argument_mapping = cast(Mapping[str, Any], parsed_arguments) if isinstance(parsed_arguments, Mapping) else {}
+    interrupt_message = message or f"Approve running {function_call.name or 'this tool'}?"
+    agent_framework_metadata = {**function_metadata, "value": function_metadata}
+    if metadata:
+        agent_framework_metadata.update(dict(metadata))
+    return {
+        "id": interrupt_id,
+        "reason": "tool_call",
+        "message": interrupt_message,
+        "toolCallId": tool_call_id or function_call.call_id,
+        "responseSchema": dict(response_schema or _approval_response_schema(argument_mapping)),
+        "metadata": {"agent_framework": agent_framework_metadata},
+    }
+
+
 def _build_run_finished_event(
     run_id: str, thread_id: str, interrupts: list[dict[str, Any]] | None = None
 ) -> RunFinishedEvent:
     """Create a RUN_FINISHED event, optionally carrying interrupt metadata."""
     if interrupts:
-        return RunFinishedEvent(run_id=run_id, thread_id=thread_id, interrupt=interrupts)  # type: ignore[call-arg]
+        canonical_interrupts = [
+            canonical for interrupt in interrupts if (canonical := _canonical_interrupt(interrupt)) is not None
+        ]
+        if canonical_interrupts:
+            return RunFinishedEvent(
+                run_id=run_id,
+                thread_id=thread_id,
+                outcome=RunFinishedInterruptOutcome(interrupts=canonical_interrupts),
+            )
+        logger.warning(
+            "run %s: %d interrupt(s) present but none carried an id/interruptId; "
+            "emitting RUN_FINISHED with no interrupt outcome",
+            run_id,
+            len(interrupts),
+        )
     return RunFinishedEvent(run_id=run_id, thread_id=thread_id)
 
 
@@ -444,17 +776,10 @@ def _emit_approval_request(
     interrupt_id = func_call_id or content.id
     if interrupt_id:
         flow.interrupts.append(
-            {
-                "id": str(interrupt_id),
-                "value": {
-                    "type": "function_approval_request",
-                    "function_call": {
-                        "call_id": func_call_id,
-                        "name": func_name,
-                        "arguments": make_json_safe(func_call.parse_arguments()),
-                    },
-                },
-            }
+            _approval_interrupt_for_function_call(
+                interrupt_id=str(interrupt_id),
+                function_call=func_call,
+            )
         )
 
     if require_confirmation:
@@ -619,7 +944,12 @@ def _emit_text_reasoning(content: Content, flow: FlowState | None = None) -> lis
     if not text and content.protected_data is None:
         return []
 
-    message_id = content.id or generate_event_id()
+    if content.id:
+        message_id = content.id
+    elif flow is not None and flow.reasoning_message_id:
+        message_id = flow.reasoning_message_id
+    else:
+        message_id = generate_event_id()
 
     events: list[BaseEvent] = []
 
@@ -781,6 +1111,9 @@ def _known_tool_call_ids(
         interrupt_id = interrupt.get("id")
         if interrupt_id:
             known_ids.add(str(interrupt_id))
+        canonical_tool_call_id = interrupt.get("toolCallId") or interrupt.get("tool_call_id")
+        if canonical_tool_call_id:
+            known_ids.add(str(canonical_tool_call_id))
     return known_ids
 
 

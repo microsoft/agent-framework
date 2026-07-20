@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import json
 import logging
@@ -93,6 +94,10 @@ SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
 _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
 _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY: Final[str] = "already_approved_approval_request_groups"
 _FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget_state"
+_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
+    "Function invocation limit reached before a final answer could be produced."
+)
+_USER_VISIBLE_CONTENT_TYPES: Final[set[str]] = {"data", "uri", "error", "hosted_file", "hosted_vector_store"}
 ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -650,8 +655,14 @@ class FunctionTool(SerializationMixin):
                 if isinstance(arguments, Mapping):
                     parsed_arguments = dict(arguments)
                     if self.input_model is not None and not self._schema_supplied:
+                        # exclude_unset (not exclude_none): keep arguments the model
+                        # explicitly provided even when their value is null, and drop
+                        # only the ones it left out, so the function's own defaults
+                        # apply. Excluding null instead would strip a required nullable
+                        # parameter the model deliberately set to null, failing the
+                        # invocation on the missing argument (#5934).
                         parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(
-                            exclude_none=True
+                            exclude_unset=True
                         )
                 elif isinstance(arguments, BaseModel):
                     if (
@@ -660,7 +671,7 @@ class FunctionTool(SerializationMixin):
                         and not isinstance(arguments, self.input_model)
                     ):
                         raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
-                    parsed_arguments = arguments.model_dump(exclude_none=True)
+                    parsed_arguments = arguments.model_dump(exclude_unset=True)
                 else:
                     raise TypeError(
                         f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
@@ -1475,7 +1486,10 @@ async def _auto_invoke_function(
         runtime_kwargs["session"] = invocation_session
     try:
         if not cast(bool, getattr(tool, "_schema_supplied", False)) and tool.input_model is not None:
-            args = tool.input_model.model_validate(parsed_args).model_dump(exclude_none=True)
+            # exclude_unset (not exclude_none) so an argument the model explicitly set
+            # to null still reaches the function; see FunctionTool.invoke for the full
+            # rationale. This is the auto-calling path #5934 actually hits.
+            args = tool.input_model.model_validate(parsed_args).model_dump(exclude_unset=True)
         else:
             args = dict(parsed_args)
         args = _validate_arguments_against_schema(
@@ -1622,6 +1636,10 @@ def _get_tool_map(
     return tool_list
 
 
+def _is_actionable_function_call(content: Content) -> bool:
+    return content.type == "function_call" and not content.informational_only
+
+
 async def _try_execute_function_calls(
     custom_args: dict[str, Any],
     attempt_idx: int,
@@ -1651,6 +1669,14 @@ async def _try_execute_function_calls(
     """
     from ._types import Content
 
+    function_calls = [
+        function_call
+        for function_call in function_calls
+        if function_call.type == "function_approval_response" or _is_actionable_function_call(function_call)
+    ]
+    if not function_calls:
+        return ([], False)
+
     tool_map = _get_tool_map(tools)
     # The live tools list (when tools is the run-local list) is exposed on the
     # FunctionInvocationContext so tools can add/remove tools during the run.
@@ -1676,14 +1702,18 @@ async def _try_execute_function_calls(
             fcc_name,
             fcc_name in approval_tools,
         )
-        if fcc.type == "function_call" and fcc.name in approval_tools:
+        if _is_actionable_function_call(fcc) and fcc.name in approval_tools:
             logger.debug("Approval needed for function: %s", fcc.name)
             approval_needed = True
             break
-        if fcc.type == "function_call" and (fcc.name in declaration_only or fcc.name in additional_tool_names):
+        if _is_actionable_function_call(fcc) and (fcc.name in declaration_only or fcc.name in additional_tool_names):
             declaration_only_flag = True
             break
-        if config.get("terminate_on_unknown_calls", False) and fcc.type == "function_call" and fcc.name not in tool_map:
+        if (
+            config.get("terminate_on_unknown_calls", False)
+            and _is_actionable_function_call(fcc)
+            and fcc.name not in tool_map
+        ):
             raise KeyError(f'Error: Requested function "{fcc.name}" not found.')
     if approval_needed:
         # approval can only be needed for Function Call Content, not Approval Responses.
@@ -1785,9 +1815,16 @@ async def _try_execute_function_calls(
                 False,
             )
 
-    execution_results = await asyncio.gather(*[
-        invoke_with_termination_handling(function_call, seq_idx) for seq_idx, function_call in enumerate(function_calls)
-    ])
+    # Create each task inside a copied context so the active agent span is
+    # preserved for every parallel tool invocation.
+    execution_tasks = [
+        contextvars.copy_context().run(
+            asyncio.create_task,
+            invoke_with_termination_handling(function_call, seq_idx),
+        )
+        for seq_idx, function_call in enumerate(function_calls)
+    ]
+    execution_results = await asyncio.gather(*execution_tasks)
 
     # Unpack results - each is (Content, terminate_flag)
     contents: list[Content] = [result[0] for result in execution_results]
@@ -1873,6 +1910,42 @@ def _clear_internal_conversation_id(response: ChatResponse[Any]) -> ChatResponse
         response.conversation_id = None
         response.clear_internal_conversation_id()
     return response
+
+
+def _response_has_visible_content(response: ChatResponse[Any]) -> bool:
+    for message in response.messages:
+        for content in message.contents:
+            if content.type == "text":
+                if content.text and content.text.strip():
+                    return True
+            elif content.type in _USER_VISIBLE_CONTENT_TYPES:
+                return True
+    return False
+
+
+def _ensure_function_invocation_limit_fallback_response(response: ChatResponse[Any]) -> ChatResponse[Any]:
+    if _response_has_visible_content(response):
+        return response
+
+    from ._types import Content, Message
+
+    fallback_content = Content.from_text(_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT)
+    if response.messages:
+        response.messages[-1].role = "assistant"
+        response.messages[-1].contents = [fallback_content]
+    else:
+        response.messages.append(Message(role="assistant", contents=[fallback_content]))
+    return response
+
+
+def _function_invocation_limit_fallback_update() -> ChatResponseUpdate:
+    from ._types import ChatResponseUpdate, Content
+
+    return ChatResponseUpdate(
+        contents=[Content.from_text(_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT)],
+        role="assistant",
+        finish_reason="stop",
+    )
 
 
 def _extract_tools(
@@ -2142,7 +2215,7 @@ def _extract_function_calls(response: ChatResponse) -> list[Content]:
     function_calls: list[Content] = []
     for message in response.messages:
         for item in message.contents:
-            if item.type != "function_call":
+            if not _is_actionable_function_call(item):
                 continue
             if item.call_id and item.call_id in function_results:
                 continue
@@ -2491,7 +2564,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             invocation_session=invocation_session,
             middleware_pipeline=function_middleware_pipeline,
         )
-        filtered_kwargs = {k: v for k, v in effective_client_kwargs.items() if k != "session"}
+        filtered_kwargs = dict(effective_client_kwargs)
 
         # Make options mutable so we can update conversation_id during function invocation loop
         mutable_options: dict[str, Any] = dict(options) if options else {}
@@ -2569,6 +2642,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                             client_kwargs=filtered_kwargs,
                         ),
                     )
+                    if (
+                        mutable_options.get("tool_choice") == "none"
+                        and max_function_calls is not None
+                        and total_function_calls >= max_function_calls
+                    ):
+                        response = _ensure_function_invocation_limit_fallback_response(response)
                     aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
                     _update_continuation_state(
                         filtered_kwargs,
@@ -2649,6 +2728,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         client_kwargs=filtered_kwargs,
                     ),
                 )
+                response = _ensure_function_invocation_limit_fallback_response(response)
                 aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
                 _update_continuation_state(
                     filtered_kwargs,
@@ -2730,6 +2810,14 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 # Get the finalized response from the inner stream
                 # This triggers the inner stream's finalizer and result hooks
                 response = await inner_stream.get_final_response()
+                response_had_visible_content = _response_has_visible_content(response)
+                function_call_limit_reached = (
+                    mutable_options.get("tool_choice") == "none"
+                    and max_function_calls is not None
+                    and total_function_calls >= max_function_calls
+                )
+                if function_call_limit_reached:
+                    response = _ensure_function_invocation_limit_fallback_response(response)
                 _update_continuation_state(
                     filtered_kwargs,
                     response,
@@ -2738,10 +2826,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 )
 
                 if not any(
-                    item.type in ("function_call", "function_approval_request")
+                    item.type == "function_approval_request" or _is_actionable_function_call(item)
                     for msg in response.messages
                     for item in msg.contents
                 ):
+                    if function_call_limit_reached and not response_had_visible_content:
+                        yield _function_invocation_limit_fallback_update()
                     return
 
                 if response.conversation_id is not None:
@@ -2825,12 +2915,16 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 yield update
             # Finalize the inner stream to trigger its hooks
             final_response = await final_inner_stream.get_final_response()
+            final_response_had_visible_content = _response_has_visible_content(final_response)
+            final_response = _ensure_function_invocation_limit_fallback_response(final_response)
             _update_continuation_state(
                 filtered_kwargs,
                 final_response,
                 session=invocation_session,
                 options=mutable_options,
             )
+            if not final_response_had_visible_content:
+                yield _function_invocation_limit_fallback_update()
 
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
             # Note: stream_result_hooks are already run via inner stream's get_final_response()

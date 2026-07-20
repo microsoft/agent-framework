@@ -37,6 +37,12 @@ internal static class Application
             while (string.IsNullOrWhiteSpace(input))
             {
                 input = Console.ReadLine();
+
+                // Exit gracefully when stdin is closed (e.g. automated test runner).
+                if (input is null)
+                {
+                    return string.Empty;
+                }
             }
 
             return input.Trim();

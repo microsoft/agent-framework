@@ -6,12 +6,111 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterable
-from typing import Any
+from collections.abc import AsyncIterable, Mapping, Sequence
+from typing import Any, cast
 
 import httpx
+from ag_ui.core import Interrupt, ResumeEntry
 
 logger = logging.getLogger(__name__)
+
+
+def _json_safe_protocol_value(value: Any) -> Any:
+    """Convert protocol values to JSON-compatible data using AG-UI aliases."""
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return _json_safe_protocol_value(model_dump(by_alias=True, exclude_none=True))
+    if isinstance(value, Mapping):
+        return {key: _json_safe_protocol_value(item) for key, item in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_json_safe_protocol_value(item) for item in value]
+    return value
+
+
+def _serialize_available_interrupts(available_interrupts: Sequence[Any] | None) -> list[dict[str, Any]] | None:
+    """Serialize typed or compatible interrupt inputs to canonical AG-UI JSON."""
+    if available_interrupts is None:
+        return None
+    serialized: list[dict[str, Any]] = []
+    for interrupt in available_interrupts:
+        if isinstance(interrupt, Interrupt):
+            serialized.append(cast(dict[str, Any], interrupt.model_dump(by_alias=True, exclude_none=True)))
+            continue
+        if isinstance(interrupt, Mapping) and "reason" not in interrupt:
+            interrupt = dict(interrupt)
+            interrupt_type = interrupt.pop("type", None)
+            if interrupt_type == "request_info" or interrupt_type is None:
+                interrupt["reason"] = "input_required"
+            elif isinstance(interrupt_type, str):
+                interrupt["reason"] = interrupt_type
+        serialized.append(
+            cast(dict[str, Any], Interrupt.model_validate(interrupt).model_dump(by_alias=True, exclude_none=True))
+        )
+    return serialized
+
+
+def _serialize_resume_entry(entry: Any) -> dict[str, Any]:
+    """Serialize one typed or legacy resume entry to canonical AG-UI JSON."""
+    if isinstance(entry, ResumeEntry):
+        return cast(dict[str, Any], entry.model_dump(by_alias=True, exclude_none=True))
+
+    model_dump = getattr(entry, "model_dump", None)
+    if callable(model_dump):
+        entry = model_dump(by_alias=True, exclude_none=True)
+
+    if not isinstance(entry, Mapping):
+        raise ValueError("Each resume entry must be an object.")
+
+    entry_dict = cast(Mapping[str, Any], entry)
+    interrupt_id = (
+        entry_dict.get("interruptId")
+        or entry_dict.get("interrupt_id")
+        or entry_dict.get("id")
+        or entry_dict.get("toolCallId")
+    )
+    if not interrupt_id:
+        raise ValueError("Each resume entry must include interruptId.")
+
+    status = entry_dict.get("status") or "resolved"
+    payload = (
+        entry_dict.get("payload")
+        if "payload" in entry_dict
+        else entry_dict.get("value")
+        if "value" in entry_dict
+        else entry_dict.get("response")
+        if "response" in entry_dict
+        else {
+            key: value
+            for key, value in entry_dict.items()
+            if key not in {"id", "interruptId", "interrupt_id", "toolCallId", "type", "status"}
+        }
+    )
+
+    serialized: dict[str, Any] = {"interruptId": str(interrupt_id), "status": str(status)}
+    if status != "cancelled" or payload:
+        serialized["payload"] = _json_safe_protocol_value(payload)
+    return cast(dict[str, Any], ResumeEntry.model_validate(serialized).model_dump(by_alias=True, exclude_none=True))
+
+
+def _serialize_resume(resume: Any) -> Any:  # noqa: ANN401
+    """Serialize typed or compatible resume inputs to canonical AG-UI JSON."""
+    if resume is None:
+        return None
+    if isinstance(resume, Sequence) and not isinstance(resume, (str, bytes, bytearray)):
+        return [_serialize_resume_entry(entry) for entry in resume]
+    if isinstance(resume, Mapping):
+        resume_dict = cast(Mapping[str, Any], resume)
+        if isinstance(resume_dict.get("interrupts"), Sequence) and not isinstance(
+            resume_dict.get("interrupts"), (str, bytes, bytearray)
+        ):
+            return [_serialize_resume_entry(entry) for entry in cast(Sequence[Any], resume_dict["interrupts"])]
+        if isinstance(resume_dict.get("interrupt"), Sequence) and not isinstance(
+            resume_dict.get("interrupt"), (str, bytes, bytearray)
+        ):
+            return [_serialize_resume_entry(entry) for entry in cast(Sequence[Any], resume_dict["interrupt"])]
+        if any(key in resume_dict for key in ("interruptId", "interrupt_id", "id", "toolCallId")):
+            return [_serialize_resume_entry(resume_dict)]
+    return _json_safe_protocol_value(resume)
 
 
 class AGUIHttpService:
@@ -66,8 +165,8 @@ class AGUIHttpService:
         messages: list[dict[str, Any]],
         state: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
-        available_interrupts: list[dict[str, Any]] | None = None,
-        resume: dict[str, Any] | None = None,
+        available_interrupts: Sequence[Any] | None = None,
+        resume: Any = None,
     ) -> AsyncIterable[dict[str, Any]]:
         """Post a run request and stream AG-UI events.
 
@@ -113,11 +212,13 @@ class AGUIHttpService:
         if tools is not None:
             request_data["tools"] = tools
 
-        if available_interrupts is not None:
-            request_data["availableInterrupts"] = available_interrupts
+        serialized_available_interrupts = _serialize_available_interrupts(available_interrupts)
+        if serialized_available_interrupts is not None:
+            request_data["availableInterrupts"] = serialized_available_interrupts
 
-        if resume is not None:
-            request_data["resume"] = resume
+        serialized_resume = _serialize_resume(resume)
+        if serialized_resume is not None:
+            request_data["resume"] = serialized_resume
 
         logger.debug(
             f"Posting run to {self.endpoint}: thread_id={thread_id}, run_id={run_id}, "

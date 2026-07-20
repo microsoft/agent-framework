@@ -32,7 +32,7 @@ The Python sample in [microsoft/agent-framework#6174](https://github.com/microso
 
 Before running this sample, ensure you have:
 
-1. An Azure AI Foundry project with a deployed model (e.g., `gpt-5.4`)
+1. A Microsoft Foundry project with a deployed model (e.g., `gpt-5.4`)
 2. Azure CLI installed and authenticated (`az login`)
 
 ## Environment Variables
@@ -40,7 +40,7 @@ Before running this sample, ensure you have:
 Set the following environment variables:
 
 ```bash
-# Required: Your Azure AI Foundry project endpoint
+# Required: Your Microsoft Foundry project endpoint
 export AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/api/projects/your-project"
 
 # Optional: Model deployment name (defaults to gpt-5.4)
@@ -57,3 +57,11 @@ dotnet run --project samples/02-agents/Harness/Harness_Step05_Loop
 ## What to Expect
 
 The program runs the four demos in order. Each loop is executed with `RunStreamingAsync`, so output is printed live and every re-invocation of the inner agent is marked with a `--- run N ---` header (detected via a change in the streamed `ResponseId`) — this lets you see exactly when the `LoopAgent` loops. Each streamed message is prefixed with `User:` or `Agent:` based on its role, so the loop's on-behalf-of feedback messages (surfaced as `User` turns) are visually distinct from the agent's responses (`Agent`). Each demo finishes by printing its aggregated final response. Demo 4 also prints an `Auto-approving: ...` line each time the `ToolApprovalAgent` heuristic approves the `DeployService` tool call, showing how approval-aware agents integrate with the loop.
+
+## Security Considerations
+
+Demo 3 uses `AIJudgeLoopEvaluator`, which is an explicit opt-in to sending the original request and the
+agent's latest response to a second, external judge `IChatClient` on every iteration. A compromised or
+malicious judge endpoint could exfiltrate that data, or return a manipulated verdict/gap analysis that
+gets fed back into the loop as feedback — a form of indirect prompt injection. Only configure a judge
+client that points at a service you trust as much as the primary model.

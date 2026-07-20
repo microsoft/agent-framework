@@ -37,7 +37,7 @@ public static class Program
 
     private static async Task Main()
     {
-        // Set up the Azure AI Foundry client
+        // Set up the Microsoft Foundry client
         var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
         var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
         AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
@@ -92,6 +92,10 @@ public static class Program
             if (evt is WorkflowOutputEvent outputEvent)
             {
                 Console.WriteLine($"{outputEvent}");
+            }
+            else if (evt is ClassificationEvent classificationEvent)
+            {
+                Console.WriteLine($"{classificationEvent}");
             }
             else if (evt is DatabaseEvent databaseEvent)
             {
@@ -274,6 +278,11 @@ internal sealed class EmailAnalysisExecutor : Executor<ChatMessage, AnalysisResu
         AnalysisResult!.EmailId = newEmail.EmailId;
         AnalysisResult!.EmailLength = newEmail.EmailContent.Length;
 
+        // Emit a classification event so the workflow output shows the spam decision.
+        await context.AddEventAsync(
+            new ClassificationEvent($"Email classified as: {AnalysisResult.spamDecision} — {AnalysisResult.Reason}"),
+            cancellationToken);
+
         return AnalysisResult;
     }
 }
@@ -417,6 +426,12 @@ internal sealed class EmailSummaryExecutor : Executor<AnalysisResult, AnalysisRe
         return message;
     }
 }
+
+/// <summary>
+/// A custom workflow event for classification operations.
+/// </summary>
+/// <param name="message">The classification message</param>
+internal sealed class ClassificationEvent(string message) : WorkflowEvent(message) { }
 
 /// <summary>
 /// A custom workflow event for database operations.

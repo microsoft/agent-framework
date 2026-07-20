@@ -22,7 +22,7 @@ Analyzer auto-detection:
     - Video            → prebuilt-videoSearch
 
 Required environment variables:
-  FOUNDRY_PROJECT_ENDPOINT                 — Azure AI Foundry project endpoint
+  FOUNDRY_PROJECT_ENDPOINT                 — Microsoft Foundry project endpoint
   FOUNDRY_MODEL                            — Model deployment name (e.g. gpt-4.1)
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 

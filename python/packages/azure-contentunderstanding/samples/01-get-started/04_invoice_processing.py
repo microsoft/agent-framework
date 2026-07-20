@@ -34,7 +34,7 @@ since we want the LLM to produce a structured JSON response from the extracted
 fields, not summarize document text.
 
 Environment variables:
-  FOUNDRY_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
+  FOUNDRY_PROJECT_ENDPOINT                — Microsoft Foundry project endpoint
   FOUNDRY_MODEL             — Model deployment name (e.g. gpt-4.1)
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 """

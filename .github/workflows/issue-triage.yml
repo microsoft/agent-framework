@@ -3,6 +3,12 @@ name: Issue Triage
 on:
   issues:
     types: [opened, typed]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to triage
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -12,7 +18,8 @@ permissions:
 concurrency:
   group: >-
     issue-triage-${{ github.repository }}-${{
-      github.event.issue.type.name == 'Bug' && github.event.issue.number
+      github.event_name == 'workflow_dispatch' && inputs.issue_number
+      || github.event.issue.type.name == 'Bug' && github.event.issue.number
       || github.run_id
     }}
   cancel-in-progress: true
@@ -26,7 +33,11 @@ env:
 jobs:
   team_check:
     runs-on: ubuntu-latest
-    if: ${{ github.event.issue.type.name == 'Bug' }}
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch'
+        || github.event.issue.type.name == 'Bug'
+      }}
     outputs:
       is_team_member: ${{ steps.check.outputs.is_team_member }}
       issue_number: ${{ steps.issue.outputs.issue_number }}
@@ -36,14 +47,18 @@ jobs:
         id: issue
         shell: bash
         env:
-          ISSUE_NUMBER_EVENT: ${{ github.event.issue.number }}
+          ISSUE_NUMBER: >-
+            ${{
+              github.event_name == 'workflow_dispatch' && inputs.issue_number
+              || github.event.issue.number
+            }}
         run: |
           set -euo pipefail
 
-          issue_number="${ISSUE_NUMBER_EVENT}"
+          issue_number="${ISSUE_NUMBER}"
 
           if [[ ! "$issue_number" =~ ^[1-9][0-9]*$ ]]; then
-            echo "Could not determine issue number from event payload." >&2
+            echo "Could not determine issue number from event payload or manual input." >&2
             exit 1
           fi
 
@@ -58,6 +73,7 @@ jobs:
           persist-credentials: false
 
       - name: Check issue author team membership
+        if: ${{ github.event_name != 'workflow_dispatch' }}
         id: check
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
@@ -84,7 +100,11 @@ jobs:
   triage:
     runs-on: ubuntu-latest
     needs: team_check
-    if: ${{ needs.team_check.outputs.is_team_member == 'false' }}
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch'
+        || needs.team_check.outputs.is_team_member == 'false'
+      }}
     environment: integration
     timeout-minutes: 60
 
@@ -114,7 +134,7 @@ jobs:
           python-version: "3.13"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.11.x"
           enable-cache: true

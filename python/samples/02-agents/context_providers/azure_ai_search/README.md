@@ -14,7 +14,7 @@ This folder contains examples demonstrating how to use the Azure AI Search conte
 ## Installation
 
 ```bash
-pip install agent-framework-foundry-search agent-framework-foundry
+pip install agent-framework-azure-ai-search agent-framework-foundry
 ```
 
 ## Prerequisites
@@ -25,13 +25,13 @@ pip install agent-framework-foundry-search agent-framework-foundry
    - [Create Azure AI Search service](https://learn.microsoft.com/azure/search/search-create-service-portal)
    - [Create and populate a search index](https://learn.microsoft.com/azure/search/search-what-is-an-index)
 
-2. **Azure AI Foundry project** with a model deployment
-   - [Create Azure AI Foundry project](https://learn.microsoft.com/azure/ai-studio/how-to/create-projects)
+2. **Microsoft Foundry project** with a model deployment
+   - [Create Microsoft Foundry project](https://learn.microsoft.com/azure/ai-studio/how-to/create-projects)
    - Deploy a model (e.g., GPT-4o)
 
 3. **For Agentic mode only**: Azure OpenAI resource for Knowledge Base model calls
    - [Create Azure OpenAI resource](https://learn.microsoft.com/azure/ai-services/openai/how-to/create-resource)
-   - Note: This is separate from your Azure AI Foundry project endpoint
+   - Note: This is separate from your Microsoft Foundry project endpoint
 
 ### Authentication
 
@@ -42,6 +42,22 @@ Both examples support two authentication methods:
 
 Run `az login` if using Entra ID authentication.
 
+### API versions (stable vs preview)
+
+The provider auto-detects which build of `azure-search-documents` is installed — nothing to
+configure in code:
+
+- **Stable / GA** — `pip install azure-search-documents` (`>=12.0.0`) → api-version `2026-04-01`.
+- **Preview** — `pip install --pre azure-search-documents` (e.g. `12.1.0b1`) → api-version `2026-05-01-preview`.
+
+The installed build picks its own api-version, so newer releases work without code changes.
+
+Agentic `knowledge_base_output_mode="answer_synthesis"` and `retrieval_reasoning_effort` of
+`"low"`/`"medium"` ship **only** in the preview build. On a stable build the provider uses
+extractive output with minimal reasoning effort and raises an actionable error if a preview-only
+option is requested. To enable them, just install the preview build (`pip install --pre
+azure-search-documents`) — no code change.
+
 ## Configuration
 
 ### Environment Variables
@@ -49,7 +65,7 @@ Run `az login` if using Entra ID authentication.
 **Common (both modes):**
 - `AZURE_SEARCH_ENDPOINT`: Your Azure AI Search endpoint (e.g., `https://myservice.search.windows.net`)
 - `AZURE_SEARCH_INDEX_NAME`: Name of your search index
-- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
+- `FOUNDRY_PROJECT_ENDPOINT`: Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL`: Model deployment name (e.g., `gpt-4o`, defaults to `gpt-4o`)
 - `AZURE_SEARCH_API_KEY`: _(Optional)_ Your search API key - if not provided, uses DefaultAzureCredential
 
@@ -261,7 +277,7 @@ async with Agent(
 ## Additional Resources
 
 - [Azure AI Search Documentation](https://learn.microsoft.com/azure/search/)
-- [Azure AI Foundry Documentation](https://learn.microsoft.com/azure/ai-studio/)
+- [Microsoft Foundry Documentation](https://learn.microsoft.com/azure/ai-studio/)
 - [RAG with Azure AI Search](https://learn.microsoft.com/azure/search/retrieval-augmented-generation-overview)
 - [Semantic Search in Azure AI Search](https://learn.microsoft.com/azure/search/semantic-search-overview)
 - [Knowledge Bases in Azure AI Search](https://learn.microsoft.com/azure/search/knowledge-store-concept-intro)

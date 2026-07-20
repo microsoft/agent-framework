@@ -11,16 +11,18 @@ context providers (todo, mode, memory, skills).
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from .._agents import Agent, SupportsAgentRun
 from .._clients import SupportsShellTool, SupportsWebSearchTool
-from .._compaction import CompactionProvider, ContextWindowCompactionStrategy, ToolResultCompactionStrategy
+from .._compaction import CompactionProvider, ContextWindowCompactionStrategy
 from .._feature_stage import ExperimentalFeature, experimental
-from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider
+from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider, MessageInjectionMiddleware
 from .._skills import SkillsProvider
+from .._types import ChatOptions
 from ._background_agents import BackgroundAgentsProvider
 from ._file_access import AgentFileStore, FileAccessProvider, FileSystemAgentFileStore
 from ._file_memory import FileMemoryProvider
@@ -28,6 +30,11 @@ from ._loop import DEFAULT_MAX_ITERATIONS, AgentLoopMiddleware
 from ._mode import AgentModeProvider
 from ._todo import TodoProvider
 from ._tool_approval import ToolApprovalMiddleware
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # pragma: no cover
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -71,7 +78,7 @@ def _assemble_instructions(
     return f"{harness}\n\n{agent_instructions or ''}".strip() or None
 
 
-def _assemble_compaction_provider(
+def _assemble_compaction(
     *,
     disable_compaction: bool,
     max_context_window_tokens: int | None,
@@ -80,46 +87,58 @@ def _assemble_compaction_provider(
     before_compaction_strategy: CompactionStrategy | None,
     after_compaction_strategy: CompactionStrategy | None,
     tokenizer: TokenizerProtocol | None,
-) -> CompactionProvider | None:
-    """Build the compaction provider from parameters or defaults.
+) -> tuple[CompactionStrategy | None, CompactionProvider | None]:
+    """Resolve the harness compaction strategies into their execution sites.
 
-    The token-budget defaults (``ContextWindowCompactionStrategy`` for the before phase and
-    ``ToolResultCompactionStrategy`` for the after phase) are only applied when the token
-    params are provided. Caller-supplied strategies are always honored. Either phase may end
-    up ``None``, which ``CompactionProvider`` interprets as "skip that phase".
+    The token-budget default (``ContextWindowCompactionStrategy``) is used for **both** the before
+    and after phases, and is only applied when the token params are provided. A single shared
+    instance is reused across both phases (it is stateless). Caller-supplied strategies always win
+    per phase.
 
-    Returns None when compaction is explicitly disabled, or when neither phase has a strategy
-    (no custom strategies and no token budget to build the defaults).
+    Because the harness enables per-service-call history persistence, running the before-phase
+    compaction as a ``CompactionProvider.before_run`` hook is a no-op: the agent skips
+    ``HistoryProvider.before_run``, so the provider only ever sees an empty context.
+    Instead the before-strategy is returned separately so the caller can wire it as the agent's
+    ``compaction_strategy`` chat option. That runs it inside ``BaseChatClient.get_response`` —
+    per model call, inner of ``PerServiceCallHistoryPersistingMiddleware`` (which has already
+    loaded the full history into the outgoing messages) and outer of the leaf client.
+
+    The after-strategy stays on a ``CompactionProvider`` (its ``after_run`` compacts the persisted
+    session history in place and works correctly).
+
+    Returns a ``(before_strategy, after_provider)`` tuple. Both elements are ``None`` when
+    compaction is disabled or when the corresponding phase has no strategy (no custom strategy
+    and no token budget to build the default).
     """
     if disable_compaction:
-        return None
+        return None, None
 
-    # Resolve the before-strategy: custom strategy wins; otherwise fall back to the
-    # token-budget-aware default when token params are available.
-    before_strategy = before_compaction_strategy
-    if before_strategy is None and max_context_window_tokens is not None and max_output_tokens is not None:
-        before_strategy = ContextWindowCompactionStrategy(
+    # Token-budget default, shared across both phases when token params are available.
+    default_strategy: CompactionStrategy | None = None
+    if max_context_window_tokens is not None and max_output_tokens is not None:
+        default_strategy = ContextWindowCompactionStrategy(
             max_context_window_tokens=max_context_window_tokens,
             max_output_tokens=max_output_tokens,
             tokenizer=tokenizer,
         )
 
-    # Resolve the after-strategy: custom strategy wins; otherwise fall back to the default
-    # when token params are available.
-    after_strategy = after_compaction_strategy
-    if after_strategy is None and max_context_window_tokens is not None and max_output_tokens is not None:
-        after_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=2)
+    # Resolve each phase: caller-supplied strategy wins; otherwise fall back to the shared default.
+    before_strategy = before_compaction_strategy if before_compaction_strategy is not None else default_strategy
+    after_strategy = after_compaction_strategy if after_compaction_strategy is not None else default_strategy
 
-    # Nothing to compact in either phase: skip the provider entirely.
-    if before_strategy is None and after_strategy is None:
-        return None
-
-    return CompactionProvider(
-        before_strategy=before_strategy,
-        after_strategy=after_strategy,
-        tokenizer=tokenizer,
-        history_source_id=history_source_id,
+    # The after-strategy runs post-turn against the persisted history via a CompactionProvider;
+    # the before-strategy runs per model call via the agent's compaction_strategy option.
+    after_provider = (
+        CompactionProvider(
+            before_strategy=None,
+            after_strategy=after_strategy,
+            tokenizer=tokenizer,
+            history_source_id=history_source_id,
+        )
+        if after_strategy is not None
+        else None
     )
+    return before_strategy, after_provider
 
 
 def _assemble_context_providers(
@@ -132,10 +151,12 @@ def _assemble_context_providers(
     mode_provider: AgentModeProvider | None,
     disable_file_memory: bool,
     file_memory_store: AgentFileStore | None,
-    disable_file_access: bool,
     file_access_store: AgentFileStore | None,
+    file_access_disable_write_tools: bool,
+    file_access_disable_readonly_tool_approval: bool,
+    file_access_disable_write_tool_approval: bool,
     skills_provider: SkillsProvider | None,
-    skills_paths: Sequence[str] | None,
+    skills_paths: str | Path | Sequence[str | Path] | None,
     background_agents: Sequence[SupportsAgentRun] | None,
     background_agents_instructions: str | None,
     shell_context_provider: ContextProvider | None,
@@ -164,16 +185,22 @@ def _assemble_context_providers(
         memory_store = file_memory_store or FileSystemAgentFileStore(Path.cwd() / "agent-file-memory")
         providers.append(FileMemoryProvider(memory_store))
 
-    # Shared file access (on by default). Default store is rooted at ``{cwd}/working``.
-    if not disable_file_access:
-        access_store = file_access_store or FileSystemAgentFileStore(Path.cwd() / "working")
-        providers.append(FileAccessProvider(access_store))
+    # Shared file access (opt-in). Only added when a store is supplied.
+    if file_access_store is not None:
+        providers.append(
+            FileAccessProvider(
+                file_access_store,
+                disable_write_tools=file_access_disable_write_tools,
+                disable_readonly_tool_approval=file_access_disable_readonly_tool_approval,
+                disable_write_tool_approval=file_access_disable_write_tool_approval,
+            )
+        )
 
     # Skills are opt-in: only added when skills_provider or skills_paths is provided.
     if skills_provider:
         providers.append(skills_provider)
     if skills_paths:
-        providers.append(SkillsProvider.from_paths(*skills_paths))
+        providers.append(SkillsProvider.from_paths(skills_paths))
 
     # Background agents are opt-in: only added when agents are provided.
     if background_agents:
@@ -236,10 +263,16 @@ def _assemble_shell(
 
 HARNESS_AGENT_PROVIDER_NAME = "microsoft.agent_framework.harness"
 
+OptionsCoT = TypeVar(
+    "OptionsCoT",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="ChatOptions[None]",
+)
+
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 def create_harness_agent(
-    client: SupportsChatGetResponse[Any],
+    client: SupportsChatGetResponse[OptionsCoT],
     *,
     id: str | None = None,
     name: str | None = None,
@@ -260,10 +293,12 @@ def create_harness_agent(
     mode_provider: AgentModeProvider | None = None,
     disable_file_memory: bool = False,
     file_memory_store: AgentFileStore | None = None,
-    disable_file_access: bool = False,
     file_access_store: AgentFileStore | None = None,
+    file_access_disable_write_tools: bool = False,
+    file_access_disable_readonly_tool_approval: bool = False,
+    file_access_disable_write_tool_approval: bool = False,
     skills_provider: SkillsProvider | None = None,
-    skills_paths: Sequence[str] | None = None,
+    skills_paths: str | Path | Sequence[str | Path] | None = None,
     background_agents: Sequence[SupportsAgentRun] | None = None,
     background_agents_instructions: str | None = None,
     shell_executor: ShellExecutor | None = None,
@@ -278,7 +313,7 @@ def create_harness_agent(
     context_providers: Sequence[ContextProvider] | None = None,
     middleware: Sequence[MiddlewareTypes] | None = None,
     default_options: Mapping[str, Any] | None = None,
-) -> Agent[Any]:
+) -> Agent[OptionsCoT]:
     """Create a pre-configured agent with batteries included.
 
     Assembles an :class:`~agent_framework.Agent` from a chat client, automatically wiring:
@@ -289,7 +324,7 @@ def create_harness_agent(
     - **TodoProvider** — todo list management
     - **AgentModeProvider** — plan/execute mode tracking
     - **FileMemoryProvider** — file-based session memory (on by default)
-    - **FileAccessProvider** — shared file read/write tools (on by default)
+    - **FileAccessProvider** — shared file read/write tools (opt-in via ``file_access_store``)
     - **SkillsProvider** — skill discovery and progressive loading
     - **BackgroundAgentsProvider** — delegate work to background sub-agents
     - **Tool approval** — "don't ask again" standing approval rules plus heuristic
@@ -357,8 +392,9 @@ def create_harness_agent(
             compaction runs even if token params are omitted. Defaults to
             ContextWindowCompactionStrategy (token-budget aware) when token params are provided.
         after_compaction_strategy: Custom after-run compaction strategy. When provided,
-            compaction runs even if token params are omitted. Defaults to
-            ToolResultCompactionStrategy when token params are provided.
+            compaction runs even if token params are omitted. Defaults to the same
+            ContextWindowCompactionStrategy used for the before phase when token params are
+            provided.
         tokenizer: Custom tokenizer for compaction strategies.
         disable_todo: When True, skip the TodoProvider.
         todo_provider: Custom TodoProvider instance. Ignored when disable_todo is True.
@@ -369,20 +405,40 @@ def create_harness_agent(
         file_memory_store: Custom AgentFileStore backing the FileMemoryProvider. When None
             (and disable_file_memory is False), a FileSystemAgentFileStore rooted at
             ``{cwd}/agent-file-memory`` is created. Ignored when disable_file_memory is True.
-        disable_file_access: When True, skip the FileAccessProvider. When False (default),
-            a FileAccessProvider is added, giving the agent shared read/write file tools.
-        file_access_store: Custom AgentFileStore backing the FileAccessProvider. When None
-            (and disable_file_access is False), a FileSystemAgentFileStore rooted at
-            ``{cwd}/working`` is created. Ignored when disable_file_access is True.
+        file_access_store: AgentFileStore backing the FileAccessProvider. File access is
+            opt-in: when None (default), no FileAccessProvider is added and the agent has no
+            file access tools. When set, a FileAccessProvider is added, giving the agent shared
+            read/write file tools backed by the supplied store.
+        file_access_disable_write_tools: When True, the FileAccessProvider advertises only its
+            read-only tools (read, ls, grep); the write tools (write, delete, replace,
+            replace_lines) are hidden. When False (default), all tools are advertised. Only
+            used when file_access_store is set.
+        file_access_disable_readonly_tool_approval: When True, the FileAccessProvider's read-only
+            tools (read, ls, grep) are registered with ``approval_mode="never_require"`` so they
+            run without host approval. When False (default), they require approval. Only used when
+            file_access_store is set.
+        file_access_disable_write_tool_approval: When True, the FileAccessProvider's write tools
+            (write, delete, replace, replace_lines) are registered with
+            ``approval_mode="never_require"`` so they run without host approval. When False
+            (default), they require approval. Only used when file_access_store is set.
         skills_provider: Custom SkillsProvider instance for code-defined skills.
             Can be combined with ``skills_paths`` to aggregate file and code-based skills.
+            **Security:** if the provider is configured with an external skill source (e.g.
+            :class:`~agent_framework.MCPSkillsSource`), the skill content it loads is untrusted input
+            — only enable sources you trust; see :class:`~agent_framework.SkillsSource`.
         skills_paths: Paths for file-based skill discovery (looks for SKILL.md files).
-            Can be combined with ``skills_provider``. When neither ``skills_provider``
-            nor ``skills_paths`` is provided, no SkillsProvider is added.
+            Accepts a single ``str`` or :class:`~pathlib.Path`, or a sequence of
+            ``str | Path``. Can be combined with ``skills_provider``. When neither
+            ``skills_provider`` nor ``skills_paths`` is provided, no SkillsProvider
+            is added.
         background_agents: Collection of agents available for background task delegation.
             When provided, a ``BackgroundAgentsProvider`` is automatically included,
             enabling the agent to start, monitor, and retrieve results from background tasks.
             Each agent must have a non-empty, unique name (case-insensitive).
+            **Security:** supplied agents receive text input from this agent and their output is fed
+            back into its context, so only supply agents you have vetted and trust — see
+            :class:`~agent_framework.BackgroundAgentsProvider` for the exfiltration and
+            prompt-injection risks of untrusted agents.
         background_agents_instructions: Optional instruction override for the
             ``BackgroundAgentsProvider``. May include ``{background_agents}`` placeholder
             which will be replaced with the agent listing.
@@ -449,8 +505,10 @@ def create_harness_agent(
     # Build history provider.
     resolved_history = history_provider or InMemoryHistoryProvider()
 
-    # Build compaction provider.
-    compaction_provider = _assemble_compaction_provider(
+    # Build compaction. The before-strategy is wired as the agent's compaction_strategy option
+    # (runs per model call, inner of per-service-call persistence); the after-strategy stays on a
+    # CompactionProvider that compacts the persisted history post-turn. See issue #7011.
+    before_compaction, compaction_provider = _assemble_compaction(
         disable_compaction=disable_compaction,
         max_context_window_tokens=max_context_window_tokens,
         max_output_tokens=max_output_tokens,
@@ -477,8 +535,10 @@ def create_harness_agent(
         mode_provider=mode_provider,
         disable_file_memory=disable_file_memory,
         file_memory_store=file_memory_store,
-        disable_file_access=disable_file_access,
         file_access_store=file_access_store,
+        file_access_disable_write_tools=file_access_disable_write_tools,
+        file_access_disable_readonly_tool_approval=file_access_disable_readonly_tool_approval,
+        file_access_disable_write_tool_approval=file_access_disable_write_tool_approval,
         skills_provider=skills_provider,
         skills_paths=skills_paths,
         background_agents=background_agents,
@@ -534,6 +594,9 @@ def create_harness_agent(
                 next_message=loop_next_message,
             ),
         )
+    # Message injection is always on. It is a no-op when no messages are queued for the session,
+    # so there is no opt-out.
+    assembled_middleware.append(MessageInjectionMiddleware())
     if middleware:
         assembled_middleware.extend(middleware)
 
@@ -547,6 +610,8 @@ def create_harness_agent(
         default_options=default_opts,  # type: ignore[arg-type]
         context_providers=assembled_providers,
         middleware=assembled_middleware or None,
+        compaction_strategy=before_compaction,
+        tokenizer=tokenizer,
         require_per_service_call_history_persistence=True,
     )
 

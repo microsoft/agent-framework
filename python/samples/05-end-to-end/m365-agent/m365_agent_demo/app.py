@@ -5,7 +5,7 @@
 #   "microsoft-agents-hosting-core",
 #   "microsoft-agents-authentication-msal",
 #   "microsoft-agents-activity",
-#   "agent-framework-core",
+#     "agent-framework-foundry",
 #   "aiohttp"
 # ]
 # ///

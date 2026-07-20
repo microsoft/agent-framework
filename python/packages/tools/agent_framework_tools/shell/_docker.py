@@ -680,7 +680,23 @@ class DockerShellTool:
         name: str = "run_shell",
         description: str | None = None,
     ) -> FunctionTool:
-        """Return a :class:`~agent_framework.FunctionTool` bound to this instance."""
+        """Return a :class:`~agent_framework.FunctionTool` bound to this instance.
+
+        Args:
+            name: Function name surfaced to the model. Defaults to ``run_shell``.
+
+                .. warning::
+                    **Security — avoid tool-name collisions.** This applies only
+                    when the shell tool requires approval (constructed with
+                    ``approval_mode="always_require"``, the default). Auto-approval
+                    rules may match tool calls by name, so setting ``name`` to a
+                    value approved by an auto-approval rule for another feature
+                    may cause this shell tool to also be auto-approved, bypassing
+                    the human approval boundary. Choose a unique name that no
+                    other registered tool uses.
+            description: Optional description surfaced to the model. When
+                ``None`` a mode-appropriate default is used.
+        """
 
         async def _run_shell(command: str) -> str:
             try:

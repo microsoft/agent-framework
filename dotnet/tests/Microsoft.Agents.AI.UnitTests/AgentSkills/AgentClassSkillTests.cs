@@ -86,7 +86,7 @@ public sealed class AgentClassSkillTests
         var source = new AgentInMemorySkillsSource(skills);
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Equal(2, result.Count);
@@ -511,10 +511,10 @@ public sealed class AgentClassSkillTests
         // Act
         var content = await skill.GetContentAsync();
 
-        // Assert — resources are rendered in body content by name; descriptions are not emitted
+        // Assert — resources are rendered in body content; described resources include description attribute
         Assert.Contains("<available_resources>", content);
         Assert.Contains("ref-data", content);
-        Assert.DoesNotContain("Some important data.", content);
+        Assert.Contains("description=\"Some important data.\"", content);
     }
 
     [Fact]
