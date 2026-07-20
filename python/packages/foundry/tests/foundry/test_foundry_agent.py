@@ -303,7 +303,9 @@ async def test_raw_foundry_agent_chat_client_prepare_options_accepts_function_to
     }
 
 
-async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_fields() -> None:
+async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_fields(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Test that _prepare_options strips client-side fields for Prompt Agent requests."""
 
     mock_project = MagicMock()
@@ -321,15 +323,18 @@ async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_
 
         return "ok"
 
-    with patch(
-        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
-        new_callable=AsyncMock,
-        return_value={
-            "model": "gpt-4.1",
-            "tools": [{"type": "function", "function": {"name": "my_func"}}],
-            "tool_choice": "auto",
-            "parallel_tool_calls": True,
-        },
+    with (
+        patch(
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+            new_callable=AsyncMock,
+            return_value={
+                "model": "gpt-4.1",
+                "tools": [{"type": "function", "function": {"name": "my_func"}}],
+                "tool_choice": "auto",
+                "parallel_tool_calls": True,
+            },
+        ),
+        caplog.at_level("WARNING", logger="agent_framework.foundry"),
     ):
         result = await client._prepare_options(
             messages=[Message(role="user", contents="hi")],
@@ -344,6 +349,94 @@ async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_
     assert result == {
         "extra_body": {"agent_reference": {"name": "test-agent", "type": "agent_reference"}},
     }
+    # A single warning is emitted because the caller supplied tools that cannot be sent (#5130).
+    assert sum("cannot be sent when an agent is specified" in record.message for record in caplog.records) == 1
+
+
+async def test_raw_foundry_agent_chat_client_prepare_options_strips_tools_when_allow_preview(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Hosted-agent (allow_preview=True) requests must also strip tool fields.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/5130. On the preview
+    path the agent identity is injected via ``project_client.get_openai_client(agent_name=...)``,
+    so an agent is still specified and the Foundry service rejects any ``tools`` in the body with
+    HTTP 400 "Not allowed when agent is specified." The earlier fix (#5101) only stripped tools on
+    the non-preview path, leaving this branch broken.
+    """
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="hosted-agent",
+        allow_preview=True,
+    )
+
+    @tool(approval_mode="never_require")
+    def my_func() -> str:
+        """A test function."""
+
+        return "ok"
+
+    with (
+        patch(
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+            new_callable=AsyncMock,
+            return_value={
+                "model": "gpt-4.1",
+                "tools": [{"type": "function", "function": {"name": "my_func"}}],
+                "tool_choice": "auto",
+                "parallel_tool_calls": True,
+            },
+        ),
+        caplog.at_level("WARNING", logger="agent_framework.foundry"),
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={"tools": [my_func]},
+        )
+
+    # Tool fields must be gone even though allow_preview=True.
+    assert "tools" not in result
+    assert "tool_choice" not in result
+    assert "parallel_tool_calls" not in result
+    # Preview path keeps model and does not inject agent_reference (identity is on the OpenAI client).
+    assert result["model"] == "gpt-4.1"
+    assert "extra_body" not in result
+    # Exactly one warning explaining that tools are dropped.
+    assert sum("cannot be sent when an agent is specified" in record.message for record in caplog.records) == 1
+
+
+async def test_raw_foundry_agent_chat_client_prepare_options_no_tool_warning_when_no_tools(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No warning should be emitted when the caller did not supply any tools."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+    )
+
+    with (
+        patch(
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+            new_callable=AsyncMock,
+            return_value={"model": "gpt-4.1"},
+        ),
+        caplog.at_level("WARNING", logger="agent_framework.foundry"),
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={},
+        )
+
+    assert "tools" not in result
+    assert not any("cannot be sent when an agent is specified" in record.message for record in caplog.records)
 
 
 async def test_raw_foundry_agent_chat_client_prepare_options_strips_model_for_hosted_session() -> None:

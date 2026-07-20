@@ -880,13 +880,13 @@ class _OutputItemTracker:
             if self._text_content is not None:
                 yield self._text_content.emit_delta(content.text)
 
-        elif content.type == "text_reasoning" and content.text is not None:
+        elif content.type == "text_reasoning":
             if self._active_type != "text_reasoning":
                 yield from self._close()
                 yield from self._open_reasoning()
-            self._accumulated.append(content.text)
+            self._accumulated.append(content.text or "")
             if self._summary_part is not None:
-                yield self._summary_part.emit_text_delta(content.text)
+                yield self._summary_part.emit_text_delta(content.text or "")
 
         elif content.type == "function_call" and content.call_id is not None:
             if self._active_type != "function_call" or self._active_id != content.call_id:
@@ -1094,7 +1094,13 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         fc = cast(ItemFunctionToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(fc.call_id, fc.name, arguments=fc.arguments)],
+            contents=[
+                Content.from_function_call(
+                    fc.call_id,
+                    fc.name,
+                    arguments=fc.arguments,
+                )
+            ],
         )
 
     if item.type == "function_call_output":
@@ -1110,7 +1116,9 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         reason_contents: list[Content] = []
         if reasoning.summary:
             for summary in reasoning.summary:
-                reason_contents.append(Content.from_text(summary.text))
+                reason_contents.append(Content.from_text_reasoning(id=reasoning.id, text=summary.text))
+        else:
+            reason_contents.append(Content.from_text_reasoning(id=reasoning.id))
         return Message(role="assistant", contents=reason_contents)
 
     if item.type == "mcp_call":
@@ -1237,6 +1245,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
                     fs.id,
                     "file_search",
                     arguments=json.dumps({"queries": fs.queries}),
+                    informational_only=True,
                 )
             ],
         )
@@ -1245,7 +1254,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         ws = cast(ItemWebSearchToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(ws.id, "web_search")],
+            contents=[Content.from_function_call(ws.id, "web_search", informational_only=True)],
         )
 
     if item.type == "computer_call":
@@ -1257,6 +1266,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
                     cc.call_id,
                     "computer_use",
                     arguments=str(cc.action),
+                    informational_only=True,
                 )
             ],
         )
@@ -1272,7 +1282,14 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         ct = cast(ItemCustomToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(ct.call_id, ct.name, arguments=ct.input)],
+            contents=[
+                Content.from_function_call(
+                    ct.call_id,
+                    ct.name,
+                    arguments=ct.input,
+                    informational_only=True,
+                )
+            ],
         )
 
     if item.type == "custom_tool_call_output":
@@ -1304,6 +1321,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
                     ap.call_id,
                     "apply_patch",
                     arguments=str(ap.operation),
+                    informational_only=True,
                 )
             ],
         )
@@ -1367,7 +1385,13 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         fc = cast(OutputItemFunctionToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(fc.call_id, fc.name, arguments=fc.arguments)],
+            contents=[
+                Content.from_function_call(
+                    fc.call_id,
+                    fc.name,
+                    arguments=fc.arguments,
+                )
+            ],
         )
 
     if item.type == "function_call_output":
@@ -1383,7 +1407,9 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         contents: list[Content] = []
         if reasoning.summary:
             for summary in reasoning.summary:
-                contents.append(Content.from_text(summary.text))
+                contents.append(Content.from_text_reasoning(id=reasoning.id, text=summary.text))
+        else:
+            contents.append(Content.from_text_reasoning(id=reasoning.id))
         return Message(role="assistant", contents=contents)
 
     if item.type == "mcp_call":
@@ -1511,6 +1537,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
                     fs.id,
                     "file_search",
                     arguments=json.dumps({"queries": fs.queries}),
+                    informational_only=True,
                 )
             ],
         )
@@ -1519,7 +1546,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         ws = cast(OutputItemWebSearchToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(ws.id, "web_search")],
+            contents=[Content.from_function_call(ws.id, "web_search", informational_only=True)],
         )
 
     if item.type == "computer_call":
@@ -1531,6 +1558,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
                     cc.call_id,
                     "computer_use",
                     arguments=str(cc.action),
+                    informational_only=True,
                 )
             ],
         )
@@ -1546,7 +1574,14 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
         ct = cast(OutputItemCustomToolCall, item)
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(ct.call_id, ct.name, arguments=ct.input)],
+            contents=[
+                Content.from_function_call(
+                    ct.call_id,
+                    ct.name,
+                    arguments=ct.input,
+                    informational_only=True,
+                )
+            ],
         )
 
     if item.type == "custom_tool_call_output":
@@ -1576,6 +1611,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
                     ap.call_id,
                     "apply_patch",
                     arguments=str(ap.operation),
+                    informational_only=True,
                 )
             ],
         )
@@ -1754,8 +1790,8 @@ async def _to_outputs(
     if content.type == "text" and content.text is not None:
         async for event in stream.aoutput_item_message(content.text):
             yield event
-    elif content.type == "text_reasoning" and content.text is not None:
-        async for event in stream.aoutput_item_reasoning_item(content.text):
+    elif content.type == "text_reasoning":
+        async for event in stream.aoutput_item_reasoning_item(content.text or ""):
             yield event
     elif content.type == "function_call":
         async for event in stream.aoutput_item_function_call(

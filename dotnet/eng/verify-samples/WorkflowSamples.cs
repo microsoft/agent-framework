@@ -130,7 +130,7 @@ internal static class WorkflowSamples
             ProjectPath = "samples/03-workflows/Agents/FoundryAgent",
             RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
             OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
-            SkipReason = "Requires Azure AI Foundry project endpoint.",
+            SkipReason = "Requires Microsoft Foundry project endpoint.",
         },
 
         new SampleDefinition

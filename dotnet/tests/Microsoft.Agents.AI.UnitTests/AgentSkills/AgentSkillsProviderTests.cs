@@ -20,6 +20,9 @@ public sealed class AgentSkillsProviderTests : IDisposable
     private readonly string _testRoot;
     private readonly TestAIAgent _agent = new();
 
+    private static ToolAutoApprovalRuleContext CreateRuleContext(FunctionCallContent functionCall) =>
+        new(functionCall, new TestAIAgent(), session: null, requestMessages: [], agentRunOptions: null);
+
     public AgentSkillsProviderTests()
     {
         this._testRoot = Path.Combine(Path.GetTempPath(), "skills-provider-tests-" + Guid.NewGuid().ToString("N"));
@@ -1155,12 +1158,12 @@ public sealed class AgentSkillsProviderTests : IDisposable
         var unrelatedCall = new FunctionCallContent("call4", "some_other_tool", null);
 
         // Act & Assert — read-only tools should be approved
-        Assert.True(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(loadSkillCall));
-        Assert.True(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(readResourceCall));
+        Assert.True(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(CreateRuleContext(loadSkillCall)));
+        Assert.True(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(CreateRuleContext(readResourceCall)));
 
         // Act & Assert — script tool and unrelated tools should not be approved
-        Assert.False(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(runScriptCall));
-        Assert.False(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(unrelatedCall));
+        Assert.False(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(CreateRuleContext(runScriptCall)));
+        Assert.False(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(CreateRuleContext(unrelatedCall)));
     }
 
     [Fact]
@@ -1173,12 +1176,12 @@ public sealed class AgentSkillsProviderTests : IDisposable
         var unrelatedCall = new FunctionCallContent("call4", "some_other_tool", null);
 
         // Act & Assert — all skill tools should be approved
-        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(loadSkillCall));
-        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(readResourceCall));
-        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(runScriptCall));
+        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(CreateRuleContext(loadSkillCall)));
+        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(CreateRuleContext(readResourceCall)));
+        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(CreateRuleContext(runScriptCall)));
 
         // Act & Assert — unrelated tools should not be approved
-        Assert.False(await AgentSkillsProvider.AllToolsAutoApprovalRule(unrelatedCall));
+        Assert.False(await AgentSkillsProvider.AllToolsAutoApprovalRule(CreateRuleContext(unrelatedCall)));
     }
 
     [Fact]

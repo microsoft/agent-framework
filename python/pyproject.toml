@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.10.0"
+version = "1.11.0"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,33 +23,35 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.10.0",
+    "agent-framework-core[all]==1.11.0",
 ]
 
 [dependency-groups]
 dev = [
-    "uv==0.11.17",
+    "uv==0.11.28",
     "flit==3.12.0",
-    "ruff==0.15.15",
-    "pytest==9.1.0",
+    "ruff==0.15.20",
+    "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
     "pytest-xdist[psutil]==3.8.0",
     "pytest-timeout==2.4.0",
     "pytest-retry==1.7.0",
-    "mypy==1.20.0",
-    "pyright==1.1.410",
-    "pyrefly==1.0.0",
-    "ty==0.0.46",
+    "mypy==2.2.0",
+    "pyright==1.1.411",
+    "pyrefly==1.1.1",
+    "ty==0.0.55",
     "zuban==0.8.2",
-    "mcp[ws]==1.27.2",
-    "opentelemetry-sdk==1.40.0",
-    "azure-monitor-opentelemetry==1.8.8",
+    "opentelemetry-sdk",
     #tasks
-    "poethepoet==0.46.0",
+    "poethepoet==0.48.0",
     "rich>=13.7.1,<16.0.0",
     "tomli==2.4.1",
-    "prek==0.4.5",
+    "prek==0.4.8",
+]
+test = [
+    "azure-monitor-opentelemetry",
+    "mcp[ws]",
 ]
 
 [tool.uv]
@@ -57,10 +59,8 @@ package = false
 prerelease = "if-necessary-or-explicit"
 # Security floors for transitive deps; overrides bypass litellm[proxy]'s strict pins.
 constraint-dependencies = ["litellm>=1.83.7", "fastapi-sso>=0.19.0"]
-# Allow opentelemetry-semantic-conventions 0.61b0 for mistralai compatibility
-# (mistralai pins <0.61 but 0.61b0 is compatible at runtime).
 # python-multipart>=0.0.31 overrides litellm[proxy]'s exact pin of <=0.0.27 for security.
-override-dependencies = ["mcp[ws]>=1.27.0", "uvicorn[standard]>=0.34.0", "opentelemetry-semantic-conventions>=0.60b1", "python-multipart>=0.0.31"]
+override-dependencies = ["mcp[ws]>=1.27.0", "uvicorn[standard]>=0.34.0", "python-multipart>=0.0.31"]
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
@@ -92,6 +92,7 @@ agent-framework-foundry-local = { workspace = true }
 agent-framework-gemini = { workspace = true }
 agent-framework-github-copilot = { workspace = true }
 agent-framework-hosting = { workspace = true }
+agent-framework-hosting-a2a = { workspace = true }
 agent-framework-hosting-responses = { workspace = true }
 agent-framework-hosting-telegram = { workspace = true }
 agent-framework-hyperlight = { workspace = true }
@@ -147,9 +148,11 @@ select = [
 ignore = [
     "D100", # allow missing docstring in public module
     "D104", # allow missing docstring in public package
+    "D421", # allow property docstrings that start with a verb
     "D418", # allow overload to have a docstring
     "TD003", # allow missing link to todo issue
     "FIX002", # allow todo
+    "ASYNC119", # allow yielding inside async-generator context managers
     "B027", # allow empty non-abstract method in ABC
     "B905", # `zip()` without an explicit `strict=` parameter
     "RUF067", # allow version detection in __init__.py
@@ -222,6 +225,13 @@ warn_return_any = false
 warn_unused_ignores = false
 show_error_codes = true
 
+# NumPy 2.5 stubs use Python 3.12 type-statement syntax while mypy intentionally
+# targets Python 3.10 for test typing; skip parsing NumPy internals.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
 # ty (preview) over tests + samples. Relaxed: ty's defaults are gradual, and a few
 # categories are too noisy on test/mock-heavy code to gate on yet.
 [tool.ty.rules]
@@ -236,8 +246,8 @@ executor.type = "uv"
 
 # Workspace setup
 [tool.poe.tasks.install]
-help = "Install all workspace packages, extras, and dev dependencies from the lockfile."
-cmd = "uv sync --all-packages --all-extras --dev --frozen --prerelease=if-necessary-or-explicit"
+help = "Install all workspace packages, extras, and dependency groups from the lockfile."
+cmd = "uv sync --all-packages --all-extras --all-groups --frozen --prerelease=if-necessary-or-explicit"
 
 [tool.poe.tasks.setup]
 help = "Create the workspace virtual environment for -P/--python, install dependencies, and install prek hooks."
@@ -358,14 +368,14 @@ cmd = "uv publish"
 
 # Dependency maintenance
 [tool.poe.tasks.upgrade-dev-dependency-pins]
-help = "Repin the workspace dev dependency versions used in pyproject.toml."
+help = "Repin exact workspace development dependency versions used in pyproject.toml."
 cmd = "python -m scripts.dependencies.upgrade_dev_dependencies"
 
 [tool.poe.tasks._upgrade-lockfile]
 cmd = "uv lock --upgrade"
 
 [tool.poe.tasks.upgrade-dev-dependencies]
-help = "Repin dev dependencies, refresh uv.lock, reinstall, and rerun validation commands."
+help = "Repin development dependencies, refresh uv.lock, reinstall, and rerun validation commands."
 sequence = [
     { ref = "upgrade-dev-dependency-pins" },
     { ref = "_upgrade-lockfile" },

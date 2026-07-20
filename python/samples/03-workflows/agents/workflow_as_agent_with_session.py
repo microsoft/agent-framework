@@ -37,7 +37,7 @@ Use cases:
 - Long-running workflows that need pause/resume capability
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 """
 

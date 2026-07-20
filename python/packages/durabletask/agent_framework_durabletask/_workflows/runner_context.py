@@ -23,6 +23,16 @@ from agent_framework import (
 from agent_framework._workflows._runner_context import YieldOutputClassifier, YieldOutputEventType
 from agent_framework._workflows._state import State
 
+# Keys of the host-metadata mapping the durable host attaches to each executor (as the
+# activity's ``host_context`` input, surfaced here via ``set_host_metadata``). These form
+# a cross-package contract: the orchestrator writes them and
+# ``WorkflowHitlContext.from_context`` in agent-framework-azurefunctions reads them back by
+# the same names, so they live here as shared constants to keep producer and consumer from
+# drifting silently (a rename would just make HITL URLs stop being built, with no error).
+HOST_METADATA_INSTANCE_ID = "instance_id"
+HOST_METADATA_WORKFLOW_NAME = "workflow_name"
+HOST_METADATA_REQUEST_PATH_PREFIX = "request_path_prefix"
+
 
 class CapturingRunnerContext(RunnerContext):
     """A RunnerContext that captures messages and events for durable activities.
@@ -41,6 +51,7 @@ class CapturingRunnerContext(RunnerContext):
         self._workflow_id: str | None = None
         self._streaming: bool = False
         self._yield_output_classifier: YieldOutputClassifier = lambda _executor_id: "output"
+        self._host_metadata: dict[str, Any] | None = None
 
     # -- Messaging ------------------------------------------------------------
 
@@ -120,6 +131,25 @@ class CapturingRunnerContext(RunnerContext):
 
     def is_streaming(self) -> bool:
         return self._streaming
+
+    # -- Host metadata --------------------------------------------------------
+
+    @property
+    def host_metadata(self) -> dict[str, Any] | None:
+        """Orchestration metadata injected by the durable host, or ``None`` in-process.
+
+        The durable orchestrator populates this from its own context (e.g. the
+        orchestration ``instance_id`` and ``workflow_name``) so an executor can
+        address the running orchestration -- for example to build a human-in-the-loop
+        respond URL and notify a reviewer -- without the caller threading those ids by
+        hand. It is ``None`` when the same executor runs in-process (no durable host),
+        so host-specific helpers can degrade gracefully.
+        """
+        return self._host_metadata
+
+    def set_host_metadata(self, metadata: dict[str, Any] | None) -> None:
+        """Set the orchestration metadata for this activity execution."""
+        self._host_metadata = metadata
 
     # -- Yield-output classification -------------------------------------------
 

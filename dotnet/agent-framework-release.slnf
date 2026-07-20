@@ -28,6 +28,7 @@
       "src\\Microsoft.Agents.AI.OpenAI\\Microsoft.Agents.AI.OpenAI.csproj",
       "src\\Microsoft.Agents.AI.Purview\\Microsoft.Agents.AI.Purview.csproj",
       "src\\Microsoft.Agents.AI.Tools.Shell\\Microsoft.Agents.AI.Tools.Shell.csproj",
+      "src\\Microsoft.Agents.AI.Valkey\\Microsoft.Agents.AI.Valkey.csproj",
       "src\\Microsoft.Agents.AI.Workflows.Declarative.Foundry\\Microsoft.Agents.AI.Workflows.Declarative.Foundry.csproj",
       "src\\Microsoft.Agents.AI.Workflows.Declarative.Mcp\\Microsoft.Agents.AI.Workflows.Declarative.Mcp.csproj",
       "src\\Microsoft.Agents.AI.Workflows.Declarative\\Microsoft.Agents.AI.Workflows.Declarative.csproj",

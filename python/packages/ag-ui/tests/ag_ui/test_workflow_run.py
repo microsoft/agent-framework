@@ -3,14 +3,17 @@
 """Tests for native workflow AG-UI runner."""
 
 import json
+from collections.abc import AsyncIterator
 from enum import Enum
 from types import SimpleNamespace
 from typing import Any, cast
 
 from ag_ui.core import EventType, StateSnapshotEvent
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
+    ChatResponseUpdate,
     Content,
     Executor,
     Message,
@@ -20,7 +23,9 @@ from agent_framework import (
     executor,
     handler,
     response_handler,
+    tool,
 )
+from conftest import StreamingChatClientStub  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_ag_ui._workflow_run import (
     _coerce_content,
@@ -393,6 +398,256 @@ async def test_workflow_run_non_chat_output_maps_to_custom_output_event():
     output_custom = [event for event in events if event.type == "CUSTOM" and event.name == "workflow_output"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert len(output_custom) == 1
     assert output_custom[0].value == {"count": 3}  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
+async def test_workflow_participant_tool_call_emits_standard_tool_events() -> None:
+    """Participant tool calls should use the standard AG-UI tool event lifecycle."""
+
+    @tool
+    def get_weather(city: str) -> str:
+        return f"Sunny in {city}"
+
+    invocation = 0
+
+    async def scripted_stream(messages: Any, options: Any, **kwargs: Any) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal invocation
+        del messages, options, kwargs
+        if invocation == 0:
+            yield ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="weather-call",
+                        name="get_weather",
+                        arguments={"city": "Seattle"},
+                    )
+                ],
+                role=None,
+            )
+        else:
+            yield ChatResponseUpdate(contents=[Content.from_text("The weather is sunny.")], role="assistant")
+        invocation += 1
+
+    participant = Agent(
+        client=StreamingChatClientStub(scripted_stream),
+        name="weather-agent",
+        tools=[get_weather],
+    )
+    workflow = WorkflowBuilder(start_executor=participant, output_from="all").build()
+
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "What is the weather in Seattle?"}]},
+            workflow,
+        )
+    ]
+
+    tool_events = [
+        event
+        for event in events
+        if event.type in {"TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_RESULT", "TOOL_CALL_END"}
+    ]
+    assert [event.type for event in tool_events] == [
+        "TOOL_CALL_START",
+        "TOOL_CALL_ARGS",
+        "TOOL_CALL_END",
+        "TOOL_CALL_RESULT",
+    ]
+    assert tool_events[0].tool_call_name == "get_weather"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert all(event.tool_call_id == "weather-call" for event in tool_events)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert not [
+        event for event in events if event.type == "CUSTOM" and getattr(event, "name", None) == "workflow_output"
+    ]
+
+
+async def test_workflow_stream_reconciles_result_from_final_response() -> None:
+    """A final response should complete, but not repeat, its exposed tool call."""
+    function_call = Content.from_function_call(
+        call_id="weather-call",
+        name="get_weather",
+        arguments={"city": "Seattle"},
+    )
+
+    @executor(id="participant")
+    async def participant(message: Any, ctx: WorkflowContext[Any, AgentResponse | AgentResponseUpdate]) -> None:
+        del message
+        await ctx.yield_output(AgentResponseUpdate(contents=[function_call], role=None))
+        await ctx.yield_output(
+            AgentResponse(
+                messages=[
+                    Message(role="assistant", contents=[function_call]),
+                    Message(
+                        role="tool",
+                        contents=[Content.from_function_result(call_id="weather-call", result="Sunny in Seattle")],
+                    ),
+                    Message(role="assistant", contents=[Content.from_text("The weather is sunny.")]),
+                ]
+            )
+        )
+
+    workflow = WorkflowBuilder(start_executor=participant, output_from="all").build()
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "What is the weather in Seattle?"}]},
+            workflow,
+        )
+    ]
+
+    tool_call_starts = [event for event in events if event.type == "TOOL_CALL_START"]
+    assert [event.tool_call_id for event in tool_call_starts] == ["weather-call"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    tool_results = [event for event in events if event.type == "TOOL_CALL_RESULT"]
+    assert [event.tool_call_id for event in tool_results] == ["weather-call"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert tool_results[0].content == "Sunny in Seattle"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
+async def test_workflow_stream_does_not_repeat_finalized_result_from_latest_assistant_message() -> None:
+    """A finalized assistant result should complete its exposed call exactly once."""
+    function_call = Content.from_function_call(
+        call_id="weather-call",
+        name="get_weather",
+        arguments={"city": "Seattle"},
+    )
+    function_result = Content.from_function_result(call_id="weather-call", result="Sunny in Seattle")
+
+    @executor(id="participant")
+    async def participant(message: Any, ctx: WorkflowContext[Any, AgentResponse | AgentResponseUpdate]) -> None:
+        del message
+        await ctx.yield_output(AgentResponseUpdate(contents=[function_call], role=None))
+        await ctx.yield_output(
+            AgentResponse(
+                messages=[
+                    Message(role="assistant", contents=[function_call]),
+                    Message(
+                        role="assistant",
+                        contents=[function_result, Content.from_text("The weather is sunny.")],
+                    ),
+                ]
+            )
+        )
+
+    workflow = WorkflowBuilder(start_executor=participant, output_from="all").build()
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "What is the weather in Seattle?"}]},
+            workflow,
+        )
+    ]
+
+    tool_ends = [event for event in events if event.type == "TOOL_CALL_END"]
+    assert [event.tool_call_id for event in tool_ends] == ["weather-call"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    tool_results = [event for event in events if event.type == "TOOL_CALL_RESULT"]
+    assert [event.tool_call_id for event in tool_results] == ["weather-call"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert tool_results[0].content == "Sunny in Seattle"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert [event.delta for event in events if event.type == "TEXT_MESSAGE_CONTENT"] == [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        "The weather is sunny."
+    ]
+
+
+async def test_workflow_stream_preserves_finalized_result_when_text_was_already_streamed() -> None:
+    """Duplicate finalized text must not suppress its exposed tool result."""
+    function_call = Content.from_function_call(
+        call_id="weather-call",
+        name="get_weather",
+        arguments={"city": "Seattle"},
+    )
+    function_result = Content.from_function_result(call_id="weather-call", result="Sunny in Seattle")
+    response_text = "The weather is sunny."
+
+    @executor(id="participant")
+    async def participant(message: Any, ctx: WorkflowContext[Any, AgentResponse | AgentResponseUpdate]) -> None:
+        del message
+        await ctx.yield_output(AgentResponseUpdate(contents=[function_call], role=None))
+        await ctx.yield_output(AgentResponseUpdate(contents=[Content.from_text(response_text)], role="assistant"))
+        await ctx.yield_output(
+            AgentResponse(
+                messages=[
+                    Message(role="assistant", contents=[function_call]),
+                    Message(role="assistant", contents=[function_result, Content.from_text(response_text)]),
+                ]
+            )
+        )
+
+    workflow = WorkflowBuilder(start_executor=participant, output_from="all").build()
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "What is the weather in Seattle?"}]},
+            workflow,
+        )
+    ]
+
+    tool_ends = [event for event in events if event.type == "TOOL_CALL_END"]
+    assert [event.tool_call_id for event in tool_ends] == ["weather-call"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    tool_results = [event for event in events if event.type == "TOOL_CALL_RESULT"]
+    assert [event.tool_call_id for event in tool_results] == ["weather-call"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert tool_results[0].content == "Sunny in Seattle"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert [event.delta for event in events if event.type == "TEXT_MESSAGE_CONTENT"] == [response_text]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
+async def test_workflow_stream_keeps_unexposed_finalized_results_private() -> None:
+    """Finalized results must not publish calls that were never exposed during the run."""
+    private_call = Content.from_function_call(
+        call_id="private-call",
+        name="internal_tool",
+        arguments={},
+    )
+
+    @executor(id="participant")
+    async def participant(message: Any, ctx: WorkflowContext[Any, AgentResponse]) -> None:
+        del message
+        await ctx.yield_output(
+            AgentResponse(
+                messages=[
+                    Message(role="assistant", contents=[private_call]),
+                    Message(
+                        role="tool",
+                        contents=[Content.from_function_result(call_id="private-call", result="private result")],
+                    ),
+                    Message(role="assistant", contents=[Content.from_text("Public response")]),
+                ]
+            )
+        )
+
+    workflow = WorkflowBuilder(start_executor=participant, output_from="all").build()
+    events = [event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)]
+
+    assert not [event for event in events if event.type.startswith("TOOL_CALL")]
+    assert [event.delta for event in events if event.type == "TEXT_MESSAGE_CONTENT"] == ["Public response"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
+async def test_workflow_stream_matches_multiple_finalized_results_by_call_id() -> None:
+    """Each exposed call should receive only the finalized result carrying its call ID."""
+    first_call = Content.from_function_call(call_id="call-a", name="first_tool", arguments={"value": "a"})
+    second_call = Content.from_function_call(call_id="call-b", name="second_tool", arguments={"value": "b"})
+
+    @executor(id="participant")
+    async def participant(message: Any, ctx: WorkflowContext[Any, AgentResponse | AgentResponseUpdate]) -> None:
+        del message
+        await ctx.yield_output(AgentResponseUpdate(contents=[first_call], role=None))
+        await ctx.yield_output(AgentResponseUpdate(contents=[second_call], role=None))
+        await ctx.yield_output(
+            AgentResponse(
+                messages=[
+                    Message(role="assistant", contents=[first_call, second_call]),
+                    Message(role="tool", contents=[Content.from_function_result(call_id="call-b", result="result-b")]),
+                    Message(role="tool", contents=[Content.from_function_result(call_id="call-a", result="result-a")]),
+                ]
+            )
+        )
+
+    workflow = WorkflowBuilder(start_executor=participant, output_from="all").build()
+    events = [event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)]
+
+    tool_results = [event for event in events if event.type == "TOOL_CALL_RESULT"]
+    assert {
+        event.tool_call_id: event.content  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        for event in tool_results
+    } == {
+        "call-a": "result-a",
+        "call-b": "result-b",
+    }
 
 
 async def test_workflow_run_passthroughs_ag_ui_base_events():
@@ -1132,6 +1387,61 @@ class TestWorkflowPayloadToContents:
         update = AgentResponseUpdate(contents=[Content.from_text(text="hi")], role=None)
         assert _workflow_payload_to_contents(update) is None
 
+    def test_agent_response_update_function_call_without_role(self) -> None:
+        """Function call content passes through without role metadata."""
+        function_call = Content.from_function_call(call_id="call-1", name="search", arguments={"query": "weather"})
+        update = AgentResponseUpdate(contents=[function_call], role=None)
+
+        assert _workflow_payload_to_contents(update) == [function_call]
+
+    def test_agent_response_update_function_result_with_tool_role(self) -> None:
+        """Function result content passes through with the tool role."""
+        function_result = Content.from_function_result(call_id="call-1", result={"temperature": 72})
+        update = AgentResponseUpdate(contents=[function_result], role="tool")
+
+        assert _workflow_payload_to_contents(update) == [function_result]
+
+    def test_agent_response_update_approval_request_without_role(self) -> None:
+        """Approval request content is excluded from the role bypass.
+
+        Workflow approvals resume through request_info pending state; an approval interrupt
+        emitted from streamed content would have no pending request to resume against.
+        """
+        function_call = Content.from_function_call(call_id="call-1", name="search", arguments={"query": "weather"})
+        approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+        update = AgentResponseUpdate(contents=[approval_request], role=None)
+
+        assert _workflow_payload_to_contents(update) is None
+
+    def test_agent_response_update_mcp_tool_call_without_role(self) -> None:
+        """MCP server tool call content passes through without role metadata."""
+        mcp_call = Content.from_mcp_server_tool_call(call_id="mcp-1", tool_name="search", arguments={"q": "weather"})
+        update = AgentResponseUpdate(contents=[mcp_call], role=None)
+
+        assert _workflow_payload_to_contents(update) == [mcp_call]
+
+    def test_agent_response_update_mcp_tool_result_without_role(self) -> None:
+        """MCP server tool result content passes through without role metadata."""
+        mcp_result = Content.from_mcp_server_tool_result(call_id="mcp-1", output={"temperature": 72})
+        update = AgentResponseUpdate(contents=[mcp_result], role=None)
+
+        assert _workflow_payload_to_contents(update) == [mcp_result]
+
+    def test_agent_response_update_mixed_content_without_role(self) -> None:
+        """Non-assistant updates keep tool content and drop text content."""
+        text = Content.from_text(text="calling the tool")
+        function_call = Content.from_function_call(call_id="call-1", name="search", arguments={"query": "weather"})
+        update = AgentResponseUpdate(contents=[text, function_call], role=None)
+
+        assert _workflow_payload_to_contents(update) == [function_call]
+
+    def test_agent_response_update_assistant_text(self) -> None:
+        """Assistant text content continues to pass through."""
+        text = Content.from_text(text="hi")
+        update = AgentResponseUpdate(contents=[text], role="assistant")
+
+        assert _workflow_payload_to_contents(update) == [text]
+
     def test_list_with_none_item(self):
         """List containing None causes None return."""
         result = _workflow_payload_to_contents([Content.from_text(text="hi"), None])
@@ -1401,6 +1711,83 @@ async def test_workflow_run_approval_resume_entry_approved() -> None:
     assert any("approved" in delta for delta in text_deltas)
     resumed_finished = _run_finished_dump([event for event in resumed_events if event.type == "RUN_FINISHED"][0])
     assert "outcome" not in resumed_finished
+
+
+async def test_workflow_run_explicit_resume_overrides_stale_message_approval() -> None:
+    """Explicit resume payloads should not be overwritten by stale function_approvals in messages."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345", "amount": "$89.99"},
+            )
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(
+            self, original_request: Content, response: Content, ctx: WorkflowContext[Any, str]
+        ) -> None:
+            del original_request
+            status = "approved" if bool(response.approved) else "rejected"
+            await ctx.yield_output(f"Refund {status}.")
+
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    first_events: list[Any] = [
+        event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
+    ]
+    first_finished_events = [event for event in first_events if event.type == "RUN_FINISHED"]
+    assert len(first_finished_events) == 1
+    interrupt_payload = _interrupts_from_run_finished(first_finished_events[0])
+    assert len(interrupt_payload) == 1
+    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
+
+    resumed_events: list[Any] = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "",
+                        "function_approvals": [
+                            {
+                                "approved": True,
+                                "id": "approval-1",
+                                "call_id": "refund-call",
+                                "name": "submit_refund",
+                                "arguments": {"order_id": "12345", "amount": "$89.99"},
+                            }
+                        ],
+                    }
+                ],
+                "resume": [
+                    {
+                        "interruptId": "approval-1",
+                        "status": "resolved",
+                        "payload": {
+                            "type": "function_approval_response",
+                            "approved": False,
+                            "id": interrupt_value.get("id", "approval-1"),
+                            "function_call": interrupt_value.get("function_call"),
+                        },
+                    }
+                ],
+            },
+            workflow,
+        )
+    ]
+
+    assistant_text = "".join(event.delta for event in resumed_events if event.type == "TEXT_MESSAGE_CONTENT")
+    assert "rejected" in assistant_text
+    assert "approved" not in assistant_text
 
 
 async def test_workflow_run_approval_argument_mismatch_emits_run_error() -> None:

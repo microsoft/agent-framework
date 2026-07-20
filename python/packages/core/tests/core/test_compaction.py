@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import pytest
+
 from agent_framework import (
     EXCLUDED_KEY,
     GROUP_ANNOTATION_KEY,
@@ -33,6 +35,7 @@ from agent_framework import (
     included_token_count,
 )
 from agent_framework._compaction import (
+    _serialize_message,
     append_compaction_message,
     extend_compaction_messages,
 )
@@ -42,6 +45,35 @@ def _assistant_function_call(call_id: str) -> Message:
     return Message(
         role="assistant",
         contents=[Content.from_function_call(call_id=call_id, name="tool", arguments='{"value":"x"}')],
+    )
+
+
+def _assistant_mcp_call(call_id: str) -> Message:
+    return Message(
+        role="assistant",
+        contents=[
+            Content.from_mcp_server_tool_call(
+                call_id=call_id,
+                tool_name="search",
+                server_name="test_server",
+                arguments='{"query":"x"}',
+            )
+        ],
+    )
+
+
+def _assistant_mcp_call_with_result(call_id: str, output: str) -> Message:
+    return Message(
+        role="assistant",
+        contents=[
+            Content.from_mcp_server_tool_call(
+                call_id=call_id,
+                tool_name="search",
+                server_name="test_server",
+                arguments='{"query":"x"}',
+            ),
+            Content.from_mcp_server_tool_result(call_id=call_id, output=[Content.from_text(output)]),
+        ],
     )
 
 
@@ -152,6 +184,45 @@ def test_group_annotations_handle_same_message_reasoning_and_function_calls() ->
     assert _group_id(messages[3]) == call_group
     assert _group_kind(messages[1]) == "tool_call"
     assert _group_has_reasoning(messages[1]) is True
+
+
+async def test_sliding_window_keeps_reasoning_and_mcp_call_atomic() -> None:
+    messages = [
+        Message(role="system", contents=["system"]),
+        Message(role="assistant", contents=[Content.from_text_reasoning(id="rs_1", text="thinking")]),
+        _assistant_mcp_call("mcp_1"),
+        Message(role="assistant", contents=["answer"]),
+        Message(role="user", contents=["follow up"]),
+    ]
+    annotate_message_groups(messages)
+
+    await SlidingWindowStrategy(keep_last_groups=3)(messages)
+
+    assert messages[1].additional_properties[EXCLUDED_KEY] is False
+    assert messages[2].additional_properties[EXCLUDED_KEY] is False
+    assert _group_id(messages[1]) == _group_id(messages[2])
+
+
+@pytest.mark.parametrize(
+    "tool_call",
+    [
+        Content.from_code_interpreter_tool_call(call_id="ci_1"),
+        Content.from_shell_tool_call(call_id="sh_1", commands=["echo hi"]),
+        Content.from_image_generation_tool_call(image_id="img_1"),
+    ],
+)
+def test_group_annotations_keep_reasoning_with_hosted_tool_calls(tool_call: Content) -> None:
+    messages = [
+        Message(role="assistant", contents=[Content.from_text_reasoning(id="rs_1", text="thinking")]),
+        Message(role="assistant", contents=[tool_call]),
+        Message(role="assistant", contents=["answer"]),
+    ]
+
+    annotate_message_groups(messages)
+
+    assert _group_id(messages[0]) == _group_id(messages[1])
+    assert _group_kind(messages[0]) == "tool_call"
+    assert _group_has_reasoning(messages[0]) is True
 
 
 def test_annotate_message_groups_with_tokenizer_adds_token_counts() -> None:
@@ -711,6 +782,24 @@ async def test_tool_result_compaction_summary_has_full_annotations() -> None:
     assert summary.additional_properties.get(EXCLUDED_KEY) is False
 
 
+async def test_tool_result_compaction_summarizes_mcp_tool_results() -> None:
+    messages = [
+        Message(role="user", contents=["hello"]),
+        _assistant_mcp_call_with_result("mcp_1", "found 10 cats"),
+        Message(role="assistant", contents=["I found cats."]),
+        _assistant_function_call("c1"),
+        _tool_result("c1", "new result"),
+    ]
+    annotate_message_groups(messages)
+
+    changed = await ToolResultCompactionStrategy(keep_last_tool_call_groups=1)(messages)
+
+    assert changed is True
+    projected = included_messages(messages)
+    summary = next(m for m in projected if (m.text or "").startswith("[Tool results:"))
+    assert summary.text == "[Tool results: search: found 10 cats]"
+
+
 async def test_summarization_strategy_summary_has_full_annotations() -> None:
     """Summary messages inserted by SummarizationStrategy must have all compaction annotations."""
     messages = [
@@ -1205,3 +1294,19 @@ def test_context_window_strategy_validates_thresholds() -> None:
             tool_eviction_threshold=0.8,
             truncation_threshold=0.5,
         )
+
+
+def test_serialize_message_preserves_non_ascii_for_token_count() -> None:
+    """Non-ASCII text is token-counted as the characters the model sees, not as
+    inflated ``\\uXXXX`` escapes, so the token estimate isn't skewed (#7022)."""
+    text = "こんにちは、元気ですか"
+    message = Message(role="user", contents=[text])
+    tokenizer = CharacterEstimatorTokenizer()
+
+    serialized = _serialize_message(message)
+    # the same payload as it would serialize with ensure_ascii=True
+    escaped = serialized.encode("ascii", "backslashreplace").decode("ascii")
+
+    assert text in serialized
+    assert "\\u3053" not in serialized
+    assert tokenizer.count_tokens(serialized) < tokenizer.count_tokens(escaped)

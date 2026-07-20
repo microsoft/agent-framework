@@ -1775,6 +1775,74 @@ def test_response_content_creation_with_function_call() -> None:
     assert function_call.call_id == "call_123"
     assert function_call.name == "get_weather"
     assert function_call.arguments == '{"location": "Seattle"}'
+    assert function_call.informational_only is False
+
+
+def test_parse_response_from_openai_with_custom_tool_call_is_informational_only() -> None:
+    """Custom tool calls are hosted Responses items, not local Agent Framework function calls."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+
+    mock_custom_call_item = MagicMock()
+    mock_custom_call_item.type = "custom_tool_call"
+    mock_custom_call_item.id = "ctc_456"
+    mock_custom_call_item.call_id = "call_123"
+    mock_custom_call_item.name = "code_exec"
+    mock_custom_call_item.input = "print('hello')"
+    mock_custom_call_item.namespace = None
+
+    mock_response.output = [mock_custom_call_item]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages[0].contents) == 1
+    function_call = response.messages[0].contents[0]
+    assert function_call.type == "function_call"
+    assert function_call.call_id == "call_123"
+    assert function_call.name == "code_exec"
+    assert function_call.arguments == "print('hello')"
+    assert function_call.informational_only is True
+
+
+def test_parse_response_from_openai_with_tool_search_call_is_informational_only() -> None:
+    """Hosted tool-search calls are transcript items and must not be invoked locally."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+
+    mock_tool_search_item = MagicMock()
+    mock_tool_search_item.type = "tool_search_call"
+    mock_tool_search_item.id = "ts_456"
+    mock_tool_search_item.call_id = "call_123"
+    mock_tool_search_item.arguments = {"query": "weather tools"}
+    mock_tool_search_item.status = "completed"
+    mock_tool_search_item.execution = "server"
+    mock_tool_search_item.created_by = None
+
+    mock_response.output = [mock_tool_search_item]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages[0].contents) == 1
+    function_call = response.messages[0].contents[0]
+    assert function_call.type == "function_call"
+    assert function_call.call_id == "call_123"
+    assert function_call.name == "tool_search"
+    assert function_call.arguments == {"query": "weather tools"}
+    assert function_call.informational_only is True
 
 
 def test_parse_response_from_openai_with_web_search_call() -> None:
@@ -2032,6 +2100,67 @@ def test_parse_chunk_from_openai_with_web_search_call_added() -> None:
     assert content.tool_name == "web_search"
     assert content.status == "in_progress"
     assert content.arguments == {"type": "search", "query": "weather in Seattle"}
+
+
+def test_parse_chunk_from_openai_function_call_is_actionable() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    added_event = MagicMock()
+    added_event.type = "response.output_item.added"
+    added_event.output_index = 0
+    added_item = MagicMock()
+    added_item.type = "function_call"
+    added_item.call_id = "call_123"
+    added_item.name = "get_weather"
+    added_event.item = added_item
+
+    delta_event = MagicMock()
+    delta_event.type = "response.function_call_arguments.delta"
+    delta_event.output_index = 0
+    delta_event.delta = '{"location": "Seattle"}'
+    delta_event.item_id = "fc_456"
+
+    client._parse_chunk_from_openai(
+        added_event,
+        options=chat_options,
+        function_call_ids=function_call_ids,
+    )
+    update = client._parse_chunk_from_openai(
+        delta_event,
+        options=chat_options,
+        function_call_ids=function_call_ids,
+    )
+
+    assert len(update.contents) == 1
+    assert update.contents[0].type == "function_call"
+    assert update.contents[0].informational_only is False
+
+
+def test_parse_chunk_from_openai_custom_tool_call_done_is_informational_only() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+
+    mock_item = MagicMock()
+    mock_item.type = "custom_tool_call"
+    mock_item.id = "ctc_456"
+    mock_item.call_id = "call_123"
+    mock_item.name = "code_exec"
+    mock_item.input = "print('hello')"
+    mock_item.namespace = None
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options=chat_options, function_call_ids=function_call_ids)
+
+    assert len(update.contents) == 1
+    assert update.contents[0].type == "function_call"
+    assert update.contents[0].name == "code_exec"
+    assert update.contents[0].informational_only is True
 
 
 def test_parse_chunk_from_openai_with_file_search_call_done() -> None:
@@ -5934,6 +6063,91 @@ def test_streaming_response_completed_sets_created_at() -> None:
     assert update.created_at == "2001-09-09T01:46:40.000000Z"
 
 
+@pytest.mark.parametrize(
+    ("status", "incomplete_reason", "output_type", "expected_finish_reason"),
+    [
+        ("completed", None, None, "stop"),
+        ("completed", None, "function_call", "tool_calls"),
+        ("incomplete", "max_output_tokens", None, "length"),
+        ("incomplete", "content_filter", None, "content_filter"),
+        ("failed", None, None, None),
+        ("incomplete", "other", None, None),
+    ],
+)
+def test_get_finish_reason_from_openai_response(
+    status: str,
+    incomplete_reason: str | None,
+    output_type: str | None,
+    expected_finish_reason: str | None,
+) -> None:
+    """Test mapping Responses API terminal states to framework finish reasons."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    mock_response = MagicMock()
+    mock_response.status = status
+    mock_response.incomplete_details = MagicMock(reason=incomplete_reason) if incomplete_reason is not None else None
+    mock_response.output = [MagicMock(type=output_type)] if output_type is not None else []
+
+    finish_reason = client._get_finish_reason_from_openai_response(mock_response)
+
+    assert finish_reason == expected_finish_reason
+
+
+def test_parse_response_from_openai_sets_finish_reason() -> None:
+    """Test that non-streaming Responses API completions include a finish reason."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.output = []
+    mock_response.id = "resp_done"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.usage = None
+    mock_response.status = "completed"
+    mock_response.incomplete_details = None
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore[arg-type]
+
+    assert response.finish_reason == "stop"
+
+
+@pytest.mark.parametrize(
+    ("event_type", "status", "incomplete_reason", "output_type", "expected_finish_reason"),
+    [
+        ("response.completed", "completed", None, None, "stop"),
+        ("response.completed", "completed", None, "function_call", "tool_calls"),
+        ("response.incomplete", "incomplete", "max_output_tokens", None, "length"),
+        ("response.incomplete", "incomplete", "content_filter", None, "content_filter"),
+        ("response.failed", "failed", None, None, None),
+    ],
+)
+def test_streaming_terminal_response_sets_finish_reason(
+    event_type: str,
+    status: str,
+    incomplete_reason: str | None,
+    output_type: str | None,
+    expected_finish_reason: str | None,
+) -> None:
+    """Test that terminal Responses API events include the mapped finish reason."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    mock_event = MagicMock()
+    mock_event.type = event_type
+    mock_event.response.id = "resp_done"
+    mock_event.response.conversation = None
+    mock_event.response.model = "test-model"
+    mock_event.response.created_at = 1000000000
+    mock_event.response.usage = None
+    mock_event.response.status = status
+    mock_event.response.incomplete_details = (
+        MagicMock(reason=incomplete_reason) if incomplete_reason is not None else None
+    )
+    mock_event.response.output = [MagicMock(type=output_type)] if output_type is not None else []
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    assert update.finish_reason == expected_finish_reason
+
+
 def test_map_chat_to_agent_update_preserves_continuation_token() -> None:
     """Test that map_chat_to_agent_update propagates continuation_token."""
     from agent_framework._types import map_chat_to_agent_update
@@ -6052,6 +6266,90 @@ async def test_prepare_options_auto_without_allowed_tools() -> None:
     run_options = await client._prepare_options(messages, options)
 
     assert run_options["tool_choice"] == "auto"
+
+
+async def test_prepare_options_allowed_tools_required() -> None:
+    """Test that _prepare_options converts allowed_tools with required mode to OpenAI API format."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    @tool
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f"Sunny in {city}"
+
+    @tool
+    def search_docs(query: str) -> str:
+        """Search documentation."""
+        return f"Results for {query}"
+
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+    options: dict[str, Any] = {
+        "model": "test-model",
+        "tools": [get_weather, search_docs],
+        "tool_choice": {"mode": "required", "allowed_tools": ["search_docs"]},
+    }
+
+    run_options = await client._prepare_options(messages, options)
+
+    assert run_options["tool_choice"] == {
+        "type": "allowed_tools",
+        "mode": "required",
+        "tools": [{"type": "function", "name": "search_docs"}],
+    }
+
+
+async def test_prepare_options_allowed_tools_required_multiple() -> None:
+    """Test that _prepare_options converts multiple allowed_tools with required mode correctly."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    @tool
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f"Sunny in {city}"
+
+    @tool
+    def search_docs(query: str) -> str:
+        """Search documentation."""
+        return f"Results for {query}"
+
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+    options: dict[str, Any] = {
+        "model": "test-model",
+        "tools": [get_weather, search_docs],
+        "tool_choice": {"mode": "required", "allowed_tools": ["get_weather", "search_docs"]},
+    }
+
+    run_options = await client._prepare_options(messages, options)
+
+    assert run_options["tool_choice"] == {
+        "type": "allowed_tools",
+        "mode": "required",
+        "tools": [
+            {"type": "function", "name": "get_weather"},
+            {"type": "function", "name": "search_docs"},
+        ],
+    }
+
+
+async def test_prepare_options_required_without_allowed_tools() -> None:
+    """Test that required mode without allowed_tools still returns plain 'required' string."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    @tool
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f"Sunny in {city}"
+
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+    options: dict[str, Any] = {
+        "model": "test-model",
+        "tools": [get_weather],
+        "tool_choice": {"mode": "required"},
+    }
+
+    run_options = await client._prepare_options(messages, options)
+
+    assert run_options["tool_choice"] == "required"
 
 
 # endregion
@@ -6443,6 +6741,63 @@ def test_prepare_messages_for_openai_drops_mcp_call_across_reasoning_messages() 
     assert "reasoning" not in types
     assert "mcp_call" not in types
     assert "function_call_output" not in types
+
+
+def test_prepare_messages_for_openai_keeps_unpaired_mcp_when_reasoning_is_stripped() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_keep",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "dogs"}',
+                )
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_mcp_server_tool_result(
+                    call_id="mcp_keep",
+                    output=[Content.from_text(text="found 5 dogs")],
+                )
+            ],
+        ),
+        Message(
+            role="assistant",
+            contents=[Content.from_text_reasoning(id="rs_abc123", text="Need a tool call.")],
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_drop",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "cats"}',
+                )
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_mcp_server_tool_result(
+                    call_id="mcp_drop",
+                    output=[Content.from_text(text="found 10 cats")],
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
+
+    mcp_items = [item for item in result if isinstance(item, dict) and item.get("type") == "mcp_call"]
+    assert [item["id"] for item in mcp_items] == ["mcp_keep"]
+    assert mcp_items[0]["output"] == "found 5 dogs"
 
 
 def test_prepare_messages_for_openai_drops_orphan_mcp_server_tool_result() -> None:

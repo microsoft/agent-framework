@@ -1,7 +1,7 @@
 [project]
 name = "agent-framework-hosting-sample-local-responses-workflow"
 version = "0.0.1"
-description = "Local hosting sample exposing a 3-agent workflow over the Responses API with per-conversation checkpoint storage."
+description = "Minimal Responses-only local hosting sample with a workflow target and native FastAPI routes."
 requires-python = ">=3.10"
 dependencies = [
     "agent-framework-foundry",
@@ -9,11 +9,14 @@ dependencies = [
     "agent-framework-hosting-responses",
     "azure-identity",
     "aiohttp>=3.13.5",
+    "fastapi>=0.115.0,<0.138.1",
     "hypercorn>=0.17",
 ]
 
 [dependency-groups]
-dev = ["openai>=1.99"]
+dev = [
+    "openai>=1.99",
+]
 
 [tool.uv]
 package = false

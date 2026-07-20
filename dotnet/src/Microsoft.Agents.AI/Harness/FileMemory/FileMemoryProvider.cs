@@ -3,12 +3,10 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -41,7 +39,6 @@ namespace Microsoft.Agents.AI;
 /// </list>
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class FileMemoryProvider : AIContextProvider, IDisposable
 {
     /// <summary>The name of the tool that writes a memory file.</summary>

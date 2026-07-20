@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import json
 import logging
@@ -654,8 +655,14 @@ class FunctionTool(SerializationMixin):
                 if isinstance(arguments, Mapping):
                     parsed_arguments = dict(arguments)
                     if self.input_model is not None and not self._schema_supplied:
+                        # exclude_unset (not exclude_none): keep arguments the model
+                        # explicitly provided even when their value is null, and drop
+                        # only the ones it left out, so the function's own defaults
+                        # apply. Excluding null instead would strip a required nullable
+                        # parameter the model deliberately set to null, failing the
+                        # invocation on the missing argument (#5934).
                         parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(
-                            exclude_none=True
+                            exclude_unset=True
                         )
                 elif isinstance(arguments, BaseModel):
                     if (
@@ -664,7 +671,7 @@ class FunctionTool(SerializationMixin):
                         and not isinstance(arguments, self.input_model)
                     ):
                         raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
-                    parsed_arguments = arguments.model_dump(exclude_none=True)
+                    parsed_arguments = arguments.model_dump(exclude_unset=True)
                 else:
                     raise TypeError(
                         f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
@@ -1479,7 +1486,10 @@ async def _auto_invoke_function(
         runtime_kwargs["session"] = invocation_session
     try:
         if not cast(bool, getattr(tool, "_schema_supplied", False)) and tool.input_model is not None:
-            args = tool.input_model.model_validate(parsed_args).model_dump(exclude_none=True)
+            # exclude_unset (not exclude_none) so an argument the model explicitly set
+            # to null still reaches the function; see FunctionTool.invoke for the full
+            # rationale. This is the auto-calling path #5934 actually hits.
+            args = tool.input_model.model_validate(parsed_args).model_dump(exclude_unset=True)
         else:
             args = dict(parsed_args)
         args = _validate_arguments_against_schema(
@@ -1626,6 +1636,10 @@ def _get_tool_map(
     return tool_list
 
 
+def _is_actionable_function_call(content: Content) -> bool:
+    return content.type == "function_call" and not content.informational_only
+
+
 async def _try_execute_function_calls(
     custom_args: dict[str, Any],
     attempt_idx: int,
@@ -1655,6 +1669,14 @@ async def _try_execute_function_calls(
     """
     from ._types import Content
 
+    function_calls = [
+        function_call
+        for function_call in function_calls
+        if function_call.type == "function_approval_response" or _is_actionable_function_call(function_call)
+    ]
+    if not function_calls:
+        return ([], False)
+
     tool_map = _get_tool_map(tools)
     # The live tools list (when tools is the run-local list) is exposed on the
     # FunctionInvocationContext so tools can add/remove tools during the run.
@@ -1680,14 +1702,18 @@ async def _try_execute_function_calls(
             fcc_name,
             fcc_name in approval_tools,
         )
-        if fcc.type == "function_call" and fcc.name in approval_tools:
+        if _is_actionable_function_call(fcc) and fcc.name in approval_tools:
             logger.debug("Approval needed for function: %s", fcc.name)
             approval_needed = True
             break
-        if fcc.type == "function_call" and (fcc.name in declaration_only or fcc.name in additional_tool_names):
+        if _is_actionable_function_call(fcc) and (fcc.name in declaration_only or fcc.name in additional_tool_names):
             declaration_only_flag = True
             break
-        if config.get("terminate_on_unknown_calls", False) and fcc.type == "function_call" and fcc.name not in tool_map:
+        if (
+            config.get("terminate_on_unknown_calls", False)
+            and _is_actionable_function_call(fcc)
+            and fcc.name not in tool_map
+        ):
             raise KeyError(f'Error: Requested function "{fcc.name}" not found.')
     if approval_needed:
         # approval can only be needed for Function Call Content, not Approval Responses.
@@ -1789,9 +1815,16 @@ async def _try_execute_function_calls(
                 False,
             )
 
-    execution_results = await asyncio.gather(*[
-        invoke_with_termination_handling(function_call, seq_idx) for seq_idx, function_call in enumerate(function_calls)
-    ])
+    # Create each task inside a copied context so the active agent span is
+    # preserved for every parallel tool invocation.
+    execution_tasks = [
+        contextvars.copy_context().run(
+            asyncio.create_task,
+            invoke_with_termination_handling(function_call, seq_idx),
+        )
+        for seq_idx, function_call in enumerate(function_calls)
+    ]
+    execution_results = await asyncio.gather(*execution_tasks)
 
     # Unpack results - each is (Content, terminate_flag)
     contents: list[Content] = [result[0] for result in execution_results]
@@ -2182,7 +2215,7 @@ def _extract_function_calls(response: ChatResponse) -> list[Content]:
     function_calls: list[Content] = []
     for message in response.messages:
         for item in message.contents:
-            if item.type != "function_call":
+            if not _is_actionable_function_call(item):
                 continue
             if item.call_id and item.call_id in function_results:
                 continue
@@ -2531,7 +2564,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             invocation_session=invocation_session,
             middleware_pipeline=function_middleware_pipeline,
         )
-        filtered_kwargs = {k: v for k, v in effective_client_kwargs.items() if k != "session"}
+        filtered_kwargs = dict(effective_client_kwargs)
 
         # Make options mutable so we can update conversation_id during function invocation loop
         mutable_options: dict[str, Any] = dict(options) if options else {}
@@ -2793,7 +2826,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 )
 
                 if not any(
-                    item.type in ("function_call", "function_approval_request")
+                    item.type == "function_approval_request" or _is_actionable_function_call(item)
                     for msg in response.messages
                     for item in msg.contents
                 ):

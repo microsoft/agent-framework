@@ -195,6 +195,9 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         source_id: str | None = None,
         instruction_template: str | None = None,
         disable_caching: bool = False,
+        disable_load_skill_approval: bool = False,
+        disable_read_skill_resource_approval: bool = False,
+        disable_run_skill_script_approval: bool = False,
     ) -> SkillsProvider:
         """Return a :class:`~agent_framework.SkillsProvider` backed by this toolbox.
 
@@ -214,6 +217,18 @@ class FoundryToolbox(MCPStreamableHTTPTool):
                 skills; see :class:`~agent_framework.SkillsProvider`.
             disable_caching: Re-query the toolbox on every agent run instead of
                 caching after the first discovery.
+            disable_load_skill_approval: When ``True``, register the provider's
+                ``load_skill`` tool with ``approval_mode="never_require"`` so loading
+                a skill body needs no host approval. Set this for unattended agents
+                (for example, an agent hosted behind :class:`ResponsesHostServer`,
+                which runs without an :class:`~agent_framework.AgentSession` and so
+                cannot satisfy the default approval flow). Defaults to ``False``.
+            disable_read_skill_resource_approval: When ``True``, register the
+                provider's ``read_skill_resource`` tool with
+                ``approval_mode="never_require"``. Defaults to ``False``.
+            disable_run_skill_script_approval: When ``True``, register the provider's
+                ``run_skill_script`` tool with ``approval_mode="never_require"``.
+                Defaults to ``False``.
 
         Returns:
             A :class:`~agent_framework.SkillsProvider` that advertises and loads the
@@ -228,7 +243,9 @@ class FoundryToolbox(MCPStreamableHTTPTool):
                     # ``tools=toolbox`` connects the MCP session; ``load_tools=False``
                     # keeps its tools hidden so only its skills are surfaced.
                     tools=toolbox,
-                    context_providers=[toolbox.as_skills_provider()],
+                    # ``disable_load_skill_approval`` lets the hosted agent load
+                    # skills without an approval round-trip (no AgentSession needed).
+                    context_providers=[toolbox.as_skills_provider(disable_load_skill_approval=True)],
                     default_options={"store": False},
                 )
                 await ResponsesHostServer(agent).run_async()
@@ -238,6 +255,9 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             source_id=source_id,
             instruction_template=instruction_template,
             disable_caching=disable_caching,
+            disable_load_skill_approval=disable_load_skill_approval,
+            disable_read_skill_resource_approval=disable_read_skill_resource_approval,
+            disable_run_skill_script_approval=disable_run_skill_script_approval,
         )
 
 

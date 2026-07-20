@@ -12,6 +12,7 @@ from typing import (
     Literal,
     Protocol,
     TypeAlias,
+    cast,
     runtime_checkable,
 )
 
@@ -36,6 +37,14 @@ SUMMARIZED_BY_SUMMARY_ID_KEY = "_summarized_by_summary_id"
 
 
 logger = logging.getLogger("agent_framework")
+
+_TOOL_CALL_CONTENT_TYPES: Final[set[str]] = {
+    "function_call",
+    "mcp_server_tool_call",
+    "code_interpreter_tool_call",
+    "shell_tool_call",
+    "image_generation_tool_call",
+}
 
 
 @runtime_checkable
@@ -74,8 +83,8 @@ def _has_content_type(message: Message, content_type: str) -> bool:
     return any(content.type == content_type for content in message.contents)
 
 
-def _has_function_call(message: Message) -> bool:
-    return _has_content_type(message, "function_call")
+def _has_tool_call(message: Message) -> bool:
+    return any(content.type in _TOOL_CALL_CONTENT_TYPES for content in message.contents)
 
 
 def _has_reasoning(message: Message) -> bool:
@@ -83,7 +92,7 @@ def _has_reasoning(message: Message) -> bool:
 
 
 def _is_tool_call_assistant(message: Message) -> bool:
-    return message.role == "assistant" and _has_function_call(message)
+    return message.role == "assistant" and _has_tool_call(message)
 
 
 def _is_reasoning_only_assistant(message: Message) -> bool:
@@ -506,7 +515,9 @@ def _serialize_message(message: Message) -> str:
         "message_id": message.message_id,
         "contents": serialized_contents,
     }
-    return json.dumps(payload, ensure_ascii=True, sort_keys=True, default=str)
+    # ensure_ascii=False so non-ASCII text (e.g. CJK) is token-counted as the
+    # actual characters the model sees, not as inflated ``\uXXXX`` escapes.
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
 
 
 def annotate_token_counts(
@@ -876,6 +887,8 @@ class ToolResultCompactionStrategy:
                 for content in msg.contents:
                     if content.type == "function_call" and content.call_id and content.name:
                         call_id_to_name[content.call_id] = content.name
+                    elif content.type == "mcp_server_tool_call" and content.call_id and content.tool_name:
+                        call_id_to_name[content.call_id] = content.tool_name
             # Collect tool results with the function name for context.
             tool_results: list[str] = []
             for msg in group_msgs:
@@ -884,6 +897,11 @@ class ToolResultCompactionStrategy:
                         result_text = content.result if isinstance(content.result, str) else str(content.result)
                         func_name = call_id_to_name.get(content.call_id or "", "")
                         label = f"{func_name}: {result_text}" if func_name else result_text
+                        tool_results.append(label.strip())
+                    elif content.type == "mcp_server_tool_result":
+                        result_text = _tool_result_text(content.output)
+                        tool_name = call_id_to_name.get(content.call_id or "", "")
+                        label = f"{tool_name}: {result_text}" if tool_name else result_text
                         tool_results.append(label.strip())
             summary_label = "; ".join(tool_results) if tool_results else "no results"
             summary_text = f"[Tool results: {summary_label}]"
@@ -916,6 +934,26 @@ class ToolResultCompactionStrategy:
             grouped = _group_messages_by_id(messages)
 
         return changed
+
+
+def _tool_result_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, str)):
+        text_parts: list[str] = []
+        for item in cast(Sequence[object], value):
+            if isinstance(item, Content) and item.type == "text" and item.text is not None:
+                text_parts.append(item.text)
+            elif isinstance(item, Mapping):
+                item_mapping = cast(Mapping[str, object], item)
+                text = item_mapping.get("text")
+                if item_mapping.get("type") == "text" and isinstance(text, str):
+                    text_parts.append(text)
+        if text_parts:
+            return "\n".join(text_parts)
+    if isinstance(value, Mapping):
+        return json.dumps(cast(Mapping[str, object], value), ensure_ascii=False)
+    return str(cast(object, value))
 
 
 def _format_messages_for_summary(messages: list[Message]) -> str:
