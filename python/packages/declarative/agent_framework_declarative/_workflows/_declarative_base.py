@@ -658,6 +658,29 @@ class DeclarativeWorkflowState:
             # Reuse the helper method for consistent text extraction
             return self._eval_and_replace_message_text(inner_expr)
 
+        # Int(expr) - convert to integer (Python-side fallback so the function
+        # works even when PowerFx is unavailable or returns an ErrorValue for
+        # non-numeric input). Returns 0 for blank/unconvertible values, matching
+        # PowerFx's Blank-as-zero coercion behaviour.
+        match = re.match(r"Int\((.+)\)$", formula.strip())
+        if match:
+            inner_expr = match.group(1).strip()
+            raw = self.eval(f"={inner_expr}")
+            try:
+                return int(float(str(raw))) if raw not in (None, "") else 0
+            except (ValueError, TypeError):
+                return 0
+
+        # Float(expr) / Value(expr) - convert to float (Python-side fallback).
+        match = re.match(r"(?:Float|Value)\((.+)\)$", formula.strip())
+        if match:
+            inner_expr = match.group(1).strip()
+            raw = self.eval(f"={inner_expr}")
+            try:
+                return float(str(raw)) if raw not in (None, "") else 0.0
+            except (ValueError, TypeError):
+                return 0.0
+
         return None
 
     def _preprocess_custom_functions(self, formula: str, temp_writes: list[tuple[str, Any]]) -> str:
