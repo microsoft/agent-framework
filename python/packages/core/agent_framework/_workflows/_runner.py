@@ -249,8 +249,6 @@ class RunnerImpl:
 
         Note:
             1. This method has no effect if checkpointing is not enabled in the context.
-            2. Do not use this method with ``create_checkpoint_object`` as both methods advance the
-               ``previous_checkpoint_id`` and may result in unexpected checkpoint lineage.
         """
         if not self._ctx.has_checkpointing():
             return
@@ -346,29 +344,23 @@ class RunnerImpl:
             logger.error(f"Failed to restore from checkpoint {checkpoint_id}: {e}")
             raise WorkflowCheckpointException(f"Failed to restore from checkpoint {checkpoint_id}") from e
 
-    async def create_checkpoint_object(self) -> WorkflowCheckpoint:
+    async def build_checkpoint(self) -> WorkflowCheckpoint:
         """Create a checkpoint object.
-
-        Note:
-            1. Do not use this method with ``create_checkpoint_if_enabled`` as both methods advance the
-               ``previous_checkpoint_id`` and may result in unexpected checkpoint lineage.
 
         Returns:
             A ``WorkflowCheckpoint``.
         """
         # Persist executor snapshots into committed shared state before exporting it.
         await self._prepare_checkpoint_state()
-        checkpoint = await self._ctx.create_checkpoint_object(
+        return await self._ctx.build_checkpoint(
             self._workflow_name,
             self._graph_signature_hash,
             self._state,
-            self._previous_checkpoint_id,
+            None,
             self._iteration,
         )
-        self._previous_checkpoint_id = checkpoint.checkpoint_id
-        return checkpoint
 
-    async def restore_from_checkpoint_object(self, checkpoint: WorkflowCheckpoint) -> None:
+    async def restore_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
         """Restore runner state from an in-memory ``WorkflowCheckpoint`` object.
 
         Unlike :meth:`restore_from_checkpoint`, this does not load from a storage

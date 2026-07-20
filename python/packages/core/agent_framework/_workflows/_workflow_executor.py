@@ -7,8 +7,6 @@ import types
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ..exceptions import WorkflowCheckpointException
-
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
@@ -280,9 +278,12 @@ class WorkflowExecutor(Executor):
         self._propagate_request = propagate_request
 
         if self.workflow._runner_context.has_checkpointing():  # type: ignore
-            raise WorkflowCheckpointException(
-                "The wrapped sub workflow must not have checkpointing enabled. "
-                "Sub workflow checkpointing is managed by the parent workflow."
+            logger.warning(
+                "Sub workflow %s has its own checkpoint storage configured. "
+                "Sub workflow states are checkpointed by the parent workflow at superstep boundaries. "
+                "Additional checkpointing is only needed if you need to persist sub workflow state "
+                "independently of the parent workflow. ",
+                self.workflow.id,
             )
 
     @property
@@ -456,7 +457,7 @@ class WorkflowExecutor(Executor):
             # WorkflowExecutor keeps no separate request/response bookkeeping of its own. The
             # sub-workflow is quiescent here: it ran to idle within this parent superstep before
             # the parent checkpoints.
-            "sub_workflow_checkpoint": await self.workflow._runner.create_checkpoint_object(),  # pyright: ignore[reportPrivateUsage]
+            "sub_workflow_checkpoint": await self.workflow._runner.build_checkpoint(),  # pyright: ignore[reportPrivateUsage]
         }
 
     @override
@@ -465,7 +466,7 @@ class WorkflowExecutor(Executor):
         # The storage backend fully materializes the checkpoint on load, checkpointed data arrives as live objects.
         sub_workflow_checkpoint = state.get("sub_workflow_checkpoint")
         if sub_workflow_checkpoint is not None:
-            await self.workflow._runner.restore_from_checkpoint_object(sub_workflow_checkpoint)  # pyright: ignore[reportPrivateUsage]
+            await self.workflow._runner.restore_checkpoint(sub_workflow_checkpoint)  # pyright: ignore[reportPrivateUsage]
             return
 
         # Backward-compatibility fallback for checkpoints written before the sub-workflow checkpoint

@@ -14,7 +14,6 @@ from agent_framework import (
     SubWorkflowResponseMessage,
     Workflow,
     WorkflowBuilder,
-    WorkflowCheckpointException,
     WorkflowContext,
     WorkflowEvent,
     WorkflowExecutor,
@@ -629,29 +628,6 @@ def _build_checkpoint_test_workflow(storage: InMemoryCheckpointStorage) -> Workf
         .add_edge(sub_workflow_executor, coordinator)
         .build()
     )
-
-
-def test_workflow_executor_rejects_sub_workflow_with_checkpointing() -> None:
-    """WorkflowExecutor must reject a sub-workflow that already has checkpointing enabled.
-
-    Sub-workflow checkpointing is managed by the parent workflow, so wrapping a sub-workflow
-    that carries its own checkpoint storage is a configuration error and must fail fast at
-    construction time.
-    """
-
-    class _Passthrough(Executor):
-        @handler
-        async def run(self, value: str, ctx: WorkflowContext[Any, str]) -> None:
-            await ctx.yield_output(value)
-
-    storage = InMemoryCheckpointStorage()
-    sub_workflow = WorkflowBuilder(
-        start_executor=_Passthrough(id="passthrough"),
-        checkpoint_storage=storage,
-    ).build()
-
-    with pytest.raises(WorkflowCheckpointException, match="must not have checkpointing enabled"):
-        WorkflowExecutor(sub_workflow, id="sub_workflow_executor")
 
 
 async def test_sub_workflow_checkpoint_restore_no_duplicate_requests() -> None:
