@@ -235,6 +235,7 @@ follow_imports_for_stubs = true
 # ty (preview) over tests + samples. Relaxed: ty's defaults are gradual, and a few
 # categories are too noisy on test/mock-heavy code to gate on yet.
 [tool.ty.rules]
+unused-ignore-comment = "ignore"
 unused-type-ignore-comment = "ignore"
 
 [tool.bandit]

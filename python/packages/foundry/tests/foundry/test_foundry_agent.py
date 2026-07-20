@@ -1017,6 +1017,7 @@ async def test_raw_foundry_agent_create_service_session_uses_stable_agents_opera
 
     assert result == "agent-session-123"
     create_session.assert_awaited_once()
+    assert create_session.await_args is not None
     create_session_kwargs = create_session.await_args.kwargs
     assert create_session_kwargs["agent_name"] == "test-agent"
     assert create_session_kwargs["isolation_key"] == "iso-key"
