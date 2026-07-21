@@ -84,10 +84,11 @@ try:
 except ImportError:  # pragma: no cover
 
     class PromptCacheOptions(TypedDict, total=False):
-        """Fallback for openai versions that predate prompt cache options."""
+        """Fallback for openai versions that predate prompt cache options.
 
-        mode: Literal["implicit", "explicit"]
-        ttl: Literal["30m"]
+        Deliberately empty: the option cannot be sent on these versions, so any
+        content in the field is flagged by type checkers.
+        """
 
 
 if TYPE_CHECKING:
