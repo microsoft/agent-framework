@@ -29,7 +29,13 @@ from typing import (
 )
 
 from agent_framework._clients import BaseChatClient
-from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
+from agent_framework._compaction import (
+    GROUP_ANNOTATION_KEY,
+    GROUP_HAS_REASONING_KEY,
+    GROUP_ID_KEY,
+    CompactionStrategy,
+    TokenizerProtocol,
+)
 from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from agent_framework._settings import SecretString
 from agent_framework._telemetry import USER_AGENT_KEY
@@ -1486,6 +1492,7 @@ class RawOpenAIChatClient(
         """
         reasoning_items: dict[str, dict[str, Any]] = {}
         if not request_uses_service_side_storage:
+            self._validate_reasoning_groups_for_stateless_replay(chat_messages)
             reasoning_items = self._prepare_reasoning_items_for_openai(chat_messages)
         serialized_reasoning_ids: set[str] = set()
 
@@ -1503,6 +1510,89 @@ class RawOpenAIChatClient(
         # Coalesce hosted-MCP result markers onto matching mcp_call input
         # items (drop unmatched). See `_AF_MCP_PENDING_OUTPUT_KEY`.
         return self._coalesce_pending_mcp_results(flat)
+
+    def _validate_reasoning_groups_for_stateless_replay(self, chat_messages: Sequence[Message]) -> None:
+        """Reject reasoning-bound tool groups that cannot be reconstructed."""
+        group_reasoning_contents: dict[str, list[Content]] = {}
+        group_call_ids: dict[str, list[str]] = {}
+        groups_with_reasoning: list[str] = []
+        seen_reasoning_groups: set[str] = set()
+        pending_reasoning_group: str | None = None
+        active_tool_group: str | None = None
+
+        for index, message in enumerate(chat_messages):
+            raw_annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+            annotation = cast("Mapping[str, Any]", raw_annotation) if isinstance(raw_annotation, Mapping) else None
+            annotated_group_id = annotation.get(GROUP_ID_KEY) if annotation is not None else None
+            reasoning_contents = [content for content in message.contents if content.type == "text_reasoning"]
+            call_ids = [
+                content.call_id
+                for content in message.contents
+                if content.type
+                in {
+                    "function_call",
+                    "function_result",
+                    "mcp_server_tool_call",
+                    "mcp_server_tool_result",
+                }
+                and content.call_id
+            ]
+
+            if isinstance(annotated_group_id, str):
+                group_id = annotated_group_id
+            elif message.role == "assistant" and reasoning_contents and not call_ids:
+                group_id = pending_reasoning_group or f"message_{index}"
+                pending_reasoning_group = group_id
+            elif message.role == "assistant" and call_ids:
+                group_id = pending_reasoning_group or f"message_{index}"
+                pending_reasoning_group = None
+                active_tool_group = group_id
+            elif message.role == "tool" and active_tool_group:
+                group_id = active_tool_group
+            else:
+                group_id = f"message_{index}"
+                pending_reasoning_group = None
+                active_tool_group = None
+
+            if (
+                reasoning_contents or (annotation is not None and annotation.get(GROUP_HAS_REASONING_KEY) is True)
+            ) and group_id not in seen_reasoning_groups:
+                groups_with_reasoning.append(group_id)
+                seen_reasoning_groups.add(group_id)
+            group_reasoning_contents.setdefault(group_id, []).extend(reasoning_contents)
+            group_call_ids.setdefault(group_id, []).extend(call_ids)
+
+        invalid_groups: list[str] = []
+        for group_id in groups_with_reasoning:
+            call_ids = list(dict.fromkeys(group_call_ids.get(group_id, [])))
+            if not call_ids:
+                continue
+            reasoning_contents = group_reasoning_contents.get(group_id, [])
+            replayable_reasoning_ids = {
+                content.id
+                for content in reasoning_contents
+                if content.id and (content.protected_data or content.additional_properties.get("encrypted_content"))
+            }
+            missing_reasoning_ids = list(
+                dict.fromkeys(
+                    content.id or "<missing provider reasoning id>"
+                    for content in reasoning_contents
+                    if not content.id or content.id not in replayable_reasoning_ids
+                )
+            )
+            if not reasoning_contents:
+                missing_reasoning_ids.append(f"<reasoning item from compacted group {group_id}>")
+            if missing_reasoning_ids:
+                invalid_groups.append(
+                    f"reasoning item(s) {', '.join(missing_reasoning_ids)} for call(s) {', '.join(call_ids)}"
+                )
+
+        if invalid_groups:
+            raise ChatClientInvalidRequestException(
+                f"Stateless replay cannot reconstruct {'; '.join(invalid_groups)} because encrypted reasoning "
+                "content is missing. Use service-side continuation or explicitly configured atomic compaction to "
+                "exclude each complete reasoning/tool-call group."
+            )
 
     def _prepare_message_for_openai(
         self,

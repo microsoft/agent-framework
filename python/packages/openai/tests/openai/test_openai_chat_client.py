@@ -1474,6 +1474,173 @@ async def test_prepare_request_does_not_duplicate_encrypted_reasoning_include() 
     assert run_options["include"] == ["reasoning.encrypted_content", "message.output_text.logprobs"]
 
 
+async def test_stateless_reasoning_group_without_encrypted_content_is_rejected_before_transport() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    create = AsyncMock()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(id="rs_missing", text="I need both tools."),
+                Content.from_function_call(call_id="call_one", name="first_tool", arguments="{}"),
+                Content.from_function_call(call_id="call_two", name="second_tool", arguments="{}"),
+            ],
+        )
+    ]
+
+    with (
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+        pytest.raises(ChatClientInvalidRequestException) as exc_info,
+    ):
+        await client.get_response(messages, options={"store": False})
+
+    message = str(exc_info.value)
+    assert "rs_missing" in message
+    assert "call_one" in message
+    assert "call_two" in message
+    assert "service-side continuation" in message
+    assert "atomic compaction" in message
+    create.assert_not_awaited()
+
+
+async def test_partially_compacted_reasoning_group_is_rejected_before_transport() -> None:
+    async def exclude_reasoning_message(messages: list[Message]) -> bool:
+        messages[0].additional_properties["_excluded"] = True
+        return True
+
+    client = OpenAIChatClient(
+        model="test-model",
+        api_key="test-key",
+        compaction_strategy=exclude_reasoning_message,
+    )
+    create = AsyncMock()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_compacted",
+                    text="I need a tool.",
+                    protected_data="encrypted-reasoning",
+                )
+            ],
+        ),
+        Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="call_compacted", name="tool", arguments="{}")],
+        ),
+    ]
+
+    with (
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+        pytest.raises(ChatClientInvalidRequestException) as exc_info,
+    ):
+        await client.get_response(messages, options={"store": False})
+
+    message = str(exc_info.value)
+    assert "group_msg_0" in message
+    assert "call_compacted" in message
+    assert "atomic compaction" in message
+    create.assert_not_awaited()
+
+
+async def test_split_reasoning_group_without_encrypted_content_is_rejected_before_transport() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    create = AsyncMock()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[Content.from_text_reasoning(id="rs_split", text="I need a tool.")],
+        ),
+        Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="call_split", name="tool", arguments="{}")],
+        ),
+    ]
+
+    with (
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+        pytest.raises(ChatClientInvalidRequestException, match="rs_split.*call_split"),
+    ):
+        await client.get_response(messages, options={"store": False})
+
+    create.assert_not_awaited()
+
+
+async def test_fully_compacted_reasoning_group_continues_with_remaining_messages() -> None:
+    async def exclude_reasoning_group(messages: list[Message]) -> bool:
+        for message in messages:
+            if message.role in {"assistant", "tool"}:
+                message.additional_properties["_excluded"] = True
+        return True
+
+    client = OpenAIChatClient(
+        model="test-model",
+        api_key="test-key",
+        compaction_strategy=exclude_reasoning_group,
+    )
+    mock_response = MagicMock(
+        id="response_123",
+        model="test-model",
+        created_at=1000000000,
+        metadata={},
+        output_parsed=None,
+        output=[],
+        usage=None,
+        finish_reason=None,
+        conversation=None,
+        status="completed",
+        incomplete_details=None,
+    )
+    messages = [
+        Message(role="user", contents=["Keep this request."]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(id="rs_excluded", text="Legacy reasoning."),
+                Content.from_function_call(call_id="call_excluded", name="tool", arguments="{}"),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_excluded", result="Excluded result.")],
+        ),
+    ]
+
+    with patch.object(client.client.responses, "create", return_value=_as_raw(mock_response)) as create:
+        await client.get_response(messages, options={"store": False})
+
+    create.assert_awaited_once()
+    assert create.await_args is not None
+    assert create.await_args.kwargs["input"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Keep this request."}],
+        }
+    ]
+
+
+async def test_encrypted_reasoning_capability_rejection_is_not_retried_lossily() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    service_error = BadRequestError(
+        message="Encrypted reasoning is not supported",
+        response=MagicMock(),
+        body={"error": {"code": "invalid_request", "message": "Encrypted reasoning is not supported"}},
+    )
+    service_error.code = "invalid_request"
+
+    with (
+        patch.object(client.client.responses, "create", side_effect=service_error) as create,
+        pytest.raises(ChatClientException, match="Encrypted reasoning is not supported"),
+    ):
+        await client.get_response([Message(role="user", contents=["Hello"])], options={"store": False})
+
+    create.assert_awaited_once()
+    assert create.await_args is not None
+    assert create.await_args.kwargs["include"] == ["reasoning.encrypted_content"]
+
+
 def test_response_content_keeps_reasoning_and_function_calls_in_one_message() -> None:
     """Reasoning + function calls should parse into one assistant message."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -1943,21 +2110,8 @@ async def test_tool_loop_store_false_replays_encrypted_reasoning_group() -> None
     assert function_outputs[0]["call_id"] == "call_123"
 
 
-async def test_stateless_request_does_not_silently_drop_reasoning_bound_mcp_output() -> None:
+async def test_stateless_request_rejects_non_replayable_reasoning_bound_mcp_output() -> None:
     client = OpenAIChatClient(model="test-model", api_key="test-key")
-    mock_response = MagicMock(
-        output=[],
-        output_parsed=None,
-        metadata={},
-        usage=None,
-        id="resp-2",
-        model="test-model",
-        created_at=1000000001,
-        status="completed",
-        finish_reason="stop",
-        incomplete=None,
-        conversation=None,
-    )
     messages = [
         Message(role="user", contents=["Search the API specifications."]),
         Message(
@@ -1983,28 +2137,14 @@ async def test_stateless_request_does_not_silently_drop_reasoning_bound_mcp_outp
         ),
     ]
 
-    with patch.object(
-        client.client.responses,
-        "create",
-        new=AsyncMock(return_value=_as_raw(mock_response)),
-    ) as mock_create:
+    create = AsyncMock()
+    with (
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+        pytest.raises(ChatClientInvalidRequestException, match="rs_mcp.*mcp_search"),
+    ):
         await client.get_response(messages=messages, options={"store": False})
 
-    assert mock_create.call_args.kwargs["input"] == [
-        {
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_text", "text": "Search the API specifications."}],
-        },
-        {
-            "type": "mcp_call",
-            "id": "mcp_search",
-            "server_label": "api_specs",
-            "name": "search",
-            "arguments": '{"q":"cats"}',
-            "output": "found 10 cats",
-        },
-    ]
+    create.assert_not_awaited()
 
 
 def test_response_content_creation_with_shell_call() -> None:
@@ -2969,6 +3109,7 @@ def test_prepare_messages_for_openai_keeps_active_function_call_for_tool_loop() 
     reasoning = Content.from_text_reasoning(
         id="rs_abc123",
         text="Let me analyze the request",
+        protected_data="encrypted-reasoning",
         additional_properties={"status": "completed"},
     )
     function_call = Content.from_function_call(
@@ -2986,7 +3127,7 @@ def test_prepare_messages_for_openai_keeps_active_function_call_for_tool_loop() 
 
     storage_off_result = client._prepare_messages_for_openai([message], request_uses_service_side_storage=False)
     storage_off_types = [item["type"] for item in storage_off_result]
-    assert "reasoning" not in storage_off_types
+    assert "reasoning" in storage_off_types
     assert "function_call" in storage_off_types
 
 
@@ -5686,7 +5827,7 @@ async def test_prepare_options_store_parameter_handling() -> None:
     assert "previous_response_id" not in options
 
 
-async def test_prepare_options_store_false_omits_reasoning_items_for_stateless_replay() -> None:
+async def test_prepare_options_store_false_rejects_non_replayable_reasoning_items() -> None:
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     messages = [
         Message(role="user", contents=[Content.from_text(text="search for hotels")]),
@@ -5717,11 +5858,8 @@ async def test_prepare_options_store_false_omits_reasoning_items_for_stateless_r
         ),
     ]
 
-    options = await client._prepare_options(messages, ChatOptions(store=False))  # type: ignore[arg-type]
-
-    assert not any(item.get("type") == "reasoning" for item in options["input"])
-    assert any(item.get("type") == "function_call" for item in options["input"])
-    assert any(item.get("type") == "function_call_output" for item in options["input"])
+    with pytest.raises(ChatClientInvalidRequestException, match="rs_test123.*call_1"):
+        await client._prepare_options(messages, ChatOptions(store=False))  # type: ignore[arg-type]
 
 
 async def test_prepare_options_with_conversation_id_strips_server_issued_items() -> None:
