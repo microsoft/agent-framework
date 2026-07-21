@@ -141,7 +141,7 @@ class TestResponsesRunHelpers:
         assert responses_session_id({"conversation_id": "conv_1"}) == ("conv_1", True)
 
     def test_responses_session_id_returns_none_when_absent(self) -> None:
-        assert responses_session_id({"input": "hi"}) == (None, False)
+        assert responses_session_id({"input": "hi"}) == (None, None)
 
     def test_responses_to_run_returns_messages_options_and_stream(self) -> None:
         run = responses_to_run({

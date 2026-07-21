@@ -130,7 +130,7 @@ def create_conversation_id() -> str:
     return f"conv_{uuid.uuid4().hex}"
 
 
-def responses_session_id(body: Mapping[str, Any]) -> tuple[str | None, bool]:
+def responses_session_id(body: Mapping[str, Any]) -> tuple[str | None, bool | None]:
     """Return the Responses session id and whether it is a conversation id.
 
     The session id can be a ``resp_*`` previous response id or a ``conv_*``
@@ -142,6 +142,7 @@ def responses_session_id(body: Mapping[str, Any]) -> tuple[str | None, bool]:
 
     Returns:
         The session id, if present, and whether it came from ``conversation_id``.
+        The flag is ``None`` when no session id is present.
     """
     previous_response_id = body.get("previous_response_id")
     if isinstance(previous_response_id, str) and previous_response_id:
@@ -149,7 +150,7 @@ def responses_session_id(body: Mapping[str, Any]) -> tuple[str | None, bool]:
     conversation_id = body.get("conversation_id")
     if isinstance(conversation_id, str) and conversation_id:
         return conversation_id, True
-    return None, False
+    return None, None
 
 
 def responses_to_run(body: Mapping[str, Any]) -> AgentRunArgs:
