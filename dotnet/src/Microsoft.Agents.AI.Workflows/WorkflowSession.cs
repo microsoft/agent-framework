@@ -485,7 +485,8 @@ internal sealed class WorkflowSession : AgentSession
             switch (evt)
             {
                 case AgentResponseUpdateEvent agentUpdate:
-                    if (agentUpdate.Update.MessageId is { Length: > 0 } messageId)
+                    string? messageId = agentUpdate.Update.MessageId;
+                    if (!string.IsNullOrWhiteSpace(messageId))
                     {
                         streamedMessageIds.Add((agentUpdate.ExecutorId, messageId));
                     }
@@ -564,8 +565,9 @@ internal sealed class WorkflowSession : AgentSession
                     bool suppressedStreamedMessage = false;
                     foreach (ChatMessage message in agentResponse.Response.Messages)
                     {
+                        string? completedMessageId = message.MessageId;
                         bool messageWasStreamed =
-                            message.MessageId is { Length: > 0 } completedMessageId
+                            !string.IsNullOrWhiteSpace(completedMessageId)
                             && streamedMessageIds.Contains((agentResponse.ExecutorId, completedMessageId));
                         if (messageWasStreamed)
                         {

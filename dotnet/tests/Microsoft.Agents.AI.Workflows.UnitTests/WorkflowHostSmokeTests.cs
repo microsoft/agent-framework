@@ -1001,6 +1001,27 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         }
 
         [Fact]
+        public async Task Test_WorkflowHostAgent_WhitespaceMessageIdDoesNotSuppressCompletionAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: false);
+            Workflow workflow =
+                new WorkflowBuilder(
+                    new StreamThenCompleteExecutor(
+                        useSameResponseId: true,
+                        streamedMessageId: " ",
+                        completedMessageId: " "))
+                .Build();
+
+            List<AgentResponseUpdate> updates =
+                await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
+
+            updates.Count(u => u.Text == InterText).Should().Be(1);
+            updates.Count(u => u.Text == FinalText).Should().Be(1);
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
+                .Should().BeTrue("whitespace-only message IDs cannot reliably correlate streamed and completed messages");
+        }
+
+        [Fact]
         public async Task Test_WorkflowHostAgent_UnstreamedMessageFromSameResponseIsForwardedAsync()
         {
             using Futures.FuturesScope _ = new(enabled: false);
@@ -1015,7 +1036,10 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
                 .Should().BeTrue("only the correlated message in a multi-message response should be suppressed");
         }
 
-        private sealed class StreamThenCompleteExecutor(bool useSameResponseId = false) : Executor("stream-then-complete")
+        private sealed class StreamThenCompleteExecutor(
+            bool useSameResponseId = false,
+            string streamedMessageId = "streamed-message",
+            string completedMessageId = "completed-message") : Executor("stream-then-complete")
         {
             protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
                 protocolBuilder.ConfigureRoutes(
@@ -1037,7 +1061,7 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
                 AgentResponseUpdate update =
                     new(ChatRole.Assistant, InterText)
                     {
-                        MessageId = "streamed-message",
+                        MessageId = streamedMessageId,
                         ResponseId = "streamed-response",
                     };
                 await context.AddEventAsync(
@@ -1047,7 +1071,7 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
                 ChatMessage message =
                     new(ChatRole.Assistant, FinalText)
                     {
-                        MessageId = "completed-message",
+                        MessageId = completedMessageId,
                     };
                 return new AgentResponse([message])
                 {
