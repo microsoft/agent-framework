@@ -211,17 +211,17 @@ class TestResponsesRunHelpers:
         ]
         assert output[3]["content"][0]["text"] == "done"
 
-    def test_responses_from_run_maps_conversation_session(self) -> None:
+    def test_responses_from_run_maps_conversation_id(self) -> None:
         result = AgentResponse(messages=Message(role="assistant", contents=[Content.from_text("hello")]))
 
-        payload = responses_from_run(result, response_id="resp_new", session_id="conv_1")
+        payload = responses_from_run(result, response_id="resp_new", conversation_id="conv_1")
 
         assert payload["conversation"] == {"id": "conv_1"}
 
-    def test_responses_from_run_omits_previous_response_session(self) -> None:
+    def test_responses_from_run_omits_conversation_when_absent(self) -> None:
         result = AgentResponse(messages=Message(role="assistant", contents=[Content.from_text("hello")]))
 
-        payload = responses_from_run(result, response_id="resp_new", session_id="resp_1")
+        payload = responses_from_run(result, response_id="resp_new")
 
         assert "conversation" not in payload
 

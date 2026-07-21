@@ -267,7 +267,6 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse:  # noqa: 
         responses_from_run(
             response_from_workflow_result(result),
             response_id=response_id,
-            session_id=previous_response_id,
         )
     )
 

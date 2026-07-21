@@ -182,7 +182,7 @@ def responses_from_run(
     result: AgentResponse[Any],
     *,
     response_id: str,
-    session_id: str | None = None,
+    conversation_id: str | None = None,
 ) -> dict[str, Any]:
     """Convert an Agent Framework response into a Responses payload.
 
@@ -191,8 +191,7 @@ def responses_from_run(
 
     Keyword Args:
         response_id: Id for the response being created.
-        session_id: Optional prior ``resp_*`` or ``conv_*`` session id. When it
-            is a conversation id, the helper renders it in the Responses
+        conversation_id: Optional conversation id to render in the Responses
             conversation field.
 
     Returns:
@@ -211,8 +210,8 @@ def responses_from_run(
         "tools": [],
         "metadata": {},
     }
-    if session_id is not None and session_id.startswith("conv_"):
-        response_kwargs["conversation"] = {"id": session_id}
+    if conversation_id is not None:
+        response_kwargs["conversation"] = {"id": conversation_id}
     return _response_payload(OpenAIResponse(**response_kwargs))
 
 
@@ -892,7 +891,8 @@ async def responses_from_streaming_run(
                 )
 
         final = await stream.get_final_response()
-        payload = responses_from_run(final, response_id=response_id, session_id=session_id)
+        conversation_id = session_id if session_id is not None and session_id.startswith("conv_") else None
+        payload = responses_from_run(final, response_id=response_id, conversation_id=conversation_id)
         if model is not None:
             # The finalized `AgentResponse` never carries a raw representation
             # (see `_model_from_update`), so prefer the model observed on the

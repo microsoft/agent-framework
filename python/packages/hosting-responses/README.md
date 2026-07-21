@@ -50,7 +50,8 @@ async def responses(body: dict = Body(...)) -> JSONResponse:
         await state.set_session(session_id, session)
     else:
         await state.set_session(response_id, session)
-    return JSONResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
+    conversation_id = session_id if is_conversation_id else None
+    return JSONResponse(responses_from_run(result, response_id=response_id, conversation_id=conversation_id))
 ```
 
 `previous_response_id` identifies an immutable continuation snapshot: multiple

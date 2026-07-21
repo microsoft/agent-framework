@@ -184,7 +184,7 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
         responses_from_run(
             result,
             response_id=response_id,
-            session_id=session_id,
+            conversation_id=conversation_id,
         )
     )
 
