@@ -4,8 +4,7 @@ import asyncio
 import os
 
 from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient
-from agent_framework_foundry_hosting import FoundryToolbox, ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient, FoundryToolbox, ResponsesHostServer
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 

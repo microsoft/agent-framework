@@ -42,7 +42,7 @@ export GOOGLE_MODEL="gemini-2.5-flash-lite"
 
 ## Examples
 
-See the [Google Gemini samples](samples/) for runnable end-to-end scripts covering:
+See the [Google Gemini samples](../../samples/02-agents/providers/gemini/) for runnable end-to-end scripts covering:
 
 - Basic agent with tool calling and streaming
 - Extended thinking with `ThinkingConfig`
