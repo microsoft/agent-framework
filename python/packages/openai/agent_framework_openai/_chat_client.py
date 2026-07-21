@@ -134,42 +134,6 @@ _AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX = "response.azure_ai_search_call_output."
 _AF_MCP_PENDING_OUTPUT_KEY = "__af_pending_mcp_result__"
 
 
-def _mcp_call_ids_paired_with_unreplayable_reasoning(messages: Sequence[Message]) -> set[str]:
-    """Find hosted MCP calls paired with reasoning that lacks a replay payload."""
-    paired_call_ids: set[str] = set()
-    pending_reasoning_prefix = False
-
-    for message in messages:
-        has_reasoning = any(
-            content.type == "text_reasoning"
-            and not (content.protected_data or content.additional_properties.get("encrypted_content"))
-            for content in message.contents
-        )
-        has_tool_call = False
-        for content in message.contents:
-            if content.type in {"function_call", "mcp_server_tool_call"}:
-                has_tool_call = True
-                if (
-                    content.type == "mcp_server_tool_call"
-                    and (has_reasoning or pending_reasoning_prefix)
-                    and content.call_id
-                ):
-                    paired_call_ids.add(content.call_id)
-
-        if has_tool_call:
-            pending_reasoning_prefix = False
-        elif (
-            message.role == "assistant"
-            and message.contents
-            and all(content.type == "text_reasoning" for content in message.contents)
-        ):
-            pending_reasoning_prefix = True
-        else:
-            pending_reasoning_prefix = False
-
-    return paired_call_ids
-
-
 class OpenAIContinuationToken(ContinuationToken):
     """Continuation token for OpenAI Responses API background operations."""
 
@@ -1521,10 +1485,8 @@ class RawOpenAIChatClient(
             The prepared chat messages for a request.
         """
         reasoning_items: dict[str, dict[str, Any]] = {}
-        drop_reasoning_mcp_call_ids: set[str] = set()
         if not request_uses_service_side_storage:
             reasoning_items = self._prepare_reasoning_items_for_openai(chat_messages)
-            drop_reasoning_mcp_call_ids = _mcp_call_ids_paired_with_unreplayable_reasoning(chat_messages)
         serialized_reasoning_ids: set[str] = set()
 
         list_of_list = [
@@ -1533,7 +1495,6 @@ class RawOpenAIChatClient(
                 request_uses_service_side_storage=request_uses_service_side_storage,
                 reasoning_items=reasoning_items,
                 serialized_reasoning_ids=serialized_reasoning_ids,
-                drop_reasoning_mcp_call_ids=drop_reasoning_mcp_call_ids,
             )
             for message in chat_messages
         ]
@@ -1550,7 +1511,6 @@ class RawOpenAIChatClient(
         request_uses_service_side_storage: bool = True,
         reasoning_items: Mapping[str, dict[str, Any]] | None = None,
         serialized_reasoning_ids: set[str] | None = None,
-        drop_reasoning_mcp_call_ids: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Prepare a chat message for the OpenAI Responses API format."""
         all_messages: list[dict[str, Any]] = []
@@ -1573,7 +1533,6 @@ class RawOpenAIChatClient(
         # emitted once per provider reasoning id by `_prepare_messages_for_openai`.
         reasoning_items = reasoning_items or {}
         serialized_reasoning_ids = serialized_reasoning_ids if serialized_reasoning_ids is not None else set()
-        drop_reasoning_mcp_call_ids = drop_reasoning_mcp_call_ids or set()
         for content in message.contents:
             match content.type:
                 case "text_reasoning":
@@ -1634,7 +1593,7 @@ class RawOpenAIChatClient(
                     # the prior response's items (#3295). Drop the call here; the
                     # orphan result is dropped by the coalesce step that follows.
                     #
-                    if request_uses_service_side_storage or content.call_id in drop_reasoning_mcp_call_ids:
+                    if request_uses_service_side_storage:
                         continue
                     prepared_mcp = self._prepare_content_for_openai(
                         message.role,

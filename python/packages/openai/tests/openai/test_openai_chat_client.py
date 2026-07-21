@@ -1943,6 +1943,70 @@ async def test_tool_loop_store_false_replays_encrypted_reasoning_group() -> None
     assert function_outputs[0]["call_id"] == "call_123"
 
 
+async def test_stateless_request_does_not_silently_drop_reasoning_bound_mcp_output() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    mock_response = MagicMock(
+        output=[],
+        output_parsed=None,
+        metadata={},
+        usage=None,
+        id="resp-2",
+        model="test-model",
+        created_at=1000000001,
+        status="completed",
+        finish_reason="stop",
+        incomplete=None,
+        conversation=None,
+    )
+    messages = [
+        Message(role="user", contents=["Search the API specifications."]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(id="rs_mcp", text="Use the hosted MCP server."),
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_search",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q":"cats"}',
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_mcp_server_tool_result(
+                    call_id="mcp_search",
+                    output=[Content.from_text(text="found 10 cats")],
+                )
+            ],
+        ),
+    ]
+
+    with patch.object(
+        client.client.responses,
+        "create",
+        new=AsyncMock(return_value=_as_raw(mock_response)),
+    ) as mock_create:
+        await client.get_response(messages=messages, options={"store": False})
+
+    assert mock_create.call_args.kwargs["input"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Search the API specifications."}],
+        },
+        {
+            "type": "mcp_call",
+            "id": "mcp_search",
+            "server_label": "api_specs",
+            "name": "search",
+            "arguments": '{"q":"cats"}',
+            "output": "found 10 cats",
+        },
+    ]
+
+
 def test_response_content_creation_with_shell_call() -> None:
     """Test _parse_response_from_openai with shell_call output."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -7022,14 +7086,18 @@ def test_prepare_messages_for_openai_coalesces_mcp_call_and_result_into_single_i
     assert fco_items == [], f"unexpected orphan function_call_output items: {fco_items}"
 
 
-def test_prepare_messages_for_openai_drops_mcp_call_when_paired_reasoning_is_stripped() -> None:
+def test_prepare_messages_for_openai_replays_completed_reasoning_bound_mcp_call() -> None:
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     messages = [
         Message(
             role="assistant",
             contents=[
-                Content.from_text_reasoning(id="rs_abc123", text="Need the MCP server."),
+                Content.from_text_reasoning(
+                    id="rs_abc123",
+                    text="Need the MCP server.",
+                    protected_data="encrypted-reasoning",
+                ),
                 Content.from_mcp_server_tool_call(
                     call_id="mcp_abc123",
                     tool_name="search",
@@ -7051,19 +7119,37 @@ def test_prepare_messages_for_openai_drops_mcp_call_when_paired_reasoning_is_str
 
     result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
 
-    types = [item.get("type") for item in result if isinstance(item, dict)]
-    assert "reasoning" not in types
-    assert "mcp_call" not in types
-    assert "function_call_output" not in types
+    assert result == [
+        {
+            "type": "reasoning",
+            "id": "rs_abc123",
+            "summary": [{"type": "summary_text", "text": "Need the MCP server."}],
+            "encrypted_content": "encrypted-reasoning",
+        },
+        {
+            "type": "mcp_call",
+            "id": "mcp_abc123",
+            "server_label": "api_specs",
+            "name": "search",
+            "arguments": '{"q": "cats"}',
+            "output": "found 10 cats",
+        },
+    ]
 
 
-def test_prepare_messages_for_openai_drops_mcp_call_across_reasoning_messages() -> None:
+def test_prepare_messages_for_openai_replays_active_mcp_call_across_reasoning_messages() -> None:
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     messages = [
         Message(
             role="assistant",
-            contents=[Content.from_text_reasoning(id="rs_abc123", text="Need a tool call.")],
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_abc123",
+                    text="Need a tool call.",
+                    protected_data="encrypted-reasoning",
+                )
+            ],
         ),
         Message(
             role="assistant",
@@ -7073,15 +7159,6 @@ def test_prepare_messages_for_openai_drops_mcp_call_across_reasoning_messages() 
                     tool_name="search",
                     server_name="api_specs",
                     arguments='{"q": "cats"}',
-                )
-            ],
-        ),
-        Message(
-            role="tool",
-            contents=[
-                Content.from_mcp_server_tool_result(
-                    call_id="mcp_abc123",
-                    output=[Content.from_text(text="found 10 cats")],
                 )
             ],
         ),
@@ -7089,57 +7166,43 @@ def test_prepare_messages_for_openai_drops_mcp_call_across_reasoning_messages() 
 
     result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
 
-    types = [item.get("type") for item in result if isinstance(item, dict)]
-    assert "reasoning" not in types
-    assert "mcp_call" not in types
-    assert "function_call_output" not in types
+    assert [item["type"] for item in result] == ["reasoning", "mcp_call"]
+    assert result[1]["id"] == "mcp_abc123"
+    assert "output" not in result[1]
 
 
-def test_prepare_messages_for_openai_keeps_unpaired_mcp_when_reasoning_is_stripped() -> None:
+def test_prepare_messages_for_openai_replays_all_mcp_calls_for_one_reasoning_item() -> None:
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     messages = [
         Message(
             role="assistant",
             contents=[
+                Content.from_text_reasoning(
+                    id="rs_abc123",
+                    text="Search both indexes.",
+                    protected_data="encrypted-reasoning",
+                ),
                 Content.from_mcp_server_tool_call(
-                    call_id="mcp_keep",
+                    call_id="mcp_dogs",
                     tool_name="search",
                     server_name="api_specs",
                     arguments='{"q": "dogs"}',
-                )
-            ],
-        ),
-        Message(
-            role="tool",
-            contents=[
-                Content.from_mcp_server_tool_result(
-                    call_id="mcp_keep",
-                    output=[Content.from_text(text="found 5 dogs")],
-                )
-            ],
-        ),
-        Message(
-            role="assistant",
-            contents=[Content.from_text_reasoning(id="rs_abc123", text="Need a tool call.")],
-        ),
-        Message(
-            role="assistant",
-            contents=[
+                ),
                 Content.from_mcp_server_tool_call(
-                    call_id="mcp_drop",
+                    call_id="mcp_cats",
                     tool_name="search",
                     server_name="api_specs",
                     arguments='{"q": "cats"}',
-                )
+                ),
             ],
         ),
         Message(
             role="tool",
             contents=[
                 Content.from_mcp_server_tool_result(
-                    call_id="mcp_drop",
-                    output=[Content.from_text(text="found 10 cats")],
+                    call_id="mcp_dogs",
+                    output=[Content.from_text(text="found 5 dogs")],
                 )
             ],
         ),
@@ -7148,8 +7211,9 @@ def test_prepare_messages_for_openai_keeps_unpaired_mcp_when_reasoning_is_stripp
     result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
 
     mcp_items = [item for item in result if isinstance(item, dict) and item.get("type") == "mcp_call"]
-    assert [item["id"] for item in mcp_items] == ["mcp_keep"]
+    assert [item["id"] for item in mcp_items] == ["mcp_dogs", "mcp_cats"]
     assert mcp_items[0]["output"] == "found 5 dogs"
+    assert "output" not in mcp_items[1]
 
 
 def test_prepare_messages_for_openai_drops_orphan_mcp_server_tool_result() -> None:
