@@ -467,6 +467,10 @@ class FlowState:
     reasoning_messages: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
     accumulated_reasoning: dict[str, str] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     reasoning_message_id: str | None = None
+    # Ordered text/tool_calls/reasoning segment boundaries in the order the
+    # model emitted them, so MESSAGES_SNAPSHOT can preserve that order
+    # (issue #7223) instead of the fixed tool-calls -> results -> text layout.
+    snapshot_segments: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
 
     def get_tool_name(self, call_id: str | None) -> str | None:
         """Get tool name by call ID."""
@@ -478,6 +482,37 @@ class FlowState:
     def get_pending_without_end(self) -> list[dict[str, Any]]:
         """Get tool calls that started but never received an end event (declaration-only)."""
         return [tc for tc in self.pending_tool_calls if tc.get("id") not in self.tool_calls_ended]
+
+
+def _open_text_segment(flow: FlowState, message_id: str) -> dict[str, Any]:
+    """Start a new snapshot text segment for a freshly opened text message."""
+    segment = {"kind": "text", "id": message_id, "text": ""}
+    flow.snapshot_segments.append(segment)
+    return segment
+
+
+def _text_segment_for(flow: FlowState, message_id: str) -> dict[str, Any] | None:
+    """Find the text segment belonging to the given message id."""
+    for segment in reversed(flow.snapshot_segments):
+        if segment["kind"] == "text" and segment["id"] == message_id:
+            return segment
+    return None
+
+
+def _track_tool_call_segment(flow: FlowState, tool_call_id: str) -> None:
+    """Record a tool call in the current tool segment, opening one if needed."""
+    if flow.snapshot_segments and flow.snapshot_segments[-1]["kind"] == "tool_calls":
+        flow.snapshot_segments[-1]["call_ids"].append(tool_call_id)
+    else:
+        flow.snapshot_segments.append({"kind": "tool_calls", "call_ids": [tool_call_id]})
+
+
+def _track_reasoning_segment(flow: FlowState, message_id: str) -> None:
+    """Record where a reasoning block sits in the snapshot emission order."""
+    for segment in flow.snapshot_segments:
+        if segment["kind"] == "reasoning" and segment["id"] == message_id:
+            return
+    flow.snapshot_segments.append({"kind": "reasoning", "id": message_id})
 
 
 def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> list[BaseEvent]:
@@ -492,6 +527,7 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
     if not flow.message_id:
         flow.message_id = generate_event_id()
         flow.accumulated_text = ""
+        _open_text_segment(flow, flow.message_id)
         events.append(TextMessageStartEvent(message_id=flow.message_id, role="assistant"))
     elif flow.accumulated_text and content.text == flow.accumulated_text:
         # Guard against full-message replay chunks that can appear after streaming deltas.
@@ -500,6 +536,9 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
 
     events.append(TextMessageContentEvent(message_id=flow.message_id, delta=content.text))
     flow.accumulated_text += content.text
+    segment = _text_segment_for(flow, flow.message_id)
+    if segment is not None:
+        segment["text"] = flow.accumulated_text
     return events
 
 
@@ -534,6 +573,7 @@ def _emit_tool_call(
         }
         flow.pending_tool_calls.append(tool_entry)
         flow.tool_calls_by_id[tool_call_id] = tool_entry
+        _track_tool_call_segment(flow, tool_call_id)
 
     elif tool_call_id:
         flow.tool_call_id = tool_call_id
@@ -809,6 +849,7 @@ def _emit_approval_request(
         flow.pending_tool_calls.append(confirm_entry)
         flow.tool_calls_by_id[confirm_id] = confirm_entry
         flow.tool_calls_ended.add(confirm_id)
+        _track_tool_call_segment(flow, confirm_id)
 
     flow.waiting_for_approval = True
     return events
@@ -870,6 +911,7 @@ def _emit_mcp_tool_call(content: Content, flow: FlowState) -> list[BaseEvent]:
     }
     flow.pending_tool_calls.append(tool_entry)
     flow.tool_calls_by_id[tool_call_id] = tool_entry
+    _track_tool_call_segment(flow, tool_call_id)
 
     return events
 
@@ -1020,6 +1062,7 @@ def _emit_text_reasoning(content: Content, flow: FlowState | None = None) -> lis
             if content.protected_data is not None:
                 reasoning_entry["encryptedValue"] = content.protected_data
             flow.reasoning_messages.append(reasoning_entry)
+            _track_reasoning_segment(flow, message_id)
         else:
             existing_entry["content"] = full_text
             if content.protected_data is not None:

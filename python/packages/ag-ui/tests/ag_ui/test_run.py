@@ -26,6 +26,7 @@ from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import (
     PendingApprovalEntry,
     PendingApprovalKey,
+    _build_messages_snapshot,
     _build_safe_metadata,
     _canonical_approval_resume_messages,
     _create_state_context_message,
@@ -405,6 +406,96 @@ def test_emit_text_skips_when_waiting_for_approval():
     events = _emit_text(content, flow)
 
     assert len(events) == 0
+
+
+def _snapshot_kinds(event):
+    """Flatten a MessagesSnapshotEvent into (kind, message) pairs for order assertions."""
+    kinds = []
+    for message in event.messages:
+        dumped = message if isinstance(message, dict) else message.model_dump(exclude_none=True)
+        if dumped.get("role") == "assistant" and dumped.get("tool_calls"):
+            kinds.append(("tool_calls", dumped))
+        elif dumped.get("role") == "assistant":
+            kinds.append(("text", dumped))
+        elif dumped.get("role") == "tool":
+            kinds.append(("result", dumped))
+        elif dumped.get("role") == "reasoning":
+            kinds.append(("reasoning", dumped))
+    return kinds
+
+
+def test_snapshot_places_lead_in_text_before_tool_calls():
+    """Lead-in narration streamed before the tool calls stays in front of them."""
+    flow = FlowState()
+    _emit_text(Content.from_text("Let me research the docs first."), flow)
+    _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["text", "tool_calls"]
+    assert kinds[0][1]["content"] == "Let me research the docs first."
+    assert kinds[0][1]["id"] == flow.message_id
+    assert kinds[1][1]["tool_calls"][0]["id"] == "call_1"
+
+
+def test_snapshot_preserves_stream_order_around_tool_results():
+    """A turn shaped text -> calls -> results -> text snapshots in that order."""
+    flow = FlowState()
+    _emit_text(Content.from_text("First, the plan."), flow)
+    _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+    _emit_tool_result(Content.from_function_result(call_id="call_1", result="done"), flow)
+    _emit_text(Content.from_text("And the summary."), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["text", "tool_calls", "result", "text"]
+    assert kinds[0][1]["content"] == "First, the plan."
+    assert kinds[2][1].get("toolCallId", kinds[2][1].get("tool_call_id")) == "call_1"
+    assert kinds[3][1]["content"] == "And the summary."
+    assert kinds[3][1]["id"] != kinds[0][1]["id"]
+
+
+def test_snapshot_tool_only_message_reuses_stream_message_id():
+    """Tool-only turns keep the message id the stream opened with."""
+    flow = FlowState()
+    flow.message_id = "tool-only-msg"
+    _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls"]
+    assert kinds[0][1]["id"] == "tool-only-msg"
+
+
+def test_snapshot_keeps_reasoning_in_emission_order():
+    """Reasoning blocks keep their streamed position instead of always trailing."""
+    flow = FlowState()
+    _emit_text_reasoning(Content.from_text("thinking out loud"), flow)
+    _emit_text(Content.from_text("Answer incoming."), flow)
+    _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["reasoning", "text", "tool_calls"]
+
+
+def test_snapshot_without_segment_tracking_keeps_legacy_layout():
+    """Flows assembled without the emit helpers keep the old fixed grouping."""
+    flow = FlowState()
+    flow.accumulated_text = "late text"
+    tool_entry = {"id": "call_1", "type": "function", "function": {"name": "docs_fetch", "arguments": ""}}
+    flow.pending_tool_calls.append(tool_entry)
+    flow.tool_calls_by_id["call_1"] = tool_entry
+    flow.tool_results.append({"id": "r1", "role": "tool", "toolCallId": "call_1", "content": "done"})
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls", "result", "text"]
 
 
 def test_emit_text_skips_when_skip_text_flag():
@@ -1619,7 +1710,7 @@ class TestReasoningInSnapshot:
         assert isinstance(events[0], ReasoningStartEvent)
 
     def test_snapshot_reasoning_ordering(self):
-        """Reasoning messages appear after assistant text in snapshot."""
+        """Reasoning keeps its streamed position in the snapshot."""
         from agent_framework_ag_ui._agent_run import _build_messages_snapshot
 
         flow = FlowState()
@@ -1631,10 +1722,10 @@ class TestReasoningInSnapshot:
 
         snapshot = _build_messages_snapshot(flow, [{"id": "u1", "role": "user", "content": "Hi"}])
 
-        # user -> assistant text -> reasoning
+        # reasoning streamed before the answer, so it snapshots before it too
         assert len(snapshot.messages) == 3
         roles = [_message_role(m) for m in snapshot.messages]
-        assert roles == ["user", "assistant", "reasoning"]
+        assert roles == ["user", "reasoning", "assistant"]
 
     def test_reasoning_accumulates_incremental_deltas(self):
         """Multiple reasoning deltas with the same id accumulate into one entry."""
