@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
-from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING
-from typing import Any
+from contextlib import _AsyncGeneratorContextManager  # pyright: ignore[reportPrivateUsage]
+from typing import TYPE_CHECKING, Any, override
 from urllib.parse import urlsplit
 
 import httpx
@@ -184,10 +183,12 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             load_tools=load_tools,
         )
 
-    def get_mcp_client(self) -> AbstractAsyncContextManager[Any]:
+    @override
+    def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an authenticated MCP HTTP client.
-        
-        Recreates the underlying HTTP client if it was previously closed."""
+
+        Recreates the underlying HTTP client if it was previously closed.
+        """
         if self._httpx_client is None:
             self._httpx_client = httpx.AsyncClient(
                 auth=_ToolboxAuth(self._credential, self._token_scope),
@@ -195,6 +196,7 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             )
         return super().get_mcp_client()
 
+    @override
     async def close(self) -> None:
         """Close the MCP session and toolbox HTTP client while preserving credentials and timeout for reconnection."""
         try:

@@ -231,6 +231,7 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     assert result == ["skill-a"]
     assert captured["client"] is sentinel_session
 
+
 class TestFoundryToolboxReconnection:
     async def test_close_preserves_credential_for_reconnection(self) -> None:
         """After close(), get_mcp_client() should recreate an authenticated client."""
