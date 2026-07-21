@@ -230,10 +230,10 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse:  # noqa: 
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # This sample demonstrates only Responses `previous_response_id`
-    # continuation. `responses_session_id` also returns `conversation_id`, so
-    # reject that shape here instead of treating it as a checkpoint cursor.
-    previous_response_id = responses_session_id(body)
-    if previous_response_id and not previous_response_id.startswith("resp_"):
+    # continuation, so reject `conversation_id` instead of treating it as a
+    # checkpoint cursor.
+    previous_response_id, is_conversation_id = responses_session_id(body)
+    if is_conversation_id:
         raise HTTPException(
             status_code=400,
             detail="This server supports previous_response_id continuation only; conversation_id is not implemented.",
@@ -267,7 +267,6 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse:  # noqa: 
         responses_from_run(
             response_from_workflow_result(result),
             response_id=response_id,
-            session_id=previous_response_id,
         )
     )
 
