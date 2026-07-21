@@ -68,6 +68,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_framework.claude")
 
+FINISH_REASON_MAP: dict[str, str] = {
+    "end_turn": "stop",
+    "stop_sequence": "stop",
+    "max_tokens": "length",
+    "tool_use": "tool_calls",
+    "refusal": "content_filter",
+}
+
 
 # Name of the in-process MCP server that hosts Agent Framework tools.
 # FunctionTool instances are converted to SDK MCP tools and served
@@ -843,7 +851,9 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                     }.items()
                     if isinstance(value, int)
                 })
-                finish_reason = message.stop_reason
+                finish_reason = (
+                    FINISH_REASON_MAP.get(message.stop_reason, message.stop_reason) if message.stop_reason else None
+                )
                 if usage_details or finish_reason:
                     yield AgentResponseUpdate(
                         contents=[Content.from_usage(usage_details, raw_representation=message)]

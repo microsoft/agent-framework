@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
 
-AZURE_OPENAI_TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"  # noqa: S105 # nosec B105
+AZURE_OPENAI_TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"  # ruff:ignore[hardcoded-password-string] # nosec B105
 
 
 RESPONSE_TYPE = Union[

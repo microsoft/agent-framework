@@ -24,6 +24,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
@@ -542,6 +543,11 @@ class OllamaChatClient(
             contents.extend(tool_calls)
         return contents
 
+    def _get_finish_reason_from_ollama(self, response: OllamaChatResponse) -> FinishReason | None:
+        if response.message.tool_calls:
+            return FinishReason("tool_calls")
+        return FinishReason(response.done_reason) if response.done_reason else None
+
     def _parse_streaming_response_from_ollama(self, response: OllamaChatResponse) -> ChatResponseUpdate:
         contents = self._parse_contents_from_ollama(response)
         finish_reason = None
@@ -561,7 +567,7 @@ class OllamaChatClient(
             )
             if usage_details:
                 contents.append(Content.from_usage(usage_details, raw_representation=response))
-            finish_reason = response.done_reason if response.done_reason in ("stop", "length") else None
+            finish_reason = self._get_finish_reason_from_ollama(response)
         return ChatResponseUpdate(
             contents=contents,
             role="assistant",
@@ -590,7 +596,7 @@ class OllamaChatClient(
                 if isinstance(value, int)
             }
         )
-        finish_reason = response.done_reason if response.done_reason in ("stop", "length") else None
+        finish_reason = self._get_finish_reason_from_ollama(response)
 
         return ChatResponse(
             messages=[Message(role="assistant", contents=contents)],

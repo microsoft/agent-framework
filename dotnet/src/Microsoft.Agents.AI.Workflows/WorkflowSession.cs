@@ -165,6 +165,7 @@ internal sealed class WorkflowSession : AgentSession
 
         return new(message.Role, message.Contents)
         {
+            AuthorName = message.AuthorName,
             CreatedAt = message.CreatedAt ?? DateTimeOffset.UtcNow,
             MessageId = message.MessageId ?? Guid.NewGuid().ToString("N"),
             ResponseId = responseId,
@@ -466,6 +467,17 @@ internal sealed class WorkflowSession : AgentSession
         {
             await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
         }
+
+        AgentResponseUpdate CreateObservabilityUpdate(WorkflowEvent evt)
+            => new(ChatRole.Assistant, [])
+            {
+                CreatedAt = DateTimeOffset.UtcNow,
+                MessageId = Guid.NewGuid().ToString("N"),
+                Role = ChatRole.Assistant,
+                ResponseId = this.LastResponseId,
+                RawRepresentation = evt
+            };
+
         await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false, cancellationToken)
                                                .ConfigureAwait(false)
                                                .WithCancellation(cancellationToken))
@@ -522,12 +534,14 @@ internal sealed class WorkflowSession : AgentSession
                         ? executorException.Message
                         : "An error occurred while executing the workflow.";
 
-                    yield return this.CreateUpdate(this.LastResponseId, evt, new ErrorContent(executorMessage));
+                    AgentResponseUpdate executorUpdate = this.CreateUpdate(this.LastResponseId, evt, new ErrorContent(executorMessage));
+                    yield return executorUpdate;
                     break;
 
                 case SuperStepCompletedEvent stepCompleted:
                     this.LastCheckpoint = stepCompleted.CompletionInfo?.Checkpoint;
-                    goto default;
+                    yield return CreateObservabilityUpdate(evt);
+                    break;
 
                 case AgentResponseEvent agentResponse:
                     // Under Futures.EnableAgentResponseOutputTaggingAndFiltering=true, mirror
@@ -536,7 +550,8 @@ internal sealed class WorkflowSession : AgentSession
                     // the legacy default, keep today's behavior — gated by the include flag.
                     if (!Futures.EnableAgentResponseOutputTaggingAndFiltering && !this._includeWorkflowOutputsInResponse)
                     {
-                        goto default;
+                        yield return CreateObservabilityUpdate(evt);
+                        break;
                     }
 
                     // Either EnableAgentResponseOutputTaggingAndFiltering -- so yield the Response
@@ -557,32 +572,50 @@ internal sealed class WorkflowSession : AgentSession
                         ChatMessage chatMessage => [chatMessage],
                         _ => null
                     };
-
-                    // Same assymetry as with AgentResponseEvent, but there is no EnableFiltering flag
-                    // to consider. If this made it here (and since it is not an AgentResponse[Update]),
-                    // it means it is already been selected as an Output() from the user. Intermediate
-                    // is irrelevant here.
-                    if (updateMessages == null || !this._includeWorkflowOutputsInResponse)
+                    IEnumerable<AIContent>? updateContents = output.Data switch
                     {
-                        goto default;
+                        string text => [new TextContent(text)],
+                        AIContent content => [content],
+                        IEnumerable<AIContent> contents => contents,
+                        _ => null
+                    };
+
+                    // Workflow outputs with response-compatible payloads are forwarded when the
+                    // host requests all workflow outputs, or when this executor is an explicit
+                    // output source for the workflow.
+                    if (updateMessages == null
+                        && updateContents == null)
+                    {
+                        yield return CreateObservabilityUpdate(evt);
+                        break;
                     }
 
-                    foreach (ChatMessage message in updateMessages)
+                    bool includeTerminalOutput = this._workflow.IsTerminalOutput(output.ExecutorId);
+                    if (!this._includeWorkflowOutputsInResponse
+                        && !includeTerminalOutput)
+                    {
+                        yield return CreateObservabilityUpdate(evt);
+                        break;
+                    }
+
+                    foreach (ChatMessage message in this._includeWorkflowOutputsInResponse ? updateMessages ?? [] : [])
                     {
                         yield return this.CreateUpdate(this.LastResponseId, evt, message);
+                    }
+                    if (updateContents is not null
+                        && (this._includeWorkflowOutputsInResponse || includeTerminalOutput))
+                    {
+                        AIContent[] contents = [.. updateContents];
+                        if (contents.Length > 0)
+                        {
+                            yield return this.CreateUpdate(this.LastResponseId, evt, contents);
+                        }
                     }
                     break;
 
                 default:
                     // Emit all other workflow events for observability (DevUI, logging, etc.)
-                    yield return new AgentResponseUpdate(ChatRole.Assistant, [])
-                    {
-                        CreatedAt = DateTimeOffset.UtcNow,
-                        MessageId = Guid.NewGuid().ToString("N"),
-                        Role = ChatRole.Assistant,
-                        ResponseId = this.LastResponseId,
-                        RawRepresentation = evt
-                    };
+                    yield return CreateObservabilityUpdate(evt);
                     break;
             }
         }
