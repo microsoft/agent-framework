@@ -81,14 +81,21 @@ else:
 
 try:
     from openai.types.chat.completion_create_params import PromptCacheOptions
+
+    _prompt_cache_options_supported = True
 except ImportError:  # pragma: no cover
+    _prompt_cache_options_supported = False
 
     class PromptCacheOptions(TypedDict, total=False):
         """Fallback for openai versions that predate prompt cache options.
 
-        Deliberately empty: the option cannot be sent on these versions, so any
-        content in the field is flagged by type checkers.
+        Mirrors the SDK's shape so ``prompt_cache_options`` type-checks the same on
+        every supported openai version; a runtime guard rejects the option when the
+        installed openai is too old to send it.
         """
+
+        mode: Literal["implicit", "explicit"]
+        ttl: Literal["30m"]
 
 
 if TYPE_CHECKING:
@@ -667,6 +674,11 @@ class RawOpenAIChatCompletionClient(
         run_options = {
             k: v for k, v in options.items() if v is not None and k not in {"instructions", "tools", "conversation_id"}
         }
+
+        if run_options.get("prompt_cache_options") is not None and not _prompt_cache_options_supported:
+            raise ChatClientInvalidRequestException(
+                "prompt_cache_options requires openai>=2.45.0; upgrade the openai package to use it."
+            )
 
         # messages
         if messages and "messages" not in run_options:
