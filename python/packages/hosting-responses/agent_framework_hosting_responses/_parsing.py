@@ -125,26 +125,31 @@ def create_response_id() -> str:
     return f"resp_{uuid.uuid4().hex}"
 
 
-def responses_session_id(body: Mapping[str, Any]) -> str | None:
-    """Return the Responses session id from request body, if present.
+def create_conversation_id() -> str:
+    """Create a Responses-shaped conversation id."""
+    return f"conv_{uuid.uuid4().hex}"
 
-    The returned value can be a ``resp_*`` previous response id or a ``conv_*``
-    conversation id. Callers choose whether this request-derived value is
+
+def responses_session_id(body: Mapping[str, Any]) -> tuple[str | None, bool]:
+    """Return the Responses session id and whether it is a conversation id.
+
+    The session id can be a ``resp_*`` previous response id or a ``conv_*``
+    conversation id. Callers choose whether these request-derived values are
     trusted for their route and deployment.
 
     Args:
         body: OpenAI Responses-shaped request body.
 
     Returns:
-        Previous response id, conversation id, or ``None``.
+        The session id, if present, and whether it came from ``conversation_id``.
     """
     previous_response_id = body.get("previous_response_id")
     if isinstance(previous_response_id, str) and previous_response_id:
-        return previous_response_id
+        return previous_response_id, False
     conversation_id = body.get("conversation_id")
     if isinstance(conversation_id, str) and conversation_id:
-        return conversation_id
-    return None
+        return conversation_id, True
+    return None, False
 
 
 def responses_to_run(body: Mapping[str, Any]) -> AgentRunArgs:

@@ -117,8 +117,8 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
         run = responses_to_run(body)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    session_id = responses_session_id(body)
-    conversation_id = session_id if body.get("conversation_id") == session_id else None
+    session_id, is_conversation_id = responses_session_id(body)
+    conversation_id = session_id if is_conversation_id else None
     response_id = create_response_id()
 
     # App-specific policy: allow only the request options this route is willing

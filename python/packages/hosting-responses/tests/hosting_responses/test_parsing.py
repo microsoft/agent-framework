@@ -12,6 +12,7 @@ import pytest
 from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream
 
 from agent_framework_hosting_responses import (
+    create_conversation_id,
     create_response_id,
     messages_from_responses_input,
     responses_from_run,
@@ -118,19 +119,29 @@ class TestMessagesFromResponsesInput:
 
 
 class TestResponsesRunHelpers:
+    def test_create_conversation_id_shape(self) -> None:
+        conversation_id = create_conversation_id()
+
+        assert len(conversation_id) == 37
+        assert conversation_id.startswith("conv_")
+        assert all(character in "0123456789abcdef" for character in conversation_id.removeprefix("conv_"))
+
     def test_create_response_id_shape(self) -> None:
         response_id = create_response_id()
 
         assert response_id.startswith("resp_")
 
     def test_responses_session_id_prefers_previous_response(self) -> None:
-        assert responses_session_id({"previous_response_id": "resp_1", "conversation_id": "conv_1"}) == "resp_1"
+        assert responses_session_id({"previous_response_id": "resp_1", "conversation_id": "conv_1"}) == (
+            "resp_1",
+            False,
+        )
 
     def test_responses_session_id_uses_conversation_id(self) -> None:
-        assert responses_session_id({"conversation_id": "conv_1"}) == "conv_1"
+        assert responses_session_id({"conversation_id": "conv_1"}) == ("conv_1", True)
 
     def test_responses_session_id_returns_none_when_absent(self) -> None:
-        assert responses_session_id({"input": "hi"}) is None
+        assert responses_session_id({"input": "hi"}) == (None, False)
 
     def test_responses_to_run_returns_messages_options_and_stream(self) -> None:
         run = responses_to_run({
