@@ -59,6 +59,9 @@ existing imports and the `[all]` extra.
   curated subset of entry-point types (no metadata duplication). The extension's own samples/docs
   would import directly from `agent_framework_durabletask` / `agent_framework_azurefunctions`; the
   shim would be compatibility-only.
+- Neutral — users may still open GitHub issues against the core repo for problems in the extension,
+  but the extension's own repo would be the primary place for issues and PRs. These issues would
+  need to be triaged and transferred to the extension repo.
 - Bad — **cross-repo coupling.** Core's shim correctness would track the extension's publish cadence
   (a shim symbol newer than the last published beta would not resolve until republished), and the
   .NET extension would still consume internal `Microsoft.Agents.AI.Workflows` surface, so the
