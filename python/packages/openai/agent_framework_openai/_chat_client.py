@@ -34,6 +34,7 @@ from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMidd
 from agent_framework._settings import SecretString
 from agent_framework._telemetry import USER_AGENT_KEY
 from agent_framework._tools import (
+    FUNCTION_INVOCATION_TERMINATED_KEY,
     SHELL_TOOL_KIND_VALUE,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -139,11 +140,13 @@ def _tool_call_ids_paired_with_reasoning(messages: Sequence[Message]) -> set[str
 
     Hosted MCP calls are self-contained response items and can be removed immediately. A
     client-side function call remains active through its tool result, so it is removable only
-    after a later assistant message proves that the function loop completed.
+    after a later assistant message proves that the function loop completed or an explicit
+    middleware-termination marker closes the loop.
     """
     paired_call_ids: set[str] = set()
     reasoning_function_call_ids: set[str] = set()
     completed_function_call_ids: set[str] = set()
+    terminated_function_call_ids: set[str] = set()
     pending_reasoning_prefix = False
 
     for message in messages:
@@ -152,6 +155,8 @@ def _tool_call_ids_paired_with_reasoning(messages: Sequence[Message]) -> set[str
         for content in message.contents:
             if content.type == "function_result" and content.call_id:
                 completed_function_call_ids.add(content.call_id)
+                if content.additional_properties.get(FUNCTION_INVOCATION_TERMINATED_KEY) is True:
+                    terminated_function_call_ids.add(content.call_id)
             elif content.type in {"function_call", "mcp_server_tool_call"}:
                 has_tool_call = True
                 if not (has_reasoning or pending_reasoning_prefix) or not content.call_id:
@@ -160,6 +165,8 @@ def _tool_call_ids_paired_with_reasoning(messages: Sequence[Message]) -> set[str
                     reasoning_function_call_ids.add(content.call_id)
                 else:
                     paired_call_ids.add(content.call_id)
+
+        paired_call_ids.update(reasoning_function_call_ids & terminated_function_call_ids)
 
         has_follow_up_assistant_content = (
             message.role == "assistant"

@@ -6,6 +6,7 @@ import inspect
 import json
 import os
 import sys
+from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -22,7 +23,10 @@ from agent_framework import (
     ChatMiddleware,
     ChatResponse,
     ChatResponseUpdate,
+    FunctionInvocationContext,
+    FunctionMiddleware,
     Message,
+    MiddlewareTermination,
     WorkflowBuilder,
     tool,
 )
@@ -1199,7 +1203,10 @@ async def test_foundry_agent_configure_azure_monitor_import_error() -> None:
         await agent.configure_azure_monitor()
 
 
-async def test_foundry_agent_workflow_drops_function_call_paired_with_stripped_reasoning() -> None:
+@pytest.mark.parametrize("terminate_tool_loop", [False, True])
+async def test_foundry_agent_workflow_drops_function_call_paired_with_stripped_reasoning(
+    terminate_tool_loop: bool,
+) -> None:
     """Stateless cross-agent replay keeps reasoning and its client-side tool call atomic."""
 
     def _message(message_id: str, text: str) -> dict[str, Any]:
@@ -1289,6 +1296,15 @@ async def test_foundry_agent_workflow_drops_function_call_paired_with_stripped_r
     def lookup_docs(query: str) -> str:
         return f"Found documentation for {query}"
 
+    class TerminateToolLoopMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            context.result = "Blocked by policy"
+            raise MiddlewareTermination("Policy blocked tool execution")
+
     transport = httpx.MockTransport(foundry_responses_boundary)
     responses_client = AsyncOpenAI(
         api_key="test-key",
@@ -1302,6 +1318,7 @@ async def test_foundry_agent_workflow_drops_function_call_paired_with_stripped_r
         project_client=project_client,
         agent_name="research-agent",
         tools=[lookup_docs],
+        middleware=[TerminateToolLoopMiddleware()] if terminate_tool_loop else None,
     )
     summary_agent = FoundryAgent(
         project_client=project_client,

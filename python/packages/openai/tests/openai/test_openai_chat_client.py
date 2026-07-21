@@ -2603,6 +2603,46 @@ def test_prepare_messages_for_openai_keeps_active_function_call_for_tool_loop() 
     assert "function_call" in storage_off_types
 
 
+def test_prepare_messages_for_openai_drops_middleware_terminated_function_call() -> None:
+    """A terminated function loop is historical even without a final assistant message."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_terminated",
+                    text="I need to call the guarded tool",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_function_call(
+                    call_id="call_terminated",
+                    name="guarded_tool",
+                    arguments="{}",
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="call_terminated",
+                    result="Blocked by policy",
+                    additional_properties={"agent_framework.function_invocation.terminated": True},
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
+
+    types = [item.get("type") for item in result]
+    assert "reasoning" not in types
+    assert "function_call" not in types
+    assert "function_call_output" not in types
+
+
 def test_prepare_messages_for_openai_full_conversation_with_reasoning() -> None:
     """Test _prepare_messages_for_openai correctly serializes a full conversation
     that includes reasoning + function_call + function_result + final text.
