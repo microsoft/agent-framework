@@ -130,7 +130,7 @@ def create_conversation_id() -> str:
     return f"conv_{uuid.uuid4().hex}"
 
 
-def responses_session_id(body: Mapping[str, Any]) -> tuple[str | None, bool | None]:
+def responses_session_id(body: Mapping[str, Any]) -> tuple[str, bool] | tuple[None, None]:
     """Return the Responses session id and whether it is a conversation id.
 
     The session id can be a ``resp_*`` previous response id or a ``conv_*``
