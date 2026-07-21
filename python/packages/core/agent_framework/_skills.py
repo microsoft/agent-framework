@@ -4078,12 +4078,14 @@ def _resolve_mcp_session_provider(
         ValueError: If both or neither of *client* and *session_provider* are
             provided.
     """
-    if (client is None) == (session_provider is None):
-        raise ValueError("Provide exactly one of 'client' or 'session_provider'.")
+    if client is not None and session_provider is not None:
+        raise ValueError("Provide exactly one of 'client' or 'session_provider', not both.")
     if session_provider is not None:
         return session_provider
-    resolved = client
-    return lambda: cast("ClientSession", resolved)
+    if client is None:
+        raise ValueError("Provide exactly one of 'client' or 'session_provider'.")
+    fixed: ClientSession = client
+    return lambda: fixed
 
 
 @experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
