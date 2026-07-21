@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **agent-framework-core**, **agent-framework-tools**: Warn when auto-approved tools have name collisions ([#7090](https://github.com/microsoft/agent-framework/pull/7090))
 - **agent-framework-hosting-a2a**: Add app-owned A2A hosting helpers ([#7050](https://github.com/microsoft/agent-framework/pull/7050))
 - **agent-framework-hosting-mcp**: Add app-owned MCP hosting helpers for exposing agents and workflows as native MCP tools ([#7209](https://github.com/microsoft/agent-framework/pull/7209))
+- **agent-framework-hosting-responses**: [BREAKING] Add Responses conversation ID creation and parsing helpers, and distinguish conversation IDs from previous response IDs ([#7234](https://github.com/microsoft/agent-framework/pull/7234))
 - **agent-framework-hosting-telegram**: Add Telegram hosting helpers and samples ([#7047](https://github.com/microsoft/agent-framework/pull/7047))
 - **samples**: Add a Microsoft OpenTelemetry Distro observability sample ([#5632](https://github.com/microsoft/agent-framework/pull/5632))
 
