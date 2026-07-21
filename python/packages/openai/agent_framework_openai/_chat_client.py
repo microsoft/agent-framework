@@ -2822,6 +2822,7 @@ class RawOpenAIChatClient(
                         id=event.item_id,
                         text=event.delta,
                         raw_representation=event,
+                        additional_properties={"reasoning_text": event.delta},
                     )
                 )
                 metadata.update(self._get_metadata_from_response(event))
@@ -2835,6 +2836,7 @@ class RawOpenAIChatClient(
                             id=event.item_id,
                             text=event.text,
                             raw_representation=event,
+                            additional_properties={"reasoning_text": event.text},
                         )
                     )
                 metadata.update(self._get_metadata_from_response(event))
@@ -3031,7 +3033,7 @@ class RawOpenAIChatClient(
                         added_reasoning = False
                         if hasattr(event_item, "content") and event_item.content:
                             for index, reasoning_content in enumerate(event_item.content):
-                                additional_properties: dict[str, Any] = {}
+                                additional_properties: dict[str, Any] = {"reasoning_text": reasoning_content.text}
                                 if (
                                     hasattr(event_item, "summary")
                                     and event_item.summary
@@ -3042,6 +3044,7 @@ class RawOpenAIChatClient(
                                     Content.from_text_reasoning(
                                         id=reasoning_id or None,
                                         text=reasoning_content.text,
+                                        protected_data=getattr(event_item, "encrypted_content", None),
                                         raw_representation=reasoning_content,
                                         additional_properties=additional_properties or None,
                                     )
@@ -3050,15 +3053,12 @@ class RawOpenAIChatClient(
                         if not added_reasoning:
                             # Reasoning item with no visible text (e.g. encrypted reasoning).
                             # Always emit an empty marker so co-occurrence detection can occur.
-                            additional_properties_empty: dict[str, Any] = {}
-                            if encrypted := getattr(event_item, "encrypted_content", None):
-                                additional_properties_empty["encrypted_content"] = encrypted
                             contents.append(
                                 Content.from_text_reasoning(
                                     id=reasoning_id or None,
                                     text="",
+                                    protected_data=getattr(event_item, "encrypted_content", None),
                                     raw_representation=event_item,
-                                    additional_properties=additional_properties_empty or None,
                                 )
                             )
                     case "web_search_call" | "file_search_call":
@@ -3219,7 +3219,18 @@ class RawOpenAIChatClient(
                     logger.debug("Unparsed annotation type in streaming: %s", ann_type)
             case "response.output_item.done":
                 done_item = event.item
-                if getattr(done_item, "type", None) == "mcp_call":
+                if getattr(done_item, "type", None) == "reasoning":
+                    encrypted_content = getattr(done_item, "encrypted_content", None)
+                    if encrypted_content:
+                        contents.append(
+                            Content.from_text_reasoning(
+                                id=getattr(done_item, "id", None),
+                                text="",
+                                protected_data=encrypted_content,
+                                raw_representation=done_item,
+                            )
+                        )
+                elif getattr(done_item, "type", None) == "mcp_call":
                     call_id = getattr(done_item, "id", None) or getattr(done_item, "call_id", None) or ""
                     output_text = getattr(done_item, "output", None)
                     parsed_output: list[Content] | None = (

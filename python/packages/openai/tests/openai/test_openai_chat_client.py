@@ -34,6 +34,7 @@ from agent_framework._sessions import (
     InMemoryHistoryProvider,
     SessionContext,
 )
+from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidRequestException,
@@ -974,6 +975,223 @@ async def test_streaming_response_without_headers_attribute_does_not_crash() -> 
     for update in updates:
         # No header => no override => model stays the deployment alias.
         assert update.model == "test-model"
+
+
+async def test_streamed_reasoning_function_group_survives_serialization_for_stateless_replay() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    reasoning_done = MagicMock()
+    reasoning_done.type = "response.output_item.done"
+    reasoning_done.item = MagicMock()
+    reasoning_done.item.type = "reasoning"
+    reasoning_done.item.id = "rs_streamed"
+    reasoning_done.item.encrypted_content = "encrypted-streamed-reasoning"
+
+    function_added = MagicMock()
+    function_added.type = "response.output_item.added"
+    function_added.output_index = 1
+    function_added.item = MagicMock()
+    function_added.item.type = "function_call"
+    function_added.item.call_id = "call_streamed"
+    function_added.item.name = "get_weather"
+
+    function_arguments = MagicMock()
+    function_arguments.type = "response.function_call_arguments.delta"
+    function_arguments.output_index = 1
+    function_arguments.item_id = "fc_streamed"
+    function_arguments.delta = '{"location":"Seattle"}'
+
+    events = [
+        ResponseReasoningSummaryTextDeltaEvent(
+            type="response.reasoning_summary_text.delta",
+            item_id="rs_streamed",
+            output_index=0,
+            sequence_number=1,
+            summary_index=0,
+            delta="I should check the weather.",
+        ),
+        reasoning_done,
+        function_added,
+        function_arguments,
+    ]
+    fake_stream = _FakeAsyncEventStream(events)
+
+    with (
+        patch.object(client, "_prepare_request", new=AsyncMock(return_value=(client.client, {}, {}))),
+        patch.object(client.client.responses, "create", new=AsyncMock(return_value=fake_stream)),
+        patch.object(client, "_get_metadata_from_response", return_value={}),
+    ):
+        stream = client.get_response(
+            messages=[Message(role="user", contents=["What's the weather?"])],
+            options={},
+            stream=True,
+        )
+        response = await stream.get_final_response()
+
+    session_restored_message = Message.from_json(response.messages[0].to_json())
+    workflow_payload = json.loads(json.dumps(encode_checkpoint_value(session_restored_message)))
+    restored_message = decode_checkpoint_value(workflow_payload)
+    assert isinstance(restored_message, Message)
+    reasoning_contents = [content for content in restored_message.contents if content.type == "text_reasoning"]
+    assert [(content.id, content.text) for content in reasoning_contents] == [
+        ("rs_streamed", "I should check the weather.")
+    ]
+    assert reasoning_contents[0].protected_data == "encrypted-streamed-reasoning"
+
+    messages = [
+        Message(role="user", contents=["What's the weather?"]),
+        restored_message,
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_streamed", result="Sunny")],
+        ),
+    ]
+    _, run_options, _ = await client._prepare_request(messages, {"store": False})
+
+    assert run_options["input"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "What's the weather?"}],
+        },
+        {
+            "type": "reasoning",
+            "id": "rs_streamed",
+            "summary": [{"type": "summary_text", "text": "I should check the weather."}],
+            "encrypted_content": "encrypted-streamed-reasoning",
+        },
+        {
+            "call_id": "call_streamed",
+            "id": "fc_streamed",
+            "type": "function_call",
+            "name": "get_weather",
+            "arguments": '{"location":"Seattle"}',
+        },
+        {
+            "call_id": "call_streamed",
+            "type": "function_call_output",
+            "output": "Sunny",
+        },
+    ]
+
+
+def test_streamed_reasoning_text_replays_as_reasoning_content() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    function_call_ids: dict[int, tuple[str, str]] = {}
+    seen_reasoning_delta_item_ids: set[str] = set()
+    reasoning_delta = ResponseReasoningTextDeltaEvent(
+        type="response.reasoning_text.delta",
+        content_index=0,
+        item_id="rs_reasoning_text",
+        output_index=0,
+        sequence_number=1,
+        delta="Private reasoning text",
+    )
+    reasoning_done = MagicMock()
+    reasoning_done.type = "response.output_item.done"
+    reasoning_done.item = MagicMock()
+    reasoning_done.item.type = "reasoning"
+    reasoning_done.item.id = "rs_reasoning_text"
+    reasoning_done.item.encrypted_content = "encrypted-reasoning-text"
+
+    response = ChatResponse.from_updates([
+        client._parse_chunk_from_openai(
+            event,
+            {},
+            function_call_ids,
+            seen_reasoning_delta_item_ids,
+        )
+        for event in (reasoning_delta, reasoning_done)
+    ])
+    prepared = client._prepare_messages_for_openai(
+        response.messages,
+        request_uses_service_side_storage=False,
+    )
+
+    assert prepared == [
+        {
+            "type": "reasoning",
+            "id": "rs_reasoning_text",
+            "summary": [],
+            "content": [{"type": "reasoning_text", "text": "Private reasoning text"}],
+            "encrypted_content": "encrypted-reasoning-text",
+        }
+    ]
+
+
+def test_streamed_encrypted_reasoning_without_visible_text_is_replayable() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    reasoning_done = MagicMock()
+    reasoning_done.type = "response.output_item.done"
+    reasoning_done.item = MagicMock()
+    reasoning_done.item.type = "reasoning"
+    reasoning_done.item.id = "rs_encrypted_only"
+    reasoning_done.item.encrypted_content = "encrypted-only"
+
+    update = client._parse_chunk_from_openai(reasoning_done, {}, {})
+    response = ChatResponse.from_updates([update])
+
+    assert [(content.id, content.text, content.protected_data) for content in response.messages[0].contents] == [
+        ("rs_encrypted_only", "", "encrypted-only")
+    ]
+
+
+def test_streamed_summary_and_reasoning_text_replay_as_one_provider_item() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    function_call_ids: dict[int, tuple[str, str]] = {}
+    seen_reasoning_delta_item_ids: set[str] = set()
+    summary_delta = ResponseReasoningSummaryTextDeltaEvent(
+        type="response.reasoning_summary_text.delta",
+        item_id="rs_mixed",
+        output_index=0,
+        sequence_number=1,
+        summary_index=0,
+        delta="Visible summary",
+    )
+    reasoning_delta = ResponseReasoningTextDeltaEvent(
+        type="response.reasoning_text.delta",
+        content_index=0,
+        item_id="rs_mixed",
+        output_index=0,
+        sequence_number=2,
+        delta="Private reasoning",
+    )
+    reasoning_done = MagicMock()
+    reasoning_done.type = "response.output_item.done"
+    reasoning_done.item = MagicMock()
+    reasoning_done.item.type = "reasoning"
+    reasoning_done.item.id = "rs_mixed"
+    reasoning_done.item.encrypted_content = "encrypted-mixed"
+
+    response = ChatResponse.from_updates([
+        client._parse_chunk_from_openai(
+            event,
+            {},
+            function_call_ids,
+            seen_reasoning_delta_item_ids,
+        )
+        for event in (summary_delta, reasoning_delta, reasoning_done)
+    ])
+    reasoning_contents = response.messages[0].contents
+    assert [(content.text, content.additional_properties) for content in reasoning_contents] == [
+        ("Visible summary", {}),
+        ("Private reasoning", {"reasoning_text": "Private reasoning"}),
+    ]
+    assert reasoning_contents[1].protected_data == "encrypted-mixed"
+
+    prepared = client._prepare_messages_for_openai(
+        response.messages,
+        request_uses_service_side_storage=False,
+    )
+    assert prepared == [
+        {
+            "type": "reasoning",
+            "id": "rs_mixed",
+            "summary": [{"type": "summary_text", "text": "Visible summary"}],
+            "content": [{"type": "reasoning_text", "text": "Private reasoning"}],
+            "encrypted_content": "encrypted-mixed",
+        }
+    ]
 
 
 async def test_streaming_text_format_preserves_final_structured_output() -> None:
