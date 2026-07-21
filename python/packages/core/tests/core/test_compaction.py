@@ -368,12 +368,14 @@ async def test_truncation_strategy_compacts_when_token_limit_exceeded() -> None:
 
 
 async def test_truncation_strategy_keeps_latest_group_when_it_exceeds_target() -> None:
+    tokenizer = CharacterEstimatorTokenizer()
     messages = [Message(role="user", contents=["latest " * 200])]
     strategy = TruncationStrategy(
         max_n=20,
         compact_to=10,
-        tokenizer=CharacterEstimatorTokenizer(),
+        tokenizer=tokenizer,
     )
+    annotate_message_groups(messages, tokenizer=tokenizer)
 
     changed = await strategy(messages)
 
