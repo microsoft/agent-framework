@@ -129,8 +129,8 @@ def _build_app(agent: _StubAgent) -> FastAPI:
             run = responses_to_run(body)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        session_id = responses_session_id(body)
-        conversation_id = session_id if body.get("conversation_id") == session_id else None
+        session_id, is_conversation_id = responses_session_id(body)
+        conversation_id = session_id if is_conversation_id else None
         response_id = create_response_id()
 
         target = await state.get_target()
@@ -146,7 +146,7 @@ def _build_app(agent: _StubAgent) -> FastAPI:
                 async for event in responses_from_streaming_run(
                     stream,
                     response_id=response_id,
-                    session_id=session_id,
+                    conversation_id=conversation_id,
                 ):
                     yield event
                 if conversation_id is not None:
@@ -164,7 +164,7 @@ def _build_app(agent: _StubAgent) -> FastAPI:
             await state.set_session(conversation_id, session)
         else:
             await state.set_session(response_id, session)
-        return JSONResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
+        return JSONResponse(responses_from_run(result, response_id=response_id, conversation_id=conversation_id))
 
     return app
 

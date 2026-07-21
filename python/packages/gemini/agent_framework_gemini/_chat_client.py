@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from typing import Any, ClassVar, Generic, cast
 from uuid import uuid4
 
@@ -538,9 +538,13 @@ class RawGeminiChatClient(
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 validated = await self._validate_options(options)
                 model, contents, config = self._prepare_request(messages, validated)
-                async for chunk in await self._genai_client.aio.models.generate_content_stream(
+                generate_content_stream = cast(
+                    Callable[..., Awaitable[AsyncIterable[types.GenerateContentResponse]]],
+                    cast(Any, self._genai_client.aio.models).generate_content_stream,
+                )
+                async for chunk in await generate_content_stream(
                     model=model,
-                    contents=contents,  # pyright: ignore[reportArgumentType]
+                    contents=contents,
                     config=config,
                 ):
                     yield self._process_chunk(chunk)

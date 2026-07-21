@@ -11,6 +11,7 @@ These samples demonstrate how to use context providers to enrich agent conversat
 | [`azure_ai_foundry_memory.py`](azure_ai_foundry_memory.py) | Use `FoundryMemoryProvider` to add semantic memory — automatically retrieves, searches, and stores memories via Microsoft Foundry. |
 | [`file_access_data_processing/`](file_access_data_processing/) | Use `FileAccessProvider` with `FileSystemAgentFileStore` to give an agent read/write/search access to a folder of CSV data files. See its own [README](file_access_data_processing/README.md). |
 | [`azure_ai_search/`](azure_ai_search/) | Retrieval Augmented Generation (RAG) with Azure AI Search in semantic and agentic modes. See its own [README](azure_ai_search/README.md). |
+| [`azure_content_understanding/`](azure_content_understanding/) | Analyze documents, images, audio, and video with Azure Content Understanding and inject the extracted content into agent context. |
 | [`mem0/`](mem0/) | Memory-powered context using the Mem0 integration (open-source and managed). See its own [README](mem0/README.md). |
 | [`redis/`](redis/) | Redis-backed context providers for conversation memory and sessions. See its own [README](redis/README.md). |
 
