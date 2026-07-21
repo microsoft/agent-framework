@@ -60,8 +60,11 @@ public sealed class AgentProviderExtensionsTest(ITestOutputHelper output) : Work
         [
             new(new ChatResponseUpdate { MessageId = "" }),
             new(new ChatResponseUpdate(ChatRole.Assistant, "hello ") { MessageId = " " }),
-            new(new ChatResponseUpdate(ChatRole.Assistant, "world") { MessageId = "" }),
-            new(new ChatResponseUpdate(ChatRole.Assistant, "!")),
+            new(new ChatResponseUpdate(ChatRole.Assistant, "world") { MessageId = "", Role = null }),
+            new(ChatRole.Assistant, "!")
+            {
+                RawRepresentation = new object(),
+            },
         ];
         mockProvider
             .Setup(p => p.InvokeAgentAsync(
@@ -120,7 +123,9 @@ public sealed class AgentProviderExtensionsTest(ITestOutputHelper output) : Work
             Assert.All(updateEvents.Skip(1), updateEvent => Assert.Equal(messageId, updateEvent.Update.MessageId));
 
             AgentResponseEvent responseEvent = Assert.Single(events.OfType<AgentResponseEvent>());
-            Assert.Equal(messageId, Assert.Single(responseEvent.Response.Messages).MessageId);
+            ChatMessage responseMessage = Assert.Single(responseEvent.Response.Messages);
+            Assert.Equal(messageId, responseMessage.MessageId);
+            Assert.Equal("hello world!", responseMessage.Text);
         }
         else
         {

@@ -235,20 +235,31 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
             await foreach (AgentResponseUpdate update in agentStream.ConfigureAwait(false))
             {
                 // Contentless updates may carry only metadata and must not become empty messages.
-                if (string.IsNullOrWhiteSpace(update.MessageId) && update.RawRepresentation is ChatResponseUpdate rawUpdate)
+                if (string.IsNullOrWhiteSpace(update.MessageId))
                 {
-                    if (update.Contents.Count > 0)
+                    bool hasContent =
+                        update.Contents.Any(
+                            content => content is not TextContent textContent || !string.IsNullOrEmpty(textContent.Text));
+                    if (hasContent)
                     {
                         if (generatedMessageId is null
-                            || !string.Equals(generatedMessageResponseId, update.ResponseId, StringComparison.Ordinal)
-                            || generatedMessageRole != update.Role)
+                            || (generatedMessageResponseId is not null
+                                && update.ResponseId is not null
+                                && !string.Equals(generatedMessageResponseId, update.ResponseId, StringComparison.Ordinal))
+                            || (generatedMessageRole is not null
+                                && update.Role is not null
+                                && generatedMessageRole != update.Role))
                         {
                             generatedMessageId = Guid.NewGuid().ToString("N");
-                            generatedMessageResponseId = update.ResponseId;
-                            generatedMessageRole = update.Role;
                         }
+
+                        generatedMessageResponseId = update.ResponseId ?? generatedMessageResponseId;
+                        generatedMessageRole = update.Role ?? generatedMessageRole;
                         update.MessageId = generatedMessageId;
-                        rawUpdate.MessageId = generatedMessageId;
+                        if (update.RawRepresentation is ChatResponseUpdate rawUpdate)
+                        {
+                            rawUpdate.MessageId = generatedMessageId;
+                        }
                     }
                 }
                 else

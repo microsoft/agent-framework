@@ -95,7 +95,9 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
         updateEvents.Skip(1).Should().OnlyContain(updateEvent => updateEvent.Update.MessageId == messageId);
 
         AgentResponseEvent responseEvent = testContext.Events.OfType<AgentResponseEvent>().Should().ContainSingle().Subject;
-        responseEvent.Response.Messages.Should().ContainSingle().Which.MessageId.Should().Be(messageId);
+        ChatMessage responseMessage = responseEvent.Response.Messages.Should().ContainSingle().Subject;
+        responseMessage.MessageId.Should().Be(messageId);
+        responseMessage.Text.Should().Be("hello world");
     }
 
     private static ChatMessage UserMessage => new(ChatRole.User, "Hello from User!") { AuthorName = "User" };
@@ -122,12 +124,13 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
                     MessageId = messageId,
                     ResponseId = "response-id",
                 });
-            yield return new AgentResponseUpdate(
-                new ChatResponseUpdate(ChatRole.Assistant, "world")
-                {
-                    MessageId = messageId,
-                    ResponseId = "response-id",
-                });
+            yield return new AgentResponseUpdate(ChatRole.Assistant, "world")
+            {
+                MessageId = messageId,
+                ResponseId = "response-id",
+                Role = null,
+                RawRepresentation = new object(),
+            };
             await Task.CompletedTask;
         }
     }

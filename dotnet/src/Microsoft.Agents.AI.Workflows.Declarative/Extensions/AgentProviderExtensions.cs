@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -38,22 +39,33 @@ internal static class AgentProviderExtensions
         ChatRole? generatedMessageRole = null;
         await foreach (AgentResponseUpdate update in agentUpdates.ConfigureAwait(false))
         {
-            await AssignConversationIdAsync(((ChatResponseUpdate?)update.RawRepresentation)?.ConversationId).ConfigureAwait(false);
+            await AssignConversationIdAsync((update.RawRepresentation as ChatResponseUpdate)?.ConversationId).ConfigureAwait(false);
 
-            if (string.IsNullOrWhiteSpace(update.MessageId) && update.RawRepresentation is ChatResponseUpdate rawUpdate)
+            if (string.IsNullOrWhiteSpace(update.MessageId))
             {
-                if (update.Contents.Count > 0)
+                bool hasContent =
+                    update.Contents.Any(
+                        content => content is not TextContent textContent || !string.IsNullOrEmpty(textContent.Text));
+                if (hasContent)
                 {
                     if (generatedMessageId is null
-                        || !string.Equals(generatedMessageResponseId, update.ResponseId, StringComparison.Ordinal)
-                        || generatedMessageRole != update.Role)
+                        || (generatedMessageResponseId is not null
+                            && update.ResponseId is not null
+                            && !string.Equals(generatedMessageResponseId, update.ResponseId, StringComparison.Ordinal))
+                        || (generatedMessageRole is not null
+                            && update.Role is not null
+                            && generatedMessageRole != update.Role))
                     {
                         generatedMessageId = Guid.NewGuid().ToString("N");
-                        generatedMessageResponseId = update.ResponseId;
-                        generatedMessageRole = update.Role;
                     }
+
+                    generatedMessageResponseId = update.ResponseId ?? generatedMessageResponseId;
+                    generatedMessageRole = update.Role ?? generatedMessageRole;
                     update.MessageId = generatedMessageId;
-                    rawUpdate.MessageId = generatedMessageId;
+                    if (update.RawRepresentation is ChatResponseUpdate rawUpdate)
+                    {
+                        rawUpdate.MessageId = generatedMessageId;
+                    }
                 }
             }
             else
