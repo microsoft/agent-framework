@@ -6,9 +6,9 @@ This package provides the Responses-specific conversion layer:
 
 - `responses_to_run(...)` — convert a Responses request body into Agent
   Framework run values.
-- `responses_session_id(...)` — extract a prior `resp_*` response id or
-  `conv_*` conversation id and report whether it is a conversation id, or
-  return `(None, None)` when neither is present.
+- `responses_session_id(...)` — return `(session_id, is_conversation_id)` for a
+  prior `resp_*` response id or `conv_*` conversation id, or `(None, None)` when
+  neither is present.
 - `create_conversation_id(...)` — mint a Responses-shaped conversation id.
 - `create_response_id(...)` — mint a Responses-shaped response id.
 - `responses_from_run(...)` — convert an `AgentResponse` into a

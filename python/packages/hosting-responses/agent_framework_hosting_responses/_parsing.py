@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+import warnings
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any, cast
 
@@ -145,9 +146,22 @@ def responses_session_id(body: Mapping[str, Any]) -> tuple[str, bool] | tuple[No
         The flag is ``None`` when no session id is present.
     """
     previous_response_id = body.get("previous_response_id")
+    if isinstance(previous_response_id, str) and previous_response_id and not previous_response_id.startswith("resp_"):
+        warnings.warn(
+            "`previous_response_id` does not use the OpenAI Responses `resp_` prefix; "
+            "continuing with the supplied value.",
+            UserWarning,
+            stacklevel=2,
+        )
+    conversation_id = body.get("conversation_id")
+    if isinstance(conversation_id, str) and conversation_id and not conversation_id.startswith("conv_"):
+        warnings.warn(
+            "`conversation_id` does not use the OpenAI Responses `conv_` prefix; continuing with the supplied value.",
+            UserWarning,
+            stacklevel=2,
+        )
     if isinstance(previous_response_id, str) and previous_response_id:
         return previous_response_id, False
-    conversation_id = body.get("conversation_id")
     if isinstance(conversation_id, str) and conversation_id:
         return conversation_id, True
     return None, None

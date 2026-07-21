@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from collections.abc import AsyncIterator, Sequence
 from typing import cast
 
@@ -136,6 +137,20 @@ class TestResponsesRunHelpers:
             "resp_1",
             False,
         )
+
+    def test_responses_session_id_valid_ids_do_not_warn(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert responses_session_id({"previous_response_id": "resp_1"}) == ("resp_1", False)
+            assert responses_session_id({"conversation_id": "conv_1"}) == ("conv_1", True)
+
+    def test_responses_session_id_warns_for_nonstandard_previous_response_id(self) -> None:
+        with pytest.warns(UserWarning, match="previous_response_id.*resp_"):
+            assert responses_session_id({"previous_response_id": "custom-response"}) == ("custom-response", False)
+
+    def test_responses_session_id_warns_for_nonstandard_conversation_id(self) -> None:
+        with pytest.warns(UserWarning, match="conversation_id.*conv_"):
+            assert responses_session_id({"conversation_id": "custom-conversation"}) == ("custom-conversation", True)
 
     def test_responses_session_id_uses_conversation_id(self) -> None:
         assert responses_session_id({"conversation_id": "conv_1"}) == ("conv_1", True)
