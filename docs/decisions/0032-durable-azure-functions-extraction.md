@@ -70,15 +70,16 @@ Compliance would be validated by: `uv lock --check` passing with both packages r
 the shim entry-point symbols importing at runtime after `uv sync --all-extras`; and `pyright` staying
 clean on `agent_framework/azure/__init__.pyi`.
 
-A known risk is **publish-lag**: a shim symbol added to core before the extension republishes would
-not resolve. For example, `WorkflowHitlContext` was added after the latest published Azure Functions
-beta. The mitigation would be to omit such a symbol from the shim until the extension publishes it,
-then add the entry and re-lock.
+A known risk is **publish-lag**: if a symbol is added to core's shim before the extension has
+published a release that exports it, that symbol would not resolve at runtime. The mitigation would
+be to omit any such symbol from the shim until the extension publishes it, then add the entry and
+re-lock.
 
 ## More Information
 
 - Related: [ADR-0008](0008-python-subpackages.md) (vendor namespaces + stable import paths),
   [ADR-0021](0021-provider-leading-clients.md) (lazy-loading gateways).
-- Follow-ups: add the `WorkflowHitlContext` shim entry once the extension publishes a beta that
-  exports it; document the direct-import convention in the extension's samples READMEs so samples are
-  not switched back to the shim.
+- Follow-ups: during extraction, keep the shim's re-exported symbols in sync with each newly
+  published extension release (adding any symbol only once the extension publishes it); document the
+  direct-import convention in the extension's samples READMEs so samples are not switched back to the
+  shim.
