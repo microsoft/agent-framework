@@ -91,8 +91,6 @@ logger = logging.getLogger("agent_framework")
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
-# Durable transcript marker consumed by provider serializers when middleware stops a function loop.
-FUNCTION_INVOCATION_TERMINATED_KEY: Final[str] = "agent_framework.function_invocation.terminated"
 _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
 _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY: Final[str] = "already_approved_approval_request_groups"
 _FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget_state"
@@ -1833,13 +1831,6 @@ async def _try_execute_function_calls(
     contents.extend(extra_user_input_contents)
     # If any function requested termination, terminate the loop
     should_terminate = any(result[1] for result in execution_results)
-    if should_terminate:
-        # Mark every result in the batch because the loop stops before a follow-up assistant
-        # response can establish that these calls are historical. Providers use this durable
-        # transcript marker to distinguish the terminated batch from an active function loop.
-        for content in contents:
-            if content.type == "function_result":
-                content.additional_properties[FUNCTION_INVOCATION_TERMINATED_KEY] = True
     return (contents, should_terminate)
 
 

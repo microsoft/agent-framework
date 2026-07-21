@@ -1204,10 +1204,11 @@ async def test_foundry_agent_configure_azure_monitor_import_error() -> None:
 
 
 @pytest.mark.parametrize("terminate_tool_loop", [False, True])
-async def test_foundry_agent_workflow_drops_function_call_paired_with_stripped_reasoning(
+async def test_foundry_agent_workflow_replays_parallel_reasoning_function_group(
     terminate_tool_loop: bool,
 ) -> None:
-    """Stateless cross-agent replay keeps reasoning and its client-side tool call atomic."""
+    """Stateless cross-agent replay keeps a parallel reasoning/function batch atomic."""
+    summary_inputs: list[list[dict[str, Any]]] = []
 
     def _message(message_id: str, text: str) -> dict[str, Any]:
         return {
@@ -1242,8 +1243,9 @@ async def test_foundry_agent_workflow_drops_function_call_paired_with_stripped_r
                     "resp_research_tool",
                     [
                         {
+                            "encrypted_content": "encrypted-reasoning",
                             "id": "rs_required",
-                            "summary": [{"text": "I need the local MCP tool.", "type": "summary_text"}],
+                            "summary": [{"text": "I need both local tools.", "type": "summary_text"}],
                             "type": "reasoning",
                         },
                         {
@@ -1251,6 +1253,14 @@ async def test_foundry_agent_workflow_drops_function_call_paired_with_stripped_r
                             "call_id": "call_paired",
                             "id": "fc_paired",
                             "name": "lookup_docs",
+                            "status": "completed",
+                            "type": "function_call",
+                        },
+                        {
+                            "arguments": '{"query":"stateless replay"}',
+                            "call_id": "call_guarded",
+                            "id": "fc_guarded",
+                            "name": "guarded_lookup",
                             "status": "completed",
                             "type": "function_call",
                         },
@@ -1268,6 +1278,7 @@ async def test_foundry_agent_workflow_drops_function_call_paired_with_stripped_r
             )
 
         input_items = payload["input"]
+        summary_inputs.append(input_items)
         input_types = {item.get("type") for item in input_items if isinstance(item, dict)}
         if "function_call" in input_types and "reasoning" not in input_types:
             return httpx.Response(
@@ -1296,14 +1307,20 @@ async def test_foundry_agent_workflow_drops_function_call_paired_with_stripped_r
     def lookup_docs(query: str) -> str:
         return f"Found documentation for {query}"
 
+    @tool(name="guarded_lookup", approval_mode="never_require")
+    def guarded_lookup(query: str) -> str:
+        return f"Found guarded documentation for {query}"
+
     class TerminateToolLoopMiddleware(FunctionMiddleware):
         async def process(
             self,
             context: FunctionInvocationContext,
             call_next: Callable[[], Awaitable[None]],
         ) -> None:
-            context.result = "Blocked by policy"
-            raise MiddlewareTermination("Policy blocked tool execution")
+            if context.function.name == "guarded_lookup":
+                context.result = "Blocked by policy"
+                raise MiddlewareTermination("Policy blocked tool execution")
+            await call_next()
 
     transport = httpx.MockTransport(foundry_responses_boundary)
     responses_client = AsyncOpenAI(
@@ -1317,7 +1334,7 @@ async def test_foundry_agent_workflow_drops_function_call_paired_with_stripped_r
     research_agent = FoundryAgent(
         project_client=project_client,
         agent_name="research-agent",
-        tools=[lookup_docs],
+        tools=[lookup_docs, guarded_lookup],
         middleware=[TerminateToolLoopMiddleware()] if terminate_tool_loop else None,
     )
     summary_agent = FoundryAgent(
@@ -1337,6 +1354,23 @@ async def test_foundry_agent_workflow_drops_function_call_paired_with_stripped_r
     outputs = result.get_outputs()
     assert outputs
     assert outputs[-1].text == "The research result was Microsoft Agent Framework."
+    assert len(summary_inputs) == 1
+    assert [item["type"] for item in summary_inputs[0]] == [
+        "message",
+        "reasoning",
+        "function_call",
+        "function_call",
+        "function_call_output",
+        "function_call_output",
+        *(["message"] if not terminate_tool_loop else []),
+    ]
+    assert summary_inputs[0][1]["encrypted_content"] == "encrypted-reasoning"
+    assert [item["call_id"] for item in summary_inputs[0][2:4]] == ["call_paired", "call_guarded"]
+    assert [item["call_id"] for item in summary_inputs[0][4:6]] == ["call_paired", "call_guarded"]
+    assert summary_inputs[0][4]["output"] == "Found documentation for Agent Framework"
+    assert summary_inputs[0][5]["output"] == (
+        "Blocked by policy" if terminate_tool_loop else "Found guarded documentation for stateless replay"
+    )
 
 
 @pytest.mark.flaky

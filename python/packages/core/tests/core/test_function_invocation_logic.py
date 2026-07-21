@@ -3823,9 +3823,7 @@ async def test_terminate_loop_single_function_call(chat_client_base: SupportsCha
     assert response.messages[1].role == "tool"
     assert response.messages[1].contents[0].type == "function_result"
     assert response.messages[1].contents[0].result == "terminated by middleware"
-    assert (
-        response.messages[1].contents[0].additional_properties["agent_framework.function_invocation.terminated"] is True
-    )
+    assert response.messages[1].contents[0].additional_properties == {}
 
     # Verify the second response is still in the queue (wasn't consumed)
     assert len(chat_client_base.run_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
@@ -3894,10 +3892,11 @@ async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client
     assert response.messages[1].role == "tool"
     # Both function results should be present
     assert len(response.messages[1].contents) == 2
-    assert all(
-        result.additional_properties["agent_framework.function_invocation.terminated"] is True
-        for result in response.messages[1].contents
-    )
+    assert [result.result for result in response.messages[1].contents] == [
+        "Normal value1",
+        "terminated by middleware",
+    ]
+    assert all(result.additional_properties == {} for result in response.messages[1].contents)
 
     # Verify the second response is still in the queue (wasn't consumed)
     assert len(chat_client_base.run_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
@@ -3950,7 +3949,8 @@ async def test_terminate_loop_streaming_single_function_call(chat_client_base: S
         content for update in updates for content in update.contents if content.type == "function_result"
     ]
     assert len(function_results) == 1
-    assert function_results[0].additional_properties["agent_framework.function_invocation.terminated"] is True
+    assert function_results[0].result == "terminated by middleware"
+    assert function_results[0].additional_properties == {}
 
     # Verify the second streaming response is still in the queue (wasn't consumed)
     assert len(chat_client_base.streaming_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]

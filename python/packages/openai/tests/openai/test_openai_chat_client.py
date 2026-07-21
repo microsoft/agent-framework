@@ -2990,8 +2990,8 @@ def test_prepare_messages_for_openai_keeps_active_function_call_for_tool_loop() 
     assert "function_call" in storage_off_types
 
 
-def test_prepare_messages_for_openai_keeps_middleware_terminated_function_call() -> None:
-    """A terminated function loop remains part of stateless history."""
+def test_prepare_messages_for_openai_replays_middleware_terminated_function_group() -> None:
+    """A terminated function loop replays through its ordinary result contents."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     messages = [
@@ -3001,6 +3001,7 @@ def test_prepare_messages_for_openai_keeps_middleware_terminated_function_call()
                 Content.from_text_reasoning(
                     id="rs_terminated",
                     text="I need to call the guarded tool",
+                    protected_data="encrypted-reasoning",
                     additional_properties={"status": "completed"},
                 ),
                 Content.from_function_call(
@@ -3016,7 +3017,6 @@ def test_prepare_messages_for_openai_keeps_middleware_terminated_function_call()
                 Content.from_function_result(
                     call_id="call_terminated",
                     result="Blocked by policy",
-                    additional_properties={"agent_framework.function_invocation.terminated": True},
                 )
             ],
         ),
@@ -3025,8 +3025,48 @@ def test_prepare_messages_for_openai_keeps_middleware_terminated_function_call()
     result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
 
     types = [item.get("type") for item in result]
-    assert "reasoning" not in types
-    assert types == ["function_call", "function_call_output"]
+    assert types == ["reasoning", "function_call", "function_call_output"]
+    assert result[0]["encrypted_content"] == "encrypted-reasoning"
+    assert result[2]["output"] == "Blocked by policy"
+
+
+def test_prepare_messages_for_openai_replays_active_parallel_function_group() -> None:
+    """An active parallel batch retains pending calls and completed siblings."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_parallel",
+                    text="I need both tools.",
+                    protected_data="encrypted-reasoning",
+                ),
+                Content.from_function_call(call_id="call_done", name="first_tool", arguments="{}"),
+                Content.from_function_call(call_id="call_pending", name="second_tool", arguments="{}"),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_done", result="first result")],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
+
+    assert [item["type"] for item in result] == [
+        "reasoning",
+        "function_call",
+        "function_call",
+        "function_call_output",
+    ]
+    assert [item["call_id"] for item in result[1:3]] == ["call_done", "call_pending"]
+    assert result[3] == {
+        "type": "function_call_output",
+        "call_id": "call_done",
+        "output": "first result",
+    }
 
 
 def test_prepare_messages_for_openai_full_conversation_with_reasoning() -> None:
