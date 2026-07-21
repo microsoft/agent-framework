@@ -47,7 +47,7 @@ import logging
 import os
 import secrets
 import shutil
-import subprocess  # noqa: S404  # nosec B404 - running shell commands is the whole point of this tool
+import subprocess  # ruff:ignore[suspicious-subprocess-import]  # nosec B404 - running shell commands is the whole point of this tool
 import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Literal
@@ -134,7 +134,7 @@ def is_docker_available(binary: str = "docker") -> bool:
     if shutil.which(binary) is None:
         return False
     try:
-        out = subprocess.run(  # noqa: S603  # nosec B603 - argv is built from trusted binary name
+        out = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]  # nosec B603 - argv is built from trusted binary name
             [binary, "version", "--format", "{{.Server.Version}}"],
             capture_output=True,
             timeout=5.0,
@@ -191,7 +191,7 @@ def build_run_argv(
         "--security-opt",
         "no-new-privileges",
         "--tmpfs",
-        "/tmp:rw,nosuid,nodev,size=64m",  # noqa: S108,  # nosec B108 - tmpfs inside the container, not on the host
+        "/tmp:rw,nosuid,nodev,size=64m",  # ruff:ignore[hardcoded-temp-file]  # nosec B108 - tmpfs inside the container, not on the host
         "--workdir",
         workdir,
     ]
@@ -491,7 +491,7 @@ class DockerShellTool:
             "--security-opt",
             "no-new-privileges",
             "--tmpfs",
-            "/tmp:rw,nosuid,nodev,size=64m",  # noqa: S108,  # nosec B108 - tmpfs inside the container, not on the host
+            "/tmp:rw,nosuid,nodev,size=64m",  # ruff:ignore[hardcoded-temp-file]  # nosec B108 - tmpfs inside the container, not on the host
             "--workdir",
             self._workdir,
         ]

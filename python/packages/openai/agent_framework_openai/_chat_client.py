@@ -49,6 +49,7 @@ from agent_framework._types import (
     ChatResponseUpdate,
     Content,
     ContinuationToken,
+    FinishReason,
     Message,
     ResponseStream,
     Role,
@@ -2339,6 +2340,19 @@ class RawOpenAIChatClient(
         )
 
     # region Parse methods
+    def _get_finish_reason_from_openai_response(self, response: Any) -> FinishReason | None:
+        """Get the framework finish reason from a terminal Responses API response."""
+        incomplete_reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
+        if incomplete_reason == "content_filter":
+            return FinishReason("content_filter")
+        if incomplete_reason == "max_output_tokens":
+            return FinishReason("length")
+        if getattr(response, "status", None) != "completed":
+            return None
+        if any(getattr(item, "type", None) == "function_call" for item in getattr(response, "output", ())):
+            return FinishReason("tool_calls")
+        return FinishReason("stop")
+
     def _parse_response_from_openai(
         self,
         response: OpenAIResponse | ParsedResponse[BaseModel],
@@ -2638,6 +2652,8 @@ class RawOpenAIChatClient(
             args["value"] = structured_response
         elif response_format := options.get("response_format"):
             args["response_format"] = response_format
+        if finish_reason := self._get_finish_reason_from_openai_response(response):
+            args["finish_reason"] = finish_reason
         # Set continuation_token when background operation is still in progress
         if response.status and response.status in ("in_progress", "queued"):
             args["continuation_token"] = OpenAIContinuationToken(response_id=response.id)
@@ -2661,6 +2677,7 @@ class RawOpenAIChatClient(
         response_id: str | None = None
         created_at: str | None = None
         continuation_token: OpenAIContinuationToken | None = None
+        finish_reason: FinishReason | None = None
         model = self.model
         match event.type:
             # types:
@@ -2837,13 +2854,14 @@ class RawOpenAIChatClient(
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
                 continuation_token = OpenAIContinuationToken(response_id=event.response.id)
-            case "response.completed":
+            case "response.completed" | "response.incomplete" | "response.failed":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
                 model = event.response.model
                 created_at = datetime.fromtimestamp(event.response.created_at, tz=timezone.utc).strftime(
                     "%Y-%m-%dT%H:%M:%S.%fZ"
                 )
+                finish_reason = self._get_finish_reason_from_openai_response(event.response)
                 if event.response.usage:
                     usage = self._parse_usage_from_openai(event.response.usage)
                     if usage:
@@ -3185,6 +3203,7 @@ class RawOpenAIChatClient(
             model=model,
             created_at=created_at,
             continuation_token=continuation_token,
+            finish_reason=finish_reason,
             additional_properties=metadata,
             raw_representation=event,
         )

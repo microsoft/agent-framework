@@ -111,7 +111,7 @@ class ShellSession:
                 return
             popen_kwargs: dict[str, object] = {}
             if sys.platform == "win32":
-                import subprocess  # noqa: S404  # nosec B404 - Win32 constants only
+                import subprocess  # ruff:ignore[suspicious-subprocess-import]  # nosec B404 - Win32 constants only
 
                 popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
             else:

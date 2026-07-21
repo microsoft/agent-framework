@@ -36,7 +36,8 @@ python/samples/
 │   └── visualization/       # Workflow visualization
 ├── 04-hosting/              # Deployment & hosting
 │   ├── a2a/                 # Agent-to-Agent protocol
-│   ├── azure-functions/     # Azure Functions samples
+│   ├── af-hosting/          # Native Responses and Telegram hosting
+│   ├── azure_functions/     # Azure Functions samples
 │   └── durabletask/         # Durable task framework
 ├── 05-end-to-end/           # Complete applications
 │   ├── chatkit-integration/

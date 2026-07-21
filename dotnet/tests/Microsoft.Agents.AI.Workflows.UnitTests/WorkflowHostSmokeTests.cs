@@ -214,6 +214,20 @@ public class NonChatProtocolExecutor() : Executor<string>(nameof(NonChatProtocol
     }
 }
 
+internal sealed class UppercaseStringExecutor(string name = "UppercaseStringExecutor") : Executor<IList<ChatMessage>, string>(name)
+{
+    public override ValueTask<string> HandleAsync(
+        IList<ChatMessage> message,
+        IWorkflowContext context,
+        CancellationToken cancellationToken = default)
+    {
+        string text = string.Join(
+            "\n",
+            message.Select(chatMessage => chatMessage.Text).Where(text => !string.IsNullOrWhiteSpace(text)));
+        return new(text.ToUpperInvariant());
+    }
+}
+
 public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
 {
     private sealed class AlwaysFailsAIAgent(bool failByThrowing) : AIAgent
@@ -823,6 +837,30 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         TestReplayAgent agent = new(TestMessages, TestAgentId, TestAgentName);
         Workflow handoffWorkflow = new HandoffWorkflowBuilder(agent).Build();
         return this.Run_AsAgent_OutgoingMessagesInHistoryAsync(handoffWorkflow, runAsync);
+    }
+
+    [Fact]
+    public async Task Test_AsAgent_UsesDesignatedWorkflowOutputInsteadOfIntermediateAgentResponsesAsync()
+    {
+        TestReplayAgent firstAgent = new(TestReplayAgent.ToChatMessages("first answer"), "first-agent", "First Agent");
+        TestReplayAgent secondAgent = new(TestReplayAgent.ToChatMessages("second answer"), "second-agent", "Second Agent");
+        ExecutorBinding first = firstAgent.BindAsExecutor(new AIAgentHostOptions { ForwardIncomingMessages = false });
+        ExecutorBinding second = secondAgent.BindAsExecutor(new AIAgentHostOptions { ForwardIncomingMessages = false });
+        UppercaseStringExecutor uppercase = new();
+
+        Workflow workflow = new WorkflowBuilder(first)
+            .AddEdge(first, second)
+            .AddEdge(second, uppercase)
+            .WithOutputFrom(uppercase)
+            .Build();
+
+        AgentResponse response = await workflow
+            .AsAIAgent("WorkflowAgent")
+            .RunAsync(new ChatMessage(ChatRole.User, "hello"));
+
+        response.Text.Should().Be("SECOND ANSWER");
+        response.Messages.Should().ContainSingle()
+            .Which.Text.Should().Be("SECOND ANSWER");
     }
 
     // ----- Phase 5: Workflow-as-Agent intermediate forwarding -----------------
