@@ -235,7 +235,7 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
             await foreach (AgentResponseUpdate update in agentStream.ConfigureAwait(false))
             {
                 // Contentless updates may carry only metadata and must not become empty messages.
-                if (string.IsNullOrEmpty(update.MessageId) && update.RawRepresentation is ChatResponseUpdate rawUpdate)
+                if (string.IsNullOrWhiteSpace(update.MessageId) && update.RawRepresentation is ChatResponseUpdate rawUpdate)
                 {
                     if (update.Contents.Count > 0)
                     {

@@ -467,6 +467,17 @@ internal sealed class WorkflowSession : AgentSession
         {
             await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
         }
+
+        AgentResponseUpdate CreateObservabilityUpdate(WorkflowEvent workflowEvent) =>
+            new(ChatRole.Assistant, [])
+            {
+                CreatedAt = DateTimeOffset.UtcNow,
+                MessageId = Guid.NewGuid().ToString("N"),
+                Role = ChatRole.Assistant,
+                ResponseId = this.LastResponseId,
+                RawRepresentation = workflowEvent
+            };
+
         await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false, cancellationToken)
                                                .ConfigureAwait(false)
                                                .WithCancellation(cancellationToken))
@@ -550,6 +561,7 @@ internal sealed class WorkflowSession : AgentSession
                     // exclusion of an event by enabling filtering and then _not_ marking an Executor
                     // as an output executor.
                     bool emittedMessage = false;
+                    bool suppressedStreamedMessage = false;
                     foreach (ChatMessage message in agentResponse.Response.Messages)
                     {
                         bool messageWasStreamed =
@@ -557,17 +569,18 @@ internal sealed class WorkflowSession : AgentSession
                             && streamedMessageIds.Contains((agentResponse.ExecutorId, completedMessageId));
                         if (messageWasStreamed)
                         {
+                            suppressedStreamedMessage = true;
                             continue;
                         }
 
                         emittedMessage = true;
                         yield return this.CreateUpdate(this.LastResponseId, evt, message);
                     }
-                    if (!emittedMessage)
+                    if (!emittedMessage && suppressedStreamedMessage)
                     {
                         // Preserve the completion event for observability after its correlated
                         // streamed content has already been forwarded.
-                        goto default;
+                        yield return CreateObservabilityUpdate(evt);
                     }
                     break;
 
@@ -596,14 +609,7 @@ internal sealed class WorkflowSession : AgentSession
 
                 default:
                     // Emit all other workflow events for observability (DevUI, logging, etc.)
-                    yield return new AgentResponseUpdate(ChatRole.Assistant, [])
-                    {
-                        CreatedAt = DateTimeOffset.UtcNow,
-                        MessageId = Guid.NewGuid().ToString("N"),
-                        Role = ChatRole.Assistant,
-                        ResponseId = this.LastResponseId,
-                        RawRepresentation = evt
-                    };
+                    yield return CreateObservabilityUpdate(evt);
                     break;
             }
         }

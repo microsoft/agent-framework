@@ -40,7 +40,7 @@ internal static class AgentProviderExtensions
         {
             await AssignConversationIdAsync(((ChatResponseUpdate?)update.RawRepresentation)?.ConversationId).ConfigureAwait(false);
 
-            if (string.IsNullOrEmpty(update.MessageId) && update.RawRepresentation is ChatResponseUpdate rawUpdate)
+            if (string.IsNullOrWhiteSpace(update.MessageId) && update.RawRepresentation is ChatResponseUpdate rawUpdate)
             {
                 if (update.Contents.Count > 0)
                 {

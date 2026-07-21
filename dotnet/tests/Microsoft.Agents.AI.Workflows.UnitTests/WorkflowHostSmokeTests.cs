@@ -883,6 +883,22 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         }
 
         [Fact]
+        public async Task Test_WorkflowHostAgent_EmptyAgentResponseDoesNotCreateObservabilityUpdateAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: true);
+            TestReplayAgent agent = new(new List<ChatMessage>());
+            ExecutorBinding binding = agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentResponseEvents = true });
+            Workflow workflow = new WorkflowBuilder(binding)
+                .WithOutputFrom(binding)
+                .Build();
+
+            List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: false);
+
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent)
+                .Should().BeFalse("an empty response did not previously produce an observable completion update");
+        }
+
+        [Fact]
         public async Task Test_WorkflowHostAgent_TerminalAgentResponseGatedWhenFuturesOffAsync()
         {
             using Futures.FuturesScope _ = new(enabled: false);

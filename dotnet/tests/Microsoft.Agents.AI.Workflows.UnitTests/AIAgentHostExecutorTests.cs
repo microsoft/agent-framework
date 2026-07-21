@@ -67,6 +67,7 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
     [Theory]
     [InlineData(null)]
     [InlineData("")]
+    [InlineData(" ")]
     public async Task Test_AgentHostExecutor_AssignsStableMessageIdToContentfulStreamingUpdatesAsync(string? missingMessageId)
     {
         // Arrange
@@ -87,7 +88,7 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
         // Assert
         AgentResponseUpdateEvent[] updateEvents = testContext.Events.OfType<AgentResponseUpdateEvent>().ToArray();
         updateEvents.Should().HaveCount(3);
-        updateEvents[0].Update.MessageId.Should().Be(missingMessageId);
+        updateEvents[0].Update.MessageId.Should().BeEmpty();
 
         string? messageId = updateEvents[1].Update.MessageId;
         messageId.Should().NotBeNullOrEmpty();
@@ -112,7 +113,7 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
             yield return new AgentResponseUpdate(
                 new ChatResponseUpdate
                 {
-                    MessageId = messageId,
+                    MessageId = "",
                     ResponseId = "response-id",
                 });
             yield return new AgentResponseUpdate(

@@ -59,8 +59,9 @@ public sealed class AgentProviderExtensionsTest(ITestOutputHelper output) : Work
         AgentResponseUpdate[] updates =
         [
             new(new ChatResponseUpdate { MessageId = "" }),
-            new(new ChatResponseUpdate(ChatRole.Assistant, "hello ") { MessageId = "" }),
-            new(new ChatResponseUpdate(ChatRole.Assistant, "world")),
+            new(new ChatResponseUpdate(ChatRole.Assistant, "hello ") { MessageId = " " }),
+            new(new ChatResponseUpdate(ChatRole.Assistant, "world") { MessageId = "" }),
+            new(new ChatResponseUpdate(ChatRole.Assistant, "!")),
         ];
         mockProvider
             .Setup(p => p.InvokeAgentAsync(
