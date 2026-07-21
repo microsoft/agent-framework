@@ -5,7 +5,7 @@ import logging
 import os
 from collections.abc import MutableMapping
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, Union, cast, overload
 
 from agent_framework._serialization import SerializationMixin
 
@@ -214,29 +214,26 @@ def _normalize_nested_schemas(node: dict[str, Any]) -> None:
     """
     items = node.get("items")
     if isinstance(items, dict):
-        _normalize_schema_node(items)
+        _normalize_schema_node(cast("dict[str, Any]", items))
     props = node.get("properties")
-    if isinstance(props, list):
-        # Serialized PropertySchema shape: [{"name": ..., "kind": ..., ...}, ...].
-        # Validate every element BEFORE mutating any, so an unexpected shape
-        # leaves the node fully untouched rather than half-converted.
-        if not all(isinstance(prop, dict) and "name" in prop for prop in props):
-            return
-        new_props: dict[str, Any] = {}
-        required_fields: list[str] = []
-        for prop in props:
-            prop_name = prop.pop("name")
-            if prop.pop("required", False):
-                required_fields.append(prop_name)
-            _normalize_schema_node(prop)
-            new_props[prop_name] = prop
-        node["properties"] = new_props
-        if required_fields:
-            node["required"] = required_fields
-    elif isinstance(props, dict):
-        for child in props.values():
-            if isinstance(child, dict):
-                _normalize_schema_node(child)
+    if not isinstance(props, list):
+        return
+    # Serialized PropertySchema shape: [{"name": ..., "kind": ..., ...}, ...].
+    # Validate every element BEFORE mutating any, so an unexpected shape
+    # leaves the node fully untouched rather than half-converted.
+    if not all(isinstance(prop, dict) and "name" in prop for prop in cast("list[Any]", props)):
+        return
+    new_props: dict[str, Any] = {}
+    required_fields: list[str] = []
+    for prop in cast("list[dict[str, Any]]", props):
+        prop_name = prop.pop("name")
+        if prop.pop("required", False):
+            required_fields.append(prop_name)
+        _normalize_schema_node(prop)
+        new_props[prop_name] = prop
+    node["properties"] = new_props
+    if required_fields:
+        node["required"] = required_fields
 
 
 def _normalize_schema_node(node: dict[str, Any]) -> None:
