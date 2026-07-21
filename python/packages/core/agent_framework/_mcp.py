@@ -2984,7 +2984,9 @@ class MCPStreamableHTTPTool(MCPTool):
                 (from ``FunctionInvocationContext.kwargs``) and returns a ``dict[str, str]``
                 of HTTP headers to inject into every outbound request to the MCP server.
                 Use this to forward per-request context (e.g. authentication tokens set in
-                agent middleware) without creating a separate ``httpx.AsyncClient``.
+                agent middleware) without creating a separate ``httpx.AsyncClient``. Also
+                invoked with ``{}`` before the ``initialize`` handshake, since no per-call
+                kwargs exist yet at that point.
             task_options: Options for tools that advertise
                 ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
             additional_tool_argument_names: Extra argument names to forward to the MCP server in
@@ -3109,6 +3111,40 @@ class MCPStreamableHTTPTool(MCPTool):
             finally:
                 _mcp_call_headers.reset(token)
         return await super().call_tool(tool_name, **kwargs)
+
+    async def _connect_on_owner(self, *, reset: bool = False, load_configured: bool = True) -> None:
+        """Connect to the MCP server, applying header_provider headers to the initialize handshake.
+
+        ``initialize`` (and any ``load_tools``/``load_prompts`` in the same connect pass) runs
+        before ``call_tool()`` ever does, so servers that require auth on ``initialize`` need
+        headers seeded here too, or they reject the connection before ``header_provider`` runs.
+
+        Keyword Args:
+            reset: If True, forces a reconnection even if already connected.
+            load_configured: If True, loads tools and prompts according to the constructor flags.
+        """
+        if self._header_provider is not None:
+            try:
+                # No per-call kwargs exist yet, so header_provider is invoked with {}; an
+                # implementation written only against call_tool()'s contract may not expect that.
+                headers = self._header_provider({})
+            except Exception:
+                logger.warning(
+                    "header_provider raised for %r during connect; proceeding without headers.",
+                    self.name,
+                    exc_info=True,
+                )
+                headers = {}
+            # Must set/reset here, not in the connect()/__aenter__() caller: this can run in a
+            # different asyncio task (the MCP lifecycle-owner task), and a Token can only be
+            # reset in the context that created it.
+            token = _mcp_call_headers.set(headers)
+            try:
+                await super()._connect_on_owner(reset=reset, load_configured=load_configured)
+            finally:
+                _mcp_call_headers.reset(token)
+            return
+        await super()._connect_on_owner(reset=reset, load_configured=load_configured)
 
 
 class MCPWebsocketTool(MCPTool):
