@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import os
 import sys
 from types import SimpleNamespace
@@ -10,9 +11,11 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 from agent_framework import (
     Agent,
+    AgentExecutor,
     AgentResponse,
     AgentSession,
     ChatContext,
@@ -20,6 +23,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Message,
+    WorkflowBuilder,
     tool,
 )
 from agent_framework_openai._chat_client import RawOpenAIChatClient
@@ -27,6 +31,7 @@ from azure.ai.projects import models as projects_models
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
+from openai import AsyncOpenAI
 
 from agent_framework_foundry._agent import (
     FoundryAgent,
@@ -1192,6 +1197,129 @@ async def test_foundry_agent_configure_azure_monitor_import_error() -> None:
         pytest.raises(ImportError, match="azure-monitor-opentelemetry is required"),
     ):
         await agent.configure_azure_monitor()
+
+
+async def test_foundry_agent_workflow_drops_function_call_paired_with_stripped_reasoning() -> None:
+    """Stateless cross-agent replay keeps reasoning and its client-side tool call atomic."""
+
+    def _message(message_id: str, text: str) -> dict[str, Any]:
+        return {
+            "id": message_id,
+            "content": [{"annotations": [], "text": text, "type": "output_text"}],
+            "role": "assistant",
+            "status": "completed",
+            "type": "message",
+        }
+
+    def _response(response_id: str, output: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "id": response_id,
+            "created_at": 0,
+            "model": "gpt-5.4",
+            "object": "response",
+            "output": output,
+            "parallel_tool_calls": True,
+            "status": "completed",
+            "tool_choice": "auto",
+            "tools": [],
+        }
+
+    async def foundry_responses_boundary(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        agent_name = payload["agent_reference"]["name"]
+
+        if agent_name == "research-agent" and "previous_response_id" not in payload:
+            return httpx.Response(
+                200,
+                json=_response(
+                    "resp_research_tool",
+                    [
+                        {
+                            "id": "rs_required",
+                            "summary": [{"text": "I need the local MCP tool.", "type": "summary_text"}],
+                            "type": "reasoning",
+                        },
+                        {
+                            "arguments": '{"query":"Agent Framework"}',
+                            "call_id": "call_paired",
+                            "id": "fc_paired",
+                            "name": "lookup_docs",
+                            "status": "completed",
+                            "type": "function_call",
+                        },
+                    ],
+                ),
+            )
+
+        if agent_name == "research-agent":
+            return httpx.Response(
+                200,
+                json=_response(
+                    "resp_research_final",
+                    [_message("msg_research", "Microsoft Agent Framework")],
+                ),
+            )
+
+        input_items = payload["input"]
+        input_types = {item.get("type") for item in input_items if isinstance(item, dict)}
+        if "function_call" in input_types and "reasoning" not in input_types:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": (
+                            "Item 'fc_paired' of type 'function_call' was provided without its "
+                            "required 'reasoning' item: 'rs_required'."
+                        ),
+                        "type": "invalid_request_error",
+                        "code": "invalid_request_error",
+                    }
+                },
+            )
+
+        return httpx.Response(
+            200,
+            json=_response(
+                "resp_summary",
+                [_message("msg_summary", "The research result was Microsoft Agent Framework.")],
+            ),
+        )
+
+    @tool(name="lookup_docs", approval_mode="never_require")
+    def lookup_docs(query: str) -> str:
+        return f"Found documentation for {query}"
+
+    transport = httpx.MockTransport(foundry_responses_boundary)
+    responses_client = AsyncOpenAI(
+        api_key="test-key",
+        http_client=httpx.AsyncClient(transport=transport),
+        max_retries=0,
+    )
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = responses_client
+
+    research_agent = FoundryAgent(
+        project_client=project_client,
+        agent_name="research-agent",
+        tools=[lookup_docs],
+    )
+    summary_agent = FoundryAgent(
+        project_client=project_client,
+        agent_name="summary-agent",
+    )
+    research_executor = AgentExecutor(research_agent, id="research")
+    summary_executor = AgentExecutor(summary_agent, id="summary")
+    workflow = (
+        WorkflowBuilder(start_executor=research_executor, output_from=[summary_executor])
+        .add_edge(research_executor, summary_executor)
+        .build()
+    )
+
+    result = await workflow.run("Research Agent Framework and summarize the result")
+
+    outputs = result.get_outputs()
+    assert outputs
+    assert outputs[-1].text == "The research result was Microsoft Agent Framework."
 
 
 @pytest.mark.flaky

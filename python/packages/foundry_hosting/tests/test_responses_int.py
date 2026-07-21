@@ -3,8 +3,9 @@
 """Integration tests for ResponsesHostServer with a real Foundry endpoint.
 
 These tests exercise the full HTTP pipeline using httpx.AsyncClient with
-ASGITransport — no real server process is started. The agent talks to a real
-Foundry project endpoint so every test requires valid credentials.
+ASGITransport — no real server process is started. Most tests talk to a real
+Foundry project endpoint. Deterministic cross-package regressions replace only
+the external Responses HTTP boundary.
 
 Required environment variables:
     FOUNDRY_PROJECT_ENDPOINT - The Microsoft Foundry project endpoint URL.
@@ -18,13 +19,15 @@ import json
 import os
 from pathlib import Path
 from typing import Annotated, Any
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
-from agent_framework import Agent, tool
+from agent_framework import Agent, SlidingWindowStrategy, tool
 from agent_framework.foundry import FoundryChatClient
 from azure.ai.agentserver.responses import InMemoryResponseProvider
 from azure.identity import AzureCliCredential
+from openai import AsyncOpenAI
 
 from agent_framework_foundry_hosting import ResponsesHostServer
 
@@ -37,7 +40,6 @@ skip_if_foundry_hosting_integration_tests_disabled = pytest.mark.skipif(
     or os.getenv("FOUNDRY_MODEL", "") == "",
     reason="No real FOUNDRY_PROJECT_ENDPOINT or FOUNDRY_MODEL provided; skipping integration tests.",
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -489,6 +491,150 @@ class TestMultiTurn:
 
         done_events = [e for e in events if e["event"] == "response.output_text.done"]
         assert "42" in done_events[0]["data"]["text"]
+
+
+class TestReasoningHostedMcpReplay:
+    """Regression coverage for stateless reasoning + hosted MCP replay."""
+
+    async def test_second_turn_does_not_replay_mcp_call_without_its_reasoning_item(self) -> None:
+        """A hosted agent can continue after a reasoning model uses hosted MCP with store disabled."""
+        call_count = 0
+
+        def _message(message_id: str) -> dict[str, Any]:
+            return {
+                "id": message_id,
+                "content": [{"annotations": [], "text": "Microsoft Agent Framework", "type": "output_text"}],
+                "role": "assistant",
+                "status": "completed",
+                "type": "message",
+            }
+
+        def _response(response_id: str, output: list[dict[str, Any]]) -> dict[str, Any]:
+            return {
+                "id": response_id,
+                "created_at": 0,
+                "model": "gpt-5.4",
+                "object": "response",
+                "output": output,
+                "parallel_tool_calls": True,
+                "tool_choice": "auto",
+                "tools": [],
+                "status": "completed",
+            }
+
+        async def foundry_responses_boundary(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return httpx.Response(
+                    200,
+                    json=_response(
+                        "resp_first",
+                        [
+                            {
+                                "id": "rs_required",
+                                "summary": [{"text": "The MCP server has the answer.", "type": "summary_text"}],
+                                "type": "reasoning",
+                            },
+                            {
+                                "id": "mcp_paired",
+                                "arguments": '{"query":"Agent Framework overview"}',
+                                "name": "microsoft_docs_search",
+                                "server_label": "Microsoft_Learn",
+                                "type": "mcp_call",
+                                "output": "Microsoft Agent Framework",
+                                "status": "completed",
+                            },
+                            _message("msg_first"),
+                        ],
+                    ),
+                )
+
+            payload = json.loads(request.content)
+            input_items = payload["input"]
+            input_types = {item.get("type") for item in input_items if isinstance(item, dict)}
+            if "mcp_call" in input_types and "reasoning" not in input_types:
+                return httpx.Response(
+                    400,
+                    json={
+                        "error": {
+                            "message": (
+                                "Item 'mcp_paired' of type 'mcp_call' was provided without its "
+                                "required 'reasoning' item: 'rs_required'."
+                            ),
+                            "type": "invalid_request_error",
+                            "code": "invalid_request_error",
+                        }
+                    },
+                )
+
+            return httpx.Response(
+                200,
+                json=_response(
+                    "resp_second",
+                    [_message("msg_second")],
+                ),
+            )
+
+        transport = httpx.MockTransport(foundry_responses_boundary)
+        responses_client = AsyncOpenAI(
+            api_key="test-key",
+            http_client=httpx.AsyncClient(transport=transport),
+            max_retries=0,
+        )
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = responses_client
+        client = FoundryChatClient(
+            project_client=project_client,
+            model="gpt-5.4",
+            compaction_strategy=SlidingWindowStrategy(keep_last_groups=4),
+        )
+        learn_mcp = client.get_mcp_tool(
+            name="Microsoft Learn",
+            url="https://learn.microsoft.com/api/mcp",
+            allowed_tools=["microsoft_docs_search"],
+            approval_mode="never_require",
+        )
+        agent = Agent(
+            client=client,  # ty: ignore[invalid-argument-type]
+            instructions=(
+                "Always use the Microsoft Learn MCP tool to answer documentation questions. "
+                "Keep the final answer to one short sentence."
+            ),
+            tools=[learn_mcp],
+            default_options={  # pyrefly: ignore[bad-argument-type]
+                "store": False,
+                "reasoning": {"effort": "low", "summary": "auto"},
+            },
+        )
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+
+        first = await _post_json(
+            server,
+            {
+                "input": "Use Microsoft Learn MCP to find the official Agent Framework overview and state its title.",
+                "stream": False,
+            },
+        )
+
+        assert first.status_code == 200
+        first_body = first.json()
+        assert first_body["status"] == "completed", first_body.get("error")
+        first_output_types = {item["type"] for item in first_body["output"]}
+        assert {"reasoning", "mcp_call"} <= first_output_types
+
+        second = await _post_json(
+            server,
+            {
+                "input": "Which Microsoft framework did you just look up? Reply with only its name.",
+                "stream": False,
+                "previous_response_id": first_body["id"],
+            },
+        )
+
+        assert second.status_code == 200
+        second_body = second.json()
+        assert second_body["status"] == "completed", second_body.get("error")
 
 
 # ---------------------------------------------------------------------------

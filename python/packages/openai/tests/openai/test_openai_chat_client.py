@@ -2575,13 +2575,8 @@ def test_prepare_message_for_openai_with_function_approval_response() -> None:
     assert prepared_message["approve"] is True
 
 
-def test_prepare_message_for_openai_includes_reasoning_with_function_call() -> None:
-    """Test _prepare_message_for_openai includes reasoning items alongside function_calls.
-
-    Reasoning models require reasoning items to be present in the input when
-    function_call items are included. Stripping reasoning causes a 400 error:
-    "function_call was provided without its required reasoning item".
-    """
+def test_prepare_messages_for_openai_keeps_active_function_call_for_tool_loop() -> None:
+    """An active tool loop retains its current function call until the model produces a follow-up."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     reasoning = Content.from_text_reasoning(
@@ -2597,20 +2592,15 @@ def test_prepare_message_for_openai_includes_reasoning_with_function_call() -> N
 
     message = Message(role="assistant", contents=[reasoning, function_call])
 
-    # Storage-on path strips both server-issued reasoning (rs_*) and function_call items
-    # because the server already has them via previous_response_id (#3295).
-    storage_on_result = client._prepare_message_for_openai(message, request_uses_service_side_storage=True)
+    storage_on_result = client._prepare_messages_for_openai([message], request_uses_service_side_storage=True)
     storage_on_types = [item["type"] for item in storage_on_result]
     assert "reasoning" not in storage_on_types
     assert "function_call" not in storage_on_types
 
-    # Storage-off path keeps function_call inline so the server sees the call. Reasoning items
-    # cannot be replayed inline against a server that has no record of the prior response, so
-    # they remain dropped on this path as well.
-    storage_off_result = client._prepare_message_for_openai(message, request_uses_service_side_storage=False)
+    storage_off_result = client._prepare_messages_for_openai([message], request_uses_service_side_storage=False)
     storage_off_types = [item["type"] for item in storage_off_result]
-    assert "function_call" in storage_off_types
     assert "reasoning" not in storage_off_types
+    assert "function_call" in storage_off_types
 
 
 def test_prepare_messages_for_openai_full_conversation_with_reasoning() -> None:
@@ -2655,19 +2645,15 @@ def test_prepare_messages_for_openai_full_conversation_with_reasoning() -> None:
         ),
     ]
 
-    # Storage-off path: function_call kept inline (server has no record of it),
-    # function_call_output kept. Reasoning is still dropped because rs_* response-scoped IDs
-    # cannot be replayed against a server that has no record of the originating response.
+    # Reasoning response items cannot be replayed without their originating response. The
+    # paired function call and result must be dropped with them so the API never receives an
+    # orphaned function_call.
     result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
 
     types = [item.get("type") for item in result]
     assert "message" in types, "User/assistant messages should be present"
-    assert "function_call" in types, "Function call items must be present without storage"
-    assert "function_call_output" in types, "Function call output must be present"
-
-    # Verify function_call has id
-    fc_items = [item for item in result if item.get("type") == "function_call"]
-    assert fc_items[0]["id"] == "fc_test456"
+    assert "function_call" not in types
+    assert "function_call_output" not in types
 
 
 def test_prepare_message_for_openai_filters_error_content() -> None:

@@ -134,21 +134,44 @@ _AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX = "response.azure_ai_search_call_output."
 _AF_MCP_PENDING_OUTPUT_KEY = "__af_pending_mcp_result__"
 
 
-def _mcp_call_ids_paired_with_reasoning(messages: Sequence[Message]) -> set[str]:
+def _tool_call_ids_paired_with_reasoning(messages: Sequence[Message]) -> set[str]:
+    """Find reasoning-paired tool calls that are safe to remove from stateless replay.
+
+    Hosted MCP calls are self-contained response items and can be removed immediately. A
+    client-side function call remains active through its tool result, so it is removable only
+    after a later assistant message proves that the function loop completed.
+    """
     paired_call_ids: set[str] = set()
+    reasoning_function_call_ids: set[str] = set()
+    completed_function_call_ids: set[str] = set()
     pending_reasoning_prefix = False
 
     for message in messages:
         has_reasoning = any(content.type == "text_reasoning" for content in message.contents)
-        has_mcp_call = False
+        has_tool_call = False
         for content in message.contents:
-            if content.type != "mcp_server_tool_call":
-                continue
-            has_mcp_call = True
-            if (has_reasoning or pending_reasoning_prefix) and content.call_id:
-                paired_call_ids.add(content.call_id)
+            if content.type == "function_result" and content.call_id:
+                completed_function_call_ids.add(content.call_id)
+            elif content.type in {"function_call", "mcp_server_tool_call"}:
+                has_tool_call = True
+                if not (has_reasoning or pending_reasoning_prefix) or not content.call_id:
+                    continue
+                if content.type == "function_call":
+                    reasoning_function_call_ids.add(content.call_id)
+                else:
+                    paired_call_ids.add(content.call_id)
 
-        if has_mcp_call:
+        has_follow_up_assistant_content = (
+            message.role == "assistant"
+            and not has_tool_call
+            and any(content.type != "text_reasoning" for content in message.contents)
+        )
+        if has_follow_up_assistant_content:
+            paired_call_ids.update(reasoning_function_call_ids & completed_function_call_ids)
+            reasoning_function_call_ids.clear()
+            completed_function_call_ids.clear()
+
+        if has_tool_call:
             pending_reasoning_prefix = False
         elif (
             message.role == "assistant"
@@ -1509,15 +1532,15 @@ class RawOpenAIChatClient(
         drops_reasoning_without_storage = not request_uses_service_side_storage and any(
             content.type == "text_reasoning" for message in chat_messages for content in message.contents
         )
-        drop_mcp_call_ids: set[str] = set()
+        drop_reasoning_tool_call_ids: set[str] = set()
         if drops_reasoning_without_storage:
-            drop_mcp_call_ids = _mcp_call_ids_paired_with_reasoning(chat_messages)
+            drop_reasoning_tool_call_ids = _tool_call_ids_paired_with_reasoning(chat_messages)
 
         list_of_list = [
             self._prepare_message_for_openai(
                 message,
                 request_uses_service_side_storage=request_uses_service_side_storage,
-                drop_mcp_call_ids=drop_mcp_call_ids,
+                drop_reasoning_tool_call_ids=drop_reasoning_tool_call_ids,
             )
             for message in chat_messages
         ]
@@ -1532,7 +1555,7 @@ class RawOpenAIChatClient(
         message: Message,
         *,
         request_uses_service_side_storage: bool = True,
-        drop_mcp_call_ids: set[str] | None = None,
+        drop_reasoning_tool_call_ids: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Prepare a chat message for the OpenAI Responses API format."""
         all_messages: list[dict[str, Any]] = []
@@ -1553,14 +1576,16 @@ class RawOpenAIChatClient(
         # marker, since the server-stored items would otherwise duplicate the inline ones. Without
         # storage, standalone reasoning items are invalid per the API ("reasoning was provided
         # without its required following item"), so the reasoning branch always drops. When that
-        # happens, `_prepare_messages_for_openai` also drops the paired hosted-MCP IDs across
-        # message boundaries rather than replaying bare MCP items.
-        drop_mcp_call_ids = drop_mcp_call_ids or set()
+        # happens, `_prepare_messages_for_openai` also drops paired function and hosted-MCP call
+        # IDs across message boundaries rather than replaying bare tool-call items.
+        drop_reasoning_tool_call_ids = drop_reasoning_tool_call_ids or set()
         for content in message.contents:
             match content.type:
                 case "text_reasoning":
                     continue
                 case "function_result":
+                    if content.call_id in drop_reasoning_tool_call_ids:
+                        continue
                     if request_uses_service_side_storage:
                         props = content.additional_properties or {}
                         # Local-shell variant serializes as `local_shell_call` carrying a server-issued id;
@@ -1582,7 +1607,7 @@ class RawOpenAIChatClient(
                     if new_args:
                         all_messages.append(new_args)
                 case "function_call":
-                    if request_uses_service_side_storage:
+                    if request_uses_service_side_storage or content.call_id in drop_reasoning_tool_call_ids:
                         continue
                     function_call = self._prepare_content_for_openai(
                         message.role,
@@ -1613,7 +1638,7 @@ class RawOpenAIChatClient(
                     #
                     # Without storage, a reasoning + hosted-MCP pair cannot be replayed
                     # partially: reasoning is stripped above, and a bare mcp_call is rejected.
-                    if request_uses_service_side_storage or content.call_id in drop_mcp_call_ids:
+                    if request_uses_service_side_storage or content.call_id in drop_reasoning_tool_call_ids:
                         continue
                     prepared_mcp = self._prepare_content_for_openai(
                         message.role,
