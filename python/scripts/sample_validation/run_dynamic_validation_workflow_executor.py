@@ -36,8 +36,11 @@ class RunDynamicValidationWorkflowExecutor(Executor):
         self, creation: WorkflowCreationResult, ctx: WorkflowContext[ExecutionResult]
     ) -> None:
         """Run the nested workflow and emit execution results."""
+        cached_results = list(creation.cached_results)
+
         if creation.workflow is None:
-            await ctx.send_message(ExecutionResult(results=[]))
+            # Nothing left for the agent; emit whatever the cache produced.
+            await ctx.send_message(ExecutionResult(results=cached_results))
             return
 
         print("\nRunning nested batched workflow...")
@@ -61,7 +64,9 @@ class RunDynamicValidationWorkflowExecutor(Executor):
                     )
 
             if result is not None:
-                await ctx.send_message(result)
+                await ctx.send_message(
+                    ExecutionResult(results=cached_results + result.results)
+                )
             else:
                 fallback_results = [
                     RunResult(
@@ -72,6 +77,8 @@ class RunDynamicValidationWorkflowExecutor(Executor):
                     )
                     for sample in creation.samples
                 ]
-                await ctx.send_message(ExecutionResult(results=fallback_results))
+                await ctx.send_message(
+                    ExecutionResult(results=cached_results + fallback_results)
+                )
         finally:
             await stop_agents(creation.agents)
