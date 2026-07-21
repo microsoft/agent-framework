@@ -18,7 +18,7 @@ from ._conversion import mcp_from_run
 WorkflowT = TypeVar("WorkflowT", bound=Workflow)
 
 
-class MCPWorkflowTool(Generic[WorkflowT]):
+class WorkflowMCPTool(Generic[WorkflowT]):
     """Expose one Agent Framework workflow through an app-owned MCP server.
 
     The adapter derives the native MCP input schema from the workflow's start
@@ -98,7 +98,7 @@ class MCPWorkflowTool(Generic[WorkflowT]):
         """Convert completed workflow outputs into native MCP content blocks."""
         if result.get_request_info_events():
             raise ValueError(
-                "The workflow requires external input. MCPWorkflowTool does not manage "
+                "The workflow requires external input. WorkflowMCPTool does not manage "
                 "human-in-the-loop continuation; handle it in the application contract."
             )
 

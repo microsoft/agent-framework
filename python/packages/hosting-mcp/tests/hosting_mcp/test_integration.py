@@ -27,7 +27,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.routing import Mount
 
-from agent_framework_hosting_mcp import MCPAgentTool
+from agent_framework_hosting_mcp import AgentMCPTool
 
 
 class HostedAgentClient(BaseChatClient[ChatOptions[None]]):
@@ -58,7 +58,7 @@ async def test_mcp_tool_calls_locally_hosted_agent() -> None:
     """Host an agent, connect an MCP tool, and invoke it through real HTTP."""
     hosted_client = HostedAgentClient()
     hosted_agent = Agent(client=hosted_client, name="HostedAgent", description="Hosted test agent.")
-    agent_tool: MCPAgentTool[Any] = MCPAgentTool(
+    agent_tool: AgentMCPTool[Any] = AgentMCPTool(
         hosted_agent,
         name="run_agent",
         chat_option_parameters={"reasoning_effort": {"type": "string"}},

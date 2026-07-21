@@ -5,10 +5,10 @@ agents and workflows through the native MCP SDK.
 
 ## Public API
 
-- `MCPAgentTool(target, ...)` generates one native MCP `Tool` from an agent,
+- `AgentMCPTool(target, ...)` generates one native MCP `Tool` from an agent,
   converts and executes calls, and optionally persists sessions through an
   existing `AgentState`.
-- `MCPWorkflowTool(target, ...)` derives one native MCP `Tool` from a workflow's
+- `WorkflowMCPTool(target, ...)` derives one native MCP `Tool` from a workflow's
   single start-executor input type and converts completed workflow outputs.
 - `mcp_to_run(arguments, *, argument_name="task",
   chat_option_arguments=())` converts MCP tool arguments to `AgentRunArgs` and
@@ -23,12 +23,12 @@ authentication, authorization, session-key policy, concurrency policy, or
 outbound delivery. Applications compose the adapter and conversion helpers
 with native MCP SDK constructs.
 
-`MCPAgentTool` owns only the schema for its single generated agent tool. It
+`AgentMCPTool` owns only the schema for its single generated agent tool. It
 does not register that schema with a server. Applications call
 `await adapter.list_tools()` and `await adapter.call_tool(...)` from native MCP
 handlers.
 
-`MCPWorkflowTool` owns only the schema derived from the start executor. It
+`WorkflowMCPTool` owns only the schema derived from the start executor. It
 requires exactly one input type. Workflow factories and continuation policy
 remain application-owned. Pending external-input requests raise because the
 adapter does not own a human-in-the-loop continuation contract.

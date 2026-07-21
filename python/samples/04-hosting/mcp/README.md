@@ -60,7 +60,7 @@ uv run fastmcp_app.py
 
 ### 3. Agent-derived tool
 
-[`agent_app.py`](agent_app.py) adds `MCPAgentTool` to the low-level server. The adapter
+[`agent_app.py`](agent_app.py) adds `AgentMCPTool` to the low-level server. The adapter
 derives the native tool name and description from the agent, owns the configured
 argument schema, runs the agent, and applies the same conversion boundary.
 
@@ -74,7 +74,7 @@ uv run agent_app.py
 
 ### 4. Session-aware agent
 
-[`session_app.py`](session_app.py) builds on `MCPAgentTool` with `AgentState`.
+[`session_app.py`](session_app.py) builds on `AgentMCPTool` with `AgentState`.
 It loads and stores an `AgentSession` using an opaque, application-defined
 `session_id` and serializes calls per ID in-process.
 
@@ -89,7 +89,7 @@ uv run session_app.py
 
 ### 5. Workflow-derived tool
 
-[`workflow_app.py`](workflow_app.py) uses `MCPWorkflowTool` to derive the tool
+[`workflow_app.py`](workflow_app.py) uses `WorkflowMCPTool` to derive the tool
 schema from the workflow start executor's single input type. Dataclass or
 Pydantic fields become top-level MCP arguments; primitive inputs are wrapped in
 one configurable argument.
@@ -108,8 +108,8 @@ uv run workflow_app.py
 |---|---|---|
 | `mcp_to_run(...)` | Converts validated MCP arguments into Agent Framework messages and selected chat options. | `manual_app.py`, `fastmcp_app.py` |
 | `mcp_from_run(...)` | Converts a completed agent response into MCP result content blocks. | `manual_app.py`, `fastmcp_app.py` |
-| `MCPAgentTool` | Derives one native MCP tool from an agent and keeps schema, execution, and conversion aligned. | `agent_app.py`, `session_app.py` |
-| `MCPWorkflowTool` | Derives one native MCP tool from a workflow start executor and converts workflow outputs. | `workflow_app.py` |
+| `AgentMCPTool` | Derives one native MCP tool from an agent and keeps schema, execution, and conversion aligned. | `agent_app.py`, `session_app.py` |
+| `WorkflowMCPTool` | Derives one native MCP tool from a workflow start executor and converts workflow outputs. | `workflow_app.py` |
 
 ## Run
 

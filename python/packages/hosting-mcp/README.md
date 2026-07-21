@@ -9,10 +9,10 @@ server lifecycle. It provides two conversion functions and small adapters:
   arguments.
 - `mcp_from_run(...)` converts an `AgentResponse` or `Message` into native MCP
   `ContentBlock` values.
-- `MCPAgentTool(...)` generates the native `Tool` definition from an agent and
+- `AgentMCPTool(...)` generates the native `Tool` definition from an agent and
   keeps listing, parsing, execution, result conversion, and optional
   `AgentState` session persistence aligned.
-- `MCPWorkflowTool(...)` generates the native `Tool` definition from a
+- `WorkflowMCPTool(...)` generates the native `Tool` definition from a
   workflow's start-executor input type and converts completed workflow outputs.
 
 Application code keeps ownership of the MCP SDK's `Server`, handler
@@ -59,7 +59,7 @@ For an agent exposed as one MCP tool, use the adapter so the schema and
 conversion cannot drift:
 
 ```python
-agent_tool = MCPAgentTool(
+agent_tool = AgentMCPTool(
     agent,
     name="run_agent",
     argument_description="The request for the hosted agent.",
@@ -81,15 +81,15 @@ async def call_tool(name, arguments):
     return await agent_tool.call_tool(name, arguments)
 ```
 
-`MCPAgentTool` uses the agent's name and description unless overridden.
+`AgentMCPTool` uses the agent's name and description unless overridden.
 `parameters` adds app-owned JSON Schema properties that remain available in the
 raw MCP arguments. `chat_option_parameters` adds properties and explicitly
 copies their values into Agent Framework chat options.
 
-For a workflow exposed as one MCP tool, use `MCPWorkflowTool`:
+For a workflow exposed as one MCP tool, use `WorkflowMCPTool`:
 
 ```python
-workflow_tool = MCPWorkflowTool(
+workflow_tool = WorkflowMCPTool(
     WorkflowState(create_workflow, cache_target=False),
     name="run_workflow",
 )
@@ -113,7 +113,7 @@ Pass an existing `AgentState` plus `session_id_parameter` to persist an
 
 ```python
 state = AgentState(agent)
-agent_tool = MCPAgentTool(
+agent_tool = AgentMCPTool(
     state,
     parameters={"session_id": {"type": "string", "minLength": 1}},
     required_parameters={"session_id"},
@@ -127,7 +127,7 @@ serialize concurrent calls for the same session. The adapter only performs the
 is always marked required in the generated MCP schema.
 
 The session identifier is an opaque, application-defined key. Neither MCP nor
-Agent Framework prescribes its format. `MCPAgentTool` treats it as the key for
+Agent Framework prescribes its format. `AgentMCPTool` treats it as the key for
 one mutable conversation: each call loads that session and stores the updated
 session under the same key. It does not implement
 `previous_response_id`-style branching. Branching requires an app-owned

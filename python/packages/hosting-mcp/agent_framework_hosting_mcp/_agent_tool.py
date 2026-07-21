@@ -17,7 +17,7 @@ from ._conversion import mcp_from_run, mcp_to_run
 AgentT = TypeVar("AgentT", bound=SupportsAgentRun)
 
 
-class MCPAgentTool(Generic[AgentT]):
+class AgentMCPTool(Generic[AgentT]):
     """Expose one Agent Framework agent through an app-owned MCP server.
 
     The adapter generates the native MCP tool definition and keeps its argument

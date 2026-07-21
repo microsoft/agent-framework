@@ -13,7 +13,7 @@
 
 """Host a typed Agent Framework workflow through native MCP constructs.
 
-``MCPWorkflowTool`` derives the MCP arguments from the start executor's input
+``WorkflowMCPTool`` derives the MCP arguments from the start executor's input
 type. This sample uses a dataclass, so its fields become the tool's top-level
 arguments. The application still owns the MCP server and transport.
 """
@@ -27,7 +27,7 @@ from dataclasses import dataclass
 import uvicorn
 from agent_framework import WorkflowBuilder, WorkflowContext, executor
 from agent_framework_hosting import WorkflowState
-from agent_framework_hosting_mcp import MCPWorkflowTool
+from agent_framework_hosting_mcp import WorkflowMCPTool
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -64,7 +64,7 @@ def create_workflow():
 
 
 server = Server("agent-framework-hosting-mcp-workflow-sample")
-workflow_tool = MCPWorkflowTool(
+workflow_tool = WorkflowMCPTool(
     WorkflowState(create_workflow, cache_target=False),
     name="draft_content",
 )

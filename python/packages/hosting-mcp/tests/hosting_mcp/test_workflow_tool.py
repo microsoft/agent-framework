@@ -18,7 +18,7 @@ from agent_framework_hosting import WorkflowState
 from mcp import types
 from pytest import raises
 
-from agent_framework_hosting_mcp import MCPWorkflowTool
+from agent_framework_hosting_mcp import WorkflowMCPTool
 
 
 @dataclass
@@ -45,7 +45,7 @@ def create_workflow():
 
 
 async def test_workflow_tool_derives_object_schema_and_runs_workflow() -> None:
-    tool: MCPWorkflowTool[Any] = MCPWorkflowTool(
+    tool: WorkflowMCPTool[Any] = WorkflowMCPTool(
         WorkflowState(create_workflow, cache_target=False),
         name="repeat_text",
     )
@@ -67,7 +67,7 @@ async def test_workflow_tool_wraps_primitive_input() -> None:
         await ctx.yield_output(value.upper())
 
     workflow = WorkflowBuilder(start_executor=uppercase, name="uppercase", output_from=[uppercase]).build()
-    tool: MCPWorkflowTool[Any] = MCPWorkflowTool(workflow, argument_name="text")
+    tool: WorkflowMCPTool[Any] = WorkflowMCPTool(workflow, argument_name="text")
 
     definition = (await tool.list_tools())[0]
     result = await tool.call_tool("uppercase", {"text": "hello"})
@@ -87,7 +87,7 @@ async def test_workflow_tool_serializes_structured_output_as_json_text() -> None
         await ctx.yield_output({"value": value})
 
     workflow = WorkflowBuilder(start_executor=structured, name="structured", output_from=[structured]).build()
-    tool: MCPWorkflowTool[Any] = MCPWorkflowTool(workflow)
+    tool: WorkflowMCPTool[Any] = WorkflowMCPTool(workflow)
 
     result = await tool.call_tool("structured", {"input": "hello"})
 
@@ -96,7 +96,7 @@ async def test_workflow_tool_serializes_structured_output_as_json_text() -> None
 
 def test_workflow_tool_rejects_unhandled_external_input_requests() -> None:
     workflow = create_workflow()
-    tool: MCPWorkflowTool[Any] = MCPWorkflowTool(workflow)
+    tool: WorkflowMCPTool[Any] = WorkflowMCPTool(workflow)
     result = WorkflowRunResult([
         WorkflowEvent.request_info(
             request_id="approval",
@@ -125,7 +125,7 @@ def test_workflow_tool_rejects_multiple_start_input_types() -> None:
         name="multiple",
         output_from="all",
     ).build()
-    tool: MCPWorkflowTool[Any] = MCPWorkflowTool(workflow)
+    tool: WorkflowMCPTool[Any] = WorkflowMCPTool(workflow)
 
     with raises(ValueError, match="exactly one"):
         tool._tool_for_workflow(workflow)  # pyright: ignore[reportPrivateUsage]

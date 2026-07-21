@@ -19,7 +19,7 @@ from agent_framework_hosting import AgentState
 from mcp import types
 from pytest import raises
 
-from agent_framework_hosting_mcp import MCPAgentTool
+from agent_framework_hosting_mcp import AgentMCPTool
 
 
 class RecordingClient(BaseChatClient[ChatOptions[None]]):
@@ -50,7 +50,7 @@ async def test_agent_tool_generates_schema_from_agent_with_overrides() -> None:
         name="Research Agent",
         description="Agent description",
     )
-    tool: MCPAgentTool[Any] = MCPAgentTool(
+    tool: AgentMCPTool[Any] = AgentMCPTool(
         agent,
         name="research",
         description="Tool description",
@@ -100,7 +100,7 @@ async def test_agent_tool_generates_schema_from_agent_with_overrides() -> None:
 
 async def test_agent_tool_uses_agent_metadata_by_default() -> None:
     agent = Agent(client=RecordingClient(), name="Research Agent", description="Agent description")
-    tool: MCPAgentTool[Any] = MCPAgentTool(agent)
+    tool: AgentMCPTool[Any] = AgentMCPTool(agent)
 
     definition = (await tool.list_tools())[0]
 
@@ -116,7 +116,7 @@ async def test_agent_tool_runs_with_agent_state_session() -> None:
         context_providers=[InMemoryHistoryProvider()],
     )
     state = AgentState(agent)
-    tool: MCPAgentTool[Any] = MCPAgentTool(
+    tool: AgentMCPTool[Any] = AgentMCPTool(
         state,
         parameters={"session_id": {"type": "string"}},
         required_parameters={"session_id"},
@@ -139,12 +139,12 @@ def test_agent_tool_rejects_undefined_session_parameter() -> None:
     agent = Agent(client=RecordingClient(), name="agent")
 
     with raises(ValueError, match="session_id_parameter"):
-        MCPAgentTool(agent, session_id_parameter="session_id")
+        AgentMCPTool(agent, session_id_parameter="session_id")
 
 
 async def test_agent_tool_always_requires_session_parameter() -> None:
     agent = Agent(client=RecordingClient(), name="agent")
-    tool: MCPAgentTool[Any] = MCPAgentTool(
+    tool: AgentMCPTool[Any] = AgentMCPTool(
         agent,
         parameters={"session_id": {"type": "string"}},
         session_id_parameter="session_id",

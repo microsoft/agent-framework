@@ -41,7 +41,7 @@ import uvicorn
 from agent_framework import Agent, InMemoryHistoryProvider
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_hosting import AgentState
-from agent_framework_hosting_mcp import MCPAgentTool
+from agent_framework_hosting_mcp import AgentMCPTool
 from azure.identity.aio import DefaultAzureCredential
 from mcp import types
 from mcp.server.lowlevel import Server
@@ -64,7 +64,7 @@ agent = Agent(
     default_options={"store": False},
 )
 state = AgentState(agent)
-agent_tool = MCPAgentTool(
+agent_tool = AgentMCPTool(
     state,
     name="run_agent",
     argument_description="The request for the hosted agent.",

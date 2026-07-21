@@ -16,7 +16,7 @@
 """Host an Agent Framework agent using the conversion functions directly.
 
 This version is useful when an application's MCP tool contract does not fit the
-single-agent ``MCPAgentTool`` adapter. The native tool schema and handler stay
+single-agent ``AgentMCPTool`` adapter. The native tool schema and handler stay
 fully visible while ``mcp_to_run`` and ``mcp_from_run`` bridge AF values.
 """
 

@@ -36,7 +36,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
-from agent_framework_hosting_mcp import MCPAgentTool
+from agent_framework_hosting_mcp import AgentMCPTool
 from azure.identity.aio import DefaultAzureCredential
 from mcp import types
 from mcp.server.lowlevel import Server
@@ -56,7 +56,7 @@ agent = Agent(
     description="Answer a request with the hosted Agent Framework agent.",
     instructions="Answer the user's request clearly and concisely.",
 )
-agent_tool = MCPAgentTool(
+agent_tool = AgentMCPTool(
     agent,
     name="run_agent",
     argument_description="The request for the hosted agent.",
