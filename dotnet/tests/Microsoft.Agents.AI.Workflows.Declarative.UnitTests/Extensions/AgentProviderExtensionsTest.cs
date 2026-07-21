@@ -24,8 +24,8 @@ public sealed class AgentProviderExtensionsTest(ITestOutputHelper output) : Work
     private const string AgentName = "test-agent";
 
     [Fact]
-    public Task AutoSendFalseOnWorkflowConversationSuppressesResponseEventsAsync() =>
-        this.RunAsync(autoSend: false, conversationId: WorkflowConversationId, expectResponseEvents: false);
+    public Task AutoSendFalseOnWorkflowConversationStillEmitsResponseEventsAsync() =>
+        this.RunAsync(autoSend: false, conversationId: WorkflowConversationId, expectResponseEvents: true);
 
     [Fact]
     public Task AutoSendTrueOnWorkflowConversationEmitsResponseEventsAsync() =>

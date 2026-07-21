@@ -23,13 +23,12 @@ internal static class AgentProviderExtensions
     {
         IAsyncEnumerable<AgentResponseUpdate> agentUpdates = agentProvider.InvokeAgentAsync(agentName, null, conversationId, inputMessages, inputArguments, cancellationToken);
 
-        // Determine whether the target conversation is the workflow conversation
-        // (used below to decide whether to mirror messages into the workflow conversation
-        // when an agent runs against a different conversation). The caller's autoSend
-        // value is honored as-is — when the workflow.yaml specifies autoSend: false the
-        // raw agent output must not be streamed to the caller, even when the agent is
-        // running on the workflow conversation.
+        // Foundry managed workflows treat responses produced on the workflow conversation
+        // as workflow output even when autoSend is explicitly false. Preserve that direct-run
+        // contract here. Workflow.AsAIAgent separately removes matching streamed/completed
+        // message duplicates at its hosting boundary.
         bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? workflowConversationId);
+        autoSend |= isWorkflowConversation;
 
         // Assign stable IDs to content-bearing chat updates before emitting and aggregating them.
         // Contentless updates may carry only metadata and must not become empty messages.
