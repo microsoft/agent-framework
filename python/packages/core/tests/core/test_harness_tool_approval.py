@@ -553,6 +553,59 @@ async def test_tool_approval_middleware_queues_streamed_approval_requests(
     assert calls == 2
 
 
+async def test_tool_approval_resolution_streams_tool_results(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A tool executed while resolving an approval must have its result streamed."""
+    calls = 0
+
+    @tool(name="guarded_tool", approval_mode="always_require")
+    def guarded_tool() -> str:
+        nonlocal calls
+        calls += 1
+        return "guarded result"
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[guarded_tool],
+        middleware=[ToolApprovalMiddleware()],
+    )
+    session = AgentSession(session_id="approval-result-stream")
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_guarded", name="guarded_tool", arguments="{}")],
+                role="assistant",
+            )
+        ]
+    ]
+
+    first_updates = [update async for update in agent.run("run guarded", stream=True, session=session)]
+    requests = [content for update in first_updates for content in update.user_input_requests]
+    assert len(requests) == 1
+    assert calls == 0
+
+    chat_client_base.streaming_responses = [
+        [ChatResponseUpdate(contents=[Content.from_text("done")], role="assistant")]
+    ]
+    second_updates = [
+        update
+        async for update in agent.run(
+            requests[0].to_function_approval_response(approved=True), stream=True, session=session
+        )
+    ]
+
+    tool_results = [
+        content
+        for update in second_updates
+        if update.role == "tool"
+        for content in update.contents
+        if content.type == "function_result"
+    ]
+    assert tool_results, "approval-resolution execution must stream its function_result"
+    assert calls == 1
+
+
 async def test_tool_approval_middleware_always_approve_tool_rule(
     chat_client_base: MockBaseChatClient,
 ) -> None:

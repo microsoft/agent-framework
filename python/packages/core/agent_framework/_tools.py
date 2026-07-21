@@ -2368,8 +2368,8 @@ async def _process_function_requests(
                 "action": "return" if should_terminate else "continue",
                 "errors_in_a_row": errors_in_a_row,
                 "result_message": None,
-                "update_role": None,
-                "function_call_results": None,
+                "update_role": "tool" if executed_count else None,
+                "function_call_results": approved_function_results or None,
                 "function_call_count": executed_count,
             }
 
@@ -2777,6 +2777,13 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 errors_in_a_row = approval_result.get("errors_in_a_row", errors_in_a_row)
                 total_function_calls += approval_result.get("function_call_count", 0)
                 budget_state["total_function_calls"] = total_function_calls
+                if role := approval_result.get("update_role"):
+                    # Stream the results of tools executed while resolving approvals,
+                    # mirroring the gate after the second _process_function_requests call.
+                    yield ChatResponseUpdate(
+                        contents=approval_result.get("function_call_results") or [],
+                        role=role,
+                    )
                 if max_function_calls is not None and total_function_calls >= max_function_calls:
                     logger.info(
                         "Maximum function calls reached (%d/%d). Stopping further function calls for this request.",
