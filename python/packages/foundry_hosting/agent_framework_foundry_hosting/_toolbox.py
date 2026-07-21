@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from azure.core.credentials_async import AsyncTokenCredential
     from mcp.client.session import ClientSession
 
+    AzureCredentialTypes = TokenCredential | AsyncTokenCredential
+
 logger = logging.getLogger(__name__)
 
 # Default Microsoft Entra scope for Foundry data-plane access.
@@ -89,7 +91,7 @@ class _ToolboxAuth(httpx.Auth):
     and is absent (no header) for protocol ``1.0.0`` or local development.
     """
 
-    def __init__(self, credential: TokenCredential | AsyncTokenCredential, scope: str) -> None:
+    def __init__(self, credential: AzureCredentialTypes, scope: str) -> None:
         self._credential = credential
         self._scope = scope
 
@@ -169,7 +171,7 @@ class FoundryToolbox(MCPStreamableHTTPTool):
 
     def __init__(
         self,
-        credential: TokenCredential | AsyncTokenCredential,
+        credential: AzureCredentialTypes,
         *,
         url: str | None = None,
         name: str | None = None,
@@ -181,9 +183,9 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         """Initialize a Foundry toolbox tool.
 
         Args:
-            credential: A synchronous or asynchronous Microsoft Entra credential used
-                to obtain bearer tokens for the toolbox endpoint. Tokens are requested
-                per outbound request and cached by the credential.
+            credential: A Microsoft Entra credential used to obtain bearer tokens for
+                the toolbox endpoint. Tokens are requested per outbound request and
+                cached by the credential.
 
         Keyword Args:
             url: The toolbox MCP endpoint URL. When ``None``, it is resolved from
