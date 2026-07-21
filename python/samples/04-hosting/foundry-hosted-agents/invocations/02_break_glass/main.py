@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 
 from agent_framework import Agent, AgentSession
 from agent_framework.foundry import FoundryChatClient
+from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
@@ -38,12 +39,31 @@ agent = Agent(
 app = InvocationAgentServerHost()
 
 
+def get_session_partition_key() -> str:
+    """Get the partition key for the current request.
+
+    A partition key is made up of the session ID and user ID. If the request is not
+    from a hosted environment, the partition key will be just the session ID. In the
+    Foundry hosted environment, the partition key is used to maintain isolation between
+    different sessions and users, such that one user cannot access another user's sessions.
+
+    Returns:
+        The partition key for the current request.
+    """
+    context = get_request_context()
+    if context.session_id is None:
+        raise RuntimeError(
+            "The request context is missing session_id. Please ensure that the request is a valid request."
+        )
+    if context.user_id is not None:
+        return f"{context.session_id}:{context.user_id}"
+    return context.session_id
+
+
 @app.invoke_handler
 async def handle_invoke(request: Request):
     """Handle streaming multi-turn chat with Azure OpenAI via SSE."""
     data = await request.json()
-    session_id = request.state.session_id
-
     stream = data.get("stream", False)
     user_message = data.get("message", None)
     if user_message is None:
@@ -52,6 +72,7 @@ async def handle_invoke(request: Request):
             return StreamingResponse(content=error, status_code=400)
         return Response(content=error, status_code=400)
 
+    session_id = get_session_partition_key()
     session = _sessions.setdefault(session_id, AgentSession(session_id=session_id))
 
     if stream:
