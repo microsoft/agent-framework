@@ -334,6 +334,30 @@ class TestPropertySchema:
         items = json_schema["properties"]["picks"]["items"]
         assert items["type"] == "object"
         assert items["properties"]["ref"] == {"type": "number"}
+        assert items["additionalProperties"] is False
+
+    def test_property_schema_object_nodes_get_additional_properties_false(self):
+        """Every object node below the root carries additionalProperties: false.
+
+        OpenAI strict structured outputs reject object nodes without it; chat
+        clients only inject it at the schema root.
+        """
+        schema = PropertySchema.from_dict({
+            "properties": {
+                "meta": {
+                    "kind": "object",
+                    "properties": {
+                        "inner": {"kind": "object", "properties": {"leaf": {"kind": "string"}}},
+                    },
+                },
+            },
+        })
+
+        json_schema = schema.to_json_schema()
+
+        meta = json_schema["properties"]["meta"]
+        assert meta["additionalProperties"] is False
+        assert meta["properties"]["inner"]["additionalProperties"] is False
 
     def test_property_schema_unexpected_nested_properties_left_untouched(self):
         """A nested properties list with an unexpected element is left fully unmodified."""

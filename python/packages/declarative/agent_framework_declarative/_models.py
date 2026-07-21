@@ -242,6 +242,10 @@ def _normalize_schema_node(node: dict[str, Any]) -> None:
         node["type"] = node.pop("kind")
     if not node.get("enum"):
         node.pop("enum", None)
+    if node.get("type") == "object":
+        # OpenAI strict structured outputs require additionalProperties: false on
+        # every object node; chat clients only inject it at the schema root.
+        node.setdefault("additionalProperties", False)
     _normalize_nested_schemas(node)
 
 
@@ -286,14 +290,10 @@ class PropertySchema(SerializationMixin):
         required_fields: list[str] = []
         for prop in json_schema.get("properties", []):
             prop_name = prop.pop("name")
-            prop["type"] = prop.pop("kind", None)
             # Convert property-level 'required' boolean to a top-level 'required' array
             if prop.pop("required", False):
                 required_fields.append(prop_name)
-            # Remove empty enum arrays
-            if not prop.get("enum"):
-                prop.pop("enum", None)
-            _normalize_nested_schemas(prop)
+            _normalize_schema_node(prop)
             new_props[prop_name] = prop
         json_schema["type"] = "object"
         json_schema["properties"] = new_props
