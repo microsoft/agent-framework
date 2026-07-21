@@ -859,18 +859,21 @@ async def responses_from_streaming_run(
     Yields:
         Server-Sent Event strings.
     """
+    created_response: dict[str, Any] = {
+        "id": response_id,
+        "object": "response",
+        "created_at": int(time.time()),
+        "status": "in_progress",
+        "model": "agent",
+        "output": [],
+    }
+    if conversation_id is not None:
+        created_response["conversation"] = {"id": conversation_id}
     yield _sse_event(
         "response.created",
         {
             "type": "response.created",
-            "response": {
-                "id": response_id,
-                "object": "response",
-                "created_at": int(time.time()),
-                "status": "in_progress",
-                "model": "agent",
-                "output": [],
-            },
+            "response": created_response,
         },
     )
 

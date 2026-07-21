@@ -245,6 +245,7 @@ class TestResponsesRunHelpers:
         ]
 
         assert events[0].startswith("event: response.created")
+        assert '"conversation":{"id":"conv_1"}' in events[0]
         assert "response.output_text.delta" in events[1]
         assert "hel" in events[1]
         assert "lo" in events[2]
