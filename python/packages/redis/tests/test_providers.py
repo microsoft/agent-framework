@@ -559,3 +559,58 @@ class TestRedisHistoryProviderBeforeAfterRun:
         )  # type: ignore[arg-type]
 
         mock_redis_client.pipeline.assert_not_called()
+
+
+class TestRedisHistoryProviderDeduplication:
+    """Tests for Redis save_messages deduplication."""
+
+    async def test_deduplicates_identical_messages(self, mock_redis_client: MagicMock):
+        msg1 = Message(role="user", contents=["hello"])
+        msg2 = Message(role="assistant", contents=["hi there"])
+
+        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg1.to_dict()), json.dumps(msg2.to_dict())])
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
+
+        await provider.save_messages("s1", [msg1, msg2])
+
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        pipeline.rpush.assert_not_called()
+        pipeline.execute.assert_not_called()
+
+    async def test_only_appends_new_messages(self, mock_redis_client: MagicMock):
+        msg1 = Message(role="user", contents=["hello"])
+        msg2 = Message(role="assistant", contents=["hi there"])
+        msg3 = Message(role="user", contents=["how are you?"])
+
+        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg1.to_dict()), json.dumps(msg2.to_dict())])
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
+
+        await provider.save_messages("s1", [msg1, msg2, msg3])
+
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        assert pipeline.rpush.call_count == 1
+
+        call_args = pipeline.rpush.call_args[0]
+        pushed_msg_dict = json.loads(call_args[1])
+        assert pushed_msg_dict["contents"][0]["text"] == "how are you?"
+
+    async def test_different_roles_same_text_not_deduplicated(self, mock_redis_client: MagicMock):
+        msg1 = Message(role="user", contents=["ping"])
+
+        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg1.to_dict())])
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
+
+        msg2 = Message(role="assistant", contents=["ping"])
+        await provider.save_messages("s1", [msg1, msg2])
+
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        assert pipeline.rpush.call_count == 1

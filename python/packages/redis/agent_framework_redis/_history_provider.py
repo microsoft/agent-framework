@@ -8,6 +8,7 @@ This module provides ``RedisHistoryProvider``, built on the new
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from typing import Any, ClassVar
 
@@ -15,6 +16,26 @@ import redis.asyncio as redis
 from agent_framework import Message
 from agent_framework._sessions import HistoryProvider
 from redis.credentials import CredentialProvider
+
+
+def _get_message_identity(message: Message) -> tuple:
+    """Return a stable identity for a message for deduplication.
+
+    Uses the message's ID if available, otherwise falls back to a hash of
+    its role and serialized contents to prevent duplicate persistence.
+    """
+    msg_id = getattr(message, "message_id", None)
+    if msg_id is None:
+        msg_id = getattr(message, "id", None)
+    if msg_id is not None:
+        return ("id", msg_id)
+
+    try:
+        contents_data = [c.to_dict() for c in message.contents] if message.contents else []
+        serialized = json.dumps(contents_data, sort_keys=True, ensure_ascii=False)
+        return ("content", message.role, serialized)
+    except Exception:
+        return ("content", message.role, str(message.contents))
 
 
 class RedisHistoryProvider(HistoryProvider):
@@ -152,7 +173,19 @@ class RedisHistoryProvider(HistoryProvider):
             return
 
         key = self._redis_key(session_id)
-        serialized_messages = [self._serialize_json(msg) for msg in messages]
+        existing_message = await self.get_messages(session_id, state=state, **kwargs)
+        existing_identities = {_get_message_identity(m) for m in existing_message}
+        new_messages = []
+        for msg in messages:
+            identity = _get_message_identity(msg)
+            if identity not in existing_identities:
+                existing_identities.add(identity)
+                new_messages.append(msg)
+
+        if not new_messages:
+            return
+
+        serialized_messages = [self._serialize_json(msg) for msg in new_messages]
 
         async with self._redis_client.pipeline(transaction=True) as pipe:
             for serialized in serialized_messages:
