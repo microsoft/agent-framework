@@ -148,7 +148,7 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
             async for event in responses_from_streaming_run(
                 stream,
                 response_id=response_id,
-                session_id=session_id,
+                conversation_id=conversation_id,
             ):
                 yield event
             # `agent.run(..., stream=True)` updates the session while the stream

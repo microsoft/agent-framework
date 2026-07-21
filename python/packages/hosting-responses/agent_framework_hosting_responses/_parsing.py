@@ -844,7 +844,7 @@ async def responses_from_streaming_run(
     stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]],
     *,
     response_id: str,
-    session_id: str | None = None,
+    conversation_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Convert an Agent Framework response stream into Responses SSE events.
 
@@ -854,7 +854,7 @@ async def responses_from_streaming_run(
 
     Keyword Args:
         response_id: Id for the response being created.
-        session_id: Optional prior ``resp_*`` or ``conv_*`` session id.
+        conversation_id: Optional conversation id to render in Responses events.
 
     Yields:
         Server-Sent Event strings.
@@ -891,7 +891,6 @@ async def responses_from_streaming_run(
                 )
 
         final = await stream.get_final_response()
-        conversation_id = session_id if session_id is not None and session_id.startswith("conv_") else None
         payload = responses_from_run(final, response_id=response_id, conversation_id=conversation_id)
         if model is not None:
             # The finalized `AgentResponse` never carries a raw representation
@@ -923,8 +922,8 @@ async def responses_from_streaming_run(
                 "message": str(exc),
             },
         }
-        if session_id is not None and session_id.startswith("conv_"):
-            response_kwargs["conversation"] = {"id": session_id}
+        if conversation_id is not None:
+            response_kwargs["conversation"] = {"id": conversation_id}
         yield _sse_event(
             "response.failed",
             {

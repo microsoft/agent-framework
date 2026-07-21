@@ -146,7 +146,7 @@ def _build_app(agent: _StubAgent) -> FastAPI:
                 async for event in responses_from_streaming_run(
                     stream,
                     response_id=response_id,
-                    session_id=session_id,
+                    conversation_id=conversation_id,
                 ):
                     yield event
                 if conversation_id is not None:

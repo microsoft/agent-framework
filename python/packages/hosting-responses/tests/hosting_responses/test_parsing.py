@@ -240,7 +240,7 @@ class TestResponsesRunHelpers:
             async for event in responses_from_streaming_run(
                 stream,
                 response_id="resp_new",
-                session_id="conv_1",
+                conversation_id="conv_1",
             )
         ]
 
@@ -263,7 +263,7 @@ class TestResponsesRunHelpers:
             async for event in responses_from_streaming_run(
                 stream,
                 response_id="resp_new",
-                session_id="conv_1",
+                conversation_id="conv_1",
             )
         ]
 
