@@ -2,7 +2,7 @@
 status: proposed
 contact: cgillum
 date: 2026-07-21
-deciders: cgillum, vameru, ctoshniwal
+deciders: cgillum, vrdmr, chetantoshniwal
 consulted:
 informed:
 ---
