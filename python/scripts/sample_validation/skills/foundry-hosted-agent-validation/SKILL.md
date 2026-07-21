@@ -105,6 +105,12 @@ agent definition), `requirements.txt`, `Dockerfile`, `.env.example`.
 script as an individual sample — validate the sample via its `main.py` host, and
 run a helper only when the sample's `README.md` calls for it as a setup.
 
+**Skip legacy samples — only validate "most up to date" samples.** The parent
+`.../foundry-hosted-agents/README.md` sample tables have a **Status** column
+(✅ Most up to date, ⚠️ Legacy). Samples marked **⚠️ Legacy** demonstrate an
+older, superseded pattern and do **not** need validation — skip them and mark
+them as success. Only validate samples marked **✅ Most up to date**.
+
 Note the **protocol** (`responses` or `invocations`) from `agent.yaml` /
 manifest — it changes the invoke command (`--protocol invocations`) and the HTTP
 path (`/responses` vs the invocations route).
