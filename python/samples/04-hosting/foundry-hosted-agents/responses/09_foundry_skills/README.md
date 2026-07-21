@@ -1,5 +1,7 @@
 # What this sample demonstrates
 
+> IMPORTANT: We recommend Foundry Hosted Agents to consume skills via Foundry Toolbox. Please see the [Foundry Toolbox MCP Skills](../12_foundry_toolbox_mcp_skills/README.md) sample for a more robust and production-ready approach to consuming skills in your hosted agent.
+
 An [Agent Framework](https://github.com/microsoft/agent-framework) agent that loads its behavioral guidelines from [**Foundry Skills**](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/skills?view=foundry&pivots=python) at startup, hosted using the **Responses protocol**. Skills are authored once as `SKILL.md` files, uploaded to your Foundry project through `AIProjectClient.beta.skills`, and downloaded by the agent on boot so updates ship without code changes.
 
 ## How It Works

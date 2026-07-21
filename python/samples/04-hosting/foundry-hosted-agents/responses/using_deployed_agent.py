@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Mapping
-from typing import Any, cast
 
 from agent_framework import AgentSession
 from agent_framework.foundry import FoundryAgent
@@ -41,41 +39,25 @@ async def create_hosted_agent_session(
     project_client: AIProjectClient,
     agent_name: str,
     agent_version: str | None,
-    isolation_key: str,
 ) -> AgentSession:
     """Create a hosted-agent service session and wrap it in an AgentSession."""
-    create_session_kwargs: dict[str, Any] = {
-        "agent_name": agent_name,
-        "isolation_key": isolation_key,
-    }
     resolved_agent_version = agent_version
     if resolved_agent_version is None:
-        agent_details = await cast(Any, project_client.beta.agents).get(  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-            agent_name=agent_name
-        )
-        versions = getattr(agent_details, "versions", None)
-        if not isinstance(versions, Mapping):
-            raise ValueError("Hosted agent details did not include a versions mapping.")
-        latest_version = getattr(cast(Any, versions.get("latest")), "version", None)
-        if not isinstance(latest_version, str) or not latest_version:
-            raise ValueError("Hosted agent details did not include a latest version string.")
-        resolved_agent_version = latest_version
+        agent_details = await project_client.agents.get(agent_name)
+        resolved_agent_version = agent_details.versions.latest.version
 
-    create_session_kwargs["version_indicator"] = VersionRefIndicator(agent_version=resolved_agent_version)
-    service_session = await project_client.beta.agents.create_session(**create_session_kwargs)
-    agent_session_id = getattr(service_session, "agent_session_id", None)
-    if not isinstance(agent_session_id, str) or not agent_session_id:
-        raise ValueError("Hosted agent session creation did not return a non-empty agent_session_id.")
-
-    return agent.get_session(agent_session_id)
+    service_session = await project_client.beta.agents.create_session(
+        agent_name,
+        version_indicator=VersionRefIndicator(agent_version=resolved_agent_version),
+    )
+    return agent.get_session(service_session.agent_session_id)
 
 
 async def main() -> None:
     credential = AzureCliCredential()
-    project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    agent_name = os.environ["FOUNDRY_AGENT_NAME"]
+    project_endpoint = "https://ai-foundry-sk-interation-test.services.ai.azure.com/api/projects/ai-proj-ga-sk-interation-test"  # os.environ["FOUNDRY_PROJECT_ENDPOINT"]
+    agent_name = "agent-framework-agent-int-test-do-not-delete"  # os.environ["FOUNDRY_AGENT_NAME"]
     agent_version = os.getenv("FOUNDRY_AGENT_VERSION")
-    isolation_key = "my-isolation-key"
 
     project_client = AIProjectClient(
         endpoint=project_endpoint,
@@ -96,7 +78,6 @@ async def main() -> None:
             project_client=project_client,
             agent_name=agent_name,
             agent_version=agent_version,
-            isolation_key=isolation_key,
         )
 
         try:
@@ -128,7 +109,6 @@ async def main() -> None:
                 await project_client.beta.agents.delete_session(
                     agent_name=agent_name,
                     session_id=session.service_session_id,
-                    isolation_key=isolation_key,
                 )
 
 
