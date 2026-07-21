@@ -676,8 +676,9 @@ class TruncationStrategy:
     groups (never partial tool-call groups). The metric is:
     - token count when ``tokenizer`` is provided
     - included message count when ``tokenizer`` is not provided
-    Compaction triggers when the metric exceeds ``max_n`` and trims to
-    ``compact_to``.
+    Compaction triggers when the metric exceeds ``max_n`` and trims toward
+    ``compact_to``. The minimum retained group is never excluded, so the
+    result may remain above ``compact_to`` when that group alone exceeds it.
     """
 
     def __init__(
@@ -1158,7 +1159,9 @@ class TokenBudgetComposedStrategy:
     Strategies run in the provided order over shared message annotations. After
     each step, token counts are refreshed. If no strategy reaches budget, a
     deterministic fallback excludes oldest groups (and finally anchors when
-    necessary) to enforce the limit.
+    necessary) to enforce the limit, while retaining the minimum group needed
+    for a non-empty projection. The result may remain above the budget when
+    that group alone exceeds it.
     """
 
     def __init__(
