@@ -4816,23 +4816,24 @@ async def test_declaration_only_tool_streaming_no_argument_duplication(
         ],
     ]
 
-    updates = []
-    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+    final_response = await chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
         "What's the weather in Seattle?",  # type: ignore[arg-type]
         options={"tool_choice": "auto", "tools": [declaration_func]},  # type: ignore[arg-type]
         stream=True,  # type: ignore[arg-type]
-    ):
-        updates.append(update)
+    ).get_final_response()
 
-    # Collect arguments from all streamed function_call updates
-    all_args = ""
-    for update in updates:
-        for content in update.contents:
-            if content.type == "function_call" and content.call_id == "call1":
-                all_args += content.arguments or ""
+    function_calls = [
+        content
+        for msg in final_response.messages
+        for content in msg.contents
+        if content.type == "function_call" and content.call_id == "call1"
+    ]
 
-    # Arguments must appear exactly once - not duplicated
-    assert all_args == '{"location":"Seattle"}', f"Expected single copy of arguments, got: {all_args!r}"
+    # The chunked arguments must aggregate into exactly one call, appearing once - not duplicated.
+    assert len(function_calls) == 1, f"Expected exactly 1 function_call, got {len(function_calls)}"
+    assert function_calls[0].arguments == '{"location":"Seattle"}', (
+        f"Expected single copy of arguments, got: {function_calls[0].arguments!r}"
+    )
 
 
 async def test_declaration_only_tool_streaming_single_chunk_no_duplication(
