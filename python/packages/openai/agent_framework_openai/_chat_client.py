@@ -34,7 +34,6 @@ from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMidd
 from agent_framework._settings import SecretString
 from agent_framework._telemetry import USER_AGENT_KEY
 from agent_framework._tools import (
-    FUNCTION_INVOCATION_TERMINATED_KEY,
     SHELL_TOOL_KIND_VALUE,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -135,48 +134,27 @@ _AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX = "response.azure_ai_search_call_output."
 _AF_MCP_PENDING_OUTPUT_KEY = "__af_pending_mcp_result__"
 
 
-def _tool_call_ids_paired_with_reasoning(messages: Sequence[Message]) -> set[str]:
-    """Find reasoning-paired tool calls that are safe to remove from stateless replay.
-
-    Hosted MCP calls are self-contained response items and can be removed immediately. A
-    client-side function call remains active through its tool result, so it is removable only
-    after a later assistant message proves that the function loop completed or an explicit
-    middleware-termination marker closes the loop.
-    """
+def _mcp_call_ids_paired_with_unreplayable_reasoning(messages: Sequence[Message]) -> set[str]:
+    """Find hosted MCP calls paired with reasoning that lacks a replay payload."""
     paired_call_ids: set[str] = set()
-    reasoning_function_call_ids: set[str] = set()
-    completed_function_call_ids: set[str] = set()
-    terminated_function_call_ids: set[str] = set()
     pending_reasoning_prefix = False
 
     for message in messages:
-        has_reasoning = any(content.type == "text_reasoning" for content in message.contents)
+        has_reasoning = any(
+            content.type == "text_reasoning"
+            and not (content.protected_data or content.additional_properties.get("encrypted_content"))
+            for content in message.contents
+        )
         has_tool_call = False
         for content in message.contents:
-            if content.type == "function_result" and content.call_id:
-                completed_function_call_ids.add(content.call_id)
-                if content.additional_properties.get(FUNCTION_INVOCATION_TERMINATED_KEY) is True:
-                    terminated_function_call_ids.add(content.call_id)
-            elif content.type in {"function_call", "mcp_server_tool_call"}:
+            if content.type in {"function_call", "mcp_server_tool_call"}:
                 has_tool_call = True
-                if not (has_reasoning or pending_reasoning_prefix) or not content.call_id:
-                    continue
-                if content.type == "function_call":
-                    reasoning_function_call_ids.add(content.call_id)
-                else:
+                if (
+                    content.type == "mcp_server_tool_call"
+                    and (has_reasoning or pending_reasoning_prefix)
+                    and content.call_id
+                ):
                     paired_call_ids.add(content.call_id)
-
-        paired_call_ids.update(reasoning_function_call_ids & terminated_function_call_ids)
-
-        has_follow_up_assistant_content = (
-            message.role == "assistant"
-            and not has_tool_call
-            and any(content.type != "text_reasoning" for content in message.contents)
-        )
-        if has_follow_up_assistant_content:
-            paired_call_ids.update(reasoning_function_call_ids & completed_function_call_ids)
-            reasoning_function_call_ids.clear()
-            completed_function_call_ids.clear()
 
         if has_tool_call:
             pending_reasoning_prefix = False
@@ -1424,6 +1402,12 @@ class RawOpenAIChatClient(
             if isinstance(value, str) and value:
                 request_uses_service_side_storage = True
                 break
+        if not request_uses_service_side_storage:
+            include = list(run_options.get("include", []))
+            if "reasoning.encrypted_content" not in include:
+                include.append("reasoning.encrypted_content")
+            run_options["include"] = include
+
         request_input = self._prepare_messages_for_openai(
             messages,
             request_uses_service_side_storage=request_uses_service_side_storage,
@@ -1536,18 +1520,20 @@ class RawOpenAIChatClient(
         Returns:
             The prepared chat messages for a request.
         """
-        drops_reasoning_without_storage = not request_uses_service_side_storage and any(
-            content.type == "text_reasoning" for message in chat_messages for content in message.contents
-        )
-        drop_reasoning_tool_call_ids: set[str] = set()
-        if drops_reasoning_without_storage:
-            drop_reasoning_tool_call_ids = _tool_call_ids_paired_with_reasoning(chat_messages)
+        reasoning_items: dict[str, dict[str, Any]] = {}
+        drop_reasoning_mcp_call_ids: set[str] = set()
+        if not request_uses_service_side_storage:
+            reasoning_items = self._prepare_reasoning_items_for_openai(chat_messages)
+            drop_reasoning_mcp_call_ids = _mcp_call_ids_paired_with_unreplayable_reasoning(chat_messages)
+        serialized_reasoning_ids: set[str] = set()
 
         list_of_list = [
             self._prepare_message_for_openai(
                 message,
                 request_uses_service_side_storage=request_uses_service_side_storage,
-                drop_reasoning_tool_call_ids=drop_reasoning_tool_call_ids,
+                reasoning_items=reasoning_items,
+                serialized_reasoning_ids=serialized_reasoning_ids,
+                drop_reasoning_mcp_call_ids=drop_reasoning_mcp_call_ids,
             )
             for message in chat_messages
         ]
@@ -1562,7 +1548,9 @@ class RawOpenAIChatClient(
         message: Message,
         *,
         request_uses_service_side_storage: bool = True,
-        drop_reasoning_tool_call_ids: set[str] | None = None,
+        reasoning_items: Mapping[str, dict[str, Any]] | None = None,
+        serialized_reasoning_ids: set[str] | None = None,
+        drop_reasoning_mcp_call_ids: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Prepare a chat message for the OpenAI Responses API format."""
         all_messages: list[dict[str, Any]] = []
@@ -1581,18 +1569,21 @@ class RawOpenAIChatClient(
         # flag, not a message-level one: HistoryProvider-attributed messages
         # (replays_local_storage) still need stripping when the request also carries a continuation
         # marker, since the server-stored items would otherwise duplicate the inline ones. Without
-        # storage, standalone reasoning items are invalid per the API ("reasoning was provided
-        # without its required following item"), so the reasoning branch always drops. When that
-        # happens, `_prepare_messages_for_openai` also drops paired function and hosted-MCP call
-        # IDs across message boundaries rather than replaying bare tool-call items.
-        drop_reasoning_tool_call_ids = drop_reasoning_tool_call_ids or set()
+        # storage, replayable reasoning items are reconstructed from their encrypted payload and
+        # emitted once per provider reasoning id by `_prepare_messages_for_openai`.
+        reasoning_items = reasoning_items or {}
+        serialized_reasoning_ids = serialized_reasoning_ids if serialized_reasoning_ids is not None else set()
+        drop_reasoning_mcp_call_ids = drop_reasoning_mcp_call_ids or set()
         for content in message.contents:
             match content.type:
                 case "text_reasoning":
+                    if request_uses_service_side_storage or not content.id or content.id in serialized_reasoning_ids:
+                        continue
+                    if reasoning_item := reasoning_items.get(content.id):
+                        all_messages.append(reasoning_item)
+                        serialized_reasoning_ids.add(content.id)
                     continue
                 case "function_result":
-                    if content.call_id in drop_reasoning_tool_call_ids:
-                        continue
                     if request_uses_service_side_storage:
                         props = content.additional_properties or {}
                         # Local-shell variant serializes as `local_shell_call` carrying a server-issued id;
@@ -1614,7 +1605,7 @@ class RawOpenAIChatClient(
                     if new_args:
                         all_messages.append(new_args)
                 case "function_call":
-                    if request_uses_service_side_storage or content.call_id in drop_reasoning_tool_call_ids:
+                    if request_uses_service_side_storage:
                         continue
                     function_call = self._prepare_content_for_openai(
                         message.role,
@@ -1643,9 +1634,7 @@ class RawOpenAIChatClient(
                     # the prior response's items (#3295). Drop the call here; the
                     # orphan result is dropped by the coalesce step that follows.
                     #
-                    # Without storage, a reasoning + hosted-MCP pair cannot be replayed
-                    # partially: reasoning is stripped above, and a bare mcp_call is rejected.
-                    if request_uses_service_side_storage or content.call_id in drop_reasoning_tool_call_ids:
+                    if request_uses_service_side_storage or content.call_id in drop_reasoning_mcp_call_ids:
                         continue
                     prepared_mcp = self._prepare_content_for_openai(
                         message.role,
@@ -1667,6 +1656,50 @@ class RawOpenAIChatClient(
         if "content" in args or "tool_calls" in args:
             all_messages.append(args)
         return all_messages
+
+    def _prepare_reasoning_items_for_openai(
+        self,
+        chat_messages: Sequence[Message],
+    ) -> dict[str, dict[str, Any]]:
+        """Reconstruct one replayable Responses reasoning item per provider id."""
+        grouped_contents: dict[str, list[Content]] = {}
+        for message in chat_messages:
+            for content in message.contents:
+                if content.type == "text_reasoning" and content.id:
+                    grouped_contents.setdefault(content.id, []).append(content)
+
+        reasoning_items: dict[str, dict[str, Any]] = {}
+        for reasoning_id, contents in grouped_contents.items():
+            encrypted_content = next(
+                (
+                    content.protected_data or content.additional_properties.get("encrypted_content")
+                    for content in contents
+                    if content.protected_data or content.additional_properties.get("encrypted_content")
+                ),
+                None,
+            )
+            if not encrypted_content:
+                continue
+
+            item: dict[str, Any] = {
+                "type": "reasoning",
+                "id": reasoning_id,
+                "summary": [],
+                "encrypted_content": encrypted_content,
+            }
+            reasoning_texts: list[dict[str, str]] = []
+            for content in contents:
+                props = content.additional_properties
+                if status := props.get("status"):
+                    item["status"] = status
+                if reasoning_text := props.get("reasoning_text"):
+                    reasoning_texts.append({"type": "reasoning_text", "text": reasoning_text})
+                elif content.text:
+                    item["summary"].append({"type": "summary_text", "text": content.text})
+            if reasoning_texts:
+                item["content"] = reasoning_texts
+            reasoning_items[reasoning_id] = item
+        return reasoning_items
 
     def _prepare_content_for_openai(
         self,
@@ -2506,15 +2539,17 @@ class RawOpenAIChatClient(
                                 )
                 case "reasoning":  # ResponseOutputReasoning
                     added_reasoning = False
+                    encrypted_content = getattr(item, "encrypted_content", None)
                     if item_content := getattr(item, "content", None):
                         for index, reasoning_content in enumerate(item_content):
-                            additional_properties: dict[str, Any] = {}
+                            additional_properties: dict[str, Any] = {"reasoning_text": reasoning_content.text}
                             if hasattr(item, "summary") and item.summary and index < len(item.summary):
                                 additional_properties["summary"] = item.summary[index]
                             contents.append(
                                 Content.from_text_reasoning(
                                     id=item.id,
                                     text=reasoning_content.text,
+                                    protected_data=encrypted_content if not added_reasoning else None,
                                     raw_representation=reasoning_content,
                                     additional_properties=additional_properties or None,
                                 )
@@ -2526,6 +2561,7 @@ class RawOpenAIChatClient(
                                 Content.from_text_reasoning(
                                     id=item.id,
                                     text=summary.text,
+                                    protected_data=encrypted_content if not added_reasoning else None,
                                     raw_representation=summary,
                                 )
                             )
@@ -2534,12 +2570,11 @@ class RawOpenAIChatClient(
                         # Reasoning item with no visible text (e.g. encrypted reasoning).
                         # Always emit an empty marker so co-occurrence detection can be done
                         additional_properties_empty: dict[str, Any] = {}
-                        if encrypted := getattr(item, "encrypted_content", None):
-                            additional_properties_empty["encrypted_content"] = encrypted
                         contents.append(
                             Content.from_text_reasoning(
                                 id=item.id,
                                 text="",
+                                protected_data=encrypted_content,
                                 raw_representation=item,
                                 additional_properties=additional_properties_empty or None,
                             )

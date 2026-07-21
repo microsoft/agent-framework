@@ -1161,6 +1161,101 @@ def test_response_content_creation_with_reasoning() -> None:
     assert response.messages[0].contents[0].text == "Reasoning step"
 
 
+async def test_non_streaming_reasoning_function_group_round_trips_for_stateless_replay() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "resp-1"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.finish_reason = "tool_calls"
+    mock_response.incomplete = None
+    mock_response.conversation = None
+
+    mock_reasoning_content = MagicMock()
+    mock_reasoning_content.text = "Reasoning step"
+    mock_reasoning_item = MagicMock()
+    mock_reasoning_item.type = "reasoning"
+    mock_reasoning_item.id = "rs_123"
+    mock_reasoning_item.content = [mock_reasoning_content]
+    mock_reasoning_item.summary = [Summary(text="Visible summary", type="summary_text")]
+    mock_reasoning_item.encrypted_content = "encrypted-reasoning"
+
+    mock_function_call_item = MagicMock()
+    mock_function_call_item.type = "function_call"
+    mock_function_call_item.id = "fc_123"
+    mock_function_call_item.call_id = "call_123"
+    mock_function_call_item.name = "get_weather"
+    mock_function_call_item.arguments = '{"location":"Amsterdam"}'
+    mock_function_call_item.status = "completed"
+    mock_response.output = [mock_reasoning_item, mock_function_call_item]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore[arg-type]
+
+    assert [(content.type, content.text) for content in response.messages[0].contents[:2]] == [
+        ("text_reasoning", "Reasoning step"),
+        ("text_reasoning", "Visible summary"),
+    ]
+    assert response.messages[0].contents[0].protected_data == "encrypted-reasoning"
+
+    messages = [
+        Message(role="user", contents=["What's the weather?"]),
+        *response.messages,
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_123", result="Sunny")],
+        ),
+    ]
+    _, run_options, _ = await client._prepare_request(
+        messages,
+        {"store": False, "include": ["message.output_text.logprobs"]},
+    )
+
+    assert run_options["include"] == ["message.output_text.logprobs", "reasoning.encrypted_content"]
+    assert run_options["input"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "What's the weather?"}],
+        },
+        {
+            "type": "reasoning",
+            "id": "rs_123",
+            "summary": [{"type": "summary_text", "text": "Visible summary"}],
+            "content": [{"type": "reasoning_text", "text": "Reasoning step"}],
+            "encrypted_content": "encrypted-reasoning",
+        },
+        {
+            "call_id": "call_123",
+            "id": "fc_123",
+            "type": "function_call",
+            "name": "get_weather",
+            "arguments": '{"location":"Amsterdam"}',
+            "status": "completed",
+        },
+        {
+            "call_id": "call_123",
+            "type": "function_call_output",
+            "output": "Sunny",
+        },
+    ]
+
+
+async def test_prepare_request_does_not_duplicate_encrypted_reasoning_include() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    _, run_options, _ = await client._prepare_request(
+        [Message(role="user", contents=["Hello"])],
+        {"include": ["reasoning.encrypted_content", "message.output_text.logprobs"]},
+    )
+
+    assert run_options["include"] == ["reasoning.encrypted_content", "message.output_text.logprobs"]
+
+
 def test_response_content_keeps_reasoning_and_function_calls_in_one_message() -> None:
     """Reasoning + function calls should parse into one assistant message."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -1540,8 +1635,8 @@ async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
         assert len(local_shell_outputs) == 0
 
 
-async def test_tool_loop_store_false_omits_reasoning_items_from_second_request() -> None:
-    """Stateless tool-loop replay must omit response-scoped reasoning items."""
+async def test_tool_loop_store_false_replays_encrypted_reasoning_group() -> None:
+    """The public client replays an encrypted reasoning/call/result group."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     mock_response1 = MagicMock()
@@ -1561,7 +1656,7 @@ async def test_tool_loop_store_false_omits_reasoning_items_from_second_request()
     mock_reasoning_item.id = "rs_local_only"
     mock_reasoning_item.content = []
     mock_reasoning_item.summary = []
-    mock_reasoning_item.encrypted_content = None
+    mock_reasoning_item.encrypted_content = "encrypted-reasoning"
 
     mock_function_call_item = MagicMock()
     mock_function_call_item.type = "function_call"
@@ -1607,9 +1702,19 @@ async def test_tool_loop_store_false_omits_reasoning_items_from_second_request()
 
     assert response.text == "The weather in Amsterdam is sunny."
     assert mock_create.call_count == 2
+    assert mock_create.call_args_list[0].kwargs["include"] == ["reasoning.encrypted_content"]
+    assert mock_create.call_args_list[1].kwargs["include"] == ["reasoning.encrypted_content"]
 
     second_call_input = mock_create.call_args_list[1].kwargs["input"]
-    assert not any(item.get("type") == "reasoning" for item in second_call_input)
+    reasoning_items = [item for item in second_call_input if item.get("type") == "reasoning"]
+    assert reasoning_items == [
+        {
+            "type": "reasoning",
+            "id": "rs_local_only",
+            "summary": [],
+            "encrypted_content": "encrypted-reasoning",
+        }
+    ]
 
     function_calls = [item for item in second_call_input if item.get("type") == "function_call"]
     assert len(function_calls) == 1
@@ -2603,8 +2708,8 @@ def test_prepare_messages_for_openai_keeps_active_function_call_for_tool_loop() 
     assert "function_call" in storage_off_types
 
 
-def test_prepare_messages_for_openai_drops_middleware_terminated_function_call() -> None:
-    """A terminated function loop is historical even without a final assistant message."""
+def test_prepare_messages_for_openai_keeps_middleware_terminated_function_call() -> None:
+    """A terminated function loop remains part of stateless history."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     messages = [
@@ -2639,8 +2744,7 @@ def test_prepare_messages_for_openai_drops_middleware_terminated_function_call()
 
     types = [item.get("type") for item in result]
     assert "reasoning" not in types
-    assert "function_call" not in types
-    assert "function_call_output" not in types
+    assert types == ["function_call", "function_call_output"]
 
 
 def test_prepare_messages_for_openai_full_conversation_with_reasoning() -> None:
@@ -2660,6 +2764,7 @@ def test_prepare_messages_for_openai_full_conversation_with_reasoning() -> None:
                 Content.from_text_reasoning(
                     id="rs_test123",
                     text="I need to search for hotels",
+                    protected_data="encrypted-reasoning",
                     additional_properties={"status": "completed"},
                 ),
                 Content.from_function_call(
@@ -2685,15 +2790,18 @@ def test_prepare_messages_for_openai_full_conversation_with_reasoning() -> None:
         ),
     ]
 
-    # Reasoning response items cannot be replayed without their originating response. The
-    # paired function call and result must be dropped with them so the API never receives an
-    # orphaned function_call.
     result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
 
     types = [item.get("type") for item in result]
     assert "message" in types, "User/assistant messages should be present"
-    assert "function_call" not in types
-    assert "function_call_output" not in types
+    assert types == ["message", "reasoning", "function_call", "function_call_output", "message"]
+    assert result[1] == {
+        "type": "reasoning",
+        "id": "rs_test123",
+        "summary": [{"type": "summary_text", "text": "I need to search for hotels"}],
+        "encrypted_content": "encrypted-reasoning",
+        "status": "completed",
+    }
 
 
 def test_prepare_message_for_openai_filters_error_content() -> None:
