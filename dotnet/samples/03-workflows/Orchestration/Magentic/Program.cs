@@ -65,6 +65,17 @@ public static class Program
             .AddParticipants([researcherAgent, coderAgent])
             .WithName("Magentic Orchestration Workflow")
             .WithDescription("Coordinates a researcher and coder to solve a complex analytical task.")
+            // By default the manager's internally generated messages (task ledger, progress ledger, final answer)
+            // use the built-in English prompts. To have them written in another language, pin a concrete language:
+            //     .WithResponseLanguage("French")
+            // For full control you can also override any of the internal prompt templates (placeholders such as
+            // {task}, {team}, and - for the progress ledger - {schema} are substituted by the framework):
+            //     .WithPromptOverrides(new MagenticPromptOverrides
+            //     {
+            //         FinalAnswerPrompt = "Rédige la réponse finale à la demande suivante en français :\n{task}",
+            //     })
+            // The built-in English templates you can copy and translate are published on MagenticDefaultPrompts
+            // (e.g. MagenticDefaultPrompts.ProgressLedgerPrompt) - use them as a starting point for your overrides.
             .RequirePlanSignoff(false)
             .WithMaxRounds(10)
             .WithMaxStalls(3)
