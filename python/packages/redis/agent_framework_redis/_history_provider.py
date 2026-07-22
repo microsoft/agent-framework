@@ -14,28 +14,8 @@ from typing import Any, ClassVar
 
 import redis.asyncio as redis
 from agent_framework import Message
-from agent_framework._sessions import HistoryProvider
+from agent_framework._sessions import HistoryProvider, _get_message_identity
 from redis.credentials import CredentialProvider
-
-
-def _get_message_identity(message: Message) -> tuple:
-    """Return a stable identity for a message for deduplication.
-
-    Uses the message's ID if available, otherwise falls back to a hash of
-    its role and serialized contents to prevent duplicate persistence.
-    """
-    msg_id = getattr(message, "message_id", None)
-    if msg_id is None:
-        msg_id = getattr(message, "id", None)
-    if msg_id is not None:
-        return ("id", msg_id)
-
-    try:
-        contents_data = [c.to_dict() for c in message.contents] if message.contents else []
-        serialized = json.dumps(contents_data, sort_keys=True, ensure_ascii=False)
-        return ("content", message.role, serialized)
-    except Exception:
-        return ("content", message.role, str(message.contents))
 
 
 class RedisHistoryProvider(HistoryProvider):
@@ -200,15 +180,11 @@ class RedisHistoryProvider(HistoryProvider):
     @staticmethod
     def _serialize_json(message: Message) -> str:
         """Serialize a Message to a JSON string for Redis storage."""
-        import json
-
         return json.dumps(message.to_dict())
 
     @staticmethod
     def _deserialize_json(data: str) -> dict[str, Any]:
         """Deserialize a JSON string from Redis to a dict."""
-        import json
-
         return json.loads(data)
 
     async def clear(self, session_id: str | None) -> None:

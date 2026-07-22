@@ -83,16 +83,17 @@ def _get_message_identity(message: Message) -> tuple:
     Uses the message's ID if available, otherwise falls back to a hash of
     its role and serialized contents to prevent duplicate persistence.
     """
-    msg_id = getattr(message, "id", None)
+    msg_id = getattr(message, "message_id", None)
+    if msg_id is None:
+        msg_id = getattr(message, "id", None)
     if msg_id is not None:
         return ("id", msg_id)
 
     try:
-        # Use to_dict() for a stable, deterministic representation
-        serialized = json.dumps(message.to_dict(), sort_keys=True, ensure_ascii=False)
+        contents_data = [c.to_dict() for c in message.contents] if message.contents else []
+        serialized = json.dumps(contents_data, sort_keys=True, ensure_ascii=False)
         return ("content", message.role, serialized)
     except Exception:
-        # Fallback if serialization fails for any reason
         return ("content", message.role, str(message.contents))
 
 
@@ -1318,27 +1319,27 @@ class FileHistoryProvider(HistoryProvider):
         file_lock = self._session_write_lock(file_path)
 
         def _append_messages() -> None:
-            existing_identities: set[tuple] = set()
-            if file_path.exists():
-                with file_path.open("r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            payload = self.loads(line)
-                            msg = Message.from_dict(dict(cast(Mapping[str, Any], payload)))
-                            existing_identities.add(_get_message_identity(msg))
-                        except Exception:
-                            logger.debug("Failed to parse history line for deduplication", exc_info=True)
-                            continue
-
-            with file_lock, file_path.open("a", encoding="utf-8") as file_handle:
-                for message in messages:
-                    identity = _get_message_identity(message)
-                    if identity not in existing_identities:
-                        existing_identities.add(identity)
-                        file_handle.write(f"{self._serialize_message(message)}\n")
+            with file_lock:
+                existing_identities: set[tuple] = set()
+                if file_path.exists():
+                    with file_path.open("r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                payload = self.loads(line)
+                                msg = Message.from_dict(dict(cast(Mapping[str, Any], payload)))
+                                existing_identities.add(_get_message_identity(msg))
+                            except Exception:
+                                logger.debug("failed to parse history line for deduplication")
+                                continue
+                with file_path.open("a", encoding="utf-8") as file_handle:
+                    for message in messages:
+                        identity = _get_message_identity(message)
+                        if identity not in existing_identities:
+                            existing_identities.add(identity)
+                            file_handle.write(f"{self._serialize_message(message)}\n")
 
         async with async_lock:
             await asyncio.to_thread(_append_messages)
