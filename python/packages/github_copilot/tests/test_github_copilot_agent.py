@@ -2,6 +2,7 @@
 
 # ruff: noqa: E402
 
+import inspect
 import os
 import unittest.mock
 from collections.abc import Sequence
@@ -91,12 +92,34 @@ def mock_session() -> MagicMock:
 
 @pytest.fixture
 def mock_client(mock_session: MagicMock) -> MagicMock:
-    """Create a mock CopilotClient."""
+    """Create a mock CopilotClient.
+
+    ``create_session`` / ``resume_session`` validate their call arguments against the
+    real SDK signatures, so that agent-internal or otherwise invalid keyword arguments
+    (which a permissive mock would silently accept) surface as ``TypeError`` here just
+    as they would against the real client.
+    """
+    from copilot import CopilotClient
+
+    def _validating(method_name: str) -> "AsyncMock":
+        real = getattr(CopilotClient, method_name)
+        sig = inspect.signature(real)
+        params = list(sig.parameters.values())
+        if params and params[0].name == "self":
+            sig = sig.replace(parameters=params[1:])
+
+        def _side_effect(*args: Any, **kwargs: Any) -> MagicMock:
+            # Raises TypeError if args/kwargs are not valid for the real signature.
+            sig.bind(*args, **kwargs)
+            return mock_session
+
+        return AsyncMock(side_effect=_side_effect)
+
     client = MagicMock()
     client.start = AsyncMock()
     client.stop = AsyncMock(return_value=[])
-    client.create_session = AsyncMock(return_value=mock_session)
-    client.resume_session = AsyncMock(return_value=mock_session)
+    client.create_session = _validating("create_session")
+    client.resume_session = _validating("resume_session")
     return client
 
 
@@ -240,34 +263,34 @@ class TestGitHubCopilotAgentInit:
         assert agent._settings.get("model") == "gpt-5.1-mini"
 
     def test_init_stores_instruction_directories(self) -> None:
-        """Test that instruction_directories are stored on the agent instance."""
+        """Test that instruction_directories are retained for passthrough to the SDK."""
         agent = GitHubCopilotAgent(default_options=copilot_options({"instruction_directories": ["/my/instructions"]}))
-        assert agent._instruction_directories == ["/my/instructions"]  # type: ignore
+        assert agent._default_options.get("instruction_directories") == ["/my/instructions"]
 
     def test_init_without_instruction_directories(self) -> None:
-        """Test that instruction_directories default to None when not provided."""
+        """Test that instruction_directories are absent when not provided."""
         agent = GitHubCopilotAgent()
-        assert agent._instruction_directories is None  # type: ignore
+        assert "instruction_directories" not in agent._default_options
 
     def test_init_stores_skill_directories(self) -> None:
-        """Test that skill_directories are stored on the agent instance."""
+        """Test that skill_directories are retained for passthrough to the SDK."""
         agent = GitHubCopilotAgent(default_options=copilot_options({"skill_directories": ["/my/skills"]}))
-        assert agent._skill_directories == ["/my/skills"]  # type: ignore
+        assert agent._default_options.get("skill_directories") == ["/my/skills"]
 
     def test_init_without_skill_directories(self) -> None:
-        """Test that skill_directories default to None when not provided."""
+        """Test that skill_directories are absent when not provided."""
         agent = GitHubCopilotAgent()
-        assert agent._skill_directories is None  # type: ignore
+        assert "skill_directories" not in agent._default_options
 
     def test_init_stores_disabled_skills(self) -> None:
-        """Test that disabled_skills are stored on the agent instance."""
+        """Test that disabled_skills are retained for passthrough to the SDK."""
         agent = GitHubCopilotAgent(default_options=copilot_options({"disabled_skills": ["skill-a"]}))
-        assert agent._disabled_skills == ["skill-a"]  # type: ignore
+        assert agent._default_options.get("disabled_skills") == ["skill-a"]
 
     def test_init_without_disabled_skills(self) -> None:
-        """Test that disabled_skills default to None when not provided."""
+        """Test that disabled_skills are absent when not provided."""
         agent = GitHubCopilotAgent()
-        assert agent._disabled_skills is None  # type: ignore
+        assert "disabled_skills" not in agent._default_options
 
 
 class TestGitHubCopilotAgentLifecycle:
@@ -1093,16 +1116,10 @@ class TestGitHubCopilotAgentSessionManagement:
         mock_client.create_session.assert_called_once()
         mock_client.resume_session.assert_called_once_with(
             mock_session.session_id,
-            on_permission_request=unittest.mock.ANY,
+            tools=unittest.mock.ANY,
             streaming=unittest.mock.ANY,
             model=unittest.mock.ANY,
-            system_message=unittest.mock.ANY,
-            tools=unittest.mock.ANY,
-            mcp_servers=unittest.mock.ANY,
-            provider=unittest.mock.ANY,
-            instruction_directories=unittest.mock.ANY,
-            skill_directories=unittest.mock.ANY,
-            disabled_skills=unittest.mock.ANY,
+            on_permission_request=unittest.mock.ANY,
             hooks=unittest.mock.ANY,
         )
 
@@ -1273,7 +1290,7 @@ class TestGitHubCopilotAgentSessionManagement:
         mock_client: MagicMock,
         mock_session: MagicMock,
     ) -> None:
-        """Test that instruction_directories is None when not specified."""
+        """Test that instruction_directories is omitted when not specified."""
         agent = GitHubCopilotAgent(client=mock_client)
         await agent.start()
 
@@ -1281,7 +1298,7 @@ class TestGitHubCopilotAgentSessionManagement:
 
         call_args = mock_client.create_session.call_args
         config = call_args.kwargs
-        assert config["instruction_directories"] is None
+        assert "instruction_directories" not in config
 
     async def test_instruction_directories_empty_list_clears_defaults(
         self,
@@ -1367,7 +1384,7 @@ class TestGitHubCopilotAgentSessionManagement:
         mock_client: MagicMock,
         mock_session: MagicMock,
     ) -> None:
-        """Test that skill_directories is None when not specified."""
+        """Test that skill_directories is omitted when not specified."""
         agent = GitHubCopilotAgent(client=mock_client)
         await agent.start()
 
@@ -1375,7 +1392,7 @@ class TestGitHubCopilotAgentSessionManagement:
 
         call_args = mock_client.create_session.call_args
         config = call_args.kwargs
-        assert config["skill_directories"] is None
+        assert "skill_directories" not in config
 
     async def test_skill_directories_empty_list_clears_defaults(
         self,
@@ -1461,7 +1478,7 @@ class TestGitHubCopilotAgentSessionManagement:
         mock_client: MagicMock,
         mock_session: MagicMock,
     ) -> None:
-        """Test that disabled_skills is None when not specified."""
+        """Test that disabled_skills is omitted when not specified."""
         agent = GitHubCopilotAgent(client=mock_client)
         await agent.start()
 
@@ -1469,7 +1486,7 @@ class TestGitHubCopilotAgentSessionManagement:
 
         call_args = mock_client.create_session.call_args
         config = call_args.kwargs
-        assert config["disabled_skills"] is None
+        assert "disabled_skills" not in config
 
     async def test_disabled_skills_empty_list_clears_defaults(
         self,
@@ -1602,7 +1619,7 @@ class TestGitHubCopilotAgentMCPServers:
 
         call_args = mock_client.create_session.call_args
         config = call_args.kwargs
-        assert config["mcp_servers"] is None
+        assert "mcp_servers" not in config
 
 
 class TestGitHubCopilotAgentProvider:
@@ -1668,7 +1685,7 @@ class TestGitHubCopilotAgentProvider:
         self,
         mock_client: MagicMock,
     ) -> None:
-        """Test that provider is None in session config when not set."""
+        """Test that provider is omitted from session config when not set."""
         agent = GitHubCopilotAgent(client=mock_client)
         await agent.start()
 
@@ -1676,13 +1693,13 @@ class TestGitHubCopilotAgentProvider:
 
         call_args = mock_client.create_session.call_args
         config = call_args.kwargs
-        assert config["provider"] is None
+        assert "provider" not in config
 
     async def test_resume_session_excludes_provider_when_not_set(
         self,
         mock_client: MagicMock,
     ) -> None:
-        """Test that provider is None in resume session config when not set."""
+        """Test that provider is omitted from resume session config when not set."""
         agent = GitHubCopilotAgent(client=mock_client)
         await agent.start()
 
@@ -1693,7 +1710,7 @@ class TestGitHubCopilotAgentProvider:
 
         call_args = mock_client.resume_session.call_args
         config = call_args.kwargs
-        assert config["provider"] is None
+        assert "provider" not in config
 
     async def test_runtime_provider_takes_precedence(
         self,
@@ -1729,11 +1746,11 @@ class TestGitHubCopilotAgentProvider:
         assert config["provider"]["type"] == "openai"
         assert config["provider"]["base_url"] == "https://runtime.openai.com"
 
-    async def test_provider_not_leaked_into_default_options(
+    async def test_provider_retained_in_default_options(
         self,
         mock_client: MagicMock,
     ) -> None:
-        """Test that provider is popped from opts and not left in _default_options."""
+        """Test that provider is retained in _default_options for passthrough to the SDK."""
         from copilot.session import ProviderConfig
 
         provider: ProviderConfig = {
@@ -1747,9 +1764,9 @@ class TestGitHubCopilotAgentProvider:
             default_options=copilot_options({"provider": provider, "model": "gpt-5"}),
         )
 
-        assert "provider" not in agent._default_options
-        assert agent._provider is not None
-        assert agent._provider["type"] == "azure"
+        # model is consumed into settings; provider rides through default_options.
+        assert "model" not in agent._default_options
+        assert agent._default_options["provider"]["type"] == "azure"
 
     async def test_provider_coexists_with_other_options(
         self,
@@ -1795,6 +1812,93 @@ class TestGitHubCopilotAgentProvider:
         assert config["model"] == "gpt-5"
         assert config["mcp_servers"] is not None
         assert config["tools"] is not None
+
+
+class TestGitHubCopilotAgentOptionsPassthrough:
+    """Regression tests for the options-passthrough contract of _build_session_kwargs."""
+
+    async def test_arbitrary_option_forwarded_verbatim(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """An option without a dedicated mapping is forwarded verbatim to create_session."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"reasoning_effort": "high", "context_tier": "large"}),
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["reasoning_effort"] == "high"
+        assert config["context_tier"] == "large"
+
+    async def test_tools_from_default_options_are_honored(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Tools supplied via default_options are converted and forwarded, not dropped."""
+        from copilot.tools import Tool as CopilotTool
+
+        passthrough_tool = CopilotTool(
+            name="passthrough",
+            description="A pre-built SDK tool supplied through default_options.",
+            handler=AsyncMock(),
+            parameters={"type": "object", "properties": {}},
+        )
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"tools": [passthrough_tool]}),
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["tools"] is not None
+        assert any(t.name == "passthrough" for t in config["tools"])
+
+    async def test_caller_hooks_forwarded_verbatim(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """A caller-supplied native ``hooks`` dict is forwarded instead of being clobbered."""
+
+        def my_pre_tool_use(_input: Any, _context: Any) -> Any:
+            return None
+
+        hooks = {"on_pre_tool_use": my_pre_tool_use}
+        agent = GitHubCopilotAgent(client=mock_client, default_options=cast(Any, {"hooks": hooks}))
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["hooks"]["on_pre_tool_use"] is my_pre_tool_use
+
+    async def test_internal_keys_do_not_leak_to_create_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Agent-internal / client-level keys must not be forwarded to create_session."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        def runtime_hook(_input: Any, _context: Any) -> Any:
+            return None
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        # timeout and on_pre_tool_use are consumed by the agent, not create_session.
+        await agent.run("hello", options=cast(Any, {"timeout": 30, "on_pre_tool_use": runtime_hook}))
+
+        config = mock_client.create_session.call_args.kwargs
+        for leaked in ("timeout", "on_pre_tool_use", "on_function_approval", "cli_path", "log_level", "base_directory"):
+            assert leaked not in config
+        # on_pre_tool_use is still honored via the hooks parameter.
+        assert config["hooks"]["on_pre_tool_use"] is runtime_hook
 
 
 class TestGitHubCopilotAgentToolConversion:

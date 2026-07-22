@@ -256,7 +256,7 @@ class CosmosMemoryContextProvider(ContextProvider):
     # ``timeout`` is an intentional part of the public flush() API and is forwarded to
     # ``asyncio.wait`` (which returns on expiry without raising), so the ASYNC109 suggestion to
     # switch to ``asyncio.timeout`` does not apply here.
-    async def flush(self, timeout: float = 30.0) -> None:  # noqa: ASYNC109
+    async def flush(self, timeout: float = 30.0) -> None:  # ruff:ignore[async-function-with-timeout]
         """Wait for any pending background memory-extraction tasks to complete.
 
         After each stored turn, the Agent Memory Toolkit schedules fact/summary

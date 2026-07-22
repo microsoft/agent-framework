@@ -1,0 +1,33 @@
+name: GitHub automation tests
+
+on:
+  pull_request:
+    paths:
+      - ".github/actions/**"
+      - ".github/scripts/**"
+      - ".github/tests/**"
+      - ".github/workflows/github-automation-tests.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/actions/**"
+      - ".github/scripts/**"
+      - ".github/tests/**"
+      - ".github/workflows/github-automation-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+
+      - name: Run tests
+        run: node --test .github/tests/*.js

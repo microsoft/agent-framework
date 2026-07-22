@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-# ruff: noqa: RUF070, RUF100
+# ruff:file-ignore[unnecessary-assign-before-yield]
 from __future__ import annotations
 
 import asyncio
@@ -524,11 +524,11 @@ class Workflow(DictConvertible):
                 # Emit explicit start/status events to the stream
                 with _framework_event_origin():
                     started = WorkflowEvent.started()
-                yield started  # noqa: RUF070
+                yield started
                 self._status = WorkflowRunState.IN_PROGRESS
                 with _framework_event_origin():
                     in_progress = WorkflowEvent.status(self._status)
-                yield in_progress  # noqa: RUF070
+                yield in_progress
 
                 # Per-run reset for fresh-message runs only. We deliberately
                 # do NOT clear shared workflow state or the runner context's
@@ -583,7 +583,7 @@ class Workflow(DictConvertible):
                         self._status = WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
                         with _framework_event_origin():
                             pending_status = WorkflowEvent.status(self._status)
-                        yield pending_status  # noqa: RUF070
+                        yield pending_status
                 # Workflow runs until idle - emit final status based on whether requests are pending
                 if saw_request:
                     self._status = WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
@@ -606,11 +606,11 @@ class Workflow(DictConvertible):
                 details = WorkflowErrorDetails.from_exception(exc)
                 with _framework_event_origin():
                     failed_event = WorkflowEvent.failed(details)
-                yield failed_event  # noqa: RUF070
+                yield failed_event
                 self._status = WorkflowRunState.FAILED
                 with _framework_event_origin():
                     failed_status = WorkflowEvent.status(WorkflowRunState.FAILED)
-                yield failed_status  # noqa: RUF070
+                yield failed_status
                 span.add_event(
                     name=OtelAttr.WORKFLOW_ERROR,
                     attributes={

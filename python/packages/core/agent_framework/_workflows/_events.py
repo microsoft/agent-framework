@@ -124,7 +124,7 @@ WorkflowEventType = Literal[
     "executor_failed",  # Executor handler raised error (use .executor_id, .details)
     "executor_bypassed",  # Executor skipped via cache hit during replay (use .executor_id, .data)
     # Orchestration event types (use .data for typed payload)
-    "group_chat",  # Group chat orchestrator events (use .data as GroupChatRequestSentEvent | GroupChatResponseReceivedEvent) # noqa: E501
+    "group_chat",  # Group chat orchestrator events (use .data as GroupChatRequestSentEvent | GroupChatResponseReceivedEvent) # ruff:ignore[line-too-long]
     "handoff_sent",  # Handoff routing events (use .data as HandoffSentEvent)
     "magentic_orchestrator",  # Magentic orchestrator events (use .data as MagenticOrchestratorEvent)
 ]

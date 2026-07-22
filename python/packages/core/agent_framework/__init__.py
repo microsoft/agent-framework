@@ -11,7 +11,7 @@ that owns that symbol.
 from __future__ import annotations
 
 # pyright: reportUnsupportedDunderAll=false
-# ruff: noqa: F822
+# ruff:file-ignore[undefined-export]
 import importlib
 import importlib.metadata
 from collections.abc import Mapping

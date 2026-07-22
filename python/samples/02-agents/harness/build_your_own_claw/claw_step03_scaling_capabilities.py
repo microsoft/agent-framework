@@ -8,7 +8,6 @@
 #     "httpx",
 #     "textual>=6.2.1",
 #     "rich>=13.7.1",
-#     "azure-identity",
 #     "python-dotenv",
 # ]
 # ///
@@ -72,8 +71,8 @@ from agent_framework import (
     tool,
 )
 from agent_framework.foundry import FoundryChatClient
-from agent_framework_monty import MontyCodeActProvider
-from agent_framework_tools.shell import LocalShellTool, ShellPolicy
+from agent_framework.monty import MontyCodeActProvider
+from agent_framework.tools import LocalShellTool, ShellPolicy
 from azure.identity import AzureCliCredential, get_bearer_token_provider
 from dotenv import load_dotenv
 from mcp.client.session import ClientSession

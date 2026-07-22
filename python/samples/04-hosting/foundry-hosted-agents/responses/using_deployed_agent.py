@@ -53,10 +53,23 @@ async def create_hosted_agent_session(
     return agent.get_session(service_session.agent_session_id)
 
 
+async def delete_hosted_agent_session(
+    *,
+    project_client: AIProjectClient,
+    agent_name: str,
+    session: AgentSession,
+) -> None:
+    """Delete a hosted-agent service session."""
+    await project_client.beta.agents.delete_session(
+        agent_name,
+        session.session_id,
+    )
+
+
 async def main() -> None:
     credential = AzureCliCredential()
-    project_endpoint = "https://ai-foundry-sk-interation-test.services.ai.azure.com/api/projects/ai-proj-ga-sk-interation-test"  # os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    agent_name = "agent-framework-agent-int-test-do-not-delete"  # os.environ["FOUNDRY_AGENT_NAME"]
+    project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
+    agent_name = os.environ["FOUNDRY_AGENT_NAME"]
     agent_version = os.getenv("FOUNDRY_AGENT_VERSION")
 
     project_client = AIProjectClient(
@@ -105,11 +118,11 @@ async def main() -> None:
                 if chunk.text:
                     print(chunk.text, end="", flush=True)
         finally:
-            if isinstance(session.service_session_id, str):
-                await project_client.beta.agents.delete_session(
-                    agent_name=agent_name,
-                    session_id=session.service_session_id,
-                )
+            await delete_hosted_agent_session(
+                project_client=project_client,
+                agent_name=agent_name,
+                session=session,
+            )
 
 
 if __name__ == "__main__":

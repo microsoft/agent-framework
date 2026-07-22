@@ -4,7 +4,7 @@ description = "Azure Cosmos DB Agent Memory Toolkit integration for Microsoft Ag
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.0.0a260709"
+version = "1.0.0a260721"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -71,7 +71,7 @@ extend = "../../pyproject.toml"
 [tool.ruff.lint.extend-per-file-ignores]
 # Samples are illustrative scripts: allow prints and a plain blocking input() loop, and
 # skip docstring/namespace/copyright rules.
-"samples/**" = ["D", "INP", "ERA001", "RUF", "S", "T201", "CPY", "ASYNC250"]
+"samples/**" = ["D", "INP", "commented-out-code", "RUF", "S", "print", "CPY", "blocking-input-in-async-function"]
 
 [tool.coverage.run]
 omit = [

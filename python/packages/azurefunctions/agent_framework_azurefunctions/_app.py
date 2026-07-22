@@ -467,7 +467,7 @@ class AgentFunctionApp(DFAppBase):
 
             outputs = yield from run_workflow_orchestrator(context, captured_workflow, initial_message, shared_state)
             # Durable Functions runtime extracts return value from StopIteration
-            return outputs  # noqa: B901
+            return outputs  # ruff:ignore[return-in-generator]
 
         # Ensure the orchestrator function is registered (prevents garbage collection)
         _ = workflow_orchestrator

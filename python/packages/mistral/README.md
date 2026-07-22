@@ -8,6 +8,8 @@ pip install agent-framework-mistral --pre
 
 and see the [README](https://github.com/microsoft/agent-framework/tree/main/python/README.md) for more information.
 
+See the [Mistral embedding sample](../../samples/02-agents/providers/mistral/mistral_embeddings.py) for a runnable example.
+
 ## Embedding Client
 
 The `MistralEmbeddingClient` provides embedding generation using Mistral AI models.
@@ -15,7 +17,7 @@ The `MistralEmbeddingClient` provides embedding generation using Mistral AI mode
 ### Quick Start
 
 ```python
-from agent_framework_mistral import MistralEmbeddingClient
+from agent_framework.mistral import MistralEmbeddingClient
 
 # Using environment variables (MISTRAL_API_KEY, MISTRAL_EMBEDDING_MODEL)
 client = MistralEmbeddingClient()
