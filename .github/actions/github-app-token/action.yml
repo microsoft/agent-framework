@@ -8,28 +8,28 @@ inputs:
     default: app-with-fallback
   azure-client-id:
     description: Client ID of the Azure workload identity
-    required: true
+    required: false
   azure-tenant-id:
     description: Azure tenant ID
-    required: true
+    required: false
   azure-subscription-id:
     description: Azure subscription containing the Key Vault
-    required: true
+    required: false
   key-vault-name:
     description: Azure Key Vault name
-    required: true
+    required: false
   key-name:
     description: Key Vault key used to sign the GitHub App JWT
-    required: true
+    required: false
   github-app-client-id:
     description: GitHub App client ID
-    required: true
+    required: false
   github-app-installation-id:
     description: GitHub App installation ID
-    required: true
+    required: false
   repository:
     description: Repository to include in the installation token
-    required: true
+    required: false
   fallback-token:
     description: PAT used temporarily when app authentication is unavailable
     required: false

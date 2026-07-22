@@ -50,13 +50,15 @@ async function createInstallationToken(config, dependencies = {}) {
   const execute = dependencies.execute ?? execFileSync;
   const request = dependencies.fetch ?? fetch;
   const nowSeconds = dependencies.nowSeconds ?? Math.floor(Date.now() / 1000);
-  const signingInput = createJwtSigningInput(config.githubAppClientId, nowSeconds);
-  const jwt = signJwt(signingInput, config, execute);
-  const [owner, repository] = config.targetRepository.split('/');
+  const repositoryParts = config.targetRepository.split('/');
 
-  if (!owner || !repository) {
+  if (repositoryParts.length !== 2 || repositoryParts.some((part) => part.length === 0)) {
     throw new Error('TARGET_REPOSITORY must use the owner/repository format.');
   }
+
+  const [, repository] = repositoryParts;
+  const signingInput = createJwtSigningInput(config.githubAppClientId, nowSeconds);
+  const jwt = signJwt(signingInput, config, execute);
 
   const response = await request(
     `https://api.github.com/app/installations/${config.githubAppInstallationId}/access_tokens`,

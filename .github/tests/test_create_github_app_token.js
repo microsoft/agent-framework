@@ -72,4 +72,22 @@ describe('GitHub App token creation', () => {
       /Required GitHub App authentication configuration is missing/,
     );
   });
+
+  it('rejects repository values with extra path segments before signing', async () => {
+    let signed = false;
+
+    await assert.rejects(
+      createInstallationToken(
+        { ...CONFIG, targetRepository: 'microsoft/agent-framework/extra' },
+        {
+          execute: () => {
+            signed = true;
+            return '+/8=\n';
+          },
+        },
+      ),
+      /TARGET_REPOSITORY must use the owner\/repository format/,
+    );
+    assert.equal(signed, false);
+  });
 });
