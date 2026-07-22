@@ -496,9 +496,11 @@ class TestMultiTurn:
 class TestReasoningHostedMcpReplay:
     """Regression coverage for stateless reasoning + hosted MCP replay."""
 
-    async def test_second_turn_does_not_replay_mcp_call_without_its_reasoning_item(self) -> None:
-        """A hosted agent can continue after a reasoning model uses hosted MCP with store disabled."""
+    async def test_second_turn_replays_mcp_call_with_encrypted_reasoning(self) -> None:
+        """A hosted agent replays an encrypted reasoning and MCP pair when store is disabled."""
         call_count = 0
+        reasoning_id = "rs_576d207b35d96b3200pkcXkMwXAij920Wcv7WhRXiMPiLdOA63"
+        provider_payloads: list[dict[str, Any]] = []
 
         def _message(message_id: str) -> dict[str, Any]:
             return {
@@ -525,6 +527,8 @@ class TestReasoningHostedMcpReplay:
         async def foundry_responses_boundary(request: httpx.Request) -> httpx.Response:
             nonlocal call_count
             call_count += 1
+            payload = json.loads(request.content)
+            provider_payloads.append(payload)
             if call_count == 1:
                 return httpx.Response(
                     200,
@@ -532,7 +536,8 @@ class TestReasoningHostedMcpReplay:
                         "resp_first",
                         [
                             {
-                                "id": "rs_required",
+                                "encrypted_content": "encrypted-reasoning",
+                                "id": reasoning_id,
                                 "summary": [{"text": "The MCP server has the answer.", "type": "summary_text"}],
                                 "type": "reasoning",
                             },
@@ -550,17 +555,22 @@ class TestReasoningHostedMcpReplay:
                     ),
                 )
 
-            payload = json.loads(request.content)
             input_items = payload["input"]
-            input_types = {item.get("type") for item in input_items if isinstance(item, dict)}
-            if "mcp_call" in input_types and "reasoning" not in input_types:
+            reasoning_items = [item for item in input_items if item.get("type") == "reasoning"]
+            mcp_calls = [item for item in input_items if item.get("type") == "mcp_call"]
+            if (
+                len(reasoning_items) != 1
+                or reasoning_items[0].get("encrypted_content") != "encrypted-reasoning"
+                or len(mcp_calls) != 1
+                or mcp_calls[0].get("output") != "Microsoft Agent Framework"
+            ):
                 return httpx.Response(
                     400,
                     json={
                         "error": {
                             "message": (
-                                "Item 'mcp_paired' of type 'mcp_call' was provided without its "
-                                "required 'reasoning' item: 'rs_required'."
+                                "The stateless request did not replay the complete encrypted "
+                                "reasoning and hosted MCP call/result group."
                             ),
                             "type": "invalid_request_error",
                             "code": "invalid_request_error",
@@ -622,6 +632,10 @@ class TestReasoningHostedMcpReplay:
         assert first_body["status"] == "completed", first_body.get("error")
         first_output_types = {item["type"] for item in first_body["output"]}
         assert {"reasoning", "mcp_call"} <= first_output_types
+        first_reasoning = next(item for item in first_body["output"] if item["type"] == "reasoning")
+        assert first_reasoning["id"] == reasoning_id
+        assert first_reasoning["encrypted_content"] == "encrypted-reasoning"
+        assert "reasoning.encrypted_content" in provider_payloads[0]["include"]
 
         second = await _post_json(
             server,
@@ -635,6 +649,17 @@ class TestReasoningHostedMcpReplay:
         assert second.status_code == 200
         second_body = second.json()
         assert second_body["status"] == "completed", second_body.get("error")
+        assert call_count == 2
+
+        second_input = provider_payloads[1]["input"]
+        reasoning_items = [item for item in second_input if item.get("type") == "reasoning"]
+        mcp_calls = [item for item in second_input if item.get("type") == "mcp_call"]
+        assert len(reasoning_items) == 1
+        assert reasoning_items[0]["id"] == reasoning_id
+        assert reasoning_items[0]["encrypted_content"] == "encrypted-reasoning"
+        assert len(mcp_calls) == 1
+        assert mcp_calls[0]["id"] == "mcp_paired"
+        assert mcp_calls[0]["output"] == "Microsoft Agent Framework"
 
 
 # ---------------------------------------------------------------------------
