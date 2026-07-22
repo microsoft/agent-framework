@@ -41,7 +41,7 @@ def _normalized_modes(allowed_modes: Collection[str]) -> set[str]:
     for mode in allowed_modes:
         if not isinstance(mode, str) or not mode.strip():
             raise ValueError("A2A modes must be non-empty strings.")
-        normalized_modes.add(mode.lower())
+        normalized_modes.add(mode.strip().lower())
     return normalized_modes
 
 
@@ -74,7 +74,7 @@ def _validate_part_modes(parts: Sequence[Part], allowed_modes: Collection[str], 
     for part in parts:
         mode = _part_mode(part)
         if mode is None:
-            raise ValueError(f"Cannot determine the A2A mode for a {direction} part.")
+            continue
         if _mode_allowed(mode, normalized_modes):
             continue
         raise ValueError(

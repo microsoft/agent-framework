@@ -88,7 +88,8 @@ def test_a2a_to_run_omits_unsupported_parts() -> None:
             message_id="message-1",
             role=Role.ROLE_USER,
             parts=[Part(), Part(text="hello")],
-        )
+        ),
+        input_modes=[" text "],
     )
 
     messages = run["messages"]
@@ -108,7 +109,7 @@ def test_a2a_to_run_validates_advertised_input_modes() -> None:
     with raises(ValueError, match="audio/wav"):
         a2a_to_run(message, input_modes=["text"])
 
-    assert a2a_to_run(message, input_modes=["audio/*"])["messages"]
+    assert a2a_to_run(message, input_modes=[" audio/* "])["messages"]
 
 
 def test_a2a_from_run_converts_final_response() -> None:
@@ -201,6 +202,11 @@ def test_a2a_from_run_parses_json_text_for_json_output_mode() -> None:
         a2a_from_run(Message("assistant", ["not json"]), output_modes=["application/json"])
 
 
+def test_a2a_from_run_rejects_text_for_incompatible_output_mode() -> None:
+    with raises(ValueError, match="cannot be converted"):
+        a2a_from_run(Message("assistant", ["hello"]), output_modes=["application/octet-stream"])
+
+
 def test_a2a_from_run_rejects_invalid_data_uri() -> None:
     content = Content("data", uri="not-a-data-uri", media_type="application/octet-stream")
 
@@ -224,11 +230,23 @@ def test_a2a_to_workflow_run_validates_structured_input() -> None:
     ParseDict({"text": "go", "repeat": 2}, data_part.data)
 
     value = a2a_to_workflow_run(
-        A2AMessage(message_id="message-1", role=Role.ROLE_USER, parts=[data_part]),
+        A2AMessage(message_id="message-1", role=Role.ROLE_USER, parts=[Part(), data_part]),
         create_workflow(),
+        input_modes=["application/json"],
     )
 
     assert value == WorkflowInput(text="go", repeat=2)
+
+
+def test_a2a_to_workflow_run_rejects_invalid_structured_input() -> None:
+    data_part = Part()
+    ParseDict({"text": "go", "repeat": "not_a_number"}, data_part.data)
+
+    with raises(ValueError, match="repeat"):
+        a2a_to_workflow_run(
+            A2AMessage(message_id="message-1", role=Role.ROLE_USER, parts=[data_part]),
+            create_workflow(),
+        )
 
 
 def test_a2a_to_workflow_run_supports_text_and_binary_inputs() -> None:
