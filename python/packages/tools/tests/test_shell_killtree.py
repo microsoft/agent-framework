@@ -129,6 +129,7 @@ async def test_kill_via_stdlib_posix_escalates_to_sigkill(monkeypatch) -> None:
     killpg = MagicMock()
     monkeypatch.setattr(killtree_module.os, "getpgid", lambda pid: 99, raising=False)
     monkeypatch.setattr(killtree_module.os, "killpg", killpg, raising=False)
+    monkeypatch.setattr(killtree_module.signal, "SIGKILL", 9, raising=False)
 
     calls = {"count": 0}
 
