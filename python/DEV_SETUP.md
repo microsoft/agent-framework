@@ -157,6 +157,12 @@ uv run poe --directory packages/core test
 
 Large packages (core, ag-ui, orchestrations, anthropic) use `pytest-xdist` for parallel test execution within the package. The aggregate `test -A` sweep also uses `pytest-xdist` across the selected packages.
 
+### Testing deprecations
+
+When an API is marked as deprecated, update the test suite to use its replacement at the same time. Keep only
+focused tests that validate the deprecated API and its warning; ordinary behavior, integration, and sample tests
+should exercise the supported API so deprecation warnings do not accumulate in test runs.
+
 ## Code quality checks
 
 To run the same checks that run during a commit and the GitHub Action `Python Code Quality`, you can use this command, from the [python](../python) folder:

@@ -173,7 +173,7 @@ class WorkflowRunResult(list[WorkflowEvent]):
 class OutputDesignation:
     """Immutable rule for labeling executor yields as terminal, intermediate, or hidden outputs.
 
-    ``outputs`` is ``None`` in omitted-selection compatibility mode (every yield is terminal). In explicit mode,
+    ``outputs`` is ``None`` in the default all-output mode (every yield is terminal). In explicit mode,
     ``outputs`` and ``intermediates`` are disjoint executor ID sets; unlisted executor
     yields are hidden from caller-facing output/intermediate events.
     Package-internal value type owned by ``Workflow``; not exported from ``agent_framework``.
@@ -305,9 +305,8 @@ class Workflow(DictConvertible):
                 better observability and management.
             description: Optional description of what the workflow does. If the workflow is built using
                 WorkflowBuilder, this will be the description of the builder.
-            output_from: List of executor IDs designated as workflow outputs, or
-                ``None`` for omitted-selection compatibility behavior when ``intermediate_output_from`` is also
-                ``None``.
+            output_from: List of executor IDs designated as workflow outputs, or ``None`` for the default
+                all-output behavior when ``intermediate_output_from`` is also ``None``.
             intermediate_output_from: List of executor IDs designated as intermediate outputs.
                 In explicit designation mode, unlisted executor yields are hidden from
                 caller-facing output/intermediate events.
@@ -334,7 +333,7 @@ class Workflow(DictConvertible):
         self.graph_signature = self._compute_graph_signature()
         self.graph_signature_hash = self._hash_graph_signature(self.graph_signature)
 
-        # Single value type encodes omitted-selection compatibility vs explicit output-designation policy.
+        # Single value type encodes default all-output vs explicit output-designation policy.
         output_designation_ids = (
             frozenset(output_from)
             if output_from is not None
@@ -433,8 +432,8 @@ class Workflow(DictConvertible):
     def get_output_executors(self) -> list[Executor]:
         """Get the list of output executors in the workflow.
 
-        In omitted-selection compatibility mode (no explicit ``output_from``), returns every
-        executor in the workflow. In explicit mode, returns only the designated output executors.
+        In the default all-output mode, returns every executor in the workflow. In explicit mode,
+        returns only the designated output executors.
         """
         designated = self._output_designation.outputs
         if designated is None:

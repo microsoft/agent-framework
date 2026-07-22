@@ -156,8 +156,7 @@ class TestThreadItemConverter:
 
         result = converter.tag_to_message_content(tag)
         assert result.type == "text"
-        # Since data is a dict, getattr won't work, so it will fall back to text
-        assert result.text == "<TAG>Name:john</TAG>"
+        assert result.text == "<TAG>Name:John Doe</TAG>"
 
     def test_tag_to_message_content_no_name(self, converter):
         """Test converting tag with no name to message content."""
@@ -440,14 +439,18 @@ class TestThreadItemConverter:
     def test_widget_to_input(self, converter):
         """Test converting WidgetItem to Message."""
         from chatkit.types import WidgetItem
-        from chatkit.widgets import Card, Text  # ty: ignore[deprecated]
+        from chatkit.widgets import WidgetTemplate
 
         widget_item = WidgetItem(
             id="widget_1",
             thread_id="thread_1",
             created_at=datetime.now(),
             type="widget",
-            widget=Card(key="card1", children=[Text(value="Hello")]),  # ty: ignore[deprecated]
+            widget=WidgetTemplate({
+                "version": "1.0",
+                "name": "greeting",
+                "template": '{"type":"Card","key":"card1","children":[{"type":"Text","value":"Hello"}]}',
+            }).build(),
         )
 
         result = converter.widget_to_input(widget_item)
@@ -563,7 +566,7 @@ class TestThreadItemConverter:
             Workflow,
             WorkflowItem,
         )
-        from chatkit.widgets import Card, Text  # ty: ignore[deprecated]
+        from chatkit.widgets import WidgetTemplate
 
         thread_items = [
             AssistantMessageItem(
@@ -590,7 +593,13 @@ class TestThreadItemConverter:
                 thread_id="thread_1",
                 created_at=datetime.now(),
                 type="widget",
-                widget=Card(key="card_dispatch", children=[Text(value="Dispatch")]),  # ty: ignore[deprecated]
+                widget=WidgetTemplate({
+                    "version": "1.0",
+                    "name": "dispatch",
+                    "template": (
+                        '{"type":"Card","key":"card_dispatch","children":[{"type":"Text","value":"Dispatch"}]}'
+                    ),
+                }).build(),
             ),
             WorkflowItem(
                 id="workflow_dispatch",

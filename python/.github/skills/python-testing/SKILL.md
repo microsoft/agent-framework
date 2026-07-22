@@ -13,6 +13,10 @@ aggregate coverage enforcement. Tests should be fast, reliable, and maintainable
 When adding new code, check that the relevant sections of the codebase are covered by tests, and add new tests as needed. When modifying existing code, update or add tests to cover the changes.
 We run tests in two stages, for a PR each commit is tested with unit tests only (using `-m "not integration"`), and the full suite including integration tests is run when merging.
 
+When an API is marked as deprecated, migrate ordinary tests to its replacement in the same change. Retain only
+focused tests that validate the deprecated behavior and warning; integration tests, samples, and unrelated unit
+tests should use the supported API.
+
 ## Running Tests
 
 ```bash

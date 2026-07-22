@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -52,8 +53,9 @@ def test_resolve_taskkill_uses_systemroot_and_caches(monkeypatch) -> None:
     monkeypatch.setenv("SystemRoot", "C:\\Windows")
     monkeypatch.setattr(killtree_module.os.path, "isfile", lambda path: path.endswith("taskkill.exe"))
 
-    assert _resolve_taskkill() == "C:\\Windows/System32/taskkill.exe"
-    assert _resolve_taskkill() == "C:\\Windows/System32/taskkill.exe"
+    expected_path = os.path.join("C:\\Windows", "System32", "taskkill.exe")
+    assert _resolve_taskkill() == expected_path
+    assert _resolve_taskkill() == expected_path
 
 
 async def test_kill_process_tree_short_circuits_or_delegates() -> None:
@@ -125,8 +127,8 @@ async def test_kill_via_stdlib_posix_escalates_to_sigkill(monkeypatch) -> None:
 
     monkeypatch.setattr(killtree_module.sys, "platform", "darwin")
     killpg = MagicMock()
-    monkeypatch.setattr(killtree_module.os, "getpgid", lambda pid: 99)
-    monkeypatch.setattr(killtree_module.os, "killpg", killpg)
+    monkeypatch.setattr(killtree_module.os, "getpgid", lambda pid: 99, raising=False)
+    monkeypatch.setattr(killtree_module.os, "killpg", killpg, raising=False)
 
     calls = {"count": 0}
 
