@@ -59,8 +59,8 @@ uv run --with textual python samples/02-agents/harness/harness_data_processing.p
 ```
 
 The workspace environment already provides the editable `agent-framework`
-packages plus the samples' other dependencies (`rich`, `python-dotenv`,
-`azure-identity`); only `textual` needs to be supplied with `--with`.
+packages plus the samples' other dependencies (`rich`, `python-dotenv`);
+only `textual` needs to be supplied with `--with`.
 
 > Note: invoking `uv run python <script>` (with `python`) bypasses the PEP 723
 > metadata and uses the workspace env; `uv run <script>` (without `python`)
@@ -125,7 +125,7 @@ tool is only wired when the chat client supports shell tools; otherwise a warnin
 and the shell tool/provider are skipped. The caller owns the executor's lifecycle.
 
 ```python
-from agent_framework_tools.shell import LocalShellTool, ShellEnvironmentProviderOptions
+from agent_framework.tools import LocalShellTool, ShellEnvironmentProviderOptions
 
 async with LocalShellTool(acknowledge_unsafe=True) as shell:
     agent = create_harness_agent(

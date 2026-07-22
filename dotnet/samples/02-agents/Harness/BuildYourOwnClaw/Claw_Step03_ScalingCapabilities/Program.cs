@@ -133,7 +133,7 @@ AIAgent researchAgent = ResearchAgent.Create(chatClient);
 // A sandboxed shell, confined to the trade-confirmation vault. ConfineWorkingDirectory re-anchors
 // every command to the vault, and the deny-list policy pre-filters obviously destructive commands.
 // (Patterns are a UX guardrail, not a security boundary — for hard isolation use DockerShellExecutor.)
-await using var shell = new LocalShellExecutor(new LocalShellExecutorOptions
+await using var shellExecutor = new LocalShellExecutor(new LocalShellExecutorOptions
 {
     WorkingDirectory = vaultDir,
     ConfineWorkingDirectory = true,
@@ -160,7 +160,9 @@ using var codeAct = new HyperlightCodeActProvider(HyperlightCodeActProviderOptio
 // Turn the chat client into a HarnessAgent. On top of Post 2's file access and approvals we add the
 // four "scaling" capabilities: skills (our own provider), background agents, a confined shell, and
 // CodeAct.
-List<AIContextProvider> contextProviders = [skillsProvider, codeAct];
+// The shell is wired up in two parts: the ShellEnvironmentProvider injects OS/shell/CWD info into the
+// system prompt, and the shell tool is registered below in ChatOptions.
+List<AIContextProvider> contextProviders = [skillsProvider, codeAct, new ShellEnvironmentProvider(shellExecutor)];
 
 AIAgent agent = chatClient.AsHarnessAgent(new HarnessAgentOptions
 {
@@ -170,8 +172,6 @@ AIAgent agent = chatClient.AsHarnessAgent(new HarnessAgentOptions
     DisableAgentSkillsProvider = true,
     // Fan-out research is delegated to this background agent.
     BackgroundAgents = [researchAgent],
-    // The confined shell, exposed as the approval-gated run_shell tool.
-    ShellExecutor = shell,
     // Keep reading the portfolio frictionless while writes, trades, and shell commands still prompt.
     ToolApprovalAgentOptions = new ToolApprovalAgentOptions
     {
@@ -179,7 +179,7 @@ AIAgent agent = chatClient.AsHarnessAgent(new HarnessAgentOptions
     },
     // Start in "execute" mode for quick lookups and actions; switch any time with /mode plan.
     AgentModeProviderOptions = new AgentModeProviderOptions { DefaultMode = "execute" },
-    // Our skills provider plus CodeAct.
+    // Our skills provider, CodeAct, and the shell environment provider.
     AIContextProviders = contextProviders,
     ChatOptions = new ChatOptions
     {
@@ -188,6 +188,8 @@ AIAgent agent = chatClient.AsHarnessAgent(new HarnessAgentOptions
         [
             StockTools.CreateGetStockPriceTool(),
             TradingTools.CreatePlaceTradeTool(),
+            // The confined shell, exposed as the approval-gated run_shell tool.
+            shellExecutor.AsAIFunction(requireApproval: true),
         ],
         Reasoning = new() { Effort = ReasoningEffort.Medium },
     },
