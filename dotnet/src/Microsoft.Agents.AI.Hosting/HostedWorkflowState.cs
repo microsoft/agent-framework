@@ -382,6 +382,7 @@ public sealed class HostedWorkflowState
     }
 }
 
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
 internal static partial class HostedWorkflowStateLogMessages
 {
     [LoggerMessage(
