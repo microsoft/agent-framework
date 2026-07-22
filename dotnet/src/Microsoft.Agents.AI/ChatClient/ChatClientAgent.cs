@@ -45,6 +45,7 @@ public sealed partial class ChatClientAgent : AIAgent
     private readonly AIAgentMetadata _agentMetadata;
     private readonly ILogger _logger;
     private readonly Type _chatClientType;
+    private readonly bool _usesImplicitDefaultChatHistoryProvider;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatClientAgent"/> class.
@@ -131,8 +132,10 @@ public sealed partial class ChatClientAgent : AIAgent
         this.ChatClient = options?.UseProvidedChatClientAsIs is true ? chatClient : chatClient.WithDefaultAgentMiddleware(options, services);
 
         // Use the ChatHistoryProvider from options if provided.
-        // If one was not provided, and we later find out that the underlying service does not manage chat history server-side,
-        // we will use the default InMemoryChatHistoryProvider at that time.
+        // If one was not provided, we fall back to the default InMemoryChatHistoryProvider. That default is
+        // automatically disengaged per-run when the underlying service manages chat history server-side
+        // (i.e. a service conversation id is present on the session). See ResolveChatHistoryProvider.
+        this._usesImplicitDefaultChatHistoryProvider = options?.ChatHistoryProvider is null;
         this.ChatHistoryProvider = options?.ChatHistoryProvider ?? new InMemoryChatHistoryProvider();
         this.AIContextProviders = this._agentOptions?.AIContextProviders as IReadOnlyList<AIContextProvider> ?? this._agentOptions?.AIContextProviders?.ToList();
 
@@ -983,10 +986,15 @@ public sealed partial class ChatClientAgent : AIAgent
     private ChatHistoryProvider? ResolveChatHistoryProvider(ChatClientAgentSession session, ChatOptions? chatOptions)
     {
         bool aguiProvider = IsAGUIProviderName(this._agentMetadata.ProviderName);
+
+        // A service-managed conversation id disengages the chat history provider. A conversation id on the
+        // options disengages any provider (preserving existing behavior), while the session's own conversation
+        // id only disengages the framework's default in-memory provider. An explicitly-configured provider keeps
+        // its conflict semantics (Throw/Warn/ClearOnChatHistoryProviderConflict) and is never silently disengaged.
         bool serviceStoresHistory = !this.RequiresPerServiceCallChatHistoryPersistence
             && !aguiProvider
-            && (!string.IsNullOrWhiteSpace(session.ConversationId)
-                || !string.IsNullOrWhiteSpace(chatOptions?.ConversationId));
+            && (!string.IsNullOrWhiteSpace(chatOptions?.ConversationId)
+                || (this._usesImplicitDefaultChatHistoryProvider && !string.IsNullOrWhiteSpace(session.ConversationId)));
         ChatHistoryProvider? provider = serviceStoresHistory ? null : this.ChatHistoryProvider;
 
         // If someone provided an override ChatHistoryProvider via AdditionalProperties, we should use that instead.

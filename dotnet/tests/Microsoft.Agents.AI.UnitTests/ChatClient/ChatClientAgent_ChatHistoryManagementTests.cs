@@ -358,6 +358,43 @@ public class ChatClientAgent_ChatHistoryManagementTests
     }
 
     /// <summary>
+    /// Verify that an explicitly-configured ChatHistoryProvider still receives (persists) messages when the
+    /// service returns a conversation id and conflict handling is disabled (Throw/Clear/Warn all false).
+    /// This pins the explicit-provider semantics: only the framework's default in-memory provider is
+    /// disengaged for service-stored history, an explicit provider is not.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ExplicitChatHistoryProvider_StillPersists_WhenConflictHandlingDisabledAndConversationIdReturnedAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
+        var chatHistoryProvider = new InMemoryChatHistoryProvider();
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new() { Instructions = "test instructions" },
+            ChatHistoryProvider = chatHistoryProvider,
+            ThrowOnChatHistoryProviderConflict = false,
+            ClearOnChatHistoryProviderConflict = false,
+            WarnOnChatHistoryProviderConflict = false,
+        });
+
+        // Act
+        ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync([new(ChatRole.User, "test")], session);
+
+        // Assert — the explicit provider is retained and still persisted the messages, unaffected by the
+        // default-provider disengagement.
+        Assert.Equal("ConvId", session!.ConversationId);
+        Assert.Same(chatHistoryProvider, agent.ChatHistoryProvider);
+        Assert.Equal(2, chatHistoryProvider.GetMessages(session).Count);
+    }
+
+    /// <summary>
     /// Verify that RunAsync still throws when ThrowOnChatHistoryProviderConflict is true
     /// even if ClearOnChatHistoryProviderConflict is also true (throw takes precedence).
     /// </summary>
@@ -411,6 +448,83 @@ public class ChatClientAgent_ChatHistoryManagementTests
         Assert.Equal("ConvId", session!.ConversationId);
         var inMemoryProvider = Assert.IsType<InMemoryChatHistoryProvider>(agent.ChatHistoryProvider);
         Assert.Empty(inMemoryProvider.GetMessages(session));
+    }
+
+    /// <summary>
+    /// Verify that RunStreamingAsync does not persist to the default InMemoryChatHistoryProvider when
+    /// the service returns a conversation id.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_DoesNotUseDefaultInMemoryChatHistoryProvider_WhenConversationIdReturnedAsync()
+    {
+        // Arrange
+        ChatResponseUpdate[] returnUpdates =
+            [
+                new ChatResponseUpdate(role: ChatRole.Assistant, content: "response") { ConversationId = "ConvId" },
+            ];
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).Returns(ToAsyncEnumerableAsync(returnUpdates));
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new() { Instructions = "test instructions" },
+        });
+
+        // Act
+        ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await foreach (var _ in agent.RunStreamingAsync([new(ChatRole.User, "test")], session))
+        {
+        }
+
+        // Assert
+        Assert.Equal("ConvId", session!.ConversationId);
+        var inMemoryProvider = Assert.IsType<InMemoryChatHistoryProvider>(agent.ChatHistoryProvider);
+        Assert.Empty(inMemoryProvider.GetMessages(session));
+    }
+
+    /// <summary>
+    /// Verify that across multiple turns backed by service-stored history, the default
+    /// InMemoryChatHistoryProvider is never populated, the conversation id stays stable, and prior
+    /// turns are not replayed to the service (the service owns the history).
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MultiTurnServiceStoredHistory_DoesNotPopulateDefaultInMemoryProviderAsync()
+    {
+        // Arrange
+        var capturedInputs = new List<List<ChatMessage>>();
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((msgs, _, _) =>
+            {
+                capturedInputs.Add(msgs.ToList());
+                return Task.FromResult(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
+            });
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new() { Instructions = "test instructions" },
+        });
+
+        // Act
+        ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync([new(ChatRole.User, "first")], session);
+        await agent.RunAsync([new(ChatRole.User, "second")], session);
+
+        // Assert
+        Assert.Equal("ConvId", session!.ConversationId);
+        var inMemoryProvider = Assert.IsType<InMemoryChatHistoryProvider>(agent.ChatHistoryProvider);
+        Assert.Empty(inMemoryProvider.GetMessages(session));
+
+        // The second turn should only send the new user message, since the service owns the history.
+        Assert.Equal(2, capturedInputs.Count);
+        Assert.Single(capturedInputs[1]);
+        Assert.Equal("second", capturedInputs[1][0].Text);
     }
 
     #endregion
@@ -653,4 +767,13 @@ public class ChatClientAgent_ChatHistoryManagementTests
     }
 
     #endregion
+
+    private static async IAsyncEnumerable<T> ToAsyncEnumerableAsync<T>(IEnumerable<T> values)
+    {
+        await Task.Yield();
+        foreach (var value in values)
+        {
+            yield return value;
+        }
+    }
 }
