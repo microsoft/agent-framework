@@ -148,7 +148,7 @@ async def test_close_closes_owned_http_client() -> None:
     )
     client = toolbox._httpx_client
     assert client is not None
-    client.aclose = AsyncMock()
+    client.aclose = AsyncMock()  # zuban: ignore
 
     await toolbox.close()
 
@@ -354,7 +354,7 @@ class TestFoundryToolboxReconnection:
         original_auth = toolbox._httpx_client.auth
 
         client = toolbox._httpx_client
-        client.aclose = AsyncMock()
+        client.aclose = AsyncMock()  # zuban: ignore
         await toolbox.close()
 
         client.aclose.assert_awaited_once()
