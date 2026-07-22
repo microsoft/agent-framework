@@ -178,9 +178,9 @@ async def test_foundry_agent_preserves_caller_requested_encrypted_reasoning() ->
         options={"include": ["reasoning.encrypted_content"]},
     )
 
-    assert mock_openai.responses.with_raw_response.create.await_args.kwargs["include"] == [
-        "reasoning.encrypted_content"
-    ]
+    await_args = mock_openai.responses.with_raw_response.create.await_args
+    assert await_args is not None
+    assert await_args.kwargs["include"] == ["reasoning.encrypted_content"]
 
 
 def test_agent_accepts_raw_foundry_agent_chat_client() -> None:
