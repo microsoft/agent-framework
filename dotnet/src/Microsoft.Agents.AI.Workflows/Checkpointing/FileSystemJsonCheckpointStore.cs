@@ -3,12 +3,20 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.Workflows.Checkpointing;
+
+internal record CheckpointFileIndexEntry(
+    CheckpointInfo CheckpointInfo,
+    string FileName,
+    string? ParentCheckpointId = null,
+    bool HasParentMetadata = false);
 
 /// <summary>
 /// Provides a file system-based implementation of a JSON checkpoint store that persists checkpoint data and index
@@ -26,7 +34,23 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
     private FileStream? _indexFile;
 
     internal DirectoryInfo Directory { get; }
+
+    // O(1) membership set used to allocate unique checkpoint ids (GetUnusedCheckpointInfo) and to guard
+    // RetrieveCheckpointAsync. It intentionally coexists with OrderedCheckpointIndex below: this set answers
+    // "does this checkpoint exist?" in O(1), while the list preserves commit order. A single HashSet cannot do
+    // both because HashSet enumeration order is not a contract.
     internal HashSet<CheckpointInfo> CheckpointIndex { get; }
+
+    // Insertion-ordered mirror of CheckpointIndex. HashSet enumeration order is not a contract (it can diverge
+    // from insertion order once a slot is freed by a rollback and reused), so RetrieveIndexAsync enumerates this
+    // list to return checkpoints in commit order, which callers such as CheckpointManager.GetLatestCheckpointAsync
+    // rely on to identify the head checkpoint.
+    private List<CheckpointInfo> OrderedCheckpointIndex { get; } = [];
+
+    private Dictionary<CheckpointInfo, string?> CheckpointParents { get; } = [];
+    private HashSet<CheckpointInfo> CheckpointsWithKnownParent { get; } = [];
+
+    private static JsonTypeInfo<CheckpointFileIndexEntry> EntryTypeInfo => WorkflowsJsonUtilities.JsonContext.Default.CheckpointFileIndexEntry;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FileSystemJsonCheckpointStore"/> class that uses the specified directory
@@ -64,9 +88,20 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
             using StreamReader reader = new(this._indexFile, encoding: Encoding.UTF8, detectEncodingFromByteOrderMarks: false, BufferSize, leaveOpen: true);
             while (reader.ReadLine() is string line)
             {
-                if (JsonSerializer.Deserialize(line, KeyTypeInfo) is { } info)
+                if (JsonSerializer.Deserialize(line, EntryTypeInfo) is { } entry)
                 {
-                    this.CheckpointIndex.Add(info);
+                    // We never actually use the file names from the index entries since they can be derived from the CheckpointInfo, but it is useful to
+                    // have the UrlEncoded file names in the index file for human readability
+                    if (this.CheckpointIndex.Add(entry.CheckpointInfo))
+                    {
+                        this.OrderedCheckpointIndex.Add(entry.CheckpointInfo);
+                    }
+
+                    this.CheckpointParents[entry.CheckpointInfo] = entry.ParentCheckpointId;
+                    if (entry.HasParentMetadata)
+                    {
+                        this.CheckpointsWithKnownParent.Add(entry.CheckpointInfo);
+                    }
                 }
             }
         }
@@ -93,16 +128,24 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
         }
     }
 
-    private string GetFileNameForCheckpoint(string runId, CheckpointInfo key)
-        => Path.Combine(this.Directory.FullName, $"{runId}_{key.CheckpointId}.json");
+    internal string GetFileNameForCheckpoint(string sessionId, CheckpointInfo key)
+    {
+        string protoPath = $"{sessionId}_{key.CheckpointId}.json";
 
-    private CheckpointInfo GetUnusedCheckpointInfo(string runId)
+        // Escape the protoPath to ensure it is a valid file name, especially if sessionId or CheckpointId contain path separators, etc.
+        return Uri.EscapeDataString(protoPath) // This takes care of most of the invalid path characters
+                  .Replace(".", "%2E");        // This takes care of escaping the root folder, since EscapeDataString does not escape dots
+    }
+
+    private CheckpointInfo GetUnusedCheckpointInfo(string sessionId)
     {
         CheckpointInfo key;
         do
         {
-            key = new(runId);
+            key = new(sessionId);
         } while (!this.CheckpointIndex.Add(key));
+
+        this.OrderedCheckpointIndex.Add(key);
 
         return key;
     }
@@ -110,32 +153,43 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
     /// <inheritdoc/>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1835:Prefer the 'Memory'-based overloads for 'ReadAsync' and 'WriteAsync'",
         Justification = "Memory-based overload is missing for 4.7.2")]
-    public override async ValueTask<CheckpointInfo> CreateCheckpointAsync(string runId, JsonElement value, CheckpointInfo? parent = null)
+    public override async ValueTask<CheckpointInfo> CreateCheckpointAsync(string sessionId, JsonElement value, CheckpointInfo? parent = null)
     {
         this.CheckDisposed();
 
-        CheckpointInfo key = this.GetUnusedCheckpointInfo(runId);
-        string fileName = this.GetFileNameForCheckpoint(runId, key);
+        CheckpointInfo key = this.GetUnusedCheckpointInfo(sessionId);
+        string fileName = this.GetFileNameForCheckpoint(sessionId, key);
+        string filePath = Path.Combine(this.Directory.FullName, fileName);
+
         try
         {
-            using Stream checkpointStream = File.Open(fileName, FileMode.Create, FileAccess.Write, FileShare.None);
+            using Stream checkpointStream = File.Open(filePath, FileMode.Create, FileAccess.Write, FileShare.None);
             using Utf8JsonWriter jsonWriter = new(checkpointStream, new JsonWriterOptions() { Indented = false });
             value.WriteTo(jsonWriter);
 
-            JsonSerializer.Serialize(this._indexFile!, key, KeyTypeInfo);
+            string? parentCheckpointId = parent?.CheckpointId;
+            this.CheckpointParents[key] = parentCheckpointId;
+            this.CheckpointsWithKnownParent.Add(key);
+
+            CheckpointFileIndexEntry entry = new(key, fileName, parentCheckpointId, HasParentMetadata: true);
+            JsonSerializer.Serialize(this._indexFile!, entry, EntryTypeInfo);
             byte[] bytes = Encoding.UTF8.GetBytes(Environment.NewLine);
             await this._indexFile!.WriteAsync(bytes, 0, bytes.Length, CancellationToken.None).ConfigureAwait(false);
+            await this._indexFile!.FlushAsync(CancellationToken.None).ConfigureAwait(false);
 
             return key;
         }
         catch (Exception ex)
         {
             this.CheckpointIndex.Remove(key);
+            this.OrderedCheckpointIndex.Remove(key);
+            this.CheckpointParents.Remove(key);
+            this.CheckpointsWithKnownParent.Remove(key);
 
             try
             {
                 // try to clean up after ourselves
-                File.Delete(fileName);
+                File.Delete(filePath);
             }
             catch { }
 
@@ -144,28 +198,35 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
     }
 
     /// <inheritdoc/>
-    public override async ValueTask<JsonElement> RetrieveCheckpointAsync(string runId, CheckpointInfo key)
+    public override async ValueTask<JsonElement> RetrieveCheckpointAsync(string sessionId, CheckpointInfo key)
     {
         this.CheckDisposed();
-        string fileName = this.GetFileNameForCheckpoint(runId, key);
+        string fileName = this.GetFileNameForCheckpoint(sessionId, key);
+        string filePath = Path.Combine(this.Directory.FullName, fileName);
 
         if (!this.CheckpointIndex.Contains(key) ||
-            !File.Exists(fileName))
+            !File.Exists(filePath))
         {
             throw new KeyNotFoundException($"Checkpoint '{key.CheckpointId}' not found in store at '{this.Directory.FullName}'.");
         }
 
-        using FileStream checkpointFileStream = File.Open(fileName, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using FileStream checkpointFileStream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         using JsonDocument document = await JsonDocument.ParseAsync(checkpointFileStream).ConfigureAwait(false);
 
         return document.RootElement.Clone();
     }
 
     /// <inheritdoc/>
-    public override ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string runId, CheckpointInfo? withParent = null)
+    public override ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent = null)
     {
         this.CheckDisposed();
 
-        return new(this.CheckpointIndex);
+        return new(this.OrderedCheckpointIndex
+            .Where(checkpoint => checkpoint.SessionId == sessionId &&
+                (withParent is null ||
+                    !this.CheckpointsWithKnownParent.Contains(checkpoint) ||
+                    (this.CheckpointParents.TryGetValue(checkpoint, out string? parentCheckpointId) &&
+                        parentCheckpointId == withParent.CheckpointId)))
+            .ToArray());
     }
 }

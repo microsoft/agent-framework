@@ -1,0 +1,80 @@
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: auth-keycloak
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+      - KC_HOSTNAME_STRICT=false
+      - KC_PROXY_HEADERS=xforwarded
+    volumes:
+      - ./keycloak/dev-realm.json:/opt/keycloak/data/import/dev-realm.json
+    command: ["start-dev", "--import-realm"]
+    ports:
+      - "5002:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /realms/master HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # One-shot init container that registers the Codespaces redirect URI
+  # with Keycloak after it becomes healthy. Auto-detects Codespaces via
+  # CODESPACE_NAME and GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN env vars.
+  keycloak-init:
+    image: curlimages/curl:latest
+    container_name: auth-keycloak-init
+    environment:
+      - KEYCLOAK_URL=http://keycloak:8080
+      - CODESPACE_NAME=${CODESPACE_NAME:-}
+      - GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN=${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-}
+    volumes:
+      - ./keycloak/setup-redirect-uris.sh:/setup-redirect-uris.sh:ro
+    entrypoint: ["sh", "/setup-redirect-uris.sh"]
+    depends_on:
+      keycloak:
+        condition: service_healthy
+
+  agent-service:
+    build:
+      context: ../../..
+      dockerfile: samples/05-end-to-end/AspNetAgentAuthorization/Service/Dockerfile
+    container_name: auth-agent-service
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - Auth__Authority=http://keycloak:8080/realms/dev
+      - Auth__Audience=agent-service
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4.1-mini}
+    ports:
+      - "5001:5001"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+
+  web-client:
+    build:
+      context: ../../..
+      dockerfile: samples/05-end-to-end/AspNetAgentAuthorization/RazorWebClient/Dockerfile
+    container_name: auth-web-client
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - Auth__Authority=http://keycloak:8080/realms/dev
+      - Auth__PublicKeycloakUrl=http://localhost:5002
+      - Auth__ClientId=web-client
+      - AgentService__BaseUrl=http://agent-service:5001
+      - CODESPACE_NAME=${CODESPACE_NAME:-}
+      - GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN=${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-}
+    ports:
+      - "8080:8080"
+    volumes:
+      - web-client-keys:/app/keys
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      agent-service:
+        condition: service_started
+
+volumes:
+  web-client-keys:

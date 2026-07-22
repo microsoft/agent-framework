@@ -41,7 +41,7 @@ def register_cleanup(entity: Any, *hooks: Callable[[], Any]) -> None:
         Single cleanup hook:
         >>> from agent_framework.devui import serve, register_cleanup
         >>> credential = DefaultAzureCredential()
-        >>> agent = ChatAgent(...)
+        >>> agent = Agent(...)
         >>> register_cleanup(agent, credential.close)
         >>> serve(entities=[agent])
 
@@ -52,7 +52,7 @@ def register_cleanup(entity: Any, *hooks: Callable[[], Any]) -> None:
         >>> # In agents/my_agent/agent.py
         >>> from agent_framework.devui import register_cleanup
         >>> credential = DefaultAzureCredential()
-        >>> agent = ChatAgent(...)
+        >>> agent = Agent(...)
         >>> register_cleanup(agent, credential.close)
         >>> # Run: devui ./agents
     """
@@ -73,7 +73,7 @@ def register_cleanup(entity: Any, *hooks: Callable[[], Any]) -> None:
     )
 
 
-def _get_registered_cleanup_hooks(entity: Any) -> list[Callable[[], Any]]:
+def _get_registered_cleanup_hooks(entity: Any) -> list[Callable[[], Any]]:  # type: ignore[reportUnusedFunction]
     """Get cleanup hooks registered for an entity (internal use).
 
     Args:
@@ -94,9 +94,9 @@ def serve(
     auto_open: bool = False,
     cors_origins: list[str] | None = None,
     ui_enabled: bool = True,
-    tracing_enabled: bool = False,
+    instrumentation_enabled: bool = False,
     mode: str = "developer",
-    auth_enabled: bool = False,
+    auth_enabled: bool = True,
     auth_token: str | None = None,
 ) -> None:
     """Launch Agent Framework DevUI with simple API.
@@ -109,7 +109,7 @@ def serve(
         auto_open: Whether to automatically open browser
         cors_origins: List of allowed CORS origins
         ui_enabled: Whether to enable the UI
-        tracing_enabled: Whether to enable OpenTelemetry tracing
+        instrumentation_enabled: Whether to enable OpenTelemetry instrumentation
         mode: Server mode - 'developer' (full access, verbose errors) or 'user' (restricted APIs, generic errors)
         auth_enabled: Whether to enable Bearer token authentication
         auth_token: Custom authentication token (auto-generated if not provided with auth_enabled=True)
@@ -126,68 +126,12 @@ def serve(
     if not isinstance(port, int) or not (1 <= port <= 65535):
         raise ValueError(f"Invalid port: {port}. Must be integer between 1 and 65535")
 
-    # Security check: Warn if network-exposed without authentication
-    if host not in ("127.0.0.1", "localhost") and not auth_enabled:
-        logger.warning("⚠️  WARNING: Exposing DevUI to network without authentication!")
-        logger.warning("⚠️  This is INSECURE - anyone on your network can access your agents")
-        logger.warning("💡 For network exposure, add --auth flag: devui --host 0.0.0.0 --auth")
+    # Enable instrumentation if requested
+    if instrumentation_enabled:
+        from agent_framework.observability import enable_instrumentation
 
-    # Handle authentication configuration
-    if auth_enabled:
-        import os
-        import secrets
-
-        # Check if token is in environment variable first
-        if not auth_token:
-            auth_token = os.environ.get("DEVUI_AUTH_TOKEN")
-
-        # Auto-generate token if STILL not provided
-        if not auth_token:
-            # Check if we're in a production-like environment
-            is_production = (
-                host not in ("127.0.0.1", "localhost")  # Exposed to network
-                or os.environ.get("CI") == "true"  # Running in CI
-                or os.environ.get("KUBERNETES_SERVICE_HOST")  # Running in k8s
-            )
-
-            if is_production:
-                # REFUSE to start without explicit token
-                logger.error("❌ Authentication enabled but no token provided")
-                logger.error("❌ Auto-generated tokens are NOT secure for network-exposed deployments")
-                logger.error("💡 Set token: export DEVUI_AUTH_TOKEN=<your-secure-token>")
-                logger.error("💡 Or pass: serve(entities=[...], auth_token='your-token')")
-                raise ValueError("DEVUI_AUTH_TOKEN required when host is not localhost")
-
-            # Development mode: auto-generate and show
-            auth_token = secrets.token_urlsafe(32)
-            logger.info("🔒 Authentication enabled with auto-generated token")
-            logger.info("\n" + "=" * 70)
-            logger.info("🔑 DEV TOKEN (localhost only, shown once):")
-            logger.info(f"   {auth_token}")
-            logger.info("=" * 70 + "\n")
-        else:
-            logger.info("🔒 Authentication enabled with provided token")
-
-        # Set environment variable for server to use
-        os.environ["AUTH_REQUIRED"] = "true"
-        os.environ["DEVUI_AUTH_TOKEN"] = auth_token
-
-    # Configure tracing environment variables if enabled
-    if tracing_enabled:
-        import os
-
-        # Only set if not already configured by user
-        if not os.environ.get("ENABLE_INSTRUMENTATION"):
-            os.environ["ENABLE_INSTRUMENTATION"] = "true"
-            logger.info("Set ENABLE_INSTRUMENTATION=true for tracing")
-
-        if not os.environ.get("ENABLE_SENSITIVE_DATA"):
-            os.environ["ENABLE_SENSITIVE_DATA"] = "true"
-            logger.info("Set ENABLE_SENSITIVE_DATA=true for tracing")
-
-        if not os.environ.get("OTLP_ENDPOINT"):
-            os.environ["OTLP_ENDPOINT"] = "http://localhost:4317"
-            logger.info("Set OTLP_ENDPOINT=http://localhost:4317 for tracing")
+        enable_instrumentation(enable_sensitive_data=True)
+        logger.info("Enabled Agent Framework instrumentation with sensitive data")
 
     # Create server with direct parameters
     server = DevServer(
@@ -197,13 +141,15 @@ def serve(
         cors_origins=cors_origins,
         ui_enabled=ui_enabled,
         mode=mode,
+        auth_enabled=auth_enabled,
+        auth_token=auth_token,
     )
 
     # Register in-memory entities if provided
     if entities:
         logger.info(f"Registering {len(entities)} in-memory entities")
         # Store entities for later registration during server startup
-        server._pending_entities = entities
+        server.set_pending_entities(entities)
 
     app = server.get_app()
 

@@ -7,10 +7,12 @@ using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using AGUI.Abstractions;
+using AGUI.Client;
 using FluentAssertions;
-using Microsoft.Agents.AI.AGUI;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
@@ -29,27 +31,27 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
 
         // Assert
-        thread.Should().NotBeNull();
+        session.Should().NotBeNull();
 
         updates.Should().NotBeEmpty();
         updates.Should().AllSatisfy(u => u.Role.Should().Be(ChatRole.Assistant));
 
         // Verify assistant response message
-        AgentRunResponse response = updates.ToAgentRunResponse();
+        AgentResponse response = updates.ToAgentResponse();
         response.Messages.Should().HaveCount(1);
         response.Messages[0].Role.Should().Be(ChatRole.Assistant);
         response.Messages[0].Text.Should().Be("Hello from fake agent!");
@@ -60,15 +62,15 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "test");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -77,7 +79,9 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         updates.Should().NotBeEmpty();
         updates[0].ResponseId.Should().NotBeNullOrEmpty();
         ChatResponseUpdate firstUpdate = updates[0].AsChatResponseUpdate();
-        string? threadId = firstUpdate.ConversationId;
+        // The AG-UI thread id is surfaced on the RUN_STARTED event (the new AGUI.Client keeps the
+        // client stateless and never populates ChatResponseUpdate.ConversationId).
+        string? threadId = (firstUpdate.RawRepresentation as RunStartedEvent)?.ThreadId;
         string? runId = updates[0].ResponseId;
         threadId.Should().NotBeNullOrEmpty();
         runId.Should().NotBeNullOrEmpty();
@@ -86,17 +90,25 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         updates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
 
         // All text content updates should have the same message ID
-        List<AgentRunResponseUpdate> textUpdates = updates.Where(u => !string.IsNullOrEmpty(u.Text)).ToList();
+        List<AgentResponseUpdate> textUpdates = updates.Where(u => !string.IsNullOrEmpty(u.Text)).ToList();
         textUpdates.Should().NotBeEmpty();
         string? firstMessageId = textUpdates.FirstOrDefault()?.MessageId;
         firstMessageId.Should().NotBeNullOrEmpty();
         textUpdates.Should().AllSatisfy(u => u.MessageId.Should().Be(firstMessageId));
 
         // RunFinished should be the last update
-        AgentRunResponseUpdate lastUpdate = updates[^1];
+        AgentResponseUpdate lastUpdate = updates[^1];
         lastUpdate.ResponseId.Should().Be(runId);
         ChatResponseUpdate lastChatUpdate = lastUpdate.AsChatResponseUpdate();
-        lastChatUpdate.ConversationId.Should().Be(threadId);
+        // The stateless client never populates ChatResponseUpdate.ConversationId; thread identity stays
+        // on the AG-UI wire events instead, so verify the RUN_FINISHED event carries the same ids.
+        lastChatUpdate.ConversationId.Should().BeNull();
+        RunFinishedEvent? runFinished = updates
+            .Select(u => u.AsChatResponseUpdate().RawRepresentation as RunFinishedEvent)
+            .FirstOrDefault(e => e is not null);
+        runFinished.Should().NotBeNull();
+        runFinished!.ThreadId.Should().Be(threadId);
+        runFinished.RunId.Should().Be(runId);
     }
 
     [Fact]
@@ -104,13 +116,13 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)agent.GetNewThread();
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
         // Act
-        AgentRunResponse response = await agent.RunAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None);
+        AgentResponse response = await agent.RunAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None);
 
         // Assert
         response.Messages.Should().NotBeEmpty();
@@ -119,18 +131,18 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task MultiTurnConversationPreservesAllMessagesInThreadAsync()
+    public async Task MultiTurnConversationPreservesAllMessagesInSessionAsync()
     {
         // Arrange
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread chatClientThread = (ChatClientAgentThread)agent.GetNewThread();
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        ChatClientAgentSession chatClientSession = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage firstUserMessage = new(ChatRole.User, "First question");
 
         // Act - First turn
-        List<AgentRunResponseUpdate> firstTurnUpdates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([firstUserMessage], chatClientThread, new AgentRunOptions(), CancellationToken.None))
+        List<AgentResponseUpdate> firstTurnUpdates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([firstUserMessage], chatClientSession, new AgentRunOptions(), CancellationToken.None))
         {
             firstTurnUpdates.Add(update);
         }
@@ -140,8 +152,8 @@ public sealed class BasicStreamingTests : IAsyncDisposable
 
         // Act - Second turn with another message
         ChatMessage secondUserMessage = new(ChatRole.User, "Second question");
-        List<AgentRunResponseUpdate> secondTurnUpdates = [];
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([secondUserMessage], chatClientThread, new AgentRunOptions(), CancellationToken.None))
+        List<AgentResponseUpdate> secondTurnUpdates = [];
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([secondUserMessage], chatClientSession, new AgentRunOptions(), CancellationToken.None))
         {
             secondTurnUpdates.Add(update);
         }
@@ -150,13 +162,13 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         secondTurnUpdates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
 
         // Verify first turn assistant response
-        AgentRunResponse firstResponse = firstTurnUpdates.ToAgentRunResponse();
+        AgentResponse firstResponse = firstTurnUpdates.ToAgentResponse();
         firstResponse.Messages.Should().HaveCount(1);
         firstResponse.Messages[0].Role.Should().Be(ChatRole.Assistant);
         firstResponse.Messages[0].Text.Should().Be("Hello from fake agent!");
 
         // Verify second turn assistant response
-        AgentRunResponse secondResponse = secondTurnUpdates.ToAgentRunResponse();
+        AgentResponse secondResponse = secondTurnUpdates.ToAgentResponse();
         secondResponse.Messages.Should().HaveCount(1);
         secondResponse.Messages[0].Role.Should().Be(ChatRole.Assistant);
         secondResponse.Messages[0].Text.Should().Be("Hello from fake agent!");
@@ -167,21 +179,21 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync(useMultiMessageAgent: true);
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread chatClientThread = (ChatClientAgentThread)agent.GetNewThread();
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        ChatClientAgentSession chatClientSession = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "Tell me a story");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], chatClientThread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], chatClientSession, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
 
         // Assert - Should have received text updates with different message IDs
-        List<AgentRunResponseUpdate> textUpdates = updates.Where(u => !string.IsNullOrEmpty(u.Text)).ToList();
+        List<AgentResponseUpdate> textUpdates = updates.Where(u => !string.IsNullOrEmpty(u.Text)).ToList();
         textUpdates.Should().NotBeEmpty();
 
         // Extract unique message IDs
@@ -189,7 +201,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         messageIds.Should().HaveCountGreaterThan(1, "agent should send multiple messages");
 
         // Verify assistant messages from updates
-        AgentRunResponse response = updates.ToAgentRunResponse();
+        AgentResponse response = updates.ToAgentResponse();
         response.Messages.Should().HaveCountGreaterThan(1);
         response.Messages.Should().AllSatisfy(m => m.Role.Should().Be(ChatRole.Assistant));
     }
@@ -199,9 +211,9 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread chatClientThread = (ChatClientAgentThread)agent.GetNewThread();
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        ChatClientAgentSession chatClientSession = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         // Multiple user messages sent in one turn
         ChatMessage[] userMessages =
@@ -211,10 +223,10 @@ public sealed class BasicStreamingTests : IAsyncDisposable
             new ChatMessage(ChatRole.User, "Third part of question")
         ];
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(userMessages, chatClientThread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(userMessages, chatClientSession, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -224,10 +236,31 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         updates.Should().Contain(u => u.Role == ChatRole.Assistant);
 
         // Verify assistant response message
-        AgentRunResponse response = updates.ToAgentRunResponse();
+        AgentResponse response = updates.ToAgentResponse();
         response.Messages.Should().HaveCount(1);
         response.Messages[0].Role.Should().Be(ChatRole.Assistant);
         response.Messages[0].Text.Should().Be("Hello from fake agent!");
+    }
+
+    [Fact]
+    public async Task PostMalformedOrEmptyBody_ReturnsBadRequestAsync()
+    {
+        // Arrange
+        await this.SetupTestServerAsync();
+
+        var endpoint = new Uri("http://localhost/agent");
+
+        // Act - malformed JSON body
+        using var malformed = new StringContent("{ not valid json", System.Text.Encoding.UTF8, "application/json");
+        using HttpResponseMessage malformedResponse = await this._client!.PostAsync(endpoint, malformed);
+
+        // Act - empty body
+        using var empty = new StringContent(string.Empty, System.Text.Encoding.UTF8, "application/json");
+        using HttpResponseMessage emptyResponse = await this._client!.PostAsync(endpoint, empty);
+
+        // Assert - the hosting glue rejects both with 400 rather than 5xx.
+        malformedResponse.StatusCode.Should().Be(System.Net.HttpStatusCode.BadRequest);
+        emptyResponse.StatusCode.Should().Be(System.Net.HttpStatusCode.BadRequest);
     }
 
     private async Task SetupTestServerAsync(bool useMultiMessageAgent = false)
@@ -235,7 +268,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
 
-        builder.Services.AddAGUI();
+        builder.Services.AddAGUIServer();
 
         if (useMultiMessageAgent)
         {
@@ -252,7 +285,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
             ? this._app.Services.GetRequiredService<FakeMultiMessageAgent>()
             : this._app.Services.GetRequiredService<FakeChatClientAgent>();
 
-        this._app.MapAGUI("/agent", agent);
+        this._app.MapAGUIServer("/agent", agent);
 
         await this._app.StartAsync();
 
@@ -280,34 +313,33 @@ internal sealed class FakeChatClientAgent : AIAgent
 
     public override string? Description => "A fake agent for testing";
 
-    public override AgentThread GetNewThread()
-    {
-        return new FakeInMemoryAgentThread();
-    }
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
+        new(new FakeAgentSession());
 
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-    {
-        return new FakeInMemoryAgentThread(serializedThread, jsonSerializerOptions);
-    }
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        new(serializedState.Deserialize<FakeAgentSession>(jsonSerializerOptions)!);
 
-    protected override async Task<AgentRunResponse> RunCoreAsync(
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => throw new NotImplementedException();
+
+    protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in this.RunStreamingAsync(messages, thread, options, cancellationToken).ConfigureAwait(false))
+        List<AgentResponseUpdate> updates = [];
+        await foreach (AgentResponseUpdate update in this.RunStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
         {
             updates.Add(update);
         }
 
-        return updates.ToAgentRunResponse();
+        return updates.ToAgentResponse();
     }
 
-    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -316,7 +348,7 @@ internal sealed class FakeChatClientAgent : AIAgent
         // Simulate streaming a deterministic response
         foreach (string chunk in new[] { "Hello", " ", "from", " ", "fake", " ", "agent", "!" })
         {
-            yield return new AgentRunResponseUpdate
+            yield return new AgentResponseUpdate
             {
                 MessageId = messageId,
                 Role = ChatRole.Assistant,
@@ -327,15 +359,14 @@ internal sealed class FakeChatClientAgent : AIAgent
         }
     }
 
-    private sealed class FakeInMemoryAgentThread : InMemoryAgentThread
+    private sealed class FakeAgentSession : AgentSession
     {
-        public FakeInMemoryAgentThread()
-            : base()
+        public FakeAgentSession()
         {
         }
 
-        public FakeInMemoryAgentThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-            : base(serializedThread, jsonSerializerOptions)
+        [JsonConstructor]
+        public FakeAgentSession(AgentSessionStateBag stateBag) : base(stateBag)
         {
         }
     }
@@ -348,34 +379,40 @@ internal sealed class FakeMultiMessageAgent : AIAgent
 
     public override string? Description => "A fake agent that sends multiple messages for testing";
 
-    public override AgentThread GetNewThread()
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
+        new(new FakeAgentSession());
+
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        new(serializedState.Deserialize<FakeAgentSession>(jsonSerializerOptions)!);
+
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return new FakeInMemoryAgentThread();
+        if (session is not FakeAgentSession fakeSession)
+        {
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(FakeAgentSession)}' can be serialized by this agent.");
+        }
+
+        return new(JsonSerializer.SerializeToElement(fakeSession, jsonSerializerOptions));
     }
 
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-    {
-        return new FakeInMemoryAgentThread(serializedThread, jsonSerializerOptions);
-    }
-
-    protected override async Task<AgentRunResponse> RunCoreAsync(
+    protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in this.RunStreamingAsync(messages, thread, options, cancellationToken).ConfigureAwait(false))
+        List<AgentResponseUpdate> updates = [];
+        await foreach (AgentResponseUpdate update in this.RunStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
         {
             updates.Add(update);
         }
 
-        return updates.ToAgentRunResponse();
+        return updates.ToAgentResponse();
     }
 
-    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -383,7 +420,7 @@ internal sealed class FakeMultiMessageAgent : AIAgent
         string messageId1 = Guid.NewGuid().ToString("N");
         foreach (string chunk in new[] { "First", " ", "message" })
         {
-            yield return new AgentRunResponseUpdate
+            yield return new AgentResponseUpdate
             {
                 MessageId = messageId1,
                 Role = ChatRole.Assistant,
@@ -397,7 +434,7 @@ internal sealed class FakeMultiMessageAgent : AIAgent
         string messageId2 = Guid.NewGuid().ToString("N");
         foreach (string chunk in new[] { "Second", " ", "message" })
         {
-            yield return new AgentRunResponseUpdate
+            yield return new AgentResponseUpdate
             {
                 MessageId = messageId2,
                 Role = ChatRole.Assistant,
@@ -411,7 +448,7 @@ internal sealed class FakeMultiMessageAgent : AIAgent
         string messageId3 = Guid.NewGuid().ToString("N");
         foreach (string chunk in new[] { "Third", " ", "message" })
         {
-            yield return new AgentRunResponseUpdate
+            yield return new AgentResponseUpdate
             {
                 MessageId = messageId3,
                 Role = ChatRole.Assistant,
@@ -422,15 +459,14 @@ internal sealed class FakeMultiMessageAgent : AIAgent
         }
     }
 
-    private sealed class FakeInMemoryAgentThread : InMemoryAgentThread
+    private sealed class FakeAgentSession : AgentSession
     {
-        public FakeInMemoryAgentThread()
-            : base()
+        public FakeAgentSession()
         {
         }
 
-        public FakeInMemoryAgentThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-            : base(serializedThread, jsonSerializerOptions)
+        [JsonConstructor]
+        public FakeAgentSession(AgentSessionStateBag stateBag) : base(stateBag)
         {
         }
     }

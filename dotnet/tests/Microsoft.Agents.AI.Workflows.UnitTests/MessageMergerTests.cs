@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Linq;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
 
@@ -17,25 +18,439 @@ public class MessageMergerTests
     [Fact]
     public void Test_MessageMerger_AssemblesMessage()
     {
-        DateTimeOffset creationTime = DateTimeOffset.UtcNow;
+        DateTimeOffset creationTime = DateTimeOffset.UtcNow.Subtract(TimeSpan.FromSeconds(1));
         string responseId = Guid.NewGuid().ToString("N");
         string messageId = Guid.NewGuid().ToString("N");
 
         MessageMerger merger = new();
 
-        foreach (AgentRunResponseUpdate update in "Hello Agent Framework Workflows!".ToAgentRunStream(authorName: TestAuthorName1, agentId: TestAgentId1, messageId: messageId, createdAt: creationTime, responseId: responseId))
+        foreach (AgentResponseUpdate update in "Hello Agent Framework Workflows!".ToAgentRunStream(authorName: TestAuthorName1, agentId: TestAgentId1, messageId: messageId, createdAt: creationTime, responseId: responseId))
         {
             merger.AddUpdate(update);
         }
 
-        AgentRunResponse response = merger.ComputeMerged(responseId);
+        AgentResponse response = merger.ComputeMerged(responseId);
 
         response.Messages.Should().HaveCount(1);
         response.Messages[0].Role.Should().Be(ChatRole.Assistant);
         response.Messages[0].AuthorName.Should().Be(TestAuthorName1);
         response.AgentId.Should().Be(TestAgentId1);
-        response.CreatedAt.Should().NotBe(creationTime);
+        response.CreatedAt.Should().HaveValue();
+        response.CreatedAt.Value.Should().BeOnOrAfter(creationTime);
+        response.CreatedAt.Value.Should().BeCloseTo(creationTime, precision: TimeSpan.FromSeconds(5));
         response.Messages[0].CreatedAt.Should().Be(creationTime);
         response.Messages[0].Contents.Should().HaveCount(1);
+        response.FinishReason.Should().BeNull();
+    }
+
+    [Fact]
+    public void Test_MessageMerger_PropagatesFinishReasonFromUpdates()
+    {
+        // Arrange
+        string responseId = Guid.NewGuid().ToString("N");
+        string messageId = Guid.NewGuid().ToString("N");
+
+        MessageMerger merger = new();
+
+        foreach (AgentResponseUpdate update in "Hello".ToAgentRunStream(agentId: TestAgentId1, messageId: messageId, responseId: responseId))
+        {
+            merger.AddUpdate(update);
+        }
+
+        // Add a final update with FinishReason set
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = messageId,
+            FinishReason = ChatFinishReason.ContentFilter,
+            Role = ChatRole.Assistant,
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(responseId);
+
+        // Assert - FinishReason from the update should propagate through
+        response.FinishReason.Should().Be(ChatFinishReason.ContentFilter);
+    }
+
+    [Fact]
+    public void Test_MessageMerger_PreservesFirstSeenMessageOrder()
+    {
+        // Arrange
+        string responseId = Guid.NewGuid().ToString("N");
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        MessageMerger merger = new();
+
+        AddTextMessage(merger, responseId, "first", now.AddMinutes(1));
+        AddTextMessage(merger, responseId, "second", null);
+        AddTextMessage(merger, responseId, "third", now.AddMinutes(-1));
+        AddTextMessage(merger, responseId, "fourth", now.AddMinutes(-1));
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(responseId);
+
+        // Assert
+        response.Messages.Select(message => message.Text).Should().Equal("first", "second", "third", "fourth");
+        response.Messages[0].CreatedAt.Should().Be(now.AddMinutes(1));
+        response.Messages[2].CreatedAt.Should().Be(now.AddMinutes(-1));
+    }
+
+    [Fact]
+    public void Test_MessageMerger_KeepsResponsesContiguousInFirstSeenOrder()
+    {
+        // Arrange
+        const string ResponseId1 = "response-1";
+        const string ResponseId2 = "response-2";
+        MessageMerger merger = new();
+
+        AddTextMessage(merger, ResponseId1, "A1");
+        AddTextMessage(merger, ResponseId2, "B1");
+        AddTextMessage(merger, ResponseId1, "A2");
+        AddTextMessage(merger, ResponseId2, "B2");
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(ResponseId1);
+
+        // Assert
+        response.Messages.Select(message => message.Text).Should().Equal("A1", "A2", "B1", "B2");
+    }
+
+    [Fact]
+    public void Test_MessageMerger_PreservesFunctionCallResultOrder()
+    {
+        // Arrange
+        const string ResponseId = "response";
+        const string CallId = "call";
+        MessageMerger merger = new();
+
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = ResponseId,
+            MessageId = "call-message",
+            Role = ChatRole.Assistant,
+            Contents = [new FunctionCallContent(CallId, "handoff")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = ResponseId,
+            MessageId = "result-message",
+            Role = ChatRole.Tool,
+            CreatedAt = DateTimeOffset.UtcNow,
+            Contents = [new FunctionResultContent(CallId, "Transferred.")],
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(ResponseId);
+
+        // Assert
+        response.Messages.Should().HaveCount(2);
+        Assert.Equal(CallId, Assert.IsType<FunctionCallContent>(Assert.Single(response.Messages[0].Contents)).CallId);
+        Assert.Equal(CallId, Assert.IsType<FunctionResultContent>(Assert.Single(response.Messages[1].Contents)).CallId);
+    }
+
+    [Fact]
+    public void Test_MessageMerger_PreservesIdentifierlessMessageOrder()
+    {
+        // Arrange
+        const string ResponseId = "response";
+        const string CallId = "call";
+        MessageMerger merger = new();
+
+        AddTextMessage(merger, ResponseId, "before");
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = ResponseId,
+            Role = ChatRole.Assistant,
+            Contents = [new FunctionCallContent(CallId, "handoff")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = ResponseId,
+            MessageId = "result-message",
+            Role = ChatRole.Tool,
+            CreatedAt = DateTimeOffset.UtcNow,
+            Contents = [new FunctionResultContent(CallId, "Transferred.")],
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(ResponseId);
+
+        // Assert
+        response.Messages.Should().HaveCount(3);
+        response.Messages[0].Text.Should().Be("before");
+        Assert.IsType<FunctionCallContent>(Assert.Single(response.Messages[1].Contents));
+        Assert.IsType<FunctionResultContent>(Assert.Single(response.Messages[2].Contents));
+    }
+
+    [Fact]
+    public void Test_MessageMerger_SeparatesIdentifierlessSegments()
+    {
+        // Arrange
+        const string ResponseId = "response";
+        const string MessageId = "message";
+        MessageMerger merger = new();
+
+        merger.AddUpdate(new AgentResponseUpdate(ChatRole.Assistant, "A") { ResponseId = ResponseId, MessageId = MessageId });
+        merger.AddUpdate(new AgentResponseUpdate(ChatRole.Tool, "X") { ResponseId = ResponseId });
+        merger.AddUpdate(new AgentResponseUpdate(ChatRole.Assistant, "B") { ResponseId = ResponseId, MessageId = MessageId });
+        merger.AddUpdate(new AgentResponseUpdate(ChatRole.Tool, "Y") { ResponseId = ResponseId });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(ResponseId);
+
+        // Assert
+        response.Messages.Select(message => message.Text).Should().Equal("AB", "X", "Y");
+    }
+
+    [Fact]
+    public void Test_MessageMerger_FoldsIdentifierlessReasoningIntoFollowingMessage()
+    {
+        // Arrange - a streamed reasoning summary arrives without a message id, immediately
+        // followed by the actual answer that carries a message id (same assistant role).
+        // See https://github.com/microsoft/agent-framework/issues/6329.
+        const string ResponseId = "response";
+        const string MessageId = "msg_answer";
+        MessageMerger merger = new();
+
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = ResponseId,
+            Role = ChatRole.Assistant,
+            Contents = [new TextReasoningContent("thinking about the question")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = ResponseId,
+            MessageId = MessageId,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("The reformulated question.")],
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(ResponseId);
+
+        // Assert - reasoning and answer should be folded into a single message with two contents,
+        // adopting the following message's id.
+        response.Messages.Should().HaveCount(1);
+        ChatMessage message = response.Messages[0];
+        message.Role.Should().Be(ChatRole.Assistant);
+        message.MessageId.Should().Be(MessageId);
+        message.Contents.Should().HaveCount(2);
+        message.Contents[0].Should().BeOfType<TextReasoningContent>()
+            .Which.Text.Should().Be("thinking about the question");
+        message.Contents[1].Should().BeOfType<TextContent>()
+            .Which.Text.Should().Be("The reformulated question.");
+        message.Text.Should().Be("The reformulated question.");
+    }
+
+    [Fact]
+    public void Test_MessageMerger_DoesNotFoldIdentifierlessReasoningIntoDifferentRole()
+    {
+        // Arrange - an id-less segment is only folded when the following message shares its role.
+        const string ResponseId = "response";
+        const string MessageId = "msg_tool";
+        MessageMerger merger = new();
+
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = ResponseId,
+            Role = ChatRole.Assistant,
+            Contents = [new TextReasoningContent("thinking")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = ResponseId,
+            MessageId = MessageId,
+            Role = ChatRole.Tool,
+            Contents = [new FunctionResultContent("call", "done")],
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(ResponseId);
+
+        // Assert - different roles must remain separate messages.
+        response.Messages.Should().HaveCount(2);
+        response.Messages[0].Role.Should().Be(ChatRole.Assistant);
+        response.Messages[0].Contents.Should().ContainSingle().Which.Should().BeOfType<TextReasoningContent>();
+        response.Messages[1].Role.Should().Be(ChatRole.Tool);
+    }
+
+    private static void AddTextMessage(MessageMerger merger, string responseId, string text, DateTimeOffset? createdAt = null)
+    {
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = Guid.NewGuid().ToString("N"),
+            Role = ChatRole.Assistant,
+            CreatedAt = createdAt,
+            Contents = [new TextContent(text)],
+        });
+    }
+
+    [Fact]
+    public void Test_MessageMerger_PreservesMessageOrderWhenReasoningLacksCreatedAt()
+    {
+        // Arrange: a reasoning model streams its reasoning summary first (without a CreatedAt
+        // timestamp) followed by the textual answer (with one). Both share a response id and carry
+        // distinct, explicit message ids, so they are legitimately two messages. This guards against
+        // ordering by CreatedAt, which would otherwise push the timestamp-less reasoning message
+        // after the text message.
+        string responseId = Guid.NewGuid().ToString("N");
+        string reasoningMessageId = Guid.NewGuid().ToString("N");
+        string textMessageId = Guid.NewGuid().ToString("N");
+
+        MessageMerger merger = new();
+
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            ResponseId = responseId,
+            MessageId = reasoningMessageId,
+            Contents = [new TextReasoningContent("Thinking about the question")],
+            CreatedAt = null,
+        });
+
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            ResponseId = responseId,
+            MessageId = textMessageId,
+            Contents = [new TextContent("Here is the answer.")],
+            CreatedAt = DateTimeOffset.UtcNow,
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(responseId);
+
+        // Assert - the reasoning message must remain first, matching a directly-invoked agent.
+        response.Messages.Should().HaveCount(2);
+
+        response.Messages[0].Contents.Should().ContainSingle()
+            .Which.Should().BeOfType<TextReasoningContent>()
+            .Which.Text.Should().Be("Thinking about the question");
+
+        response.Messages[1].Contents.Should().ContainSingle()
+            .Which.Should().BeOfType<TextContent>()
+            .Which.Text.Should().Be("Here is the answer.");
+    }
+
+    [Fact]
+    public void Test_MessageMerger_MergesReasoningAndTextIntoSingleMessageWhenReasoningLacksMessageId()
+    {
+        // Arrange: this mirrors the exact streaming shape captured from the workflow-as-agent repro
+        // in https://github.com/microsoft/agent-framework/issues/6329. A reasoning model (e.g. Azure
+        // OpenAI Responses) streams its reasoning summary first as several id-less updates (the
+        // Responses API emits reasoning updates with a null MessageId and no CreatedAt), followed by
+        // the textual answer carrying a real message id. All updates share the same response id.
+        //
+        // Previously the merger bucketed updates per MessageId and appended the id-less reasoning
+        // updates last, splitting one assistant message into two ([text], [reasoning]) in reversed
+        // order. Now M.E.AI (using ToAgentResponse) only groups contiguous updates sharing a MessageId,
+        // while the explicit fold loop in ComputeMerged folds the id-less reasoning into the id'd
+        // text message that follows it - keeping them in a single assistant message, exactly as a
+        // directly-invoked agent produces.
+        string responseId = "resp_" + Guid.NewGuid().ToString("N");
+        string textMessageId = "msg_" + Guid.NewGuid().ToString("N");
+
+        MessageMerger merger = new();
+
+        // Reasoning summary: id-less updates without a CreatedAt timestamp.
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            ResponseId = responseId,
+            MessageId = null,
+            Contents = [new TextReasoningContent("Thinking ")],
+            CreatedAt = null,
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            ResponseId = responseId,
+            MessageId = null,
+            Contents = [new TextReasoningContent("about the question")],
+            CreatedAt = null,
+        });
+
+        // Final answer: text updates carrying a real message id.
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            ResponseId = responseId,
+            MessageId = textMessageId,
+            Contents = [new TextContent("Here is ")],
+            CreatedAt = DateTimeOffset.UtcNow,
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            ResponseId = responseId,
+            MessageId = textMessageId,
+            Contents = [new TextContent("the answer.")],
+            CreatedAt = DateTimeOffset.UtcNow,
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(responseId);
+
+        // Assert - a single assistant message with reasoning first, then the answer text.
+        response.Messages.Should().ContainSingle();
+
+        ChatMessage message = response.Messages[0];
+        message.Role.Should().Be(ChatRole.Assistant);
+        message.Contents.Should().HaveCount(2);
+
+        message.Contents[0].Should().BeOfType<TextReasoningContent>()
+            .Which.Text.Should().Be("Thinking about the question");
+
+        message.Contents[1].Should().BeOfType<TextContent>()
+            .Which.Text.Should().Be("Here is the answer.");
+    }
+
+    [Fact]
+    public void Test_MessageMerger_FoldsIdentifierlessReasoningIntoFollowingMessageAcrossResponseBuckets()
+    {
+        // Arrange: this reproduces the workflow-as-agent repro where a reasoning summary and the
+        // answer text end up in DIFFERENT response buckets (distinct response ids). The per-response
+        // fold cannot merge across buckets, so this exercises the flattened-message fold in the outer
+        // ComputeMerged. See https://github.com/microsoft/agent-framework/issues/6329.
+        const string ReasoningResponseId = "resp_reasoning";
+        const string TextResponseId = "resp_text";
+        const string TextMessageId = "msg_answer";
+
+        MessageMerger merger = new();
+
+        // Reasoning summary: id-less update in its own response bucket, seen first.
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            ResponseId = ReasoningResponseId,
+            MessageId = null,
+            Contents = [new TextReasoningContent("thinking about the question")],
+        });
+
+        // Final answer: text update carrying a real message id in a different response bucket.
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            ResponseId = TextResponseId,
+            MessageId = TextMessageId,
+            Contents = [new TextContent("The reformulated question.")],
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(TextResponseId);
+
+        // Assert - a single assistant message adopting the answer's id, reasoning first then text.
+        response.Messages.Should().ContainSingle();
+        ChatMessage message = response.Messages[0];
+        message.Role.Should().Be(ChatRole.Assistant);
+        message.MessageId.Should().Be(TextMessageId);
+        message.Contents.Should().HaveCount(2);
+        message.Contents[0].Should().BeOfType<TextReasoningContent>()
+            .Which.Text.Should().Be("thinking about the question");
+        message.Contents[1].Should().BeOfType<TextContent>()
+            .Which.Text.Should().Be("The reformulated question.");
+        message.Text.Should().Be("The reformulated question.");
     }
 }

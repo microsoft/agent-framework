@@ -134,4 +134,17 @@ public static class DurableAgentsOptionsExtensions
     {
         return new Dictionary<string, FunctionsAgentOptions>(s_agentOptions, StringComparer.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// Ensures every agent in <paramref name="agentNames"/> has an entry in the
+    /// options registry. Agents that already have explicit options are left untouched.
+    /// New entries receive the default configuration (HTTP trigger enabled, MCP tool disabled).
+    /// </summary>
+    internal static void EnsureDefaultOptionsForAll(IEnumerable<string> agentNames)
+    {
+        foreach (string name in agentNames)
+        {
+            s_agentOptions.TryAdd(name, new FunctionsAgentOptions { HttpTrigger = { IsEnabled = true } });
+        }
+    }
 }

@@ -3,7 +3,7 @@
 using System.Collections.Generic;
 using System.Text.Json;
 
-namespace Microsoft.Bot.ObjectModel;
+namespace Microsoft.Agents.ObjectModel;
 
 /// <summary>
 /// Extension methods for <see cref="PropertyInfo"/>.

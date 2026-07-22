@@ -1,35 +1,37 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import gc
 import tempfile
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Awaitable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal, cast, overload
 from uuid import uuid4
 
 import pytest
 
 from agent_framework import (
     AgentExecutor,
-    AgentRunEvent,
-    AgentRunResponse,
-    AgentRunResponseUpdate,
-    AgentRunUpdateEvent,
-    AgentThread,
+    AgentResponse,
+    AgentResponseUpdate,
+    AgentRunInputs,
+    AgentSession,
     BaseAgent,
-    ChatMessage,
+    Content,
     Executor,
     FileCheckpointStorage,
+    InProcRunnerContext,
     Message,
-    RequestInfoEvent,
-    Role,
-    TextContent,
+    ResponseStream,
     WorkflowBuilder,
+    WorkflowCheckpointException,
     WorkflowContext,
+    WorkflowConvergenceException,
     WorkflowEvent,
-    WorkflowOutputEvent,
+    WorkflowException,
+    WorkflowMessage,
+    WorkflowRunResult,
     WorkflowRunState,
-    WorkflowStatusEvent,
     handler,
     response_handler,
 )
@@ -88,7 +90,7 @@ class MockExecutorRequestApproval(Executor):
     @handler
     async def mock_handler_a(self, message: NumberMessage, ctx: WorkflowContext) -> None:
         """A mock handler that requests approval."""
-        await ctx.set_shared_state(self.id, message.data)
+        ctx.set_state(self.id, message.data)
         await ctx.request_info(MockRequest(prompt="Mock approval request"), ApprovalMessage)
 
     @response_handler
@@ -99,7 +101,7 @@ class MockExecutorRequestApproval(Executor):
         ctx: WorkflowContext[NumberMessage, int],
     ) -> None:
         """A mock handler that processes the approval response."""
-        data = await ctx.get_shared_state(self.id)
+        data = ctx.get_state(self.id)
         assert isinstance(data, int)
         if response.approved:
             await ctx.yield_output(data)
@@ -113,17 +115,16 @@ async def test_workflow_run_streaming() -> None:
     executor_b = IncrementExecutor(id="executor_b")
 
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
+        WorkflowBuilder(start_executor=executor_a)
         .add_edge(executor_a, executor_b)
         .add_edge(executor_b, executor_a)
         .build()
     )
 
     result: int | None = None
-    async for event in workflow.run_stream(NumberMessage(data=0)):
+    async for event in workflow.run(NumberMessage(data=0), stream=True):
         assert isinstance(event, WorkflowEvent)
-        if isinstance(event, WorkflowOutputEvent):
+        if event.type == "output":
             result = event.data
 
     assert result is not None and result == 10
@@ -135,16 +136,14 @@ async def test_workflow_run_stream_not_completed():
     executor_b = IncrementExecutor(id="executor_b")
 
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
+        WorkflowBuilder(max_iterations=5, start_executor=executor_a)
         .add_edge(executor_a, executor_b)
         .add_edge(executor_b, executor_a)
-        .set_max_iterations(5)
         .build()
     )
 
-    with pytest.raises(RuntimeError):
-        async for _ in workflow.run_stream(NumberMessage(data=0)):
+    with pytest.raises(WorkflowConvergenceException):
+        async for _ in workflow.run(NumberMessage(data=0), stream=True):
             pass
 
 
@@ -154,8 +153,7 @@ async def test_workflow_run():
     executor_b = IncrementExecutor(id="executor_b")
 
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
+        WorkflowBuilder(start_executor=executor_a)
         .add_edge(executor_a, executor_b)
         .add_edge(executor_b, executor_a)
         .build()
@@ -173,15 +171,13 @@ async def test_workflow_run_not_completed():
     executor_b = IncrementExecutor(id="executor_b")
 
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
+        WorkflowBuilder(max_iterations=5, start_executor=executor_a)
         .add_edge(executor_a, executor_b)
         .add_edge(executor_b, executor_a)
-        .set_max_iterations(5)
         .build()
     )
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(WorkflowConvergenceException):
         await workflow.run(NumberMessage(data=0))
 
 
@@ -192,14 +188,15 @@ async def test_fan_out():
     executor_c = IncrementExecutor(id="executor_c", limit=2)  # This executor will not complete the workflow
 
     workflow = (
-        WorkflowBuilder().set_start_executor(executor_a).add_fan_out_edges(executor_a, [executor_b, executor_c]).build()
+        WorkflowBuilder(start_executor=executor_a).add_fan_out_edges(executor_a, [executor_b, executor_c]).build()
     )
 
     events = await workflow.run(NumberMessage(data=0))
 
-    # Each executor will emit two events: ExecutorInvokedEvent and ExecutorCompletedEvent
-    # executor_b will also emit a WorkflowOutputEvent (no WorkflowCompletedEvent anymore)
-    # Each superstep will emit also emit a WorkflowStartedEvent and WorkflowCompletedEvent
+    # Each executor will emit two events: executor_invoked (type='executor_invoked')
+    # and executor_completed (type='executor_completed')
+    # executor_b will also emit an output event (type='output')
+    # Each superstep will emit a started event (type='started') and status event (type='status')
     # This workflow will converge in 2 supersteps because executor_c will send one more message
     # after executor_b completes
     assert len(events) == 11
@@ -216,14 +213,15 @@ async def test_fan_out_multiple_completed_events():
     executor_c = IncrementExecutor(id="executor_c", limit=1)
 
     workflow = (
-        WorkflowBuilder().set_start_executor(executor_a).add_fan_out_edges(executor_a, [executor_b, executor_c]).build()
+        WorkflowBuilder(start_executor=executor_a).add_fan_out_edges(executor_a, [executor_b, executor_c]).build()
     )
 
     events = await workflow.run(NumberMessage(data=0))
 
-    # Each executor will emit two events: ExecutorInvokedEvent and ExecutorCompletedEvent
-    # executor_b and executor_c will also emit a WorkflowOutputEvent (no WorkflowCompletedEvent anymore)
-    # Each superstep will emit also emit a WorkflowStartedEvent and WorkflowCompletedEvent
+    # Each executor will emit two events: executor_invoked (type='executor_invoked')
+    # and executor_completed (type='executor_completed')
+    # executor_b and executor_c will also emit an output event (type='output')
+    # Each superstep will emit a started event (type='started') and status event (type='status')
     # This workflow will converge in 1 superstep because executor_a and executor_b will not send further messages
     assert len(events) == 10
 
@@ -240,8 +238,7 @@ async def test_fan_in():
     aggregator = AggregatorExecutor(id="aggregator")
 
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
+        WorkflowBuilder(start_executor=executor_a)
         .add_fan_out_edges(executor_a, [executor_b, executor_c])
         .add_fan_in_edges([executor_b, executor_c], aggregator)
         .build()
@@ -249,9 +246,10 @@ async def test_fan_in():
 
     events = await workflow.run(NumberMessage(data=0))
 
-    # Each executor will emit two events: ExecutorInvokedEvent and ExecutorCompletedEvent
-    # aggregator will also emit a WorkflowOutputEvent (no WorkflowCompletedEvent anymore)
-    # Each superstep will emit also emit a WorkflowStartedEvent and WorkflowCompletedEvent
+    # Each executor will emit two events: executor_invoked (type='executor_invoked')
+    # and executor_completed (type='executor_completed')
+    # aggregator will also emit an output event (type='output')
+    # Each superstep will emit a started event (type='started') and status event (type='status')
     assert len(events) == 13
 
     assert events.get_final_state() == WorkflowRunState.IDLE
@@ -276,50 +274,50 @@ async def test_workflow_with_checkpointing_enabled(simple_executor: Executor):
 
         # Build workflow with checkpointing - should not raise any errors
         workflow = (
-            WorkflowBuilder()
+            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
             .add_edge(simple_executor, simple_executor)  # Self-loop to satisfy graph requirements
-            .set_start_executor(simple_executor)
-            .with_checkpointing(storage)
             .build()
         )
 
         # Verify workflow was created and can run
-        test_message = Message(data="test message", source_id="test", target_id=None)
+        test_message = WorkflowMessage(data="test message", source_id="test", target_id=None)
         result = await workflow.run(test_message)
         assert result is not None
 
 
-async def test_workflow_checkpointing_not_enabled_for_external_restore(simple_executor: Executor):
+async def test_workflow_checkpointing_not_enabled_for_external_restore(
+    simple_executor: Executor,
+):
     """Test that external checkpoint restoration fails when workflow doesn't support checkpointing."""
     # Build workflow WITHOUT checkpointing
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor=simple_executor)
         .add_edge(simple_executor, simple_executor)  # Self-loop to satisfy graph requirements
-        .set_start_executor(simple_executor)
         .build()
     )
 
     # Attempt to restore from checkpoint without providing external storage should fail
     try:
-        [event async for event in workflow.run_stream(checkpoint_id="fake-checkpoint-id")]
+        [event async for event in workflow.run(checkpoint_id="fake-checkpoint-id", stream=True)]
         raise AssertionError("Expected ValueError to be raised")
     except ValueError as e:
         assert "Cannot restore from checkpoint" in str(e)
         assert "either provide checkpoint_storage parameter" in str(e)
 
 
-async def test_workflow_run_stream_from_checkpoint_no_checkpointing_enabled(simple_executor: Executor):
+async def test_workflow_run_stream_from_checkpoint_no_checkpointing_enabled(
+    simple_executor: Executor,
+):
     # Build workflow WITHOUT checkpointing
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor=simple_executor)
         .add_edge(simple_executor, simple_executor)  # Self-loop to satisfy graph requirements
-        .set_start_executor(simple_executor)
         .build()
     )
 
     # Attempt to run from checkpoint should fail
     try:
-        async for _ in workflow.run_stream(checkpoint_id="fake_checkpoint_id"):
+        async for _ in workflow.run(checkpoint_id="fake_checkpoint_id", stream=True):
             pass
         raise AssertionError("Expected ValueError to be raised")
     except ValueError as e:
@@ -327,30 +325,29 @@ async def test_workflow_run_stream_from_checkpoint_no_checkpointing_enabled(simp
         assert "either provide checkpoint_storage parameter" in str(e)
 
 
-async def test_workflow_run_stream_from_checkpoint_invalid_checkpoint(simple_executor: Executor):
+async def test_workflow_run_stream_from_checkpoint_invalid_checkpoint(
+    simple_executor: Executor,
+):
     """Test that attempting to restore from a non-existent checkpoint fails appropriately."""
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
         # Build workflow with checkpointing
         workflow = (
-            WorkflowBuilder()
+            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
             .add_edge(simple_executor, simple_executor)  # Self-loop to satisfy graph requirements
-            .set_start_executor(simple_executor)
-            .with_checkpointing(storage)
             .build()
         )
 
         # Attempt to run from non-existent checkpoint should fail
-        try:
-            async for _ in workflow.run_stream(checkpoint_id="nonexistent_checkpoint_id"):
+        with pytest.raises(WorkflowCheckpointException, match="No checkpoint found with ID nonexistent_checkpoint_id"):
+            async for _ in workflow.run(checkpoint_id="nonexistent_checkpoint_id", stream=True):
                 pass
-            raise AssertionError("Expected RuntimeError to be raised")
-        except RuntimeError as e:
-            assert "Failed to restore from checkpoint" in str(e)
 
 
-async def test_workflow_run_stream_from_checkpoint_with_external_storage(simple_executor: Executor):
+async def test_workflow_run_stream_from_checkpoint_with_external_storage(
+    simple_executor: Executor,
+):
     """Test that external checkpoint storage can be provided for restoration."""
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
@@ -359,23 +356,25 @@ async def test_workflow_run_stream_from_checkpoint_with_external_storage(simple_
         from agent_framework import WorkflowCheckpoint
 
         test_checkpoint = WorkflowCheckpoint(
-            workflow_id="test-workflow",
+            workflow_name="test-workflow",
+            graph_signature_hash="test-graph-signature",
+            previous_checkpoint_id=None,
             messages={},
-            shared_state={},
+            state={},
             iteration_count=0,
         )
-        checkpoint_id = await storage.save_checkpoint(test_checkpoint)
+        checkpoint_id = await storage.save(test_checkpoint)
 
         # Create a workflow WITHOUT checkpointing
         workflow_without_checkpointing = (
-            WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
+            WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
         )
 
         # Resume from checkpoint using external storage parameter
         try:
             events: list[WorkflowEvent] = []
-            async for event in workflow_without_checkpointing.run_stream(
-                checkpoint_id=checkpoint_id, checkpoint_storage=storage
+            async for event in workflow_without_checkpointing.run(
+                checkpoint_id=checkpoint_id, checkpoint_storage=storage, stream=True
             ):
                 events.append(event)
                 if len(events) >= 2:  # Limit to avoid infinite loops
@@ -390,25 +389,25 @@ async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Execu
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
+        # Build workflow with checkpointing
+        workflow = (
+            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
+            .add_edge(simple_executor, simple_executor)
+            .build()
+        )
+
         # Create a test checkpoint manually in storage
         from agent_framework import WorkflowCheckpoint
 
         test_checkpoint = WorkflowCheckpoint(
-            workflow_id="test-workflow",
+            workflow_name=workflow.name,
+            graph_signature_hash=workflow.graph_signature_hash,
+            previous_checkpoint_id=None,
             messages={},
-            shared_state={},
+            state={},
             iteration_count=0,
         )
-        checkpoint_id = await storage.save_checkpoint(test_checkpoint)
-
-        # Build workflow with checkpointing
-        workflow = (
-            WorkflowBuilder()
-            .add_edge(simple_executor, simple_executor)
-            .set_start_executor(simple_executor)
-            .with_checkpointing(storage)
-            .build()
-        )
+        checkpoint_id = await storage.save(test_checkpoint)
 
         # Test non-streaming run method with checkpoint_id
         result = await workflow.run(checkpoint_id=checkpoint_id)
@@ -416,48 +415,47 @@ async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Execu
         assert hasattr(result, "get_outputs")  # Should have WorkflowRunResult methods
 
 
-async def test_workflow_run_stream_from_checkpoint_with_responses(simple_executor: Executor):
-    """Test that workflow can be resumed from checkpoint with pending RequestInfoEvents."""
+async def test_workflow_run_stream_from_checkpoint_with_responses(
+    simple_executor: Executor,
+):
+    """Test that workflow can be resumed from checkpoint with pending request_info events."""
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
+
+        # Build workflow with checkpointing
+        workflow = (
+            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
+            .add_edge(simple_executor, simple_executor)
+            .build()
+        )
 
         # Create a test checkpoint manually in storage
         from agent_framework import WorkflowCheckpoint
 
         test_checkpoint = WorkflowCheckpoint(
-            workflow_id="test-workflow",
+            workflow_name=workflow.name,
+            graph_signature_hash=workflow.graph_signature_hash,
             messages={},
-            shared_state={},
+            state={},
             pending_request_info_events={
-                "request_123": RequestInfoEvent(
+                "request_123": WorkflowEvent.request_info(
                     request_id="request_123",
                     source_executor_id=simple_executor.id,
                     request_data="Mock",
                     response_type=str,
-                ).to_dict(),
+                ),
             },
             iteration_count=0,
         )
-        checkpoint_id = await storage.save_checkpoint(test_checkpoint)
-
-        # Build workflow with checkpointing
-        workflow = (
-            WorkflowBuilder()
-            .add_edge(simple_executor, simple_executor)
-            .set_start_executor(simple_executor)
-            .with_checkpointing(storage)
-            .build()
-        )
+        checkpoint_id = await storage.save(test_checkpoint)
 
         # Resume from checkpoint - pending request events should be emitted
         events: list[WorkflowEvent] = []
-        async for event in workflow.run_stream(checkpoint_id=checkpoint_id):
+        async for event in workflow.run(checkpoint_id=checkpoint_id, stream=True):
             events.append(event)
 
         # Verify that the pending request event was emitted
-        assert next(
-            event for event in events if isinstance(event, RequestInfoEvent) and event.request_id == "request_123"
-        )
+        assert next(event for event in events if event.type == "request_info" and event.request_id == "request_123")
 
         assert len(events) > 0  # Just ensure we processed some events
 
@@ -471,90 +469,108 @@ class StateTrackingMessage:
 
 
 class StateTrackingExecutor(Executor):
-    """An executor that tracks state in shared state to test context reset behavior."""
+    """An executor that tracks state in workflow state to test context reset behavior."""
 
     @handler
     async def handle_message(
-        self, message: StateTrackingMessage, ctx: WorkflowContext[StateTrackingMessage, list[str]]
+        self,
+        message: StateTrackingMessage,
+        ctx: WorkflowContext[StateTrackingMessage, list[str]],
     ) -> None:
-        """Handle the message and track it in shared state."""
-        # Get existing messages from shared state
-        try:
-            existing_messages = await ctx.get_shared_state("processed_messages")
-        except KeyError:
-            existing_messages = []
+        """Handle the message and track it in workflow state."""
+        # Get existing messages from workflow state
+        existing_messages: list[str] = ctx.get_state("processed_messages") or []
 
         # Record this message
         message_record = f"{message.run_id}:{message.data}"
         existing_messages.append(message_record)  # type: ignore
 
-        # Update shared state
-        await ctx.set_shared_state("processed_messages", existing_messages)
+        # Update workflow state
+        ctx.set_state("processed_messages", existing_messages)
 
         # Yield output
         await ctx.yield_output(existing_messages.copy())  # type: ignore
 
 
-async def test_workflow_multiple_runs_no_state_collision():
-    """Test that running the same workflow instance multiple times doesn't have state collision."""
+async def test_workflow_multiple_runs_preserve_state():
+    """Test that running the same workflow instance multiple times preserves shared state.
+
+    State preservation is the new default - calling ``Workflow.run`` repeatedly
+    on the same instance behaves like a chat agent maintaining memory across
+    turns. Callers that want fresh state should rebuild the Workflow.
+    """
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
-        # Create executor that tracks state in shared state
+        # Create executor that tracks state in workflow state
         state_executor = StateTrackingExecutor(id="state_executor")
 
         # Build workflow with checkpointing
         workflow = (
-            WorkflowBuilder()
+            WorkflowBuilder(start_executor=state_executor, checkpoint_storage=storage)
             .add_edge(state_executor, state_executor)  # Self-loop to satisfy graph requirements
-            .set_start_executor(state_executor)
-            .with_checkpointing(storage)
             .build()
         )
 
-        # Run 1: Should only see messages from run 1
+        # Run 1: Single record from run 1
         result1 = await workflow.run(StateTrackingMessage(data="message1", run_id="run1"))
         assert result1.get_final_state() == WorkflowRunState.IDLE
         outputs1 = result1.get_outputs()
         assert outputs1[0] == ["run1:message1"]
 
-        # Run 2: Should only see messages from run 2, not run 1
+        # Run 2: State from run 1 persists; run 2's record appends.
         result2 = await workflow.run(StateTrackingMessage(data="message2", run_id="run2"))
         assert result2.get_final_state() == WorkflowRunState.IDLE
         outputs2 = result2.get_outputs()
-        assert outputs2[0] == ["run2:message2"]  # Should NOT contain run1 data
+        assert outputs2[0] == ["run1:message1", "run2:message2"]
 
-        # Run 3: Should only see messages from run 3
+        # Run 3: Same - all three accumulate.
         result3 = await workflow.run(StateTrackingMessage(data="message3", run_id="run3"))
         assert result3.get_final_state() == WorkflowRunState.IDLE
         outputs3 = result3.get_outputs()
-        assert outputs3[0] == ["run3:message3"]  # Should NOT contain run1 or run2 data
-
-        # Verify that each run only processed its own message
-        # This confirms that the checkpointable context properly resets between runs
-        assert outputs1[0] != outputs2[0]
-        assert outputs2[0] != outputs3[0]
-        assert outputs1[0] != outputs3[0]
+        assert outputs3[0] == ["run1:message1", "run2:message2", "run3:message3"]
 
 
-async def test_workflow_checkpoint_runtime_only_configuration(simple_executor: Executor):
+async def test_workflow_multiple_runs_no_state_collision_after_rebuild():
+    """Rebuilding the Workflow gives a fresh shared-state slate."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        def _build():
+            executor = StateTrackingExecutor(id="state_executor")
+            return (
+                WorkflowBuilder(start_executor=executor, checkpoint_storage=storage)
+                .add_edge(executor, executor)
+                .build()
+            )
+
+        wf1 = _build()
+        result1 = await wf1.run(StateTrackingMessage(data="message1", run_id="run1"))
+        assert result1.get_outputs()[0] == ["run1:message1"]
+
+        wf2 = _build()
+        result2 = await wf2.run(StateTrackingMessage(data="message2", run_id="run2"))
+        assert result2.get_outputs()[0] == ["run2:message2"]
+
+
+async def test_workflow_checkpoint_runtime_only_configuration(
+    simple_executor: Executor,
+):
     """Test that checkpointing can be configured ONLY at runtime, not at build time."""
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
         # Build workflow WITHOUT checkpointing at build time
-        workflow = (
-            WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
-        )
+        workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
 
         # Run with runtime checkpoint storage - should create checkpoints
-        test_message = Message(data="runtime checkpoint test", source_id="test", target_id=None)
+        test_message = WorkflowMessage(data="runtime checkpoint test", source_id="test", target_id=None)
         result = await workflow.run(test_message, checkpoint_storage=storage)
         assert result is not None
         assert result.get_final_state() == WorkflowRunState.IDLE
 
         # Verify checkpoints were created
-        checkpoints = await storage.list_checkpoints()
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
         assert len(checkpoints) > 0
 
         # Find a superstep checkpoint to resume from
@@ -566,7 +582,7 @@ async def test_workflow_checkpoint_runtime_only_configuration(simple_executor: E
 
         # Create new workflow instance (still without build-time checkpointing)
         workflow_resume = (
-            WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
+            WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
         )
 
         # Resume from checkpoint using runtime checkpoint storage
@@ -574,32 +590,38 @@ async def test_workflow_checkpoint_runtime_only_configuration(simple_executor: E
             checkpoint_id=resume_checkpoint.checkpoint_id, checkpoint_storage=storage
         )
         assert result_resumed is not None
-        assert result_resumed.get_final_state() in (WorkflowRunState.IDLE, WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+        assert result_resumed.get_final_state() in (
+            WorkflowRunState.IDLE,
+            WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
+        )
 
 
-async def test_workflow_checkpoint_runtime_overrides_buildtime(simple_executor: Executor):
+async def test_workflow_checkpoint_runtime_overrides_buildtime(
+    simple_executor: Executor,
+):
     """Test that runtime checkpoint storage overrides build-time configuration."""
-    with tempfile.TemporaryDirectory() as temp_dir1, tempfile.TemporaryDirectory() as temp_dir2:
+    with (
+        tempfile.TemporaryDirectory() as temp_dir1,
+        tempfile.TemporaryDirectory() as temp_dir2,
+    ):
         buildtime_storage = FileCheckpointStorage(temp_dir1)
         runtime_storage = FileCheckpointStorage(temp_dir2)
 
         # Build workflow with build-time checkpointing
         workflow = (
-            WorkflowBuilder()
+            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=buildtime_storage)
             .add_edge(simple_executor, simple_executor)
-            .set_start_executor(simple_executor)
-            .with_checkpointing(buildtime_storage)
             .build()
         )
 
         # Run with runtime checkpoint storage override
-        test_message = Message(data="override test", source_id="test", target_id=None)
+        test_message = WorkflowMessage(data="override test", source_id="test", target_id=None)
         result = await workflow.run(test_message, checkpoint_storage=runtime_storage)
         assert result is not None
 
         # Verify checkpoints were created in runtime storage, not build-time storage
-        buildtime_checkpoints = await buildtime_storage.list_checkpoints()
-        runtime_checkpoints = await runtime_storage.list_checkpoints()
+        buildtime_checkpoints = await buildtime_storage.list_checkpoints(workflow_name=workflow.name)
+        runtime_checkpoints = await runtime_storage.list_checkpoints(workflow_name=workflow.name)
 
         assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
         assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"
@@ -626,8 +648,7 @@ async def test_comprehensive_edge_groups_workflow():
     # 3. FanOut: fanout_hub -> [parallel_1, parallel_2]
     # 4. FanIn: [parallel_1, parallel_2] -> aggregator
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(router)
+        WorkflowBuilder(start_executor=router)
         # Switch-case routing based on message data
         .add_switch_case_edge_group(
             router,
@@ -696,8 +717,7 @@ async def test_workflow_with_simple_cycle_and_exit_condition():
 
     # Simple cycle: A -> B -> A, A exits when limit reached
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
+        WorkflowBuilder(start_executor=executor_a)
         .add_edge(executor_a, executor_b)  # A -> B
         .add_edge(executor_b, executor_a)  # B -> A (creates cycle)
         .build()
@@ -711,10 +731,12 @@ async def test_workflow_with_simple_cycle_and_exit_condition():
     assert outputs[0] is not None and outputs[0] >= 6  # Should complete when executor_a reaches its limit
 
     # Verify cycling occurred (should have events from both executors)
-    # Check for ExecutorInvokedEvent and ExecutorCompletedEvent types that have executor_id
-    from agent_framework import ExecutorCompletedEvent, ExecutorInvokedEvent
+    # Check for executor events that have executor_id
+    from agent_framework import WorkflowEvent
 
-    executor_events = [e for e in events if isinstance(e, (ExecutorInvokedEvent, ExecutorCompletedEvent))]
+    executor_events = [
+        e for e in events if isinstance(e, WorkflowEvent) and e.type in ("executor_invoked", "executor_completed")
+    ]
     executor_ids = {e.executor_id for e in executor_events}
     assert "exec_a" in executor_ids, "Should have events from executor A"
     assert "exec_b" in executor_ids, "Should have events from executor B"
@@ -727,7 +749,7 @@ async def test_workflow_concurrent_execution_prevention():
     """Test that concurrent workflow executions are prevented."""
     # Create a simple workflow that takes some time to execute
     executor = IncrementExecutor(id="slow_executor", limit=3, increment=1)
-    workflow = WorkflowBuilder().set_start_executor(executor).build()
+    workflow = WorkflowBuilder(start_executor=executor).build()
 
     # Create a task that will run the workflow
     async def run_workflow():
@@ -740,7 +762,9 @@ async def test_workflow_concurrent_execution_prevention():
     await asyncio.sleep(0.01)
 
     # Try to start a second concurrent execution - this should fail
-    with pytest.raises(RuntimeError, match="Workflow is already running. Concurrent executions are not allowed."):
+    with pytest.raises(
+        WorkflowException, match="Workflow is already running; concurrent runs are not allowed on the same instance."
+    ):
         await workflow.run(NumberMessage(data=0))
 
     # Wait for the first task to complete
@@ -756,12 +780,12 @@ async def test_workflow_concurrent_execution_prevention_streaming():
     """Test that concurrent workflow streaming executions are prevented."""
     # Create a simple workflow
     executor = IncrementExecutor(id="slow_executor", limit=3, increment=1)
-    workflow = WorkflowBuilder().set_start_executor(executor).build()
+    workflow = WorkflowBuilder(start_executor=executor).build()
 
     # Create an async generator that will consume the stream slowly
     async def consume_stream_slowly():
         result: list[WorkflowEvent] = []
-        async for event in workflow.run_stream(NumberMessage(data=0)):
+        async for event in workflow.run(NumberMessage(data=0), stream=True):
             result.append(event)
             await asyncio.sleep(0.01)  # Slow consumption
         return result
@@ -773,7 +797,9 @@ async def test_workflow_concurrent_execution_prevention_streaming():
     await asyncio.sleep(0.02)
 
     # Try to start a second concurrent execution - this should fail
-    with pytest.raises(RuntimeError, match="Workflow is already running. Concurrent executions are not allowed."):
+    with pytest.raises(
+        WorkflowException, match="Workflow is already running; concurrent runs are not allowed on the same instance."
+    ):
         await workflow.run(NumberMessage(data=0))
 
     # Wait for the first task to complete
@@ -789,12 +815,12 @@ async def test_workflow_concurrent_execution_prevention_mixed_methods():
     """Test that concurrent executions are prevented across different execution methods."""
     # Create a simple workflow
     executor = IncrementExecutor(id="slow_executor", limit=3, increment=1)
-    workflow = WorkflowBuilder().set_start_executor(executor).build()
+    workflow = WorkflowBuilder(start_executor=executor).build()
 
     # Start a streaming execution
     async def consume_stream():
         result: list[WorkflowEvent] = []
-        async for event in workflow.run_stream(NumberMessage(data=0)):
+        async for event in workflow.run(NumberMessage(data=0), stream=True):
             result.append(event)
             await asyncio.sleep(0.01)
         return result
@@ -803,11 +829,15 @@ async def test_workflow_concurrent_execution_prevention_mixed_methods():
     await asyncio.sleep(0.02)  # Let it start
 
     # Try different execution methods - all should fail
-    with pytest.raises(RuntimeError, match="Workflow is already running. Concurrent executions are not allowed."):
+    with pytest.raises(
+        WorkflowException, match="Workflow is already running; concurrent runs are not allowed on the same instance."
+    ):
         await workflow.run(NumberMessage(data=0))
 
-    with pytest.raises(RuntimeError, match="Workflow is already running. Concurrent executions are not allowed."):
-        async for _ in workflow.run_stream(NumberMessage(data=0)):
+    with pytest.raises(
+        WorkflowException, match="Workflow is already running; concurrent runs are not allowed on the same instance."
+    ):
+        async for _ in workflow.run(NumberMessage(data=0), stream=True):
             break
 
     # Wait for the original task to complete
@@ -818,6 +848,349 @@ async def test_workflow_concurrent_execution_prevention_mixed_methods():
     assert result.get_final_state() == WorkflowRunState.IDLE
 
 
+async def test_workflow_sequential_runs_after_completion() -> None:
+    """A completed run must release the runner so the next ``run`` succeeds.
+
+    This is the happy-path counterpart to the concurrent-run guard tests:
+    those tests verify that a *concurrent* run is rejected, but they do not
+    verify that the lock is actually released afterwards. This test
+    exercises that release path explicitly across the three call shapes
+    (non-streaming, streaming-iterated, streaming-via-get_final_response)
+    and across multiple consecutive turns to catch lock leaks.
+    """
+    executor = IncrementExecutor(id="seq_executor", limit=3, increment=1)
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    # Non-streaming -> non-streaming
+    r1 = await workflow.run(NumberMessage(data=0))
+    assert r1.get_final_state() == WorkflowRunState.IDLE
+
+    r2 = await workflow.run(NumberMessage(data=0))
+    assert r2.get_final_state() == WorkflowRunState.IDLE
+
+    # Non-streaming -> streaming-iterated
+    stream_events: list[WorkflowEvent] = []
+    async for event in workflow.run(NumberMessage(data=0), stream=True):
+        stream_events.append(event)
+    assert any(e.type == "status" and e.state == WorkflowRunState.IDLE for e in stream_events)
+
+    # Streaming -> streaming via get_final_response (no manual iteration)
+    r3 = await workflow.run(NumberMessage(data=0), stream=True).get_final_response()
+    assert r3.get_final_state() == WorkflowRunState.IDLE
+
+    # Streaming -> non-streaming (back to the start)
+    r4 = await workflow.run(NumberMessage(data=0))
+    assert r4.get_final_state() == WorkflowRunState.IDLE
+
+
+async def test_workflow_unconsumed_stream_releases_run_lock() -> None:
+    """An unconsumed stream must not leak the run lock.
+
+    ``Workflow.run`` reserves the runner *synchronously* so that concurrent
+    callers are rejected immediately. The reservation is normally released
+    by ``_run_core``'s ``finally`` once the stream is iterated. If the
+    caller never iterates the stream, a GC-time finalizer must release the
+    reservation instead - otherwise every subsequent ``Workflow.run`` call
+    on this instance would fail with the concurrent-run error.
+    """
+    executor = IncrementExecutor(id="unconsumed_stream_exec", limit=3, increment=1)
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    # Build a stream and immediately drop it without iterating.
+    stream = workflow.run(NumberMessage(data=0), stream=True)
+    assert stream is not None  # silence unused-variable warnings; stream is GC'd below
+    del stream
+    gc.collect()
+    # Yield to the event loop so any scheduled finalizer work can run.
+    await asyncio.sleep(0)
+
+    # The runner should be back to IDLE; a fresh run must succeed.
+    result = await workflow.run(NumberMessage(data=0))
+    assert result.get_final_state() == WorkflowRunState.IDLE
+
+
+async def test_workflow_unawaited_run_coroutine_releases_run_lock() -> None:
+    """An un-awaited non-streaming ``run()`` coroutine must also not leak the lock.
+
+    ``Workflow.run`` (non-streaming) returns a coroutine produced by
+    ``ResponseStream.get_final_response``. The underlying ResponseStream is
+    held alive by that coroutine, so dropping the coroutine without
+    awaiting it must still release the reservation via the same GC-time
+    fallback used for unconsumed streams.
+    """
+    executor = IncrementExecutor(id="unawaited_run_exec", limit=3, increment=1)
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    coro = workflow.run(NumberMessage(data=0))
+    # Closing suppresses the "coroutine was never awaited" warning. We cast to
+    # ``Any`` because the typed return is ``Awaitable[...]``; in practice it is
+    # a coroutine that exposes ``close``.
+    cast(Any, coro).close()
+    del coro
+    gc.collect()
+    await asyncio.sleep(0)
+
+    result = await workflow.run(NumberMessage(data=0))
+    assert result.get_final_state() == WorkflowRunState.IDLE
+
+
+async def test_workflow_partial_stream_does_not_clobber_successor_active_run() -> None:
+    """A stale ``_run_core`` finalizer must not clear a successor's run lock.
+
+    Repro for the GC-finalizer race the user reported:
+
+    1. Start stream A and consume one event so its body is suspended at a
+       ``yield``. Its ``finally`` is now armed and will run when the
+       generator is closed.
+    2. Drop stream A and ``gc.collect``. The ``_active_run`` weakref's
+       referent is gone, so a subsequent ``run()`` will pass the
+       concurrency guard - but stream A's async-gen finalizer hasn't
+       actually executed yet (``aclose`` is scheduled on the loop).
+    3. Synchronously start stream B; ``run()`` installs a fresh weakref
+       in ``_active_run``.
+    4. Yield to the loop so stream A's stale ``finally`` runs. Without
+       the identity check it unconditionally writes
+       ``self._active_run = None``, silently disabling the concurrency
+       guard for stream B.
+    """
+    executor = IncrementExecutor(id="stale_finalizer_exec", limit=100, increment=1)
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    # Step 1: drive stream A's body until it's suspended at its first yield.
+    stream_a = workflow.run(NumberMessage(data=0), stream=True)
+    aiter_a = stream_a.__aiter__()
+    await aiter_a.__anext__()
+
+    # Step 2: drop stream A; GC invalidates the weakref and schedules
+    # async-gen close, but does not run the close inline.
+    del stream_a
+    del aiter_a
+    gc.collect()
+
+    # Step 3: synchronously start stream B *before* yielding to the loop,
+    # so the stale ``aclose`` for stream A hasn't fired yet.
+    stream_b = workflow.run(NumberMessage(data=0), stream=True)
+    ref_b = workflow._active_run  # type: ignore[attr-defined]
+    assert ref_b is not None and ref_b() is stream_b
+
+    # Step 4: yield enough times for stream A's scheduled aclose to drive
+    # its body through ``GeneratorExit`` and into its ``finally``.
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    # With the fix, stream B's reservation is still in place. Without it,
+    # ``_active_run`` was clobbered to ``None`` and a concurrent run would
+    # be (incorrectly) accepted.
+    assert workflow._active_run is ref_b  # type: ignore[attr-defined]
+    with pytest.raises(
+        WorkflowException,
+        match="Workflow is already running; concurrent runs are not allowed on the same instance.",
+    ):
+        await workflow.run(NumberMessage(data=0))
+
+    # Tear down stream B without iterating it (its body never started, so
+    # closing it is a no-op for workflow state).
+    del stream_b
+    del ref_b
+    gc.collect()
+    await asyncio.sleep(0)
+
+
+async def test_workflow_stale_runtime_checkpoint_storage_not_inherited() -> None:
+    """A new run must not inherit a prior run's leftover runtime checkpoint storage.
+
+    If a run that set a runtime ``checkpoint_storage`` override is dropped before
+    its async-generator finalizer clears it, the override can linger on the
+    ``RunnerContext`` while ``_is_run_active()`` already reports False. ``run()``
+    defensively clears that stale override so a subsequent run that does not pass
+    its own ``checkpoint_storage`` does not silently checkpoint into it.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        leftover_storage = FileCheckpointStorage(temp_dir)
+        executor = IncrementExecutor(id="stale_storage_exec", limit=3, increment=1)
+        workflow = WorkflowBuilder(start_executor=executor).build()
+
+        assert isinstance(workflow._runner.context, InProcRunnerContext)  # pyright: ignore[reportPrivateUsage]
+
+        # Simulate a leftover runtime override from a dropped prior run.
+        workflow._runner.context.set_runtime_checkpoint_storage(leftover_storage)  # pyright: ignore[reportPrivateUsage]
+
+        # A fresh run without its own checkpoint_storage must not use the leftover.
+        result = await workflow.run(NumberMessage(data=0))
+        assert result.get_final_state() == WorkflowRunState.IDLE
+
+        checkpoints = await leftover_storage.list_checkpoints(workflow_name=workflow.name)
+        assert checkpoints == [], "Stale runtime checkpoint storage must not be inherited by a new run"
+        assert workflow._runner.context._runtime_checkpoint_storage is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_workflow_partial_stream_does_not_clobber_successor_runtime_storage() -> None:
+    """A stale ``_run_core`` finalizer must not clear a successor's runtime storage.
+
+    Same GC-finalizer race as
+    ``test_workflow_partial_stream_does_not_clobber_successor_active_run`` but for the
+    runtime checkpoint storage override: the dropped run's deferred ``finally`` must
+    only clear the override if it still owns it, otherwise it wipes the successor
+    run's storage.
+    """
+    with (
+        tempfile.TemporaryDirectory() as temp_dir_a,
+        tempfile.TemporaryDirectory() as temp_dir_b,
+    ):
+        storage_a = FileCheckpointStorage(temp_dir_a)
+        storage_b = FileCheckpointStorage(temp_dir_b)
+        executor = IncrementExecutor(id="storage_finalizer_exec", limit=100, increment=1)
+        workflow = WorkflowBuilder(start_executor=executor).build()
+        context = workflow._runner.context  # pyright: ignore[reportPrivateUsage]
+
+        assert isinstance(context, InProcRunnerContext)
+
+        # Step 1: drive stream A's body to its first yield so it set storage_a.
+        stream_a = workflow.run(NumberMessage(data=0), checkpoint_storage=storage_a, stream=True)
+        aiter_a = stream_a.__aiter__()
+        await aiter_a.__anext__()
+        assert context._runtime_checkpoint_storage is storage_a  # pyright: ignore[reportPrivateUsage]
+
+        # Step 2: drop stream A; the weakref dies and async-gen close is scheduled
+        # but not run inline.
+        del stream_a
+        del aiter_a
+        gc.collect()
+
+        # Step 3: synchronously start stream B with its own storage and drive it to
+        # its first yield so it set storage_b and took ownership of the override.
+        stream_b = workflow.run(NumberMessage(data=0), checkpoint_storage=storage_b, stream=True)
+        aiter_b = stream_b.__aiter__()
+        await aiter_b.__anext__()
+        assert context._runtime_checkpoint_storage is storage_b  # pyright: ignore[reportPrivateUsage]
+
+        # Step 4: yield enough for stream A's scheduled aclose to drive its body
+        # through ``GeneratorExit`` and into its ``finally``.
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+        # With the ownership guard, stream B's override survives. Without it, A's
+        # stale finalizer would have cleared it.
+        assert context._runtime_checkpoint_storage is storage_b  # pyright: ignore[reportPrivateUsage]
+
+        # Tear down stream B.
+        del stream_b
+        del aiter_b
+        gc.collect()
+        await asyncio.sleep(0)
+
+
+async def test_workflow_serializes_concurrent_delivery_to_same_executor():
+    """Messages delivered to one executor within a superstep must be processed serially.
+
+    A start executor fans out to two intermediate executors that both send to a single
+    target in the same superstep. The runner dispatches those two deliveries concurrently
+    (they have different source executors), but the target must process them one at a time
+    rather than interleaving at ``await`` points.
+    """
+
+    class _FanSource(Executor):
+        def __init__(self, id: str, label: str) -> None:
+            super().__init__(id=id)
+            self._label = label
+
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(self._label)
+
+    class _SerialTarget(Executor):
+        def __init__(self, id: str) -> None:
+            super().__init__(id=id)
+            self.active = 0
+            self.max_active = 0
+            self.received: list[str] = []
+
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            # Yield control. If execution were not serialized per executor, a concurrent
+            # delivery would enter here and push ``active`` (and ``max_active``) to 2.
+            await asyncio.sleep(0)
+            self.received.append(message)
+            self.active -= 1
+
+    start = _FanSource(id="start", label="go")
+    source_a = _FanSource(id="a", label="from_a")
+    source_b = _FanSource(id="b", label="from_b")
+    target = _SerialTarget(id="target")
+
+    # superstep 1: start -> {a, b}; superstep 2: a -> target, b -> target (both in the
+    # same superstep); superstep 3: target receives both deliveries and processes them serially.
+    workflow = (
+        WorkflowBuilder(start_executor=start)
+        .add_edge(start, source_a)
+        .add_edge(start, source_b)
+        .add_edge(source_a, target)
+        .add_edge(source_b, target)
+        .build()
+    )
+
+    await workflow.run("go")
+
+    assert target.max_active == 1, "Target processed concurrent deliveries (executions overlapped)"
+    assert sorted(target.received) == ["from_a", "from_b"]
+
+
+def test_executor_serialization_lock_is_loop_scoped():
+    """The per-executor serialization lock must be created under the running loop.
+
+    Executors are often constructed outside an event loop and may be reused across loops
+    (e.g. successive ``asyncio.run`` calls). The lock is created lazily and re-created when
+    the running loop changes, so reuse never raises ``asyncio.Lock`` "bound to a different
+    event loop". Creating it eagerly in ``__init__`` and binding it to the first loop would.
+    """
+
+    class _Noop(Executor):
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None: ...
+
+    executor = _Noop(id="noop")
+
+    async def _grab_lock() -> asyncio.Lock:
+        return executor._get_execution_lock()  # pyright: ignore[reportPrivateUsage]
+
+    # Each ``asyncio.run`` uses a fresh event loop; the lock must be re-created per loop.
+    lock_loop_1 = asyncio.run(_grab_lock())
+    lock_loop_2 = asyncio.run(_grab_lock())
+
+    assert lock_loop_1 is not lock_loop_2
+
+
+def test_workflow_instance_can_be_reused_across_event_loops():
+    """A workflow built once can be re-run across separate event loops.
+
+    Both the per-executor ``asyncio.Lock`` and the runner context's ``asyncio.Queue`` bind to
+    the first event loop they are awaited under. They are re-created lazily under the running
+    loop, so successive ``asyncio.run`` calls on the same workflow instance do not raise
+    "bound to a different event loop".
+    """
+
+    class _Echo(Executor):
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[Any, str]) -> None:
+            await ctx.yield_output(message)
+
+    workflow = WorkflowBuilder(start_executor=_Echo(id="echo")).build()
+
+    async def _run(message: str) -> WorkflowRunResult:
+        return await workflow.run(message)
+
+    # A fresh event loop per run; reuse must not raise "bound to a different event loop".
+    result_1 = asyncio.run(_run("a"))
+    result_2 = asyncio.run(_run("b"))
+
+    assert result_1.get_final_state() == WorkflowRunState.IDLE
+    assert result_2.get_final_state() == WorkflowRunState.IDLE
+    assert result_1.get_outputs() == ["a"]
+    assert result_2.get_outputs() == ["b"]
+
+
 class _StreamingTestAgent(BaseAgent):
     """Test agent that supports both streaming and non-streaming modes."""
 
@@ -825,115 +1198,417 @@ class _StreamingTestAgent(BaseAgent):
         super().__init__(**kwargs)
         self._reply_text = reply_text
 
-    async def run(
+    @overload
+    def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: AgentRunInputs | None = ...,
         *,
-        thread: AgentThread | None = None,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
         **kwargs: Any,
-    ) -> AgentRunResponse:
-        """Non-streaming run - returns complete response."""
-        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
+    ) -> Awaitable[AgentResponse[Any]]: ...
 
-    async def run_stream(
+    @overload
+    def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: AgentRunInputs | None = ...,
         *,
-        thread: AgentThread | None = None,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        """Streaming run - yields incremental updates."""
-        # Simulate streaming by yielding character by character
-        for char in self._reply_text:
-            yield AgentRunResponseUpdate(contents=[TextContent(text=char)])
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        if stream:
+
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                # Simulate streaming by yielding character by character
+                for char in self._reply_text:
+                    yield AgentResponseUpdate(contents=[Content.from_text(text=char)])
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=[Message("assistant", [self._reply_text])])
+
+        return _run()
 
 
 async def test_agent_streaming_vs_non_streaming() -> None:
-    """Test that run() emits AgentRunEvent while run_stream() emits AgentRunUpdateEvent."""
+    """Test that stream=True/False both emit output events (type='output') with the right data types."""
     agent = _StreamingTestAgent(id="test_agent", name="TestAgent", reply_text="Hello World")
     agent_exec = AgentExecutor(agent, id="agent_exec")
 
-    workflow = WorkflowBuilder().set_start_executor(agent_exec).build()
+    workflow = WorkflowBuilder(start_executor=agent_exec).build()
 
     # Test non-streaming mode with run()
     result = await workflow.run("test message")
 
     # Filter for agent events (result is a list of events)
-    agent_run_events = [e for e in result if isinstance(e, AgentRunEvent)]
-    agent_update_events = [e for e in result if isinstance(e, AgentRunUpdateEvent)]
+    agent_run_events = [e for e in result if e.type == "output" and isinstance(e.data, AgentResponse)]
+    agent_update_events = [e for e in result if e.type == "output" and isinstance(e.data, AgentResponseUpdate)]
 
-    # In non-streaming mode, should have AgentRunEvent, no AgentRunUpdateEvent
-    assert len(agent_run_events) == 1, "Expected exactly one AgentRunEvent in non-streaming mode"
-    assert len(agent_update_events) == 0, "Expected no AgentRunUpdateEvent in non-streaming mode"
+    # In non-streaming mode, should have output event with AgentResponse, no AgentResponseUpdate
+    assert len(agent_run_events) == 1, "Expected exactly one output event with AgentResponse in non-streaming mode"
+    assert len(agent_update_events) == 0, "Expected no output event with AgentResponseUpdate in non-streaming mode"
     assert agent_run_events[0].executor_id == "agent_exec"
     assert agent_run_events[0].data is not None
     assert agent_run_events[0].data.messages[0].text == "Hello World"
 
-    # Test streaming mode with run_stream()
+    # Test streaming mode with run(stream=True)
     stream_events: list[WorkflowEvent] = []
-    async for event in workflow.run_stream("test message"):
+    async for event in workflow.run("test message", stream=True):
         stream_events.append(event)
 
     # Filter for agent events
-    stream_agent_run_events = [e for e in stream_events if isinstance(e, AgentRunEvent)]
-    stream_agent_update_events = [e for e in stream_events if isinstance(e, AgentRunUpdateEvent)]
+    agent_response: list[AgentResponse[Any]] = [
+        cast(AgentResponse[Any], e.data)  # pyright: ignore[reportUnknownMemberType]
+        for e in stream_events
+        if e.type == "output" and isinstance(e.data, AgentResponse)
+    ]
+    agent_response_updates = [
+        e.data for e in stream_events if e.type == "output" and isinstance(e.data, AgentResponseUpdate)
+    ]
 
-    # In streaming mode, should have AgentRunUpdateEvent, no AgentRunEvent
-    assert len(stream_agent_run_events) == 0, "Expected no AgentRunEvent in streaming mode"
-    assert len(stream_agent_update_events) > 0, "Expected AgentRunUpdateEvent events in streaming mode"
+    # In streaming mode, should have AgentResponseUpdate, no AgentResponse
+    assert len(agent_response) == 0, "Expected no AgentResponse in streaming mode"
+    assert len(agent_response_updates) > 0, "Expected AgentResponseUpdate events in streaming mode"
 
     # Verify we got incremental updates (one per character in "Hello World")
-    assert len(stream_agent_update_events) == len("Hello World"), "Expected one update per character"
+    assert len(agent_response_updates) == len("Hello World"), "Expected one update per character"
 
     # Verify the updates build up to the full message
-    accumulated_text = "".join(
-        e.data.contents[0].text
-        for e in stream_agent_update_events
-        if e.data and e.data.contents and e.data.contents[0].text
-    )
+    accumulated_text = "".join([
+        e.contents[0].text
+        for e in agent_response_updates
+        if e.contents
+        and isinstance(e.contents[0], Content)
+        and e.contents[0].type == "text"
+        and e.contents[0].text is not None
+    ])
     assert accumulated_text == "Hello World", f"Expected 'Hello World', got '{accumulated_text}'"
 
 
-async def test_workflow_run_parameter_validation(simple_executor: Executor) -> None:
-    """Test that run() and run_stream() properly validate parameter combinations."""
-    workflow = WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
+async def test_workflow_run_inflight_messages_guard(simple_executor: Executor) -> None:
+    """``run(message=...)`` must reject in-flight executor messages from a prior run.
 
-    test_message = Message(data="test", source_id="test", target_id=None)
+    Workflows preserve state and pending messages across :meth:`Workflow.run`
+    calls. If a prior run aborted before the runner drained those pending
+    messages (e.g. it raised :class:`WorkflowConvergenceException`), the next
+    fresh-message call should fail loudly instead of silently mixing the
+    leftover messages with the new turn. The supported recovery path is to
+    resume from a checkpoint; there is no in-process recovery hatch.
+    """
+    workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
+    test_message = WorkflowMessage(data="test", source_id="test", target_id=None)
+
+    # Simulate an aborted prior run by leaving a message in the runner context.
+    workflow._runner.context._messages["test"] = [test_message]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert await workflow._runner.context.has_messages()
+
+    with pytest.raises(RuntimeError, match="in-flight executor messages"):
+        await workflow.run(test_message)
+
+    with pytest.raises(RuntimeError, match="in-flight executor messages"):
+        async for _ in workflow.run(test_message, stream=True):
+            pass
+
+
+async def test_workflow_run_parameter_validation(simple_executor: Executor) -> None:
+    """Test that stream properly validate parameter combinations."""
+    workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
+
+    test_message = WorkflowMessage(data="test", source_id="test", target_id=None)
 
     # Valid: message only (new run)
     result = await workflow.run(test_message)
     assert result.get_final_state() == WorkflowRunState.IDLE
 
-    # Invalid: both message and checkpoint_id
+    # Invalid: message + checkpoint_id (mutually exclusive). Multi-turn
+    # state preservation is handled by Workflow.run preserving state across
+    # calls, so the host pattern is two separate calls (restore-then-run),
+    # not a single combined call.
     with pytest.raises(ValueError, match="Cannot provide both 'message' and 'checkpoint_id'"):
-        await workflow.run(test_message, checkpoint_id="fake_id")
+        await workflow.run(test_message, checkpoint_id="some-checkpoint")
 
-    # Invalid: both message and checkpoint_id (streaming)
     with pytest.raises(ValueError, match="Cannot provide both 'message' and 'checkpoint_id'"):
-        async for _ in workflow.run_stream(test_message, checkpoint_id="fake_id"):
+        async for _ in workflow.run(test_message, checkpoint_id="some-checkpoint", stream=True):
             pass
 
     # Invalid: none of message or checkpoint_id
-    with pytest.raises(ValueError, match="Must provide either"):
+    with pytest.raises(ValueError, match="Must provide at least one of"):
         await workflow.run()
 
     # Invalid: none of message or checkpoint_id (streaming)
-    with pytest.raises(ValueError, match="Must provide either"):
-        async for _ in workflow.run_stream():
+    with pytest.raises(ValueError, match="Must provide at least one of"):
+        async for _ in workflow.run(stream=True):
             pass
 
 
-async def test_workflow_run_stream_parameter_validation(simple_executor: Executor) -> None:
-    """Test run_stream() specific parameter validation scenarios."""
-    workflow = WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
+async def test_workflow_run_stream_parameter_validation(
+    simple_executor: Executor,
+) -> None:
+    """Test stream=True specific parameter validation scenarios."""
+    workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
 
-    test_message = Message(data="test", source_id="test", target_id=None)
+    test_message = WorkflowMessage(data="test", source_id="test", target_id=None)
 
     # Valid: message only (new run)
     events: list[WorkflowEvent] = []
-    async for event in workflow.run_stream(test_message):
+    async for event in workflow.run(test_message, stream=True):
         events.append(event)
-    assert any(isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE for e in events)
+    assert any(e.type == "status" and e.state == WorkflowRunState.IDLE for e in events)
 
     # Invalid combinations already tested in test_workflow_run_parameter_validation
     # This test ensures streaming works correctly for valid parameters
+
+
+# region Output executor filtering tests
+
+
+class OutputProducerExecutor(Executor):
+    """An executor that produces a unique output value for testing output filtering."""
+
+    def __init__(self, id: str, output_value: int) -> None:
+        super().__init__(id=id)
+        self.output_value = output_value
+
+    @handler
+    async def handle_message(self, message: NumberMessage, ctx: WorkflowContext[NumberMessage, int]) -> None:
+        await ctx.yield_output(self.output_value)
+
+
+class PassthroughExecutor(Executor):
+    """An executor that passes through messages and produces an output."""
+
+    def __init__(self, id: str, output_value: int) -> None:
+        super().__init__(id=id)
+        self.output_value = output_value
+
+    @handler
+    async def handle_message(self, message: NumberMessage, ctx: WorkflowContext[NumberMessage, int]) -> None:
+        await ctx.yield_output(self.output_value)
+        await ctx.send_message(message)
+
+
+async def test_output_executors_empty_yields_all_outputs() -> None:
+    """Test that omitted output selection yields all outputs for compatibility."""
+    # Create executors that each produce different outputs
+    executor_a = PassthroughExecutor(id="executor_a", output_value=10)
+    executor_b = OutputProducerExecutor(id="executor_b", output_value=20)
+
+    # Build workflow with a -> b
+    workflow = WorkflowBuilder(start_executor=executor_a).add_edge(executor_a, executor_b).build()
+
+    result = await workflow.run(NumberMessage(data=0))
+    outputs = result.get_outputs()
+
+    # Both executors' outputs should be present
+    assert len(outputs) == 2
+    assert outputs == [10, 20]
+
+    output_events = [event for event in result if event.type == "output"]
+    assert len(output_events) == 2
+    assert output_events[0].executor_id == "executor_a"
+    assert output_events[1].executor_id == "executor_b"
+
+
+async def test_output_executors_filters_outputs_non_streaming() -> None:
+    """Test that only outputs from specified executors are yielded in non-streaming mode."""
+    # Create executors that each produce different outputs
+    executor_a = PassthroughExecutor(id="executor_a", output_value=10)
+    executor_b = OutputProducerExecutor(id="executor_b", output_value=20)
+
+    # Build workflow with a -> b
+    workflow = (
+        WorkflowBuilder(start_executor=executor_a, output_from=[executor_b]).add_edge(executor_a, executor_b).build()
+    )
+
+    result = await workflow.run(NumberMessage(data=0))
+    outputs = result.get_outputs()
+
+    # Only executor_b's output should be present
+    assert len(outputs) == 1
+    assert outputs[0] == 20
+
+    output_events = [event for event in result if event.type == "output"]
+    assert len(output_events) == 1
+    assert output_events[0].executor_id == "executor_b"
+
+
+async def test_output_executors_filters_outputs_streaming() -> None:
+    """Test that only outputs from specified executors are yielded in streaming mode."""
+    # Create executors that each produce different outputs
+    executor_a = PassthroughExecutor(id="executor_a", output_value=100)
+    executor_b = OutputProducerExecutor(id="executor_b", output_value=200)
+
+    # Build workflow with a -> b
+    workflow = (
+        WorkflowBuilder(start_executor=executor_a, output_from=[executor_a]).add_edge(executor_a, executor_b).build()
+    )
+
+    # Collect outputs from streaming
+    output_events: list[WorkflowEvent] = []
+    async for event in workflow.run(NumberMessage(data=0), stream=True):
+        if event.type == "output":
+            output_events.append(event)
+
+    # Only executor_a's output should be present
+    assert len(output_events) == 1
+    assert output_events[0].data == 100
+    assert output_events[0].executor_id == "executor_a"
+
+
+async def test_output_executors_with_multiple_specified_executors() -> None:
+    """Test filtering with multiple executors in the output list."""
+    # Create three executors with pass-through to reach all of them
+    executor_a = PassthroughExecutor(id="executor_a", output_value=1)
+    executor_b = PassthroughExecutor(id="executor_b", output_value=2)
+    executor_c = OutputProducerExecutor(id="executor_c", output_value=3)
+
+    # Build workflow with a -> b -> c
+    workflow = (
+        WorkflowBuilder(start_executor=executor_a, output_from=[executor_a, executor_c])
+        .add_edge(executor_a, executor_b)
+        .add_edge(executor_b, executor_c)
+        .build()
+    )
+
+    result = await workflow.run(NumberMessage(data=0))
+    outputs = result.get_outputs()
+
+    # Only executor_a and executor_c outputs should be present
+    assert len(outputs) == 2
+    assert 1 in outputs  # executor_a
+    assert 3 in outputs  # executor_c
+    assert 2 not in outputs  # executor_b should be filtered out
+
+
+async def test_output_executors_with_nonexistent_executor_id() -> None:
+    """Test that specifying a non-existent executor ID doesn't break the workflow."""
+    from agent_framework._workflows._workflow import OutputDesignation
+
+    executor_a = OutputProducerExecutor(id="executor_a", output_value=42)
+
+    workflow = WorkflowBuilder(start_executor=executor_a).build()
+
+    # Designate a nonexistent executor so the workflow-level filter drops every yield.
+    workflow._output_designation = OutputDesignation(outputs=frozenset({"nonexistent_executor"}))  # type: ignore[attr-defined]
+    workflow._runner.context.set_yield_output_classifier(workflow._output_designation.classify)  # type: ignore[attr-defined, reportPrivateUsage]
+
+    result = await workflow.run(NumberMessage(data=0))
+    outputs = result.get_outputs()
+
+    # No outputs should be yielded since the executor ID doesn't match
+    assert len(outputs) == 0
+
+
+async def test_output_executors_filtering_with_fan_in() -> None:
+    """Test output filtering in a fan-in workflow."""
+
+    class FanOutStartExecutor(Executor):
+        """Executor that sends messages to fan-out targets."""
+
+        @handler
+        async def handle(self, message: NumberMessage, ctx: WorkflowContext[NumberMessage, int]) -> None:
+            await ctx.yield_output(999)  # This should be filtered out
+            await ctx.send_message(NumberMessage(data=5))
+
+    class FanOutTargetExecutor(Executor):
+        """Executor that processes fan-out messages."""
+
+        def __init__(self, id: str, increment: int) -> None:
+            super().__init__(id=id)
+            self.increment = increment
+
+        @handler
+        async def handle(self, message: NumberMessage, ctx: WorkflowContext[NumberMessage, int]) -> None:
+            await ctx.yield_output(888)  # This should be filtered out
+            await ctx.send_message(NumberMessage(data=message.data + self.increment))
+
+    # Create executors for fan-in pattern
+    executor_start = FanOutStartExecutor(id="executor_start")
+    executor_a = FanOutTargetExecutor(id="executor_a", increment=10)
+    executor_b = FanOutTargetExecutor(id="executor_b", increment=20)
+    aggregator = AggregatorExecutor(id="aggregator")
+
+    # Build fan-in workflow: start -> [a, b] -> aggregator
+    workflow = (
+        WorkflowBuilder(start_executor=executor_start, output_from=[aggregator])
+        .add_fan_out_edges(executor_start, [executor_a, executor_b])
+        .add_fan_in_edges([executor_a, executor_b], aggregator)
+        .build()
+    )
+
+    result = await workflow.run(NumberMessage(data=0))
+    outputs = result.get_outputs()
+
+    # Only aggregator output should be present
+    # executor_a sends 5+10=15, executor_b sends 5+20=25, aggregator sums: 15+25=40
+    assert len(outputs) == 1
+    assert outputs[0] == 40
+
+
+async def test_output_executors_filtering_with_run_responses() -> None:
+    """Test output filtering works correctly with run(responses=...) method."""
+    executor = MockExecutorRequestApproval(id="approval_executor")
+
+    workflow = WorkflowBuilder(start_executor=executor, output_from=[executor]).build()
+
+    # Run workflow which will request approval
+    result = await workflow.run(NumberMessage(data=42))
+
+    # Get request info events
+    request_events = result.get_request_info_events()
+    assert len(request_events) == 1
+
+    # Send approval response
+    responses = {request_events[0].request_id: ApprovalMessage(approved=True)}
+    response_result = await workflow.run(responses=responses)
+    outputs = response_result.get_outputs()
+
+    # Output should be yielded since approval_executor is in output_executors
+    assert len(outputs) == 1
+    assert outputs[0] == 42
+
+
+async def test_output_executors_filtering_with_run_responses_streaming() -> None:
+    """Test output filtering works correctly with run(responses=..., stream=True) method."""
+    executor = MockExecutorRequestApproval(id="approval_executor")
+
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    # Run workflow which will request approval
+    events_list: list[WorkflowEvent] = []
+    async for event in workflow.run(NumberMessage(data=99), stream=True):
+        events_list.append(event)
+
+    # Get request info events
+    request_events = [e for e in events_list if e.type == "request_info"]
+    assert len(request_events) == 1
+
+    # Designate a different executor so the workflow-level filter drops the approval yield.
+    from agent_framework._workflows._workflow import OutputDesignation
+
+    workflow._output_designation = OutputDesignation(outputs=frozenset({"other_executor"}))  # type: ignore[attr-defined]
+    workflow._runner.context.set_yield_output_classifier(workflow._output_designation.classify)  # type: ignore[attr-defined, reportPrivateUsage]
+
+    # Send approval response via streaming
+    responses = {request_events[0].request_id: ApprovalMessage(approved=True)}
+    output_events: list[WorkflowEvent] = []
+    async for event in workflow.run(responses=responses, stream=True):
+        if event.type == "output":
+            output_events.append(event)
+
+    # No outputs should be yielded since approval_executor is not in output_executors
+    assert len(output_events) == 0
+
+
+# endregion

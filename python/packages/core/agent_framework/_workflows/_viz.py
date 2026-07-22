@@ -98,7 +98,7 @@ class WorkflowViz:
                 return temp_file.name
 
         try:
-            import graphviz  # type: ignore
+            import graphviz
         except ImportError as e:
             raise ImportError(
                 "viz extra is required for export. Install it with: pip install graphviz>=0.20.0 "
@@ -308,7 +308,7 @@ class WorkflowViz:
         """Emit DOT subgraphs for any WorkflowExecutor instances found in the workflow."""
         # Lazy import to avoid any potential import cycles
         try:
-            from ._workflow_executor import WorkflowExecutor  # type: ignore
+            from ._workflow_executor import WorkflowExecutor
         except ImportError:  # pragma: no cover - best-effort; if unavailable, skip subgraphs
             return
 
@@ -408,7 +408,7 @@ class WorkflowViz:
         include_internal_executors: bool = False,
     ) -> None:
         try:
-            from ._workflow_executor import WorkflowExecutor  # type: ignore
+            from ._workflow_executor import WorkflowExecutor
         except ImportError:  # pragma: no cover
             return
 

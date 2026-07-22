@@ -156,9 +156,26 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         {
             return new ResponseError
             {
-                Code = "invalid_request",
+                Code = ResponseErrorCodes.InvalidRequest,
                 Message = "Mutually exclusive parameters: 'conversation' and 'previous_response_id'. Ensure you are only providing one of: 'previous_response_id' or 'conversation'."
             };
+        }
+
+        // When a conversation store is configured and the request references a conversation,
+        // verify it exists up front. This surfaces a missing conversation as a clean not-found
+        // error (mapped to HTTP 404, consistent with the Conversations API) instead of failing
+        // mid-execution and reporting a generic server error.
+        if (this._conversationStorage is not null && request.Conversation?.Id is { Length: > 0 } conversationId)
+        {
+            var conversation = await this._conversationStorage.GetConversationAsync(conversationId, cancellationToken).ConfigureAwait(false);
+            if (conversation is null)
+            {
+                return new ResponseError
+                {
+                    Code = ResponseErrorCodes.ConversationNotFound,
+                    Message = $"Conversation with id '{conversationId}' not found."
+                };
+            }
         }
 
         return await this._executor.ValidateRequestAsync(request, cancellationToken).ConfigureAwait(false);
@@ -425,11 +442,28 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             // Create agent invocation context
             var context = new AgentInvocationContext(new IdGenerator(responseId: responseId, conversationId: state.Response?.Conversation?.Id));
 
+            // Load conversation history if a conversation ID is provided
+            IReadOnlyList<Extensions.AI.ChatMessage>? conversationHistory = null;
+            if (this._conversationStorage is not null && request.Conversation?.Id is not null)
+            {
+                var itemsResult = await this._conversationStorage.ListItemsAsync(
+                    request.Conversation.Id,
+                    limit: 100,
+                    order: SortOrder.Ascending,
+                    cancellationToken: linkedCts.Token).ConfigureAwait(false);
+
+                var history = ItemResourceConversions.ToChatMessages(itemsResult.Data);
+                if (history.Count > 0)
+                {
+                    conversationHistory = history;
+                }
+            }
+
             // Collect output items for conversation storage
             List<ItemResource> outputItems = [];
 
             // Execute using the injected executor
-            await foreach (var streamingEvent in this._executor.ExecuteAsync(context, request, linkedCts.Token).ConfigureAwait(false))
+            await foreach (var streamingEvent in this._executor.ExecuteAsync(context, request, conversationHistory, linkedCts.Token).ConfigureAwait(false))
             {
                 state.AddStreamingEvent(streamingEvent);
 

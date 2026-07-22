@@ -1,12 +1,144 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import logging
+import typing
 from types import UnionType
-from typing import Any, TypeVar, Union, cast, get_args, get_origin
+from typing import Any, TypeGuard, Union, cast, get_args, get_origin
 
-logger = logging.getLogger(__name__)
+import typing_extensions
 
-T = TypeVar("T")
+from .._agents import Agent
+
+# Pre-compute the TypeVar types for runtime-safe detection.
+# isinstance(x, TypeVar) can fail if TypeVar is a factory/callable
+# on some Python versions, so we compare against the actual runtime type.
+_TYPEVAR_TYPES: tuple[type, ...] = (type(typing.TypeVar("_T")), type(typing_extensions.TypeVar("_T")))  # pyright: ignore[reportUnknownVariableType]
+
+
+def is_typevar(x: Any) -> bool:
+    """Check if x is an unresolved TypeVar instance (from typing or typing_extensions).
+
+    Args:
+        x: The value to check.
+
+    Returns:
+        True if x is a TypeVar instance, False otherwise.
+    """
+    return isinstance(x, _TYPEVAR_TYPES)
+
+
+def contains_typevar(annotation: Any) -> bool:
+    """Check if an annotation contains an unresolved TypeVar at any nesting level.
+
+    Args:
+        annotation: The annotation to inspect.
+
+    Returns:
+        True if the annotation or any nested type argument is a TypeVar, False otherwise.
+    """
+    if is_typevar(annotation):
+        return True
+
+    return any(contains_typevar(arg) for arg in get_args(annotation))
+
+
+def is_chat_agent(agent: Any) -> TypeGuard[Agent]:
+    """Check if the given agent is a Agent.
+
+    Args:
+        agent (Any): The agent to check.
+
+    Returns:
+        TypeGuard[Agent]: True if the agent is a Agent, False otherwise.
+    """
+    return isinstance(agent, Agent)
+
+
+def resolve_type_annotation(
+    type_annotation: type[Any] | UnionType | str | None,
+    globalns: dict[str, Any] | None = None,
+    localns: dict[str, Any] | None = None,
+) -> type[Any] | UnionType | None:
+    """Resolve a type annotation, including string forward references.
+
+    Args:
+        type_annotation: A type, union type, string forward reference, or None
+        globalns: Global namespace for resolving forward references (typically func.__globals__)
+        localns: Local namespace for resolving forward references
+
+    Returns:
+        The resolved type annotation. For string annotations, evaluates them in the
+        provided namespace. Returns None if type_annotation is None.
+
+    Raises:
+        NameError: If a forward reference cannot be resolved in the provided namespaces
+        SyntaxError: If a string annotation contains invalid Python syntax
+
+    Note:
+        This function uses eval() to resolve string type annotations. This is the same
+        approach used by Python's typing.get_type_hints() and typing.ForwardRef internally.
+        Security is managed by: (1) strings come from decorator parameters in source code,
+        not runtime user input, and (2) the eval namespace is restricted to the function's
+        module globals plus Union/Optional from typing.
+
+    Examples:
+        - resolve_type_annotation(str) -> str
+        - resolve_type_annotation("str | int", {"str": str, "int": int}) -> str | int
+        - resolve_type_annotation("MyClass", {"MyClass": MyClass}) -> MyClass
+    """
+    if type_annotation is None:
+        return None
+
+    if isinstance(type_annotation, str):
+        # Resolve string forward reference by evaluating it.
+        # This uses eval() which is the same approach as Python's typing.get_type_hints()
+        # and typing.ForwardRef._evaluate(). The namespace is restricted to the function's
+        # globals plus typing constructs, and input comes from developer source code.
+        eval_globalns = globalns.copy() if globalns else {}
+        eval_globalns.setdefault("Union", Union)
+        eval_globalns.setdefault("Optional", __import__("typing").Optional)
+
+        try:
+            return cast(
+                "type[Any] | UnionType",
+                eval(type_annotation, eval_globalns, localns),  # ruff:ignore[suspicious-eval-usage]  # nosec B307
+            )
+        except NameError as e:
+            raise NameError(
+                f"Could not resolve type annotation '{type_annotation}'. "
+                f"Make sure the type is defined or imported. Original error: {e}"
+            ) from e
+
+    return type_annotation
+
+
+def normalize_type_to_list(type_annotation: type[Any] | UnionType | None) -> list[type[Any] | UnionType]:
+    """Normalize a type annotation (possibly a union) to a list of concrete types.
+
+    Args:
+        type_annotation: A type, union type (using | or Union[]), or None
+
+    Returns:
+        A list of types. For union types, returns all members.
+        For None, returns an empty list.
+        For Optional[T] (Union[T, None]), returns [T, type(None)].
+
+    Examples:
+        - normalize_type_to_list(str) -> [str]
+        - normalize_type_to_list(str | int) -> [str, int]
+        - normalize_type_to_list(Union[str, int]) -> [str, int]
+        - normalize_type_to_list(None) -> []
+    """
+    if type_annotation is None:
+        return []
+
+    origin = get_origin(type_annotation)
+
+    # Handle Union types (str | int or Union[str, int])
+    if origin is Union or origin is UnionType:
+        return list(get_args(type_annotation))
+
+    # Single type
+    return [type_annotation]
 
 
 def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
@@ -43,7 +175,7 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
     if origin in [list, set]:
         return isinstance(data, origin) and (
             not args or all(any(is_instance_of(item, arg) for arg in args) for item in data)  # type: ignore[misc]
-        )  # type: ignore
+        )
 
     # Case 4: target_type is a tuple
     if origin is tuple:
@@ -80,6 +212,58 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
     return isinstance(data, target_type)
 
 
+def try_coerce_to_type(data: Any, target_type: type | UnionType | Any) -> Any:
+    """Try to coerce data to the target type.
+
+    Attempts lightweight type coercion for common cases where raw data
+    (e.g., from JSON deserialization) needs to be converted to the expected type.
+
+    Returns the coerced value if successful, or the original value if coercion
+    is not needed or not possible.
+
+    Args:
+        data: The data to coerce.
+        target_type: The type to coerce to.
+
+    Returns:
+        The coerced value, or the original value if coercion fails.
+    """
+    original_data = data
+
+    # If already the right type, return as-is
+    if is_instance_of(data, target_type):
+        return data
+
+    # Can't coerce to non-concrete targets (Union, generic, etc.)
+    if not isinstance(target_type, type):
+        return original_data
+
+    target_cls: type[Any] = target_type
+
+    # int -> float (JSON integers for float fields)
+    if isinstance(data, int) and target_cls is float:
+        return float(data)
+
+    # dict -> dataclass or pydantic model
+    if isinstance(data, dict):
+        from dataclasses import is_dataclass
+
+        if is_dataclass(target_cls):
+            try:
+                return target_cls(**data)
+            except (TypeError, ValueError):
+                return original_data
+
+        model_validate = getattr(target_cls, "model_validate", None)
+        if callable(model_validate):
+            try:
+                return model_validate(data)
+            except Exception:
+                return original_data
+
+    return original_data
+
+
 def serialize_type(t: type) -> str:
     """Serialize a type to a string.
 
@@ -110,7 +294,7 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
 
     A type is compatible if values of source_type can be assigned to variables of target_type.
     For example:
-    - list[ChatMessage] is compatible with list[str | ChatMessage]
+    - list[Message] is compatible with list[str | Message]
     - str is compatible with str | int
     - int is compatible with Any
 

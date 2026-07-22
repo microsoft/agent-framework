@@ -17,7 +17,7 @@ pip install agent-framework-devui --pre
 You can also launch it programmatically
 
 ```python
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.devui import serve
 
@@ -26,9 +26,9 @@ def get_weather(location: str) -> str:
     return f"Weather in {location}: 72°F and sunny"
 
 # Create your agent
-agent = ChatAgent(
+agent = Agent(
     name="WeatherAgent",
-    chat_client=OpenAIChatClient(),
+    client=OpenAIChatClient(),
     tools=[get_weather]
 )
 
@@ -47,6 +47,9 @@ devui ./agents --port 8080
 # → API: http://localhost:8080/v1/*
 ```
 
+DevUI is auth-enabled by default. Localhost starts with a generated development token logged at startup; pass it as
+`Authorization: Bearer <token>` for direct API calls.
+
 When DevUI starts with no discovered entities, it displays a **sample entity gallery** with curated examples from the Agent Framework repository. You can download these samples, review them, and run them locally to get started quickly.
 
 ## Using MCP Tools
@@ -55,8 +58,8 @@ When DevUI starts with no discovered entities, it displays a **sample entity gal
 
 ```python
 # ✅ Correct - DevUI handles cleanup automatically
-mcp_tool = MCPStreamableHTTPTool(url="http://localhost:8011/mcp", chat_client=chat_client)
-agent = ChatAgent(tools=mcp_tool)
+mcp_tool = MCPStreamableHTTPTool(url="http://localhost:8011/mcp", client=client)
+agent = Agent(tools=mcp_tool)
 serve(entities=[agent])
 ```
 
@@ -68,13 +71,13 @@ Register cleanup hooks to properly close credentials and resources on shutdown:
 
 ```python
 from azure.identity.aio import DefaultAzureCredential
-from agent_framework import ChatAgent
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework_devui import register_cleanup, serve
 
 credential = DefaultAzureCredential()
-client = AzureOpenAIChatClient()
-agent = ChatAgent(name="MyAgent", chat_client=client)
+client = OpenAIChatCompletionClient()
+agent = Agent(name="MyAgent", client=client)
 
 # Register cleanup hook - credential will be closed on shutdown
 register_cleanup(agent, credential.close)
@@ -92,22 +95,42 @@ For your agents to be discovered by the DevUI, they must be organized in a direc
 ```
 agents/
 ├── weather_agent/
-│   ├── __init__.py      # Must export: agent = ChatAgent(...)
+│   ├── __init__.py      # Must export: agent = Agent(...)
 │   ├── agent.py
 │   └── .env             # Optional: API keys, config vars
 ├── my_workflow/
-│   ├── __init__.py      # Must export: workflow = WorkflowBuilder()...
+│   ├── __init__.py      # Must export: workflow = WorkflowBuilder(start_executor=...)...
 │   ├── workflow.py
 │   └── .env             # Optional: environment variables
 └── .env                 # Optional: shared environment variables
 ```
 
-## Viewing Telemetry (Otel Traces) in DevUI
+### Importing from External Modules
 
-Agent Framework emits OpenTelemetry (Otel) traces for various operations. You can view these traces in DevUI by enabling tracing when starting the server.
+If your agents import tools or utilities from sibling directories (e.g., `from tools.helpers import my_tool`), you must set `PYTHONPATH` to include the parent directory:
 
 ```bash
-devui ./agents --tracing framework
+# Project structure:
+# backend/
+# ├── agents/
+# │   └── my_agent/
+# │       └── agent.py    # contains: from tools.helpers import my_tool
+# └── tools/
+#     └── helpers.py
+
+# Run from project root with PYTHONPATH
+cd backend
+PYTHONPATH=. devui ./agents --port 8080
+```
+
+Without `PYTHONPATH`, Python cannot find modules in sibling directories and DevUI will report an import error.
+
+## Viewing Telemetry (Otel Traces) in DevUI
+
+Agent Framework emits OpenTelemetry (Otel) traces for various operations. You can view these traces in DevUI by enabling instrumentation when starting the server.
+
+```bash
+devui ./agents --instrumentation
 ```
 
 ## OpenAI-Compatible API
@@ -117,12 +140,14 @@ For convenience, DevUI provides an OpenAI Responses backend API. This means you 
 ```bash
 # Simple - use your entity name as the entity_id in metadata
 curl -X POST http://localhost:8080/v1/responses \
+  -H "Authorization: Bearer <devui-token>" \
   -H "Content-Type: application/json" \
   -d @- << 'EOF'
 {
   "metadata": {"entity_id": "weather_agent"},
   "input": "Hello world"
 }
+EOF
 ```
 
 Or use the OpenAI Python SDK:
@@ -132,7 +157,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:8080/v1",
-    api_key="not-needed"  # API key not required for local DevUI
+    api_key="<devui-token>"
 )
 
 response = client.responses.create(
@@ -181,6 +206,7 @@ DevUI provides an **OpenAI Proxy** feature for testing OpenAI models directly th
 
 ```bash
 curl -X POST http://localhost:8080/v1/responses \
+  -H "Authorization: Bearer <devui-token>" \
   -H "X-Proxy-Backend: openai" \
   -d '{"model": "gpt-4.1-mini", "input": "Hello"}'
 ```
@@ -194,13 +220,14 @@ devui [directory] [options]
 
 Options:
   --port, -p      Port (default: 8080)
-  --host          Host (default: 127.0.0.1)
+  --host          Host (default: 127.0.0.1; non-loopback hosts require auth)
   --headless      API only, no UI
-  --config        YAML config file
-  --tracing       none|framework|workflow|all
+  --no-open       Don't automatically open browser
+  --instrumentation  Enable OpenTelemetry instrumentation
   --reload        Enable auto-reload
   --mode          developer|user (default: developer)
-  --auth          Enable Bearer token authentication
+  --no-auth       Disable auth for loopback-only local development
+  --auth-token    Custom authentication token (required for non-loopback hosts unless DEVUI_AUTH_TOKEN is set)
 ```
 
 ### UI Modes
@@ -212,8 +239,8 @@ Options:
 # Development
 devui ./agents
 
-# Production (user-facing)
-devui ./agents --mode user --auth
+# Local-only no-auth development
+devui ./agents --no-auth
 ```
 
 ## Key Endpoints
@@ -228,9 +255,9 @@ Given that DevUI offers an OpenAI Responses API, it internally maps messages and
 | `response.created` + `response.in_progress`                  | `AgentStartedEvent`               | OpenAI   |
 | `response.completed`                                         | `AgentCompletedEvent`             | OpenAI   |
 | `response.failed`                                            | `AgentFailedEvent`                | OpenAI   |
-| `response.created` + `response.in_progress`                  | `WorkflowStartedEvent`            | OpenAI   |
-| `response.completed`                                         | `WorkflowCompletedEvent`          | OpenAI   |
-| `response.failed`                                            | `WorkflowFailedEvent`             | OpenAI   |
+| `response.created` + `response.in_progress`                  | `WorkflowEvent (type='started')`  | OpenAI   |
+| `response.completed`                                         | `WorkflowEvent (type='status')`   | OpenAI   |
+| `response.failed`                                            | `WorkflowEvent (type='failed')`   | OpenAI   |
 |                                                              | **Content Types**                 |          |
 | `response.content_part.added` + `response.output_text.delta` | `TextContent`                     | OpenAI   |
 | `response.reasoning_text.delta`                              | `TextReasoningContent`            | OpenAI   |
@@ -246,13 +273,13 @@ Given that DevUI offers an OpenAI Responses API, it internally maps messages and
 | `error`                                                      | `ErrorContent`                    | OpenAI   |
 | Final `Response.usage` field (not streamed)                  | `UsageContent`                    | OpenAI   |
 |                                                              | **Workflow Events**               |          |
-| `response.output_item.added` (ExecutorActionItem)*           | `ExecutorInvokedEvent`            | OpenAI   |
-| `response.output_item.done` (ExecutorActionItem)*            | `ExecutorCompletedEvent`          | OpenAI   |
-| `response.output_item.done` (ExecutorActionItem with error)* | `ExecutorFailedEvent`             | OpenAI   |
-| `response.output_item.added` (ResponseOutputMessage)         | `WorkflowOutputEvent`             | OpenAI   |
-| `response.workflow_event.complete`                           | `WorkflowEvent` (other)           | DevUI    |
-| `response.trace.complete`                                    | `WorkflowStatusEvent`             | DevUI    |
-| `response.trace.complete`                                    | `WorkflowWarningEvent`            | DevUI    |
+| `response.output_item.added` (ExecutorActionItem)*           | `WorkflowEvent (type='executor_invoked')`   | OpenAI   |
+| `response.output_item.done` (ExecutorActionItem)*            | `WorkflowEvent (type='executor_completed')` | OpenAI   |
+| `response.output_item.done` (ExecutorActionItem with error)* | `WorkflowEvent (type='executor_failed')`    | OpenAI   |
+| `response.output_item.added` (ResponseOutputMessage)         | `WorkflowEvent (type='output')`             | OpenAI   |
+| `response.workflow_event.complete`                           | `WorkflowEvent` (other types)               | DevUI    |
+| `response.trace.complete`                                    | `WorkflowEvent (type='status')`             | DevUI    |
+| `response.trace.complete`                                    | `WorkflowEvent (type='warning')`            | DevUI    |
 |                                                              | **Trace Content**                 |          |
 | `response.trace.complete`                                    | `DataContent` (no data/errors)    | DevUI    |
 | `response.trace.complete`                                    | `UriContent` (unsupported MIME)   | DevUI    |
@@ -315,28 +342,39 @@ These custom extensions are clearly namespaced and can be safely ignored by stan
 
 ## Security
 
-DevUI is designed as a **sample application for local development** and should not be exposed to untrusted networks without proper authentication.
+DevUI is designed as a **sample application for local development** and is not intended for production use. For
+production, or for features beyond this sample app, build a custom interface and API server using the Agent Framework SDK.
 
-**For production deployments:**
+Auth is enabled by default. Unauthenticated mode is allowed only when DevUI is bound to `localhost` or `127.0.0.1`.
+Network-reachable binds such as `0.0.0.0`, LAN IPs, and hostnames require Bearer token authentication with an explicit
+token.
+
+**For shared development hosts:**
 
 ```bash
-# User mode with authentication (recommended)
-devui ./agents --mode user --auth --host 0.0.0.0
+# Set a token explicitly before binding beyond loopback
+DEVUI_AUTH_TOKEN="<secure-dev-token>" devui ./agents --mode user --host 0.0.0.0
+
+# Or pass the token on the command line
+devui ./agents --mode user --host 0.0.0.0 --auth-token "<secure-dev-token>"
 ```
 
-This restricts developer APIs (reload, deployment, entity details) and requires Bearer token authentication.
+Do not use `--no-auth` with `0.0.0.0`, LAN IPs, or hostnames. That configuration fails closed before startup.
 
 **Security features:**
 
 - User mode restricts developer-facing APIs
-- Optional Bearer token authentication via `--auth`
+- Bearer token authentication is enabled by default
+- Unauthenticated mode is loopback-only (`localhost` / `127.0.0.1`)
+- Non-loopback binds require `DEVUI_AUTH_TOKEN` or `--auth-token`
 - Only loads entities from local directories or in-memory registration
 - No remote code execution capabilities
 - Binds to localhost (127.0.0.1) by default
 
 **Best practices:**
 
-- Use `--mode user --auth` for any deployment exposed to end users
+- Do not use DevUI as a production deployment surface
+- Use `--mode user` plus `DEVUI_AUTH_TOKEN` or `--auth-token` for shared development hosts
 - Review all agent/workflow code before running
 - Only load entities from trusted sources
 - Use `.env` files for sensitive credentials (never commit them)
@@ -352,7 +390,7 @@ This restricts developer APIs (reload, deployment, entity details) and requires 
 
 ## Examples
 
-See working implementations in `python/samples/getting_started/devui/`
+See working implementations in `python/samples/02-agents/devui/`
 
 ## License
 

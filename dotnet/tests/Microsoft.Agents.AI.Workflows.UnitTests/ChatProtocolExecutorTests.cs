@@ -65,7 +65,7 @@ public class ChatProtocolExecutorTests
         ];
 
         // Act - Send List<ChatMessage> via ExecuteAsync
-        await executor.ExecuteAsync(messages, new TypeId(typeof(List<ChatMessage>)), context);
+        await executor.ExecuteCoreAsync(messages, new TypeId(typeof(List<ChatMessage>)), context);
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
         // Assert
@@ -90,7 +90,7 @@ public class ChatProtocolExecutorTests
         ];
 
         // Act - Send as ChatMessage[]
-        await executor.ExecuteAsync(messages, new TypeId(typeof(ChatMessage[])), context);
+        await executor.ExecuteCoreAsync(messages, new TypeId(typeof(ChatMessage[])), context);
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
         // Assert
@@ -111,7 +111,7 @@ public class ChatProtocolExecutorTests
         var message = new ChatMessage(ChatRole.User, "Single message");
 
         // Act - Send as single ChatMessage
-        await executor.ExecuteAsync(message, new TypeId(typeof(ChatMessage)), context);
+        await executor.ExecuteCoreAsync(message, new TypeId(typeof(ChatMessage)), context);
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
         // Assert
@@ -127,13 +127,13 @@ public class ChatProtocolExecutorTests
         TestWorkflowContext context = new(executor.Id);
 
         // Send multiple message batches before taking a turn
-        await executor.ExecuteAsync(new ChatMessage(ChatRole.User, "Message 1"), new TypeId(typeof(ChatMessage)), context);
-        await executor.ExecuteAsync(new List<ChatMessage>
+        await executor.ExecuteCoreAsync(new ChatMessage(ChatRole.User, "Message 1"), new TypeId(typeof(ChatMessage)), context);
+        await executor.ExecuteCoreAsync(new List<ChatMessage>
         {
             new(ChatRole.User, "Message 2"),
             new(ChatRole.User, "Message 3")
         }, new TypeId(typeof(List<ChatMessage>)), context);
-        await executor.ExecuteAsync(new ChatMessage[] { new(ChatRole.User, "Message 4") }, new TypeId(typeof(ChatMessage[])), context);
+        await executor.ExecuteCoreAsync(new ChatMessage[] { new(ChatRole.User, "Message 4") }, new TypeId(typeof(ChatMessage[])), context);
 
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
@@ -144,7 +144,7 @@ public class ChatProtocolExecutorTests
         executor.ReceivedMessages.Clear();
 
         // Second turn should process new messages only
-        await executor.ExecuteAsync(new List<ChatMessage>
+        await executor.ExecuteCoreAsync(new List<ChatMessage>
         {
             new(ChatRole.User, "Second batch")
         }, new TypeId(typeof(List<ChatMessage>)), context);
@@ -165,7 +165,7 @@ public class ChatProtocolExecutorTests
             });
         TestWorkflowContext context = new(executor.Id);
 
-        await executor.ExecuteAsync("String message", new TypeId(typeof(string)), context);
+        await executor.ExecuteCoreAsync("String message", new TypeId(typeof(string)), context);
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
         executor.ReceivedMessages.Should().HaveCount(1);
@@ -179,8 +179,8 @@ public class ChatProtocolExecutorTests
         TestChatProtocolExecutor executor = new();
         TestWorkflowContext context = new(executor.Id);
 
-        await executor.ExecuteAsync(new List<ChatMessage>(), new TypeId(typeof(List<ChatMessage>)), context);
-        await executor.ExecuteAsync(Array.Empty<ChatMessage>(), new TypeId(typeof(ChatMessage[])), context);
+        await executor.ExecuteCoreAsync(new List<ChatMessage>(), new TypeId(typeof(List<ChatMessage>)), context);
+        await executor.ExecuteCoreAsync(Array.Empty<ChatMessage>(), new TypeId(typeof(ChatMessage[])), context);
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
         executor.ReceivedMessages.Should().BeEmpty();
@@ -198,7 +198,7 @@ public class ChatProtocolExecutorTests
         var sourceMessages = new[] { new ChatMessage(ChatRole.User, "Test message") };
         object messagesToSend = collectionType == typeof(List<ChatMessage>) ? sourceMessages.ToList() : sourceMessages;
 
-        await executor.ExecuteAsync(messagesToSend, new TypeId(collectionType), context);
+        await executor.ExecuteCoreAsync(messagesToSend, new TypeId(collectionType), context);
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
         executor.ReceivedMessages.Should().HaveCount(1);
@@ -211,12 +211,12 @@ public class ChatProtocolExecutorTests
         TestChatProtocolExecutor executor = new();
         TestWorkflowContext context = new(executor.Id);
 
-        await executor.ExecuteAsync(new List<ChatMessage> { new(ChatRole.User, "Turn 1") }, new TypeId(typeof(List<ChatMessage>)), context);
+        await executor.ExecuteCoreAsync(new List<ChatMessage> { new(ChatRole.User, "Turn 1") }, new TypeId(typeof(List<ChatMessage>)), context);
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
         executor.ReceivedMessages.Should().HaveCount(1);
 
-        await executor.ExecuteAsync(new ChatMessage(ChatRole.User, "Turn 2"), new TypeId(typeof(ChatMessage)), context);
+        await executor.ExecuteCoreAsync(new ChatMessage(ChatRole.User, "Turn 2"), new TypeId(typeof(ChatMessage)), context);
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
         executor.ReceivedMessages.Should().HaveCount(2);
@@ -233,7 +233,7 @@ public class ChatProtocolExecutorTests
 
         List<ChatMessage> initialMessages = [new ChatMessage(ChatRole.User, "Kick off the workflow")];
 
-        await executor.ExecuteAsync(initialMessages, new TypeId(typeof(List<ChatMessage>)), context);
+        await executor.ExecuteCoreAsync(initialMessages, new TypeId(typeof(List<ChatMessage>)), context);
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
         executor.ReceivedMessages.Should().NotBeEmpty();

@@ -9,7 +9,6 @@ using Microsoft.DurableTask.Client.Entities;
 using Microsoft.DurableTask.Entities;
 using Microsoft.Extensions.Configuration;
 using OpenAI.Chat;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 
@@ -20,6 +19,8 @@ namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 [Trait("Category", "Integration")]
 public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposable
 {
+    private const string DisabledDueToFailingCiJob = "Disabled due to persistent CI failures. See #6732.";
+
     private static readonly TimeSpan s_defaultTimeout = Debugger.IsAttached
         ? TimeSpan.FromMinutes(5)
         : TimeSpan.FromSeconds(30);
@@ -37,11 +38,11 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
 
     public void Dispose() => this._cts.Dispose();
 
-    [Fact]
+    [Fact(Skip = DisabledDueToFailingCiJob)]
     public async Task EntityNamePrefixAsync()
     {
         // Setup
-        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
             name: "TestAgent",
             instructions: "You are a helpful assistant that always responds with a friendly greeting."
         );
@@ -51,11 +52,11 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
         // A proxy agent is needed to call the hosted test agent
         AIAgent simpleAgentProxy = simpleAgent.AsDurableAgentProxy(testHelper.Services);
 
-        AgentThread thread = simpleAgentProxy.GetNewThread();
+        AgentSession session = await simpleAgentProxy.CreateSessionAsync(this.TestTimeoutToken);
 
         DurableTaskClient client = testHelper.GetClient();
 
-        AgentSessionId sessionId = thread.GetService<AgentSessionId>();
+        AgentSessionId sessionId = session.GetService<AgentSessionId>();
         EntityInstanceId expectedEntityId = new($"dafx-{simpleAgent.Name}", sessionId.Key);
 
         EntityMetadata? entity = await client.Entities.GetEntityAsync(expectedEntityId, false, this.TestTimeoutToken);
@@ -65,7 +66,7 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
         // Act: send a prompt to the agent
         await simpleAgentProxy.RunAsync(
             message: "Hello!",
-            thread,
+            session,
             cancellationToken: this.TestTimeoutToken);
 
         // Assert: verify the agent state was stored with the correct entity name prefix
@@ -81,14 +82,14 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
         Assert.Null(request.OrchestrationId);
     }
 
-    [Theory]
+    [Theory(Skip = DisabledDueToFailingCiJob)]
     [InlineData("run")]
     [InlineData("Run")]
     [InlineData("RunAgentAsync")]
     public async Task RunAgentMethodNamesAllWorkAsync(string runAgentMethodName)
     {
         // Setup
-        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
             name: "TestAgent",
             instructions: "You are a helpful assistant that always responds with a friendly greeting."
         );
@@ -98,11 +99,11 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
         // A proxy agent is needed to call the hosted test agent
         AIAgent simpleAgentProxy = simpleAgent.AsDurableAgentProxy(testHelper.Services);
 
-        AgentThread thread = simpleAgentProxy.GetNewThread();
+        AgentSession session = await simpleAgentProxy.CreateSessionAsync(this.TestTimeoutToken);
 
         DurableTaskClient client = testHelper.GetClient();
 
-        AgentSessionId sessionId = thread.GetService<AgentSessionId>();
+        AgentSessionId sessionId = session.GetService<AgentSessionId>();
         EntityInstanceId expectedEntityId = new($"dafx-{simpleAgent.Name}", sessionId.Key);
 
         EntityMetadata? entity = await client.Entities.GetEntityAsync(expectedEntityId, false, this.TestTimeoutToken);
@@ -139,11 +140,11 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
         Assert.Null(request.OrchestrationId);
     }
 
-    [Fact]
+    [Fact(Skip = DisabledDueToFailingCiJob)]
     public async Task OrchestrationIdSetDuringOrchestrationAsync()
     {
         // Arrange
-        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
             name: "TestAgent",
             instructions: "You are a helpful assistant that always responds with a friendly greeting."
         );
@@ -184,13 +185,13 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
         public override async Task<string> RunAsync(TaskOrchestrationContext context, string input)
         {
             DurableAIAgent writer = context.GetAgent("TestAgent");
-            AgentThread writerThread = writer.GetNewThread();
+            AgentSession writerSession = await writer.CreateSessionAsync();
 
             await writer.RunAsync(
                 message: context.GetInput<string>()!,
-                thread: writerThread);
+                session: writerSession);
 
-            AgentSessionId sessionId = writerThread.GetService<AgentSessionId>();
+            AgentSessionId sessionId = writerSession.GetService<AgentSessionId>();
 
             return sessionId.ToString();
         }

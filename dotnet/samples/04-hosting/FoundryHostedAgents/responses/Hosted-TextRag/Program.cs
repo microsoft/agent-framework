@@ -1,0 +1,103 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+// This sample shows how to use TextSearchProvider to add retrieval augmented generation (RAG)
+// capabilities to a hosted agent. The provider runs a search against an external knowledge base
+// before each model invocation and injects the results into the model context.
+
+using Azure.AI.Projects;
+using Azure.Core;
+using Azure.Identity;
+using DotNetEnv;
+using Hosted_Shared_Contributor_Setup;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Foundry.Hosting;
+using Microsoft.Extensions.AI;
+using OpenAI.Chat;
+
+// Load .env file if present (for local development)
+Env.TraversePath().Load();
+
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-4o";
+
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+// Use a chained credential: try a temporary dev token first (for local Docker debugging),
+// then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in production).
+TokenCredential credential = new ChainedTokenCredential(
+    new DevTemporaryTokenCredential(),
+    new DefaultAzureCredential());
+
+TextSearchProviderOptions textSearchOptions = new()
+{
+    SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
+    RecentMessageMemoryLimit = 6,
+};
+
+AIAgent agent = new AIProjectClient(new Uri(endpoint), credential)
+    .AsAIAgent(new ChatClientAgentOptions
+    {
+        Name = Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-text-rag",
+        ChatOptions = new ChatOptions
+        {
+            ModelId = deploymentName,
+            Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
+        },
+        AIContextProviders = [new TextSearchProvider(MockSearchAsync, textSearchOptions)]
+    });
+
+// Host the agent as a Foundry Hosted Agent using the Responses API.
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddFoundryResponses(agent);
+
+var app = builder.Build();
+app.MapFoundryResponses();
+
+// Contributor-only: in Development, also map the per-agent OpenAI route shape that live Foundry uses
+// so a local REPL client can target this server via AIProjectClient.AsAIAgent(Uri agentEndpoint).
+// Do not use this in production. Hosted Foundry agents only support the agent-endpoint path.
+app.MapDevTemporaryLocalAgentEndpoint();
+
+app.Run();
+
+// ── Mock search function ─────────────────────────────────────────────────────
+// In production, replace this with a real search provider (e.g., Azure AI Search).
+
+static Task<IEnumerable<TextSearchProvider.TextSearchResult>> MockSearchAsync(string query, CancellationToken cancellationToken)
+{
+    List<TextSearchProvider.TextSearchResult> results = [];
+
+    if (query.Contains("return", StringComparison.OrdinalIgnoreCase) || query.Contains("refund", StringComparison.OrdinalIgnoreCase))
+    {
+        results.Add(new()
+        {
+            SourceName = "Contoso Outdoors Return Policy",
+            SourceLink = "https://contoso.com/policies/returns",
+            Text = "Customers may return any item within 30 days of delivery. Items should be unused and include original packaging. Refunds are issued to the original payment method within 5 business days of inspection."
+        });
+    }
+
+    if (query.Contains("shipping", StringComparison.OrdinalIgnoreCase))
+    {
+        results.Add(new()
+        {
+            SourceName = "Contoso Outdoors Shipping Guide",
+            SourceLink = "https://contoso.com/help/shipping",
+            Text = "Standard shipping is free on orders over $50 and typically arrives in 3-5 business days within the continental United States. Expedited options are available at checkout."
+        });
+    }
+
+    if (query.Contains("tent", StringComparison.OrdinalIgnoreCase) || query.Contains("fabric", StringComparison.OrdinalIgnoreCase))
+    {
+        results.Add(new()
+        {
+            SourceName = "TrailRunner Tent Care Instructions",
+            SourceLink = "https://contoso.com/manuals/trailrunner-tent",
+            Text = "Clean the tent fabric with lukewarm water and a non-detergent soap. Allow it to air dry completely before storage and avoid prolonged UV exposure to extend the lifespan of the waterproof coating."
+        });
+    }
+
+    return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>(results);
+}

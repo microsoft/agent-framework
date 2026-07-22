@@ -6,7 +6,7 @@
 import logging
 from typing import Any
 
-from agent_framework.exceptions import ServiceException
+from agent_framework.exceptions import AgentException
 from msal import PublicClientApplication
 
 logger = logging.getLogger(__name__)
@@ -39,13 +39,13 @@ def acquire_token(
         The access token string.
 
     Raises:
-        ServiceException: If authentication token cannot be acquired.
+        AgentException: If authentication token cannot be acquired.
     """
     if not client_id:
-        raise ServiceException("Client ID is required for token acquisition.")
+        raise ValueError("Client ID is required for token acquisition.")
 
     if not tenant_id:
-        raise ServiceException("Tenant ID is required for token acquisition.")
+        raise ValueError("Tenant ID is required for token acquisition.")
 
     authority = f"https://login.microsoftonline.com/{tenant_id}"
     target_scopes = scopes or DEFAULT_SCOPES
@@ -62,7 +62,7 @@ def acquire_token(
             logger.debug("Attempting silent token acquisition")
             response = pca.acquire_token_silent(scopes=target_scopes, account=accounts[0])
             if response and "access_token" in response:
-                token = str(response["access_token"])  # type: ignore[assignment]
+                token = str(response["access_token"])
                 logger.debug("Successfully acquired token silently")
             elif response and "error" in response:
                 logger.warning(
@@ -77,7 +77,7 @@ def acquire_token(
             logger.debug("Attempting interactive token acquisition")
             response = pca.acquire_token_interactive(scopes=target_scopes)
             if response and "access_token" in response:
-                token = str(response["access_token"])  # type: ignore[assignment]
+                token = str(response["access_token"])
                 logger.debug("Successfully acquired token interactively")
             elif response and "error" in response:
                 logger.error(
@@ -87,9 +87,9 @@ def acquire_token(
                 )
         except Exception as ex:
             logger.error("Interactive token acquisition failed with exception: %s", ex)
-            raise ServiceException(f"Failed to acquire authentication token: {ex}") from ex
+            raise AgentException(f"Failed to acquire authentication token: {ex}") from ex
 
     if not token:
-        raise ServiceException("Authentication token cannot be acquired.")
+        raise AgentException("Authentication token cannot be acquired.")
 
     return token

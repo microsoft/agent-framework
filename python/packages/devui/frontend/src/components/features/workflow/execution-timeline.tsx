@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { HilTimelineItem } from "./hil-timeline-item";
 import { RunWorkflowButton } from "./run-workflow-button";
+import { ChatMessageInput } from "@/components/ui/chat-message-input";
+import { isChatMessageSchema } from "@/utils/workflow-utils";
 import {
   Loader2,
   CheckCircle,
@@ -21,6 +23,7 @@ import {
   Square,
 } from "lucide-react";
 import type { ExtendedResponseStreamEvent, JSONSchemaProperty } from "@/types";
+import type { ResponseInputContent } from "@/types/agent-framework";
 import type { ExecutorState } from "./executor-node";
 import { truncateText } from "@/utils/workflow-utils";
 
@@ -91,6 +94,14 @@ function getStateBadgeClass(state: ExecutorState) {
     default:
       return "bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20";
   }
+}
+
+function getMessageText(item: unknown): string {
+  const content = (item as { content?: Array<{ type: string; text?: string }> }).content;
+  return content
+    ?.filter((content) => content.type === "output_text" && content.text)
+    .map((content) => content.text)
+    .join("\n") ?? "";
 }
 
 function ExecutorRunItem({
@@ -262,8 +273,8 @@ export function ExecutionTimeline({
         const item = (event as import("@/types/openai").ResponseOutputItemAddedEvent).item;
 
         // Handle both executor_action items AND message items from Magentic agents
-        if (item && item.type === "executor_action" && item.executor_id && item.id) {
-          const executorId = item.executor_id;
+        if (item && item.type === "executor_action" && "executor_id" in item && item.id) {
+          const executorId = String(item.executor_id);
           const itemId = item.id;
           const runNumber = (runCount.get(executorId) || 0) + 1;
           runCount.set(executorId, runNumber);
@@ -277,22 +288,45 @@ export function ExecutionTimeline({
             timestamp: uiTimestamp,
             runNumber,
           });
-        } else if (item && item.type === "message" && item.metadata?.agent_id && item.metadata?.source === "magentic" && item.id) {
+        } else if (item && item.type === "message" && "metadata" in item && item.id) {
           // Handle message items from Magentic agents
-          const executorId = item.metadata.agent_id;
-          const itemId = item.id;
-          const runNumber = (runCount.get(executorId) || 0) + 1;
-          runCount.set(executorId, runNumber);
+          const metadata = item.metadata as {
+            agent_id?: string;
+            executor_id?: string;
+            source?: string;
+            workflow_output_kind?: string;
+          } | undefined;
+          if (metadata?.agent_id && metadata?.source === "magentic") {
+            const executorId = metadata.agent_id;
+            const itemId = item.id;
+            const runNumber = (runCount.get(executorId) || 0) + 1;
+            runCount.set(executorId, runNumber);
 
-          runs.push({
-            executorId,
-            executorName: truncateText(executorId, 35),
-            itemId,
-            state: "running",
-            output: itemOutputs[itemId] || "",
-            timestamp: uiTimestamp,
-            runNumber,
-          });
+            runs.push({
+              executorId,
+              executorName: truncateText(executorId, 35),
+              itemId,
+              state: "running",
+              output: itemOutputs[itemId] || "",
+              timestamp: uiTimestamp,
+              runNumber,
+            });
+          } else if (metadata?.executor_id && metadata.workflow_output_kind === "intermediate") {
+            const executorId = metadata.executor_id;
+            const itemId = item.id;
+            const runNumber = (runCount.get(executorId) || 0) + 1;
+            runCount.set(executorId, runNumber);
+
+            runs.push({
+              executorId,
+              executorName: truncateText(executorId, 35),
+              itemId,
+              state: item.status === "completed" ? "completed" : "running",
+              output: itemOutputs[itemId] || getMessageText(item),
+              timestamp: uiTimestamp,
+              runNumber,
+            });
+          }
         }
       }
 
@@ -301,7 +335,7 @@ export function ExecutionTimeline({
         const item = (event as import("@/types/openai").ResponseOutputItemDoneEvent).item;
 
         // Handle both executor_action items AND message items from Magentic agents
-        if (item && item.type === "executor_action" && item.executor_id && item.id) {
+        if (item && item.type === "executor_action" && "executor_id" in item && item.id) {
           const itemId = item.id;
           // Find the run by ITEM ID (not executor ID!) to handle multiple runs correctly
           const existingRun = runs.find((r) => r.itemId === itemId);
@@ -315,18 +349,34 @@ export function ExecutionTimeline({
                 : "completed";
             // Use item-specific output, not executor-wide output
             existingRun.output = itemOutputs[itemId] || "";
-            if (item.status === "failed" && item.error) {
-              existingRun.error = item.error;
+            if (item.status === "failed" && "error" in item && item.error) {
+              existingRun.error = String(item.error);
             }
           }
-        } else if (item && item.type === "message" && item.metadata?.agent_id && item.metadata?.source === "magentic" && item.id) {
+        } else if (item && item.type === "message" && "metadata" in item && item.id) {
           // Handle message completion from Magentic agents
-          const itemId = item.id;
-          const existingRun = runs.find((r) => r.itemId === itemId);
+          const metadata = item.metadata as {
+            agent_id?: string;
+            executor_id?: string;
+            source?: string;
+            workflow_output_kind?: string;
+          } | undefined;
+          if (metadata?.agent_id && metadata?.source === "magentic") {
+            const itemId = item.id;
+            const existingRun = runs.find((r) => r.itemId === itemId);
 
-          if (existingRun) {
-            existingRun.state = item.status === "completed" ? "completed" : "failed";
-            existingRun.output = itemOutputs[itemId] || "";
+            if (existingRun) {
+              existingRun.state = item.status === "completed" ? "completed" : "failed";
+              existingRun.output = itemOutputs[itemId] || "";
+            }
+          } else if (metadata?.executor_id && metadata.workflow_output_kind === "intermediate") {
+            const itemId = item.id;
+            const existingRun = runs.find((r) => r.itemId === itemId);
+
+            if (existingRun) {
+              existingRun.state = item.status === "completed" ? "completed" : "failed";
+              existingRun.output = itemOutputs[itemId] || getMessageText(item);
+            }
           }
         }
       }
@@ -347,8 +397,10 @@ export function ExecutionTimeline({
         const runNumber = (runCount.get(executorId) || 0) + 1;
         runCount.set(executorId, runNumber);
 
-        // Create synthetic item ID for fallback format (no real item.id from backend)
-        const syntheticItemId = `fallback_${executorId}_${uiTimestamp}`;
+        // Create synthetic item ID using the run counter for guaranteed uniqueness.
+        // Using uiTimestamp here caused collisions when the same executor ran
+        // twice within the same second (both fallback entries would share an ID).
+        const syntheticItemId = `fallback_${executorId}_run${runNumber}`;
 
         runs.push({
           executorId,
@@ -625,16 +677,35 @@ export function ExecutionTimeline({
       {/* Bottom Control Bar - Sticky (hidden when HIL is active) */}
       {(onRun || onCancel) && pendingHilRequests.length === 0 && (
         <div className="border-t p-3 bg-background flex-shrink-0">
-          <RunWorkflowButton
-            inputSchema={inputSchema}
-            onRun={onRun || (() => {})}
-            onCancel={onCancel}
-            isSubmitting={workflowState === "running"}
-            isCancelling={isCancelling}
-            workflowState={workflowState}
-            checkpoints={checkpoints}
-            showCheckpoints={false}
-          />
+          {inputSchema && isChatMessageSchema(inputSchema) ? (
+            <ChatMessageInput
+              onSubmit={async (content: ResponseInputContent[]) => {
+                // Wrap in OpenAI message format (same as run-workflow-button modal)
+                const openaiInput = [
+                  { type: "message", role: "user", content },
+                ];
+                onRun?.(openaiInput as unknown as Record<string, unknown>);
+              }}
+              isSubmitting={workflowState === "running"}
+              isStreaming={workflowState === "running"}
+              onCancel={onCancel}
+              isCancelling={isCancelling}
+              placeholder="Message workflow..."
+              showFileUpload={true}
+              entityName="workflow"
+            />
+          ) : (
+            <RunWorkflowButton
+              inputSchema={inputSchema}
+              onRun={onRun || (() => {})}
+              onCancel={onCancel}
+              isSubmitting={workflowState === "running"}
+              isCancelling={isCancelling}
+              workflowState={workflowState}
+              checkpoints={checkpoints}
+              showCheckpoints={false}
+            />
+          )}
         </div>
       )}
 

@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Linq;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
@@ -33,9 +34,10 @@ public class AIContextTests
         };
 
         Assert.NotNull(context.Messages);
-        Assert.Equal(2, context.Messages.Count);
-        Assert.Equal("Hello", context.Messages[0].Text);
-        Assert.Equal("Hi there!", context.Messages[1].Text);
+        var messages = context.Messages.ToList();
+        Assert.Equal(2, messages.Count);
+        Assert.Equal("Hello", messages[0].Text);
+        Assert.Equal("Hi there!", messages[1].Text);
     }
 
     [Fact]
@@ -51,8 +53,9 @@ public class AIContextTests
         };
 
         Assert.NotNull(context.Tools);
-        Assert.Equal(2, context.Tools.Count);
-        Assert.Equal("Function1", context.Tools[0].Name);
-        Assert.Equal("Function2", context.Tools[1].Name);
+        var tools = context.Tools.ToList();
+        Assert.Equal(2, tools.Count);
+        Assert.Equal("Function1", tools[0].Name);
+        Assert.Equal("Function2", tools[1].Name);
     }
 }

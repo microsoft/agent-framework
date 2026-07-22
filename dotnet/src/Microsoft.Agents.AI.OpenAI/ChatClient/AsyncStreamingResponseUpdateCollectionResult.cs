@@ -1,15 +1,18 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ClientModel;
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.Shared.DiagnosticIds;
 using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.OpenAI;
 
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 internal sealed class AsyncStreamingResponseUpdateCollectionResult : AsyncCollectionResult<StreamingResponseUpdate>
 {
-    private readonly IAsyncEnumerable<AgentRunResponseUpdate> _updates;
+    private readonly IAsyncEnumerable<AgentResponseUpdate> _updates;
 
-    internal AsyncStreamingResponseUpdateCollectionResult(IAsyncEnumerable<AgentRunResponseUpdate> updates)
+    internal AsyncStreamingResponseUpdateCollectionResult(IAsyncEnumerable<AgentResponseUpdate> updates)
     {
         this._updates = updates;
     }
@@ -23,7 +26,7 @@ internal sealed class AsyncStreamingResponseUpdateCollectionResult : AsyncCollec
 
     protected async override IAsyncEnumerable<StreamingResponseUpdate> GetValuesFromPageAsync(ClientResult page)
     {
-        var updates = ((ClientResult<IAsyncEnumerable<AgentRunResponseUpdate>>)page).Value;
+        var updates = ((ClientResult<IAsyncEnumerable<AgentResponseUpdate>>)page).Value;
 
         await foreach (var update in updates.ConfigureAwait(false))
         {

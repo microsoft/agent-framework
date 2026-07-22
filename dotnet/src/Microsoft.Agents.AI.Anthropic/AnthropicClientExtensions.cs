@@ -20,7 +20,7 @@ public static class AnthropicClientExtensions
     /// <summary>
     /// Creates a new AI agent using the specified model and options.
     /// </summary>
-    /// <param name="client">An Anthropic <see cref="IAnthropicClient"/> to use with the agent..</param>
+    /// <param name="client">An Anthropic <see cref="IAnthropicClient"/> to use with the agent.</param>
     /// <param name="model">The model to use for chat completions.</param>
     /// <param name="instructions">The instructions for the AI agent.</param>
     /// <param name="name">The name of the AI agent.</param>
@@ -31,7 +31,7 @@ public static class AnthropicClientExtensions
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>The created <see cref="ChatClientAgent"/> AI agent.</returns>
-    public static ChatClientAgent CreateAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this IAnthropicClient client,
         string model,
         string? instructions = null,
@@ -74,14 +74,14 @@ public static class AnthropicClientExtensions
     /// <summary>
     /// Creates an AI agent from an <see cref="IAnthropicClient"/> using the Anthropic Chat Completion API.
     /// </summary>
-    /// <param name="client">An Anthropic <see cref="IAnthropicClient"/> to use with the agent..</param>
+    /// <param name="client">An Anthropic <see cref="IAnthropicClient"/> to use with the agent.</param>
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the Anthropic Chat Completion service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
-    public static ChatClientAgent CreateAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this IAnthropicClient client,
         ChatClientAgentOptions options,
         Func<IChatClient, IChatClient>? clientFactory = null,

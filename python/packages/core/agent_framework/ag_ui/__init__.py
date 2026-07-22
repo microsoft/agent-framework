@@ -1,22 +1,43 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""AG-UI integration namespace for optional Agent Framework connectors.
+
+This module lazily re-exports objects from:
+- ``agent-framework-ag-ui``
+
+Supported classes and functions:
+- AgentFrameworkAgent
+- AgentFrameworkWorkflow
+- AGUIChatClient
+- AGUIEventConverter
+- AGUIHttpService
+- AGUIThreadSnapshot
+- AGUIThreadSnapshotStore
+- InMemoryAGUIThreadSnapshotStore
+- SnapshotScopeResolver
+- add_agent_framework_fastapi_endpoint
+- state_update
+- __version__
+"""
+
 import importlib
 from typing import Any
 
 IMPORT_PATH = "agent_framework_ag_ui"
 PACKAGE_NAME = "agent-framework-ag-ui"
 _IMPORTS = [
-    "__version__",
     "AgentFrameworkAgent",
+    "AgentFrameworkWorkflow",
     "add_agent_framework_fastapi_endpoint",
     "AGUIChatClient",
     "AGUIEventConverter",
     "AGUIHttpService",
-    "ConfirmationStrategy",
-    "DefaultConfirmationStrategy",
-    "TaskPlannerConfirmationStrategy",
-    "RecipeConfirmationStrategy",
-    "DocumentWriterConfirmationStrategy",
+    "AGUIThreadSnapshot",
+    "AGUIThreadSnapshotStore",
+    "InMemoryAGUIThreadSnapshotStore",
+    "SnapshotScopeResolver",
+    "state_update",
+    "__version__",
 ]
 
 

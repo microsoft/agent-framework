@@ -2,7 +2,8 @@
 
 import importlib.metadata
 
-from ._agent import A2AAgent
+from ._a2a_executor import A2AExecutor
+from ._agent import A2AAgent, A2AAgentSession, A2AContinuationToken, A2AServiceSessionId
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -11,5 +12,9 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "A2AAgent",
+    "A2AAgentSession",
+    "A2AContinuationToken",
+    "A2AExecutor",
+    "A2AServiceSessionId",
     "__version__",
 ]

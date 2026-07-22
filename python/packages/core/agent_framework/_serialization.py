@@ -1,16 +1,23 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
+import copy
 import json
+import logging
 import re
 from collections.abc import Mapping, MutableMapping
-from typing import Any, ClassVar, Protocol, TypeVar, runtime_checkable
+from dataclasses import asdict, is_dataclass
+from datetime import date, datetime
+from functools import lru_cache
+from typing import Any, ClassVar, Protocol, TypeGuard, TypeVar, cast, runtime_checkable
 
-from ._logging import get_logger
+logger = logging.getLogger("agent_framework")
 
-logger = get_logger()
-
-TClass = TypeVar("TClass", bound="SerializationMixin")
-TProtocol = TypeVar("TProtocol", bound="SerializationProtocol")
+ClassT = TypeVar("ClassT", bound="SerializationMixin")
+ProtocolT = TypeVar("ProtocolT", bound="SerializationProtocol")
+_JSON_SCALAR_TYPES = (str, int, float, bool, type(None))
+_DIRECT_JSON_TYPES = (*_JSON_SCALAR_TYPES, list, dict)
 
 # Regex pattern for converting CamelCase to snake_case
 _CAMEL_TO_SNAKE_PATTERN = re.compile(r"(?<!^)(?=[A-Z])")
@@ -29,16 +36,16 @@ class SerializationProtocol(Protocol):
     ensuring consistent behavior across the framework.
 
     Examples:
-        The framework's ``ChatMessage`` class demonstrates the protocol in action:
+        The framework's ``Message`` class demonstrates the protocol in action:
 
         .. code-block:: python
 
-            from agent_framework import ChatMessage
+            from agent_framework import Message
             from agent_framework._serialization import SerializationProtocol
 
 
-            # ChatMessage implements SerializationProtocol via SerializationMixin
-            user_msg = ChatMessage(role="user", text="What's the weather like today?")
+            # Message implements SerializationProtocol via SerializationMixin
+            user_msg = Message(role="user", contents=["What's the weather like today?"])
 
             # Serialize to dictionary - automatic type identification and nested serialization
             msg_dict = user_msg.to_dict()
@@ -50,10 +57,10 @@ class SerializationProtocol(Protocol):
             #     "additional_properties": {}
             # }
 
-            # Deserialize back to ChatMessage instance - automatic type reconstruction
-            restored_msg = ChatMessage.from_dict(msg_dict)
+            # Deserialize back to Message instance - automatic type reconstruction
+            restored_msg = Message.from_dict(msg_dict)
             print(restored_msg.text)  # "What's the weather like today?"
-            print(restored_msg.role.value)  # "user"
+            print(restored_msg.role)  # "user"
 
             # Verify protocol compliance (useful for type checking and validation)
             assert isinstance(user_msg, SerializationProtocol)
@@ -93,7 +100,7 @@ class SerializationProtocol(Protocol):
         ...
 
     @classmethod
-    def from_dict(cls: type[TProtocol], value: MutableMapping[str, Any], /, **kwargs: Any) -> TProtocol:
+    def from_dict(cls: type[ProtocolT], value: MutableMapping[str, Any], /, **kwargs: Any) -> ProtocolT:
         """Create an instance from a dictionary.
 
         Args:
@@ -127,7 +134,20 @@ def is_serializable(value: Any) -> bool:
         that implement ``SerializationProtocol`` require conversion via ``to_dict()``
         before JSON serialization.
     """
-    return isinstance(value, (str, int, float, bool, type(None), list, dict))
+    return isinstance(value, _DIRECT_JSON_TYPES)
+
+
+@lru_cache(maxsize=128)
+def _implements_serialization_protocol(value_type: type[Any]) -> bool:
+    """Check structural serialization support once per concrete type."""
+    return callable(getattr(value_type, "to_dict", None)) and callable(getattr(value_type, "from_dict", None))
+
+
+def _is_serialization_protocol(value: Any) -> TypeGuard[SerializationProtocol]:
+    """Check whether a value structurally supports framework serialization."""
+    if _implements_serialization_protocol(cast(type[Any], type(value))):
+        return True
+    return callable(getattr(value, "to_dict", None)) and callable(getattr(value, "from_dict", None))
 
 
 class SerializationMixin:
@@ -164,45 +184,22 @@ class SerializationMixin:
     during deserialization via the ``dependencies`` parameter.
 
     Examples:
-        **Nested object serialization with agent thread management:**
+        **Nested object serialization:**
 
         .. code-block:: python
 
-            from agent_framework import ChatMessage
-            from agent_framework._threads import AgentThreadState, ChatMessageStoreState
+            from agent_framework import Message
+            from agent_framework._sessions import AgentSession
 
 
-            # ChatMessageStoreState handles nested ChatMessage serialization
-            store_state = ChatMessageStoreState(
-                messages=[
-                    ChatMessage(role="user", text="Hello agent"),
-                    ChatMessage(role="assistant", text="Hi! How can I help?"),
-                ]
-            )
+            # AgentSession uses SerializationMixin for state serialization
+            session = AgentSession(session_id="test")
 
-            # Nested serialization: messages are automatically converted to dicts
-            store_dict = store_state.to_dict()
-            # Result: {
-            #     "type": "chat_message_store_state",
-            #     "messages": [
-            #         {"type": "chat_message", "role": {...}, "contents": [...]},
-            #         {"type": "chat_message", "role": {...}, "contents": [...]}
-            #     ]
-            # }
+            # Serialization produces a clean dict representation
+            session_dict = session.to_dict()
 
-            # AgentThreadState contains nested ChatMessageStoreState
-            thread_state = AgentThreadState(chat_message_store_state=store_state)
-
-            # Deep serialization: nested SerializationMixin objects are handled automatically
-            thread_dict = thread_state.to_dict()
-            # The chat_message_store_state and its nested messages are all serialized
-
-            # Reconstruction from nested dictionaries with automatic type conversion
-            # The __init__ method handles MutableMapping -> object conversion:
-            reconstructed = AgentThreadState.from_dict({
-                "chat_message_store_state": {"messages": [{"role": "user", "text": "Hello again"}]}
-            })
-            # chat_message_store_state becomes ChatMessageStoreState instance automatically
+            # Reconstruction from dictionaries
+            restored = AgentSession.from_dict(session_dict)
 
         **Framework tools with exclusion patterns:**
 
@@ -259,7 +256,7 @@ class SerializationMixin:
 
 
             agent = CustomAgent(
-                context_providers=[...],
+                context_provider=[...],
                 middleware=[...]
             )
 
@@ -285,6 +282,25 @@ class SerializationMixin:
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = set()
     INJECTABLE: ClassVar[set[str]] = set()
+    _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> SerializationMixin:
+        """Create a deep copy, preserving ``_SHALLOW_COPY_FIELDS`` by reference.
+
+        Fields listed in ``_SHALLOW_COPY_FIELDS`` may contain LLM SDK objects
+        (e.g., proto/gRPC responses) that are not safe to deep-copy.  They are
+        kept as shallow references in the copy; all other attributes are
+        deep-copied normally.
+        """
+        cls = type(self)
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k in cls._SHALLOW_COPY_FIELDS:
+                object.__setattr__(result, k, v)
+            else:
+                object.__setattr__(result, k, copy.deepcopy(v, memo))
+        return result
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance and any nested objects to a dictionary.
@@ -318,15 +334,21 @@ class SerializationMixin:
             if key not in combined_exclude and not key.startswith("_"):
                 if exclude_none and value is None:
                     continue
+                if type(value) in _JSON_SCALAR_TYPES:
+                    result[key] = value
+                    continue
                 # Recursively serialize SerializationProtocol objects
-                if isinstance(value, SerializationProtocol):
+                if _is_serialization_protocol(value):
                     result[key] = value.to_dict(exclude=exclude, exclude_none=exclude_none)
                     continue
                 # Handle lists containing SerializationProtocol objects
                 if isinstance(value, list):
                     value_as_list: list[Any] = []
-                    for item in value:
-                        if isinstance(item, SerializationProtocol):
+                    for item in cast(list[Any], value):
+                        if type(item) in _JSON_SCALAR_TYPES:
+                            value_as_list.append(item)
+                            continue
+                        if _is_serialization_protocol(item):
                             value_as_list.append(item.to_dict(exclude=exclude, exclude_none=exclude_none))
                             continue
                         if is_serializable(item):
@@ -342,20 +364,24 @@ class SerializationMixin:
                     from datetime import date, datetime, time
 
                     serialized_dict: dict[str, Any] = {}
-                    for k, v in value.items():
-                        if isinstance(v, SerializationProtocol):
-                            serialized_dict[k] = v.to_dict(exclude=exclude, exclude_none=exclude_none)
-                            continue
+                    for raw_key, v in cast(dict[Any, Any], value).items():
+                        dict_key = str(raw_key)
                         # Convert datetime objects to strings
                         if isinstance(v, (datetime, date, time)):
-                            serialized_dict[k] = str(v)
+                            serialized_dict[dict_key] = str(v)
+                            continue
+                        if type(v) in _JSON_SCALAR_TYPES:
+                            serialized_dict[dict_key] = v
+                            continue
+                        if _is_serialization_protocol(v):
+                            serialized_dict[dict_key] = v.to_dict(exclude=exclude, exclude_none=exclude_none)
                             continue
                         # Check if the value is JSON serializable
                         if is_serializable(v):
-                            serialized_dict[k] = v
+                            serialized_dict[dict_key] = v
                             continue
                         logger.debug(
-                            f"Skipping non-serializable value for key '{k}' in dict attribute '{key}' "
+                            f"Skipping non-serializable value for key '{dict_key}' in dict attribute '{key}' "
                             f"of type {type(v).__name__}"
                         )
                     result[key] = serialized_dict
@@ -390,8 +416,8 @@ class SerializationMixin:
 
     @classmethod
     def from_dict(
-        cls: type[TClass], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> TClass:
+        cls: type[ClassT], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
+    ) -> ClassT:
         """Create an instance from a dictionary with optional dependency injection.
 
         This method reconstructs an object from its dictionary representation, automatically
@@ -426,13 +452,13 @@ class SerializationMixin:
                 from openai import AsyncOpenAI
 
 
-                # OpenAI chat client requires an AsyncOpenAI client instance
-                # The client is marked as INJECTABLE = {"client"} in OpenAIBase
+                # OpenAI chat client requires an AsyncOpenAI client instance.
+                # The client dependency is excluded from serialization.
 
                 # Serialized data contains only the model configuration
                 client_data = {
                     "type": "open_ai_chat_client",
-                    "model_id": "gpt-4o-mini",
+                    "model": "gpt-4o-mini",
                     # client is excluded from serialization
                 }
 
@@ -441,14 +467,14 @@ class SerializationMixin:
                 dependencies = {"open_ai_chat_client": {"client": openai_client}}
 
                 # The chat client is reconstructed with the OpenAI client injected
-                chat_client = OpenAIChatClient.from_dict(client_data, dependencies=dependencies)
+                client = OpenAIChatClient.from_dict(client_data, dependencies=dependencies)
                 # Now ready to make API calls with the injected client
 
-            **Function Injection for Tools** - AIFunction runtime dependency:
+            **Function Injection for Tools** - FunctionTool runtime dependency:
 
             .. code-block:: python
 
-                from agent_framework import AIFunction
+                from agent_framework import FunctionTool
                 from typing import Annotated
 
 
@@ -458,33 +484,33 @@ class SerializationMixin:
                     return f"Current weather in {location}: 72°F and sunny"
 
 
-                # AIFunction has INJECTABLE = {"func"}
+                # FunctionTool has INJECTABLE = {"func"}
                 function_data = {
-                    "type": "ai_function",
+                    "type": "function_tool",
                     "name": "get_weather",
                     "description": "Get current weather for a location",
                     # func is excluded from serialization
                 }
 
                 # Inject the actual function implementation during deserialization
-                dependencies = {"ai_function": {"func": get_current_weather}}
+                dependencies = {"function_tool": {"func": get_current_weather}}
 
-                # Reconstruct the AIFunction with the callable injected
-                weather_func = AIFunction.from_dict(function_data, dependencies=dependencies)
+                # Reconstruct the FunctionTool with the callable injected
+                weather_func = FunctionTool.from_dict(function_data, dependencies=dependencies)
                 # The function is now callable and ready for agent use
 
-            **Middleware Context Injection** - Agent execution context:
+            **MiddlewareTypes Context Injection** - Agent execution context:
 
             .. code-block:: python
 
-                from agent_framework._middleware import AgentRunContext
+                from agent_framework._middleware import AgentContext
                 from agent_framework import BaseAgent
 
-                # AgentRunContext has INJECTABLE = {"agent", "result"}
+                # AgentContext has INJECTABLE = {"agent", "result"}
                 context_data = {
-                    "type": "agent_run_context",
+                    "type": "agent_context",
                     "messages": [{"role": "user", "text": "Hello"}],
-                    "is_streaming": False,
+                    "stream": False,
                     "metadata": {"session_id": "abc123"},
                     # agent and result are excluded from serialization
                 }
@@ -492,15 +518,15 @@ class SerializationMixin:
                 # Inject agent and result during middleware processing
                 my_agent = BaseAgent(name="test-agent")
                 dependencies = {
-                    "agent_run_context": {
+                    "agent_context": {
                         "agent": my_agent,
                         "result": None,  # Will be populated during execution
                     }
                 }
 
                 # Reconstruct context with agent dependency for middleware chain
-                context = AgentRunContext.from_dict(context_data, dependencies=dependencies)
-                # Middleware can now access context.agent and process the execution
+                context = AgentContext.from_dict(context_data, dependencies=dependencies)
+                # MiddlewareTypes can now access context.agent and process the execution
 
             This injection system allows the agent framework to maintain clean separation
             between serializable configuration and runtime dependencies like API clients,
@@ -527,7 +553,8 @@ class SerializationMixin:
                 # Only apply if the instance matches
                 if kwargs.get(field) == name and isinstance(dep_value, dict):
                     # Apply instance-specific dependencies
-                    for param_name, param_value in dep_value.items():
+                    for raw_param_name, param_value in dep_value.items():  # pyright: ignore[reportUnknownVariableType]
+                        param_name = str(raw_param_name)  # pyright: ignore[reportUnknownArgumentType]
                         if param_name not in cls.INJECTABLE:
                             logger.debug(
                                 f"Dependency '{param_name}' for type '{type_id}' is not in INJECTABLE set. "
@@ -558,7 +585,7 @@ class SerializationMixin:
         return cls(**kwargs)
 
     @classmethod
-    def from_json(cls: type[TClass], value: str, /, *, dependencies: MutableMapping[str, Any] | None = None) -> TClass:
+    def from_json(cls: type[ClassT], value: str, /, *, dependencies: MutableMapping[str, Any] | None = None) -> ClassT:
         """Create an instance from a JSON string.
 
         This is a convenience method that parses the JSON string using ``json.loads()``
@@ -604,13 +631,60 @@ class SerializationMixin:
         """
         # for from_dict
         if value and (type_ := value.get("type")) and isinstance(type_, str):
-            return type_  # type:ignore[no-any-return]
+            return type_
         # for todict when defined per instance
         if (type_ := getattr(cls, "type", None)) and isinstance(type_, str):
-            return type_  # type:ignore[no-any-return]
+            return type_
         # for both when defined on class.
         if (type_ := getattr(cls, "TYPE", None)) and isinstance(type_, str):
-            return type_  # type:ignore[no-any-return]
+            return type_
         # Fallback and default
         # Convert class name to snake_case
         return _CAMEL_TO_SNAKE_PATTERN.sub("_", cls.__name__).lower()
+
+
+def make_json_safe(obj: Any) -> Any:
+    """Recursively convert an object to a JSON-serializable form.
+
+    Handles dataclasses, Pydantic models, objects with ``to_dict``/``dict``/``__dict__``,
+    datetimes, lists, dicts, and primitives.  Falls back to ``str()`` for any remaining
+    non-serializable value so that ``json.dumps`` never raises a ``TypeError``.
+
+    Args:
+        obj: Object to make JSON safe.
+
+    Returns:
+        A JSON-serializable version of the object.
+    """
+    if isinstance(obj, _JSON_SCALAR_TYPES):
+        return obj
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return make_json_safe(asdict(obj))
+    if type(obj) is dict:
+        return {str(key): make_json_safe(value) for key, value in obj.items()}  # type: ignore[misc]
+    if type(obj) in (list, tuple):
+        return [make_json_safe(item) for item in obj]  # type: ignore[misc]
+    if callable(getattr(obj, "model_dump", None)):
+        try:
+            return make_json_safe(obj.model_dump())  # type: ignore[no-any-return]
+        except TypeError:
+            pass
+    if callable(getattr(obj, "to_dict", None)):
+        try:
+            return make_json_safe(obj.to_dict())  # type: ignore[no-any-return]
+        except TypeError:
+            pass
+    if callable(getattr(obj, "dict", None)):
+        try:
+            return make_json_safe(obj.dict())  # type: ignore[no-any-return]
+        except TypeError:
+            pass
+    if isinstance(obj, dict):
+        return {str(key): make_json_safe(value) for key, value in obj.items()}  # type: ignore[misc]
+    if isinstance(obj, (list, tuple)):
+        return [make_json_safe(item) for item in obj]  # type: ignore[misc]
+    if hasattr(obj, "__dict__"):
+        return {key: make_json_safe(value) for key, value in vars(obj).items()}
+    return str(obj)

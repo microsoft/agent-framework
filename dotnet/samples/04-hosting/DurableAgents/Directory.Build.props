@@ -1,0 +1,9 @@
+<Project>
+
+  <Import Project="../../Directory.Build.props" />
+
+  <!-- Remove the Environment alias from parent Directory.Build.props to allow System.Environment usage -->
+  <ItemGroup>
+    <Using Remove="SampleHelpers.SampleEnvironment" />
+  </ItemGroup>
+</Project>

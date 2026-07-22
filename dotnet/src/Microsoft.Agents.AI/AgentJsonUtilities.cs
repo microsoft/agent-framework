@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -65,9 +66,47 @@ internal static partial class AgentJsonUtilities
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
 
     // Agent abstraction types
-    [JsonSerializable(typeof(ChatClientAgentThread.ThreadState))]
+    [JsonSerializable(typeof(ChatClientAgentSession))]
     [JsonSerializable(typeof(TextSearchProvider.TextSearchProviderState))]
-    [JsonSerializable(typeof(ChatHistoryMemoryProvider.ChatHistoryMemoryProviderState))]
+    [JsonSerializable(typeof(ChatHistoryMemoryProvider.State))]
+
+    // TodoProvider types
+    [JsonSerializable(typeof(TodoState))]
+    [JsonSerializable(typeof(TodoItem))]
+    [JsonSerializable(typeof(TodoItemInput))]
+    [JsonSerializable(typeof(TodoCompleteInput))]
+    [JsonSerializable(typeof(List<int>), TypeInfoPropertyName = "IntList")]
+    [JsonSerializable(typeof(List<TodoItem>), TypeInfoPropertyName = "TodoItemList")]
+    [JsonSerializable(typeof(List<TodoItemInput>), TypeInfoPropertyName = "TodoItemInputList")]
+    [JsonSerializable(typeof(List<TodoCompleteInput>), TypeInfoPropertyName = "TodoCompleteInputList")]
+
+    // AgentModeProvider types
+    [JsonSerializable(typeof(AgentModeState))]
+
+    // ToolApprovalAgent types
+    [JsonSerializable(typeof(ToolApprovalState))]
+    [JsonSerializable(typeof(ToolApprovalRule))]
+    [JsonSerializable(typeof(List<ToolApprovalRule>), TypeInfoPropertyName = "ToolApprovalRuleList")]
+
+    // FileMemoryProvider types
+    [JsonSerializable(typeof(FileMemoryState))]
+    [JsonSerializable(typeof(FileSearchResult))]
+    [JsonSerializable(typeof(List<FileSearchResult>), TypeInfoPropertyName = "FileSearchResultList")]
+    [JsonSerializable(typeof(FileSearchMatch))]
+    [JsonSerializable(typeof(List<FileSearchMatch>), TypeInfoPropertyName = "FileSearchMatchList")]
+    [JsonSerializable(typeof(FileListEntry))]
+    [JsonSerializable(typeof(List<FileListEntry>), TypeInfoPropertyName = "FileListEntryList")]
+    [JsonSerializable(typeof(FileStoreEntry))]
+    [JsonSerializable(typeof(List<FileStoreEntry>), TypeInfoPropertyName = "FileStoreEntryList")]
+    [JsonSerializable(typeof(FileLineEdit))]
+    [JsonSerializable(typeof(List<FileLineEdit>), TypeInfoPropertyName = "FileLineEditList")]
+
+    // BackgroundAgentsProvider types
+    [JsonSerializable(typeof(BackgroundAgentState))]
+    [JsonSerializable(typeof(BackgroundAgentRuntimeState))]
+    [JsonSerializable(typeof(BackgroundTaskInfo))]
+    [JsonSerializable(typeof(BackgroundTaskStatus))]
+    [JsonSerializable(typeof(List<BackgroundTaskInfo>), TypeInfoPropertyName = "BackgroundTaskInfoList")]
 
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;

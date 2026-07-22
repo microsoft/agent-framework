@@ -2,9 +2,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 
@@ -15,8 +16,62 @@ internal static class ChatMessageExtensions
     public static RecordValue ToRecord(this ChatMessage message) =>
         FormulaValue.NewRecordFromFields(message.GetMessageFields());
 
+    /// <summary>
+    /// Merges the user-authored <paramref name="input"/> with the round-tripped
+    /// <paramref name="inputMessage"/> returned by <c>AgentProvider.CreateMessageAsync</c>
+    /// to produce the value stored in <c>System.LastMessage</c>.
+    /// </summary>
+    /// <remarks>
+    /// The agent service often strips or alters <see cref="TextContent"/> on round-trip,
+    /// while replacing inline media (<see cref="DataContent"/>, <see cref="UriContent"/>)
+    /// with server-side references (typically <see cref="HostedFileContent"/>).
+    /// We want both: the original text (so <c>=System.LastMessage.Text</c> works) and
+    /// the server's media references (so subsequent actions don't re-upload large blobs).
+    /// <para>
+    /// Strategy: keep <paramref name="inputMessage"/> as the base — it has the server-generated
+    /// <see cref="ChatMessage.MessageId"/> and any provider-augmented metadata, and is forward-
+    /// compatible with new properties added on <see cref="ChatMessage"/> in the abstractions
+    /// layer. Only the <see cref="ChatMessage.Contents"/> list is mutated to substitute
+    /// original <see cref="TextContent"/> items in place (and append any extras the round-trip
+    /// dropped). Non-text content items returned by the service are left untouched so
+    /// server-side references survive.
+    /// </para>
+    /// </remarks>
+    public static ChatMessage MergeForLastMessage(this ChatMessage input, ChatMessage? inputMessage)
+    {
+        if (inputMessage is null)
+        {
+            return input;
+        }
+
+        // Build a queue of the original text items, in order. Fall back to ChatMessage.Text
+        // if the input has no explicit TextContent entries.
+        Queue<TextContent> originalTexts = new(input.Contents.OfType<TextContent>());
+        if (originalTexts.Count == 0 && !string.IsNullOrEmpty(input.Text))
+        {
+            originalTexts.Enqueue(new TextContent(input.Text));
+        }
+
+        // Replace TextContent items in inputMessage.Contents with the originals, in order.
+        for (int i = 0; i < inputMessage.Contents.Count && originalTexts.Count > 0; i++)
+        {
+            if (inputMessage.Contents[i] is TextContent)
+            {
+                inputMessage.Contents[i] = originalTexts.Dequeue();
+            }
+        }
+
+        // Append any remaining original text items that the round-trip dropped entirely.
+        while (originalTexts.Count > 0)
+        {
+            inputMessage.Contents.Add(originalTexts.Dequeue());
+        }
+
+        return inputMessage;
+    }
+
     public static TableValue ToTable(this IEnumerable<ChatMessage> messages) =>
-        FormulaValue.NewTable(TypeSchema.Message.MessageRecordType, messages.Select(message => message.ToRecord()));
+        FormulaValue.NewTable(TypeSchema.Message.RecordType, messages.Select(message => message.ToRecord()));
 
     public static IEnumerable<ChatMessage>? ToChatMessages(this DataValue? messages)
     {
@@ -83,7 +138,8 @@ internal static class ChatMessageExtensions
     public static ChatMessage ToChatMessage(this RecordDataValue message) =>
         new(message.GetRole(), [.. message.GetContent()])
         {
-            AdditionalProperties = message.GetProperty<RecordDataValue>("metadata").ToMetadata()
+            MessageId = message.GetProperty<StringDataValue>(TypeSchema.Message.Fields.Id)?.Value,
+            AdditionalProperties = message.GetProperty<RecordDataValue>(TypeSchema.Message.Fields.Metadata).ToMetadata()
         };
 
     public static ChatMessage ToChatMessage(this StringDataValue message) => new(ChatRole.User, message.Value);
@@ -118,7 +174,7 @@ internal static class ChatMessageExtensions
 
     public static ChatRole ToChatRole(this AgentMessageRole? role) => role?.ToChatRole() ?? ChatRole.User;
 
-    public static AIContent? ToContent(this AgentMessageContentType contentType, string? contentValue)
+    public static AIContent? ToContent(this AgentMessageContentType contentType, string? contentValue, string? mediaType = null)
     {
         if (string.IsNullOrEmpty(contentValue))
         {
@@ -128,7 +184,7 @@ internal static class ChatMessageExtensions
         return
             contentType switch
             {
-                AgentMessageContentType.ImageUrl => GetImageContent(contentValue),
+                AgentMessageContentType.ImageUrl => GetImageContent(contentValue, mediaType ?? InferMediaType(contentValue)),
                 AgentMessageContentType.ImageFile => new HostedFileContent(contentValue),
                 _ => new TextContent(contentValue)
             };
@@ -158,26 +214,53 @@ internal static class ChatMessageExtensions
         {
             foreach (RecordDataValue contentItem in content.Values)
             {
-                StringDataValue? contentValue = contentItem.GetProperty<StringDataValue>(TypeSchema.Message.Fields.ContentValue);
+                StringDataValue? contentValue = contentItem.GetProperty<StringDataValue>(TypeSchema.MessageContent.Fields.Value);
+                StringDataValue? mediaTypeValue = contentItem.GetProperty<StringDataValue>(TypeSchema.MessageContent.Fields.MediaType);
                 if (contentValue is null || string.IsNullOrWhiteSpace(contentValue.Value))
                 {
                     continue;
                 }
+
                 yield return
-                    contentItem.GetProperty<StringDataValue>(TypeSchema.Message.Fields.ContentType)?.Value switch
+                    contentItem.GetProperty<StringDataValue>(TypeSchema.MessageContent.Fields.Type)?.Value switch
                     {
-                        TypeSchema.Message.ContentTypes.ImageUrl => GetImageContent(contentValue.Value),
-                        TypeSchema.Message.ContentTypes.ImageFile => new HostedFileContent(contentValue.Value),
+                        TypeSchema.MessageContent.ContentTypes.ImageUrl => GetImageContent(contentValue.Value, mediaTypeValue?.Value ?? InferMediaType(contentValue.Value)),
+                        TypeSchema.MessageContent.ContentTypes.ImageFile => new HostedFileContent(contentValue.Value),
                         _ => new TextContent(contentValue.Value)
                     };
             }
         }
     }
 
-    private static AIContent GetImageContent(string uriText) =>
+    private static string InferMediaType(string value)
+    {
+        // Base64 encoded content includes media type
+        if (value.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            int semicolonIndex = value.IndexOf(';');
+            if (semicolonIndex > 5)
+            {
+                return value.Substring(5, semicolonIndex - 5);
+            }
+        }
+
+        // URL based input only supports image
+        string fileExtension = Path.GetExtension(value);
+        return
+            fileExtension.ToUpperInvariant() switch
+            {
+                ".JPG" or ".JPEG" => "image/jpeg",
+                ".PNG" => "image/png",
+                ".GIF" => "image/gif",
+                ".WEBP" => "image/webp",
+                _ => "image/*"
+            };
+    }
+
+    private static AIContent GetImageContent(string uriText, string mediaType) =>
         uriText.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ?
-            new DataContent(uriText, "image/*") :
-            new UriContent(uriText, "image/*");
+            new DataContent(uriText, mediaType) :
+            new UriContent(uriText, mediaType);
 
     private static TValue? GetProperty<TValue>(this RecordDataValue record, string name)
         where TValue : DataValue
@@ -196,7 +279,7 @@ internal static class ChatMessageExtensions
         yield return new NamedValue(TypeSchema.Message.Fields.Id, message.MessageId.ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Role, message.Role.Value.ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Author, message.AuthorName.ToFormula());
-        yield return new NamedValue(TypeSchema.Message.Fields.Content, FormulaValue.NewTable(TypeSchema.Message.ContentRecordType, message.GetContentRecords()));
+        yield return new NamedValue(TypeSchema.Message.Fields.Content, FormulaValue.NewTable(TypeSchema.MessageContent.RecordType, message.GetContentRecords()));
         yield return new NamedValue(TypeSchema.Message.Fields.Text, message.Text.ToFormula());
         yield return new NamedValue(TypeSchema.Message.Fields.Metadata, message.AdditionalProperties.ToRecord());
     }
@@ -209,19 +292,24 @@ internal static class ChatMessageExtensions
         return
             content switch
             {
-                UriContent uriContent => CreateContentRecord(TypeSchema.Message.ContentTypes.ImageUrl, uriContent.Uri.ToString()),
-                HostedFileContent fileContent => CreateContentRecord(TypeSchema.Message.ContentTypes.ImageFile, fileContent.FileId),
-                TextContent textContent => CreateContentRecord(TypeSchema.Message.ContentTypes.Text, textContent.Text),
-                DataContent dataContent => CreateContentRecord(TypeSchema.Message.ContentTypes.ImageUrl, dataContent.Uri),
+                UriContent uriContent => CreateContentRecord(TypeSchema.MessageContent.ContentTypes.ImageUrl, uriContent.Uri.ToString()),
+                HostedFileContent fileContent => CreateContentRecord(TypeSchema.MessageContent.ContentTypes.ImageFile, fileContent.FileId),
+                TextContent textContent => CreateContentRecord(TypeSchema.MessageContent.ContentTypes.Text, textContent.Text),
+                DataContent dataContent => CreateContentRecord(TypeSchema.MessageContent.ContentTypes.ImageUrl, dataContent.Uri),
                 _ => []
             };
 
-        static IEnumerable<NamedValue> CreateContentRecord(string type, string value)
+        static IEnumerable<NamedValue> CreateContentRecord(string type, string value, string? mediaType = null)
         {
-            yield return new NamedValue(TypeSchema.Message.Fields.ContentType, type.ToFormula());
-            yield return new NamedValue(TypeSchema.Message.Fields.ContentValue, value.ToFormula());
+            yield return new NamedValue(TypeSchema.MessageContent.Fields.Type, type.ToFormula());
+            yield return new NamedValue(TypeSchema.MessageContent.Fields.Value, value.ToFormula());
+            if (mediaType is not null)
+            {
+                yield return new NamedValue(TypeSchema.MessageContent.Fields.MediaType, mediaType.ToFormula());
+            }
         }
     }
+
     private static RecordValue ToRecord(this AdditionalPropertiesDictionary? value)
     {
         return FormulaValue.NewRecordFromFields(GetFields());

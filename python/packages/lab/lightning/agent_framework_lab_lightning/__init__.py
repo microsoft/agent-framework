@@ -2,10 +2,14 @@
 
 """RL Module for Microsoft Agent Framework."""
 
+from __future__ import annotations
+
 import importlib.metadata
 
-from agent_framework.observability import OBSERVABILITY_SETTINGS
-from agentlightning import AgentOpsTracer  # type: ignore
+from agent_framework.observability import enable_instrumentation
+from agentlightning.tracer import (
+    AgentOpsTracer,
+)
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -13,7 +17,7 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"  # Fallback for development mode
 
 
-class AgentFrameworkTracer(AgentOpsTracer):  # type: ignore
+class AgentFrameworkTracer(AgentOpsTracer):
     """Tracer for Agent-framework.
 
     Tracer that enables OpenTelemetry observability for the Agent-framework,
@@ -22,13 +26,12 @@ class AgentFrameworkTracer(AgentOpsTracer):  # type: ignore
 
     def init(self) -> None:
         """Initialize the agent-framework-lab-lightning for training."""
-        OBSERVABILITY_SETTINGS.enable_instrumentation = True
+        enable_instrumentation()
         super().init()
 
     def teardown(self) -> None:
         """Teardown the agent-framework-lab-lightning for training."""
         super().teardown()
-        OBSERVABILITY_SETTINGS.enable_instrumentation = False
 
 
 __all__: list[str] = ["AgentFrameworkTracer"]

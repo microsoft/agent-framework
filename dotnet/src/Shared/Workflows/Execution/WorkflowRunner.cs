@@ -25,6 +25,9 @@ internal sealed class WorkflowRunner
     private Dictionary<string, AIFunction> FunctionMap { get; }
     private CheckpointInfo? LastCheckpoint { get; set; }
 
+    // Set to true once stdin returns EOF; ExecuteAsync exits the loop when this flag is set.
+    private bool _stdinEof;
+
     public static void Notify(string message, ConsoleColor? color = null)
     {
         Console.ForegroundColor = color ?? ConsoleColor.Cyan;
@@ -52,15 +55,21 @@ internal sealed class WorkflowRunner
 
     public async Task ExecuteAsync(Func<Workflow> workflowProvider, string input)
     {
+        // Reset EOF flag so a reused WorkflowRunner instance handles stdin correctly on each run.
+        this._stdinEof = false;
+
         Workflow workflow = workflowProvider.Invoke();
 
         CheckpointManager checkpointManager;
+        DirectoryInfo? checkpointFolder = null;
+        FileSystemJsonCheckpointStore? jsonCheckpointStore = null;
 
         if (this.UseJsonCheckpoints)
         {
             // Use a file-system based JSON checkpoint store to persist checkpoints to disk.
-            DirectoryInfo checkpointFolder = Directory.CreateDirectory(Path.Combine(".", $"chk-{DateTime.Now:yyMMdd-hhmmss-ff}"));
-            checkpointManager = CheckpointManager.CreateJson(new FileSystemJsonCheckpointStore(checkpointFolder));
+            checkpointFolder = Directory.CreateDirectory(Path.Combine(".", $"chk-{DateTime.Now:yyMMdd-hhmmss-ff}"));
+            jsonCheckpointStore = new FileSystemJsonCheckpointStore(checkpointFolder);
+            checkpointManager = CheckpointManager.CreateJson(jsonCheckpointStore);
         }
         else
         {
@@ -68,46 +77,65 @@ internal sealed class WorkflowRunner
             checkpointManager = CheckpointManager.CreateInMemory();
         }
 
-        Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager).ConfigureAwait(false);
-
-        bool isComplete = false;
-        ExternalResponse? requestResponse = null;
-        do
+        try
         {
-            ExternalRequest? externalRequest = await this.MonitorAndDisposeWorkflowRunAsync(run, requestResponse).ConfigureAwait(false);
-            if (externalRequest is not null)
-            {
-                Notify("\nWORKFLOW: Yield\n", ConsoleColor.DarkYellow);
+            StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input, checkpointManager).ConfigureAwait(false);
 
-                if (this.LastCheckpoint is null)
+            bool isComplete = false;
+            ExternalResponse? requestResponse = null;
+            do
+            {
+                ExternalRequest? externalRequest = await this.MonitorAndDisposeWorkflowRunAsync(run, requestResponse).ConfigureAwait(false);
+                if (externalRequest is not null)
                 {
-                    throw new InvalidOperationException("Checkpoint information missing after external request.");
+                    Notify("\nWORKFLOW: Yield\n", ConsoleColor.DarkYellow);
+
+                    if (this.LastCheckpoint is null)
+                    {
+                        throw new InvalidOperationException("Checkpoint information missing after external request.");
+                    }
+
+                    // Process the external request.
+                    object response = await this.HandleExternalRequestAsync(externalRequest).ConfigureAwait(false);
+
+                    // If stdin was closed during input handling, stop the workflow loop gracefully.
+                    if (this._stdinEof)
+                    {
+                        break;
+                    }
+
+                    requestResponse = externalRequest.CreateResponse(response);
+
+                    // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
+                    workflow = workflowProvider.Invoke();
+
+                    // Restore the latest checkpoint.
+                    Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
+                    Notify("WORKFLOW: Restore", ConsoleColor.DarkYellow);
+
+                    run = await InProcessExecution.ResumeStreamingAsync(workflow, this.LastCheckpoint, checkpointManager).ConfigureAwait(false);
                 }
-
-                // Process the external request.
-                object response = await this.HandleExternalRequestAsync(externalRequest).ConfigureAwait(false);
-                requestResponse = externalRequest.CreateResponse(response);
-
-                // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
-                workflow = workflowProvider.Invoke();
-
-                // Restore the latest checkpoint.
-                Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
-                Notify("WORKFLOW: Restore", ConsoleColor.DarkYellow);
-
-                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager, run.Run.RunId).ConfigureAwait(false);
+                else
+                {
+                    isComplete = true;
+                }
             }
-            else
-            {
-                isComplete = true;
-            }
+            while (!isComplete);
         }
-        while (!isComplete);
+        catch (Exception)
+        {
+            throw;
+        }
+        finally
+        {
+            jsonCheckpointStore?.Dispose();
+            checkpointFolder?.Delete(true);
+        }
 
         Notify("\nWORKFLOW: Done!\n");
     }
 
-    public async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, ExternalResponse? response = null)
+    public async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(StreamingRun run, ExternalResponse? response = null)
     {
 #pragma warning disable CA2007 // Consider calling ConfigureAwait on the awaited task
         await using IAsyncDisposable disposeRun = run;
@@ -121,10 +149,10 @@ internal sealed class WorkflowRunner
 
         if (response is not null)
         {
-            await run.Run.SendResponseAsync(response).ConfigureAwait(false);
+            await run.SendResponseAsync(response).ConfigureAwait(false);
         }
 
-        await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync().ConfigureAwait(false))
         {
             switch (workflowEvent)
             {
@@ -162,7 +190,10 @@ internal sealed class WorkflowRunner
 
                 case RequestInfoEvent requestInfo:
                     Debug.WriteLine($"REQUEST #{requestInfo.Request.RequestId}");
-                    externalResponse = requestInfo.Request;
+                    if (response is null || !string.Equals(requestInfo.Request.RequestId, response.RequestId, StringComparison.Ordinal))
+                    {
+                        externalResponse = requestInfo.Request;
+                    }
                     break;
 
                 case ConversationUpdateEvent invokeEvent:
@@ -177,7 +208,7 @@ internal sealed class WorkflowRunner
                     Console.ResetColor();
                     break;
 
-                case AgentRunUpdateEvent streamEvent:
+                case AgentResponseUpdateEvent streamEvent:
                     if (!string.Equals(messageId, streamEvent.Update.MessageId, StringComparison.Ordinal))
                     {
                         hasStreamed = false;
@@ -230,7 +261,7 @@ internal sealed class WorkflowRunner
                     }
                     break;
 
-                case AgentRunResponseEvent messageEvent:
+                case AgentResponseEvent messageEvent:
                     try
                     {
                         if (hasStreamed)
@@ -272,9 +303,10 @@ internal sealed class WorkflowRunner
     /// </summary>
     private async ValueTask<ExternalInputResponse> HandleExternalRequestAsync(ExternalRequest request)
     {
-        ExternalInputRequest inputRequest =
-            request.DataAs<ExternalInputRequest>() ??
-            throw new InvalidOperationException($"Expected external request type: {request.GetType().Name}.");
+        if (!request.TryGetDataAs<ExternalInputRequest>(out var inputRequest))
+        {
+            throw new InvalidOperationException($"Expected external request type: {request.PortInfo.RequestType}.");
+        }
 
         List<ChatMessage> responseMessages = [];
 
@@ -289,7 +321,7 @@ internal sealed class WorkflowRunner
         if (responseMessages.Count == 0)
         {
             // Must be request for user input.
-            responseMessages.Add(HandleUserInputRequest(inputRequest));
+            responseMessages.Add(this.HandleUserInputRequest(inputRequest));
         }
 
         Console.WriteLine();
@@ -304,9 +336,8 @@ internal sealed class WorkflowRunner
             ChatMessage? responseMessage =
                 requestItem switch
                 {
-                    FunctionCallContent functionCall => await InvokeFunctionAsync(functionCall).ConfigureAwait(false),
-                    FunctionApprovalRequestContent functionApprovalRequest => ApproveFunction(functionApprovalRequest),
-                    McpServerToolApprovalRequestContent mcpApprovalRequest => ApproveMCP(mcpApprovalRequest),
+                    FunctionCallContent functionCall when !functionCall.InformationalOnly => await InvokeFunctionAsync(functionCall).ConfigureAwait(false),
+                    ToolApprovalRequestContent approvalRequest => ApproveToolCall(approvalRequest),
                     _ => HandleUnknown(requestItem),
                 };
 
@@ -324,16 +355,16 @@ internal sealed class WorkflowRunner
             return null;
         }
 
-        ChatMessage ApproveFunction(FunctionApprovalRequestContent functionApprovalRequest)
+        ChatMessage ApproveToolCall(ToolApprovalRequestContent approvalRequest)
         {
-            Notify($"INPUT - Approving Function: {functionApprovalRequest.FunctionCall.Name}");
-            return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved: true)]);
-        }
-
-        ChatMessage ApproveMCP(McpServerToolApprovalRequestContent mcpApprovalRequest)
-        {
-            Notify($"INPUT - Approving MCP: {mcpApprovalRequest.ToolCall.ToolName}");
-            return new ChatMessage(ChatRole.User, [mcpApprovalRequest.CreateResponse(approved: true)]);
+            string toolName = approvalRequest.ToolCall switch
+            {
+                McpServerToolCallContent mcp => mcp.Name,
+                FunctionCallContent f => f.Name,
+                _ => approvalRequest.ToolCall!.CallId
+            };
+            Notify($"INPUT - Approving: {toolName}");
+            return new ChatMessage(ChatRole.User, [approvalRequest.CreateResponse(approved: true)]);
         }
 
         async Task<ChatMessage> InvokeFunctionAsync(FunctionCallContent functionCall)
@@ -346,7 +377,7 @@ internal sealed class WorkflowRunner
         }
     }
 
-    private static ChatMessage HandleUserInputRequest(ExternalInputRequest request)
+    private ChatMessage HandleUserInputRequest(ExternalInputRequest request)
     {
         string prompt =
             string.IsNullOrWhiteSpace(request.AgentResponse.Text) || request.AgentResponse.ResponseId is not null ?
@@ -360,6 +391,13 @@ internal sealed class WorkflowRunner
             Console.Write($"{prompt} ");
             Console.ForegroundColor = ConsoleColor.White;
             userInput = Console.ReadLine();
+
+            // Stop waiting when stdin is closed (e.g. automated test runner piped input).
+            if (userInput is null)
+            {
+                this._stdinEof = true;
+                return new ChatMessage(ChatRole.User, string.Empty);
+            }
         }
         while (string.IsNullOrWhiteSpace(userInput));
 

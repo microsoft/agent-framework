@@ -3,10 +3,12 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -16,6 +18,17 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// This class provides an implementation of the Semantic Conventions for Generative AI systems v1.37, defined at <see href="https://opentelemetry.io/docs/specs/semconv/gen-ai/" />.
 /// The specification is still experimental and subject to change; as such, the telemetry output by this client is also subject to change.
+/// <para>
+/// <strong>Security considerations:</strong> This class emits telemetry via the standard .NET
+/// <c>System.Diagnostics</c> (<see cref="Activity"/>/metrics) APIs — it does not itself contact any
+/// external system. Where that telemetry is sent (a local collector, a hosted observability backend,
+/// etc.) is entirely determined by the OpenTelemetry exporters and pipeline the developer configures
+/// outside of Agent Framework. By default, emitted telemetry is limited to metadata (e.g. token counts,
+/// operation names, durations) and does not include message content. Enabling
+/// <see cref="EnableSensitiveData"/> is an explicit, separate opt-in that additionally emits raw chat
+/// message content, function-call arguments, and function-call results — treat that data as sensitive
+/// and ensure it is not sent to, or retained by, a telemetry backend you have not secured appropriately.
+/// </para>
 /// </remarks>
 public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
 {
@@ -32,6 +45,19 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     private readonly OpenTelemetryChatClient _otelClient;
     /// <summary>The provider name extracted from <see cref="AIAgentMetadata"/>.</summary>
     private readonly string? _providerName;
+    /// <summary>The resolved source name for telemetry. Always non-empty; defaults to <see cref="OpenTelemetryConsts.DefaultSourceName"/>.</summary>
+    private readonly string _sourceName;
+    /// <summary>
+    /// Indicates whether the underlying <see cref="IChatClient"/> of a <see cref="ChatClientAgent"/> inner agent
+    /// should be automatically wrapped with <see cref="OpenTelemetryChatClient"/> on each invocation.
+    /// </summary>
+    private readonly bool _autoWireChatClient;
+
+    /// <summary>
+    /// The auto-wired below-FICC telemetry slot, when one was activated. Cached so that updates to
+    /// <see cref="EnableSensitiveData"/> made after construction can be propagated to it.
+    /// </summary>
+    private DeferredOpenTelemetryChatClient? _innerTelemetrySlot;
 
     /// <summary>Initializes a new instance of the <see cref="OpenTelemetryAgent"/> class.</summary>
     /// <param name="innerAgent">The underlying <see cref="AIAgent"/> to be augmented with telemetry capabilities.</param>
@@ -44,13 +70,46 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// The constructor automatically extracts provider metadata from the inner agent and configures
     /// telemetry collection according to OpenTelemetry semantic conventions for AI systems.
     /// </remarks>
-    public OpenTelemetryAgent(AIAgent innerAgent, string? sourceName = null) : base(innerAgent)
+    public OpenTelemetryAgent(AIAgent innerAgent, string? sourceName = null)
+#pragma warning disable MAAI001 // Auto-wiring is the new default; the experimental opt-out lives on the 3-arg overload.
+        : this(innerAgent, sourceName, autoWireChatClient: true)
+#pragma warning restore MAAI001
+    {
+    }
+
+    /// <summary>Initializes a new instance of the <see cref="OpenTelemetryAgent"/> class.</summary>
+    /// <param name="innerAgent">The underlying <see cref="AIAgent"/> to be augmented with telemetry capabilities.</param>
+    /// <param name="sourceName">
+    /// An optional source name that will be used to identify telemetry data from this agent.
+    /// If not provided, a default source name will be used for telemetry identification.
+    /// </param>
+    /// <param name="autoWireChatClient">
+    /// When <see langword="true"/> and the inner agent is a <see cref="ChatClientAgent"/>, the underlying
+    /// <see cref="IChatClient"/> is automatically wrapped with <see cref="OpenTelemetryChatClient"/> for each invocation
+    /// so that chat-level telemetry flows alongside agent-level telemetry. If the underlying chat client is already
+    /// instrumented, no additional wrapping is applied. Set to <see langword="false"/> to opt-out of this behavior.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="innerAgent"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// The constructor automatically extracts provider metadata from the inner agent and configures
+    /// telemetry collection according to OpenTelemetry semantic conventions for AI systems.
+    /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public OpenTelemetryAgent(AIAgent innerAgent, string? sourceName, bool autoWireChatClient) : base(innerAgent)
     {
         this._providerName = innerAgent.GetService<AIAgentMetadata>()?.ProviderName;
 
+        // Resolve once so the outer OpenTelemetryChatClient and the auto-wired inner
+        // OpenTelemetryChatClient always emit spans under the same ActivitySource, even when
+        // the caller passes "" or whitespace (which neither client should treat as a real source).
+        this._sourceName = string.IsNullOrWhiteSpace(sourceName) ? OpenTelemetryConsts.DefaultSourceName : sourceName!;
+        this._autoWireChatClient = autoWireChatClient;
+
         this._otelClient = new OpenTelemetryChatClient(
             new ForwardingChatClient(this),
-            sourceName: string.IsNullOrEmpty(sourceName) ? OpenTelemetryConsts.DefaultSourceName : sourceName!);
+            sourceName: this._sourceName);
+
+        this.TryActivateInnerChatClientTelemetry();
     }
 
     /// <inheritdoc/>
@@ -70,33 +129,48 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// and outputs, such as message content, function call arguments, and function call results.
     /// The default value can be overridden by setting the <c>OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT</c>
     /// environment variable to "true". Explicitly setting this property will override the environment variable.
+    /// <para>
+    /// <strong>Security consideration:</strong> When sensitive data capture is enabled, the full text of chat messages —
+    /// including user inputs, LLM responses, function call arguments, and function results — is emitted as telemetry.
+    /// This data may contain PII or other sensitive information. Ensure that your telemetry pipeline is configured
+    /// with appropriate access controls and data retention policies.
+    /// </para>
     /// </remarks>
     public bool EnableSensitiveData
     {
         get => this._otelClient.EnableSensitiveData;
-        set => this._otelClient.EnableSensitiveData = value;
+        set
+        {
+            this._otelClient.EnableSensitiveData = value;
+
+            // Keep the auto-wired below-FICC slot in sync so its chat span captures message content too.
+            if (this._innerTelemetrySlot is { } slot)
+            {
+                slot.EnableSensitiveData = value;
+            }
+        }
     }
 
     /// <inheritdoc/>
-    protected override async Task<AgentRunResponse> RunCoreAsync(
-        IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override async Task<AgentResponse> RunCoreAsync(
+        IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        ChatOptions co = new ForwardedOptions(options, thread, Activity.Current);
+        ChatOptions co = new ForwardedOptions(options, session, Activity.Current);
 
         var response = await this._otelClient.GetResponseAsync(messages, co, cancellationToken).ConfigureAwait(false);
 
-        return response.RawRepresentation as AgentRunResponse ?? new AgentRunResponse(response);
+        return response.RawRepresentation as AgentResponse ?? new AgentResponse(response);
     }
 
     /// <inheritdoc/>
-    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
-        IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+        IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ChatOptions co = new ForwardedOptions(options, thread, Activity.Current);
+        ChatOptions co = new ForwardedOptions(options, session, Activity.Current);
 
         await foreach (var update in this._otelClient.GetStreamingResponseAsync(messages, co, cancellationToken).ConfigureAwait(false))
         {
-            yield return update.RawRepresentation as AgentRunResponseUpdate ?? new AgentRunResponseUpdate(update);
+            yield return update.RawRepresentation as AgentResponseUpdate ?? new AgentResponseUpdate(update);
         }
     }
 
@@ -142,19 +216,67 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// <summary>State passed from this instance into the inner agent, circumventing the intermediate <see cref="OpenTelemetryChatClient"/>.</summary>
     private sealed class ForwardedOptions : ChatOptions
     {
-        public ForwardedOptions(AgentRunOptions? options, AgentThread? thread, Activity? currentActivity) :
+        public ForwardedOptions(AgentRunOptions? options, AgentSession? session, Activity? currentActivity) :
             base((options as ChatClientAgentRunOptions)?.ChatOptions)
         {
             this.Options = options;
-            this.Thread = thread;
+            this.Session = session;
             this.CurrentActivity = currentActivity;
         }
 
         public AgentRunOptions? Options { get; }
 
-        public AgentThread? Thread { get; }
+        public AgentSession? Session { get; }
 
         public Activity? CurrentActivity { get; }
+    }
+
+    /// <summary>
+    /// When auto-wiring is enabled and the inner agent is a <see cref="ChatClientAgent"/> whose underlying
+    /// <see cref="IChatClient"/> is not already instrumented, activates the in-place
+    /// <see cref="DeferredOpenTelemetryChatClient"/> slot so that chat spans are emitted below the
+    /// <see cref="FunctionInvokingChatClient"/> under this agent's source name. Positioning OpenTelemetry below FICC
+    /// is what allows FICC to emit execute_tool spans on the agent source. Respects
+    /// <see cref="ChatClientAgentOptions.UseProvidedChatClientAsIs"/> and is a no-op when no slot is reachable.
+    /// </summary>
+    private void TryActivateInnerChatClientTelemetry()
+    {
+        if (!this._autoWireChatClient)
+        {
+            return;
+        }
+
+        // Auto-wiring only applies when a ChatClientAgent is reachable from the inner agent. Otherwise, no-op.
+        // Use GetService rather than a type check so wrapping agents that expose a nested ChatClientAgent are supported.
+        var chatClientAgent = this.InnerAgent.GetService<ChatClientAgent>();
+        if (chatClientAgent is null)
+        {
+            return;
+        }
+
+        // Respect ChatClientAgentOptions.UseProvidedChatClientAsIs: don't decorate the chat client when the user opted out.
+        if (chatClientAgent.GetService<ChatClientAgentOptions>()?.UseProvidedChatClientAsIs is true)
+        {
+            return;
+        }
+
+        // Don't activate when the chat client is already instrumented (e.g. the caller added their own
+        // OpenTelemetryChatClient), to avoid emitting duplicate chat spans.
+        var chatClient = chatClientAgent.GetService<IChatClient>();
+        if (chatClient is null || chatClient.GetService(typeof(OpenTelemetryChatClient)) is not null)
+        {
+            return;
+        }
+
+        // Activate the pre-placed slot in-place (below FICC) rather than wrapping a new OpenTelemetryChatClient
+        // around the whole pipeline on each run. Cache it and seed its EnableSensitiveData from the current
+        // value so a later change to this agent's EnableSensitiveData can be propagated to the inner chat span.
+        if (chatClient.GetService(typeof(DeferredOpenTelemetryChatClient)) is DeferredOpenTelemetryChatClient slot)
+        {
+            slot.Activate(this._sourceName);
+            slot.EnableSensitiveData = this.EnableSensitiveData;
+            this._innerTelemetrySlot = slot;
+        }
     }
 
     /// <summary>The stub <see cref="IChatClient"/> used to delegate from the <see cref="OpenTelemetryChatClient"/> into the inner <see cref="AIAgent"/>.</summary>
@@ -169,8 +291,9 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             // Update the current activity to reflect the agent invocation.
             parentAgent.UpdateCurrentActivity(fo?.CurrentActivity);
 
-            // Invoke the inner agent.
-            var response = await parentAgent.InnerAgent.RunAsync(messages, fo?.Thread, fo?.Options, cancellationToken).ConfigureAwait(false);
+            // Invoke the inner agent. Chat-level telemetry is emitted by the in-place DeferredOpenTelemetryChatClient
+            // slot (below FICC), activated once at construction; no per-run chat-client wiring is needed here.
+            var response = await parentAgent.InnerAgent.RunAsync(messages, fo?.Session, fo?.Options, cancellationToken).ConfigureAwait(false);
 
             // Wrap the response in a ChatResponse so we can pass it back through OpenTelemetryChatClient.
             return response.AsChatResponse();
@@ -184,8 +307,9 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             // Update the current activity to reflect the agent invocation.
             parentAgent.UpdateCurrentActivity(fo?.CurrentActivity);
 
-            // Invoke the inner agent.
-            await foreach (var update in parentAgent.InnerAgent.RunStreamingAsync(messages, fo?.Thread, fo?.Options, cancellationToken).ConfigureAwait(false))
+            // Invoke the inner agent. Chat-level telemetry is emitted by the in-place DeferredOpenTelemetryChatClient
+            // slot (below FICC), activated once at construction; no per-run chat-client wiring is needed here.
+            await foreach (var update in parentAgent.InnerAgent.RunStreamingAsync(messages, fo?.Session, fo?.Options, cancellationToken).ConfigureAwait(false))
             {
                 // Wrap the response updates in ChatResponseUpdates so we can pass them back through OpenTelemetryChatClient.
                 yield return update.AsChatResponseUpdate();

@@ -2,6 +2,8 @@
 
 """Unit tests for AgentFunctionApp."""
 
+# pyright: reportPrivateUsage=false
+
 import json
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
@@ -10,19 +12,42 @@ from unittest.mock import ANY, AsyncMock, Mock, patch
 import azure.durable_functions as df
 import azure.functions as func
 import pytest
-from agent_framework import AgentRunResponse, ChatMessage, ErrorContent
-
-from agent_framework_azurefunctions import AgentFunctionApp
-from agent_framework_azurefunctions._app import WAIT_FOR_RESPONSE_FIELD, WAIT_FOR_RESPONSE_HEADER
-from agent_framework_azurefunctions._constants import (
+from agent_framework import AgentResponse, Message
+from agent_framework_durabletask import (
     MIMETYPE_APPLICATION_JSON,
     MIMETYPE_TEXT_PLAIN,
     THREAD_ID_HEADER,
+    WAIT_FOR_RESPONSE_FIELD,
+    WAIT_FOR_RESPONSE_HEADER,
+    AgentEntity,
+    AgentEntityStateProviderMixin,
+    DurableAgentState,
+    workflow_orchestrator_name,
 )
-from agent_framework_azurefunctions._durable_agent_state import DurableAgentState
-from agent_framework_azurefunctions._entities import AgentEntity, create_agent_entity
 
-TFunc = TypeVar("TFunc", bound=Callable[..., Any])
+from agent_framework_azurefunctions import AgentFunctionApp
+from agent_framework_azurefunctions._entities import create_agent_entity
+
+FuncT = TypeVar("FuncT", bound=Callable[..., Any])
+
+
+def _identity_decorator(func: FuncT) -> FuncT:
+    return func
+
+
+class _InMemoryStateProvider(AgentEntityStateProviderMixin):
+    def __init__(self, *, thread_id: str = "test-thread", initial_state: dict[str, Any] | None = None) -> None:
+        self._thread_id = thread_id
+        self._state_dict: dict[str, Any] = initial_state or {}
+
+    def _get_state_dict(self) -> dict[str, Any]:
+        return self._state_dict
+
+    def _set_state_dict(self, state: dict[str, Any]) -> None:
+        self._state_dict = state
+
+    def _get_thread_id_from_entity(self) -> str:
+        return self._thread_id
 
 
 class TestAgentFunctionAppInit:
@@ -88,7 +113,7 @@ class TestAgentFunctionAppInit:
             app.add_agent(mock_agent, callback=specific_callback)
 
         setup_mock.assert_called_once()
-        _, _, passed_callback, enable_http_endpoint, enable_mcp_tool_trigger = setup_mock.call_args[0]
+        _, _, passed_callback, enable_http_endpoint, _enable_mcp_tool_trigger = setup_mock.call_args[0]
         assert passed_callback is specific_callback
         assert enable_http_endpoint is True
 
@@ -104,7 +129,7 @@ class TestAgentFunctionAppInit:
             app.add_agent(mock_agent)
 
         setup_mock.assert_called_once()
-        _, _, passed_callback, enable_http_endpoint, enable_mcp_tool_trigger = setup_mock.call_args[0]
+        _, _, passed_callback, enable_http_endpoint, _enable_mcp_tool_trigger = setup_mock.call_args[0]
         assert passed_callback is default_callback
         assert enable_http_endpoint is True
 
@@ -119,7 +144,7 @@ class TestAgentFunctionAppInit:
             AgentFunctionApp(agents=[mock_agent], default_callback=default_callback)
 
         setup_mock.assert_called_once()
-        _, _, passed_callback, enable_http_endpoint, enable_mcp_tool_trigger = setup_mock.call_args[0]
+        _, _, passed_callback, enable_http_endpoint, _enable_mcp_tool_trigger = setup_mock.call_args[0]
         assert passed_callback is default_callback
         assert enable_http_endpoint is True
 
@@ -141,8 +166,8 @@ class TestAgentFunctionAppSetup:
         mock_agent = Mock()
         mock_agent.name = "TestAgent"
 
-        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 return func
 
             return decorator
@@ -166,15 +191,15 @@ class TestAgentFunctionAppSetup:
 
         def capture_function_name(
             self: AgentFunctionApp, name: str, *args: Any, **kwargs: Any
-        ) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        ) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 captured_names.append(name)
                 return func
 
             return decorator
 
-        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 return func
 
             return decorator
@@ -196,16 +221,16 @@ class TestAgentFunctionAppSetup:
 
         captured_routes: list[str | None] = []
 
-        def capture_route(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def capture_route(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 route_key = kwargs.get("route") if kwargs else None
                 captured_routes.append(route_key)
                 return func
 
             return decorator
 
-        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 return func
 
             return decorator
@@ -332,18 +357,17 @@ class TestAgentEntityOperations:
         """Test that entity can run agent operation."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
-            return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Test response")])
+            return_value=AgentResponse(messages=[Message(role="assistant", contents=["Test response"])])
         )
 
-        entity = AgentEntity(mock_agent)
-        mock_context = Mock()
+        entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider(thread_id="test-conv-123"))
 
-        result = await entity.run(
-            mock_context,
-            {"message": "Test message", "thread_id": "test-conv-123", "correlationId": "corr-app-entity-1"},
-        )
+        result = await entity.run({
+            "message": "Test message",
+            "correlationId": "corr-app-entity-1",
+        })
 
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert result.text == "Test response"
         assert entity.state.message_count == 2
 
@@ -351,25 +375,20 @@ class TestAgentEntityOperations:
         """Test that the entity stores conversation history."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
-            return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response 1")])
+            return_value=AgentResponse(messages=[Message(role="assistant", contents=["Response 1"])])
         )
 
-        entity = AgentEntity(mock_agent)
-        mock_context = Mock()
+        entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider(thread_id="conv-1"))
 
         # Send first message
-        await entity.run(
-            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-app-entity-2"}
-        )
+        await entity.run({"message": "Message 1", "correlationId": "corr-app-entity-2"})
 
         # Each conversation turn creates 2 entries: request and response
         history = entity.state.data.conversation_history[0].messages  # Request entry
         assert len(history) == 1  # Just the user message
 
         # Send second message
-        await entity.run(
-            mock_context, {"message": "Message 2", "thread_id": "conv-2", "correlationId": "corr-app-entity-2b"}
-        )
+        await entity.run({"message": "Message 2", "correlationId": "corr-app-entity-2b"})
 
         # Now we have 4 entries total (2 requests + 2 responses)
         # Access the first request entry
@@ -390,35 +409,29 @@ class TestAgentEntityOperations:
         """Test that the entity increments the message count."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
-            return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response")])
+            return_value=AgentResponse(messages=[Message(role="assistant", contents=["Response"])])
         )
 
-        entity = AgentEntity(mock_agent)
-        mock_context = Mock()
+        entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider(thread_id="conv-1"))
 
         assert len(entity.state.data.conversation_history) == 0
 
-        await entity.run(
-            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-app-entity-3a"}
-        )
+        await entity.run({"message": "Message 1", "correlationId": "corr-app-entity-3a"})
         assert len(entity.state.data.conversation_history) == 2
 
-        await entity.run(
-            mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlationId": "corr-app-entity-3b"}
-        )
+        await entity.run({"message": "Message 2", "correlationId": "corr-app-entity-3b"})
         assert len(entity.state.data.conversation_history) == 4
 
     def test_entity_reset(self) -> None:
         """Test that entity reset clears state."""
         mock_agent = Mock()
-        entity = AgentEntity(mock_agent)
+        entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider())
 
         # Set some state
         entity.state = DurableAgentState()
 
         # Reset
-        mock_context = Mock()
-        entity.reset(mock_context)
+        entity.reset()
 
         assert len(entity.state.data.conversation_history) == 0
 
@@ -437,7 +450,7 @@ class TestAgentEntityFactory:
         """Test that the entity function handles the run operation."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
-            return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response")])
+            return_value=AgentResponse(messages=[Message(role="assistant", contents=["Response"])])
         )
 
         entity_function = create_agent_entity(mock_agent)
@@ -447,7 +460,6 @@ class TestAgentEntityFactory:
         mock_context.operation_name = "run"
         mock_context.get_input.return_value = {
             "message": "Test message",
-            "thread_id": "conv-123",
             "correlationId": "corr-app-factory-1",
         }
         mock_context.get_state.return_value = None
@@ -465,7 +477,7 @@ class TestAgentEntityFactory:
         """Test that the entity function handles the deprecated run_agent operation for backward compatibility."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
-            return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response")])
+            return_value=AgentResponse(messages=[Message(role="assistant", contents=["Response"])])
         )
 
         entity_function = create_agent_entity(mock_agent)
@@ -475,7 +487,6 @@ class TestAgentEntityFactory:
         mock_context.operation_name = "run_agent"
         mock_context.get_input.return_value = {
             "message": "Test message",
-            "thread_id": "conv-123",
             "correlationId": "corr-app-factory-1",
         }
         mock_context.get_state.return_value = None
@@ -595,7 +606,11 @@ class TestAgentEntityFactory:
         }
 
         mock_context = Mock()
-        mock_context.operation_name = "reset"
+        mock_context.operation_name = "run"
+        mock_context.get_input.return_value = {
+            "message": "Test message",
+            "correlationId": "corr-restore-1",
+        }
         mock_context.get_state.return_value = existing_state
 
         with patch.object(DurableAgentState, "from_dict", wraps=DurableAgentState.from_dict) as from_dict_mock:
@@ -612,17 +627,17 @@ class TestErrorHandling:
         mock_agent = Mock()
         mock_agent.run = AsyncMock(side_effect=Exception("Agent error"))
 
-        entity = AgentEntity(mock_agent)
-        mock_context = Mock()
+        entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider(thread_id="conv-1"))
 
-        result = await entity.run(
-            mock_context, {"message": "Test message", "thread_id": "conv-1", "correlationId": "corr-app-error-1"}
-        )
+        result = await entity.run({
+            "message": "Test message",
+            "correlationId": "corr-app-error-1",
+        })
 
-        assert isinstance(result, AgentRunResponse)
+        assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
         content = result.messages[0].contents[0]
-        assert isinstance(content, ErrorContent)
+        assert content.type == "error"
         assert "Agent error" in (content.message or "")
         assert content.error_code == "Exception"
 
@@ -710,7 +725,7 @@ class TestIncomingRequestParsing:
 
         request = Mock()
         request.params = {"thread_id": "query-thread"}
-        req_body = {}
+        req_body: dict[str, Any] = {}
 
         thread_id = app._resolve_thread_id(request, req_body)
 
@@ -724,14 +739,14 @@ class TestHttpRunRoute:
     def _get_run_handler(agent: Mock) -> Callable[[func.HttpRequest, Any], Awaitable[func.HttpResponse]]:
         captured_handlers: dict[str | None, Callable[..., Awaitable[func.HttpResponse]]] = {}
 
-        def capture_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def capture_decorator(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 return func
 
             return decorator
 
-        def capture_route(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
+        def capture_route(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 route_key = kwargs.get("route") if kwargs else None
                 captured_handlers[route_key] = func
                 return func
@@ -777,7 +792,7 @@ class TestHttpRunRoute:
 
         assert run_request["message"] == "Plain text via HTTP"
         assert run_request["role"] == "user"
-        assert "thread_id" in run_request
+        assert "thread_id" not in run_request
 
     async def test_http_run_accept_header_returns_json(self) -> None:
         """Test that Accept header requesting JSON results in JSON response."""
@@ -913,9 +928,9 @@ class TestMCPToolEndpoint:
             patch.object(app, "durable_client_input") as client_mock,
         ):
             # Setup mock decorator chain
-            func_name_mock.return_value = lambda f: f
-            mcp_trigger_mock.return_value = lambda f: f
-            client_mock.return_value = lambda f: f
+            func_name_mock.return_value = _identity_decorator
+            mcp_trigger_mock.return_value = _identity_decorator
+            client_mock.return_value = _identity_decorator
 
             app._setup_mcp_tool_trigger(mock_agent.name, mock_agent.description)
 
@@ -938,11 +953,11 @@ class TestMCPToolEndpoint:
         app = AgentFunctionApp()
 
         with (
-            patch.object(app, "function_name", return_value=lambda f: f),
+            patch.object(app, "function_name", return_value=_identity_decorator),
             patch.object(app, "mcp_tool_trigger") as mcp_trigger_mock,
-            patch.object(app, "durable_client_input", return_value=lambda f: f),
+            patch.object(app, "durable_client_input", return_value=_identity_decorator),
         ):
-            mcp_trigger_mock.return_value = lambda f: f
+            mcp_trigger_mock.return_value = _identity_decorator
 
             app._setup_mcp_tool_trigger(mock_agent.name, None)
 
@@ -1056,6 +1071,70 @@ class TestMCPToolEndpoint:
             with pytest.raises(RuntimeError, match="Agent execution failed"):
                 await app._handle_mcp_tool_invocation("TestAgent", context, client)
 
+    async def test_handle_mcp_tool_invocation_ignores_agent_name_in_thread_id(self) -> None:
+        """Test that MCP tool invocation uses the agent_name parameter, not the name from thread_id."""
+        mock_agent = Mock()
+        mock_agent.name = "PlantAdvisor"
+
+        app = AgentFunctionApp(agents=[mock_agent])
+        client = AsyncMock()
+
+        # Mock the entity response
+        mock_state = Mock()
+        mock_state.entity_state = {
+            "schemaVersion": "1.0.0",
+            "data": {"conversationHistory": []},
+        }
+        client.read_entity_state.return_value = mock_state
+
+        # Thread ID contains a different agent name (@StockAdvisor@poc123)
+        # but we're invoking PlantAdvisor - it should use PlantAdvisor's entity
+        context = json.dumps({"arguments": {"query": "test query", "threadId": "@StockAdvisor@test123"}})
+
+        with patch.object(app, "_get_response_from_entity") as get_response_mock:
+            get_response_mock.return_value = {"status": "success", "response": "Test response"}
+
+            await app._handle_mcp_tool_invocation("PlantAdvisor", context, client)
+
+            # Verify signal_entity was called with PlantAdvisor's entity, not StockAdvisor's
+            client.signal_entity.assert_called_once()
+            call_args = client.signal_entity.call_args
+            entity_id = call_args[0][0]
+
+            # Entity name should be dafx-PlantAdvisor, not dafx-StockAdvisor
+            assert entity_id.name == "dafx-PlantAdvisor"
+            assert entity_id.key == "test123"
+
+    async def test_handle_mcp_tool_invocation_uses_plain_thread_id_as_key(self) -> None:
+        """Test that a plain thread_id (not in @name@key format) is used as-is for the key."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent])
+        client = AsyncMock()
+
+        mock_state = Mock()
+        mock_state.entity_state = {
+            "schemaVersion": "1.0.0",
+            "data": {"conversationHistory": []},
+        }
+        client.read_entity_state.return_value = mock_state
+
+        # Plain thread_id without @name@key format
+        context = json.dumps({"arguments": {"query": "test query", "threadId": "simple-thread-123"}})
+
+        with patch.object(app, "_get_response_from_entity") as get_response_mock:
+            get_response_mock.return_value = {"status": "success", "response": "Test response"}
+
+            await app._handle_mcp_tool_invocation("TestAgent", context, client)
+
+            client.signal_entity.assert_called_once()
+            call_args = client.signal_entity.call_args
+            entity_id = call_args[0][0]
+
+            assert entity_id.name == "dafx-TestAgent"
+            assert entity_id.key == "simple-thread-123"
+
     def test_health_check_includes_mcp_tool_enabled(self) -> None:
         """Test that health check endpoint includes mcp_tool_enabled field."""
         mock_agent = Mock()
@@ -1064,10 +1143,10 @@ class TestMCPToolEndpoint:
         app = AgentFunctionApp(agents=[mock_agent], enable_mcp_tool_trigger=True)
 
         # Capture the health check handler function
-        captured_handler = None
+        captured_handler: Callable[[func.HttpRequest], func.HttpResponse] | None = None
 
-        def capture_decorator(*args, **kwargs):
-            def decorator(func):
+        def capture_decorator(*args: Any, **kwargs: Any) -> Callable[[FuncT], FuncT]:
+            def decorator(func: FuncT) -> FuncT:
                 nonlocal captured_handler
                 captured_handler = func
                 return func
@@ -1092,6 +1171,795 @@ class TestMCPToolEndpoint:
         assert len(body["agents"]) == 1
         assert "mcp_tool_enabled" in body["agents"][0]
         assert body["agents"][0]["mcp_tool_enabled"] is True
+
+
+class TestAgentFunctionAppErrorPaths:
+    """Test suite for error handling paths."""
+
+    def test_init_with_invalid_max_poll_retries(self) -> None:
+        """Test initialization handles invalid max_poll_retries by falling back to default."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        # Test with invalid type
+        app = AgentFunctionApp(agents=[mock_agent], max_poll_retries="invalid")  # type: ignore[arg-type] # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type]
+        assert app.max_poll_retries >= 1  # Should use default
+
+        # Test with None
+        app2 = AgentFunctionApp(agents=[mock_agent], max_poll_retries=None)  # type: ignore[arg-type] # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type]
+        assert app2.max_poll_retries >= 1  # Should use default
+
+    def test_init_with_invalid_poll_interval_seconds(self) -> None:
+        """Test initialization handles invalid poll_interval_seconds by falling back to default."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        # Test with invalid type
+        app = AgentFunctionApp(agents=[mock_agent], poll_interval_seconds="invalid")  # type: ignore[arg-type] # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type]
+        assert app.poll_interval_seconds > 0  # Should use default
+
+        # Test with None
+        app2 = AgentFunctionApp(agents=[mock_agent], poll_interval_seconds=None)  # type: ignore[arg-type] # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type]
+        assert app2.poll_interval_seconds > 0  # Should use default
+
+    def test_get_agent_raises_for_unregistered_agent(self) -> None:
+        """Test get_agent raises ValueError for unregistered agent."""
+        mock_agent = Mock()
+        mock_agent.name = "RegisteredAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent], enable_http_endpoints=False)
+
+        # Create mock orchestration context
+        mock_context = Mock()
+
+        # Should raise ValueError for unregistered agent
+        with pytest.raises(ValueError, match="Agent 'UnknownAgent' is not registered"):
+            app.get_agent(mock_context, "UnknownAgent")
+
+    def test_convert_payload_to_text_with_response_key(self) -> None:
+        """Test _convert_payload_to_text returns response key value."""
+        app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
+
+        # Test with response key
+        payload = {"response": "Test response"}
+        result = app._convert_payload_to_text(payload)
+        assert result == "Test response"
+
+        # Test with error key
+        payload = {"error": "Error message"}
+        result = app._convert_payload_to_text(payload)
+        assert result == "Error message"
+
+        # Test with message key
+        payload = {"message": "Message text"}
+        result = app._convert_payload_to_text(payload)
+        assert result == "Message text"
+
+        # Test with no matching keys - should return JSON string
+        payload = {"other": "value"}
+        result = app._convert_payload_to_text(payload)
+        assert "other" in result
+        assert "value" in result
+
+    def test_create_session_id_with_thread_id(self) -> None:
+        """Test _create_session_id with provided thread_id."""
+        app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
+
+        # With thread_id provided
+        session_id = app._create_session_id("TestAgent", "my-thread-123")
+        assert session_id.key == "my-thread-123"
+
+        # Without thread_id (None) - should generate random
+        session_id = app._create_session_id("TestAgent", None)
+        assert session_id.key is not None
+        assert len(session_id.key) > 0
+
+    def test_resolve_thread_id_from_body(self) -> None:
+        """Test _resolve_thread_id extracts from body."""
+        app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
+
+        mock_req = Mock()
+        mock_req.params = {}
+
+        # Thread ID in body - field name is "thread_id"
+        req_body = {"thread_id": "body-thread-123"}
+        result = app._resolve_thread_id(mock_req, req_body)
+        assert result == "body-thread-123"
+
+    def test_select_body_parser_json_content_type(self) -> None:
+        """Test _select_body_parser for JSON content type."""
+        app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
+
+        # Test with application/json
+        parser, format_str = app._select_body_parser("application/json")
+        assert parser == app._parse_json_body
+        assert format_str == "json"
+
+        # Test with +json suffix
+        parser, format_str = app._select_body_parser("application/vnd.api+json")
+        assert parser == app._parse_json_body
+        assert format_str == "json"
+
+    def test_accepts_json_response_with_accept_header(self) -> None:
+        """Test _accepts_json_response checks accept header."""
+        app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
+
+        # With application/json in accept header
+        headers = {"accept": "application/json"}
+        result = app._accepts_json_response(headers)
+        assert result is True
+
+        # Without accept header
+        headers = {}
+        result = app._accepts_json_response(headers)
+        assert result is False
+
+    def test_parse_json_body_invalid_type(self) -> None:
+        """Test _parse_json_body raises error for invalid JSON."""
+        from agent_framework_azurefunctions._errors import IncomingRequestError
+
+        app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
+
+        # Mock request with non-dict JSON
+        mock_req = Mock()
+        mock_req.get_json.return_value = ["not", "a", "dict"]
+
+        with pytest.raises(IncomingRequestError, match="Invalid JSON payload"):
+            app._parse_json_body(mock_req)
+
+    def test_coerce_to_bool_with_none(self) -> None:
+        """Test _coerce_to_bool handles None and various value types."""
+        app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
+
+        # None returns False
+        assert app._coerce_to_bool(None) is False
+
+        # Integer
+        assert app._coerce_to_bool(1) is True
+        assert app._coerce_to_bool(0) is False
+
+        # String
+        assert app._coerce_to_bool("true") is True
+        assert app._coerce_to_bool("false") is False
+
+        # Other type returns False
+        assert app._coerce_to_bool([]) is False
+
+
+class TestAgentFunctionAppWorkflow:
+    """Test suite for AgentFunctionApp workflow support."""
+
+    def test_init_with_workflow_stores_workflow(self) -> None:
+        """Test that workflow is stored when provided."""
+        mock_workflow = Mock()
+        mock_workflow.name = "test_workflow"
+        mock_workflow.executors = {}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            app = AgentFunctionApp(workflow=mock_workflow)
+
+        assert app.workflow is mock_workflow
+
+    def test_init_with_workflow_registers_agent_entity_by_executor_id(self) -> None:
+        """Workflow agent executors are registered as entities keyed by executor id."""
+        from agent_framework import AgentExecutor
+
+        mock_agent = Mock()
+        mock_agent.name = "WorkflowAgent"
+
+        mock_executor = Mock(spec=AgentExecutor)
+        mock_executor.agent = mock_agent
+        # Executor id intentionally differs from the agent name to exercise the
+        # identity fix: dispatch uses the executor id, so registration must too.
+        mock_executor.id = "custom-executor-id"
+
+        mock_workflow = Mock()
+        mock_workflow.name = "orders"
+        mock_workflow.executors = {"custom-executor-id": mock_executor}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            patch.object(AgentFunctionApp, "_setup_agent_entity") as setup_entity,
+        ):
+            app = AgentFunctionApp(workflow=mock_workflow)
+
+        # The entity is registered under the workflow-scoped dispatch identity.
+        setup_entity.assert_called_once()
+        call_args = setup_entity.call_args.args
+        assert call_args[0] is mock_agent
+        assert call_args[1] == "orders-custom-executor-id"
+
+        # Regression guard: the workflow agent must also be tracked on the app's
+        # normal registration surface, keyed by the scoped id, so it appears in
+        # ``agents`` and is retrievable via ``get_agent``.
+        assert "orders-custom-executor-id" in app.agents
+        assert app.agents["orders-custom-executor-id"] is mock_agent
+
+    def test_init_with_workflow_calls_setup_methods(self) -> None:
+        """Test that workflow setup methods are called."""
+        mock_executor = Mock()
+        mock_executor.id = "TestExecutor"
+
+        mock_workflow = Mock()
+        mock_workflow.name = "test_workflow"
+        # Include a non-AgentExecutor so _setup_executor_activity is called
+        mock_workflow.executors = {"TestExecutor": mock_executor}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity") as setup_exec,
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            AgentFunctionApp(workflow=mock_workflow)
+
+        setup_exec.assert_called_once()
+        setup_orch.assert_called_once()
+
+    def test_init_without_workflow_does_not_call_workflow_setup(self) -> None:
+        """Test that workflow setup is not called when no workflow provided."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity") as setup_exec,
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            AgentFunctionApp(agents=[mock_agent])
+
+        setup_exec.assert_not_called()
+        setup_orch.assert_not_called()
+
+    def test_init_with_workflow_and_explicit_agent_does_not_raise(self) -> None:
+        """An agent passed explicitly and present in the workflow registers without error."""
+        from agent_framework import AgentExecutor
+
+        mock_agent = Mock()
+        mock_agent.name = "SharedAgent"
+
+        mock_executor = Mock(spec=AgentExecutor)
+        mock_executor.agent = mock_agent
+        mock_executor.id = "SharedAgent"
+
+        mock_workflow = Mock()
+        mock_workflow.name = "shared_flow"
+        mock_workflow.executors = {"SharedAgent": mock_executor}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            patch.object(AgentFunctionApp, "_setup_agent_functions"),
+            patch.object(AgentFunctionApp, "_setup_agent_entity"),
+        ):
+            # Same agent passed explicitly AND present in workflow — should not raise
+            app = AgentFunctionApp(agents=[mock_agent], workflow=mock_workflow)
+
+        assert "SharedAgent" in app.agents
+
+    def test_init_with_multiple_workflows_registers_each(self) -> None:
+        """The workflows= list registers each workflow keyed by name."""
+        from agent_framework import Executor
+
+        def _wf(name: str, executor_id: str) -> Mock:
+            ex = Mock(spec=Executor)
+            ex.id = executor_id
+            wf = Mock()
+            wf.name = name
+            wf.executors = {executor_id: ex}
+            return wf
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity") as setup_exec,
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            app = AgentFunctionApp(workflows=[_wf("orders", "router"), _wf("billing", "router")])
+
+        assert set(app.workflows) == {"orders", "billing"}
+        assert app.workflow is None  # ambiguous with >1 workflow
+        assert setup_exec.call_count == 2
+        assert setup_orch.call_count == 2
+
+    def test_init_rejects_duplicate_workflow_name(self) -> None:
+        """Two workflows with the same name are rejected."""
+        from agent_framework import Executor
+
+        def _wf(executor_id: str) -> Mock:
+            ex = Mock(spec=Executor)
+            ex.id = executor_id
+            wf = Mock()
+            wf.name = "orders"
+            wf.executors = {executor_id: ex}
+            return wf
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="already registered"),
+        ):
+            AgentFunctionApp(workflows=[_wf("a"), _wf("b")])
+
+    def test_init_rejects_case_insensitive_duplicate_workflow_name(self) -> None:
+        """Workflow names that differ only by case collide and are rejected.
+
+        The route ownership guard folds case, so hosting both ``orders`` and
+        ``Orders`` would let one workflow's routes reach the other's instances.
+        """
+        from agent_framework import Executor
+
+        def _wf(name: str, executor_id: str) -> Mock:
+            ex = Mock(spec=Executor)
+            ex.id = executor_id
+            wf = Mock()
+            wf.name = name
+            wf.executors = {executor_id: ex}
+            return wf
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="case-insensitively"),
+        ):
+            AgentFunctionApp(workflows=[_wf("orders", "a"), _wf("Orders", "b")])
+
+    def test_init_rejects_mapping_key_mismatch(self) -> None:
+        """A workflows mapping whose key disagrees with Workflow.name is rejected."""
+        mock_workflow = Mock()
+        mock_workflow.name = "orders"
+        mock_workflow.executors = {}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="does not match"),
+        ):
+            AgentFunctionApp(workflows={"wrong_key": mock_workflow})
+
+    def test_init_rejects_auto_generated_workflow_name(self) -> None:
+        """An auto-generated WorkflowBuilder name is rejected."""
+        import uuid
+
+        mock_workflow = Mock()
+        mock_workflow.name = f"WorkflowBuilder-{uuid.uuid4()}"
+        mock_workflow.executors = {}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="auto-generated"),
+        ):
+            AgentFunctionApp(workflow=mock_workflow)
+
+
+class TestAgentFunctionAppSubworkflow:
+    """Test recursive registration of nested sub-workflows on the Functions app."""
+
+    @staticmethod
+    def _inner_agent_wf(name: str, executor_id: str) -> tuple[Mock, Mock]:
+        from agent_framework import AgentExecutor
+
+        agent = Mock()
+        agent.name = "InnerAssistant"
+        ex = Mock(spec=AgentExecutor)
+        ex.agent = agent
+        ex.id = executor_id
+        wf = Mock()
+        wf.name = name
+        wf.executors = {executor_id: ex}
+        return wf, agent
+
+    @staticmethod
+    def _outer_wf(name: str, inner: Mock, *, sub_ids: tuple[str, ...] = ("sub",)) -> Mock:
+        from agent_framework import Executor, WorkflowExecutor
+
+        executors: dict[str, Mock] = {}
+        for sid in sub_ids:
+            sub = Mock(spec=WorkflowExecutor)
+            sub.id = sid
+            sub.workflow = inner
+            sub.allow_direct_output = False
+            executors[sid] = sub
+        router = Mock(spec=Executor)
+        router.id = "router"
+        executors["router"] = router
+        wf = Mock()
+        wf.name = name
+        wf.executors = executors
+        return wf
+
+    def test_nested_workflow_registers_both_orchestrations(self) -> None:
+        """An outer workflow registers an orchestration for itself and the inner workflow."""
+        inner, _ = self._inner_agent_wf("inner", "agent_node")
+        outer = self._outer_wf("outer", inner)
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            app = AgentFunctionApp(workflow=outer)
+
+        assert setup_orch.call_count == 2
+        registered = {call.args[0].name for call in setup_orch.call_args_list}
+        assert registered == {"outer", "inner"}
+        # Only the top-level workflow is tracked as an addressable workflow.
+        assert set(app.workflows) == {"outer"}
+
+    def test_nested_workflow_registers_inner_agent_scoped(self) -> None:
+        """The inner workflow's agent entity is registered under the inner-scoped id."""
+        inner, inner_agent = self._inner_agent_wf("inner", "agent_node")
+        outer = self._outer_wf("outer", inner)
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            patch.object(AgentFunctionApp, "_setup_agent_entity") as setup_entity,
+        ):
+            app = AgentFunctionApp(workflow=outer)
+
+        setup_entity.assert_called_once()
+        call_args = setup_entity.call_args.args
+        assert call_args[0] is inner_agent
+        assert call_args[1] == "inner-agent_node"
+        assert "inner-agent_node" in app.agents
+
+    def test_nested_workflow_routes_only_top_level(self) -> None:
+        """HTTP routes are registered only for the top-level workflow."""
+        inner, _ = self._inner_agent_wf("inner", "agent_node")
+        outer = self._outer_wf("outer", inner)
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            patch.object(AgentFunctionApp, "_register_workflow_routes") as routes,
+        ):
+            AgentFunctionApp(workflow=outer)
+
+        routes.assert_called_once()
+        assert routes.call_args.args[0] is outer
+
+    def test_shared_subworkflow_registered_once(self) -> None:
+        """A sub-workflow reused by two nodes registers its orchestration only once."""
+        inner, _ = self._inner_agent_wf("inner", "agent_node")
+        outer = self._outer_wf("outer", inner, sub_ids=("sub_a", "sub_b"))
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            AgentFunctionApp(workflow=outer)
+
+        registered = sorted(call.args[0].name for call in setup_orch.call_args_list)
+        assert registered == ["inner", "outer"]
+
+    def test_nested_workflow_with_invalid_name_is_rejected(self) -> None:
+        """A nested sub-workflow must also have a valid, stable name."""
+        inner, _ = self._inner_agent_wf("has space", "agent_node")
+        outer = self._outer_wf("outer", inner)
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="invalid"),
+        ):
+            AgentFunctionApp(workflow=outer)
+
+    def test_different_subworkflow_sharing_a_name_is_rejected(self) -> None:
+        """Two different sub-workflow instances that share a name collide and are rejected."""
+        inner_a, _ = self._inner_agent_wf("shared", "agent_node")
+        inner_b, _ = self._inner_agent_wf("shared", "other_node")  # different instance, same name
+        from agent_framework import WorkflowExecutor
+
+        sub_a = Mock(spec=WorkflowExecutor)
+        sub_a.id = "a"
+        sub_a.workflow = inner_a
+        sub_b = Mock(spec=WorkflowExecutor)
+        sub_b.id = "b"
+        sub_b.workflow = inner_b
+        outer = Mock()
+        outer.name = "outer"
+        outer.executors = {"a": sub_a, "b": sub_b}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="different workflow"),
+        ):
+            AgentFunctionApp(workflow=outer)
+
+    def test_cross_registration_nested_collision_is_atomic(self) -> None:
+        """A later top-level workflow whose nested child collides aborts before committing it.
+
+        Hosting ``[first, second]`` where ``second``'s nested sub-workflow reuses
+        ``first``'s child name must raise *before* ``second`` registers any primitives,
+        so the app is never left with ``second`` half-configured.
+        """
+        shared_a, _ = self._inner_agent_wf("shared", "agent_node")
+        shared_b, _ = self._inner_agent_wf("shared", "other_node")  # different instance, same name
+        first = self._outer_wf("first", shared_a)
+        second = self._outer_wf("second", shared_b)
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+            pytest.raises(ValueError, match="collides"),
+        ):
+            AgentFunctionApp(workflows=[first, second])
+
+        # Only 'first' and its child 'shared' committed primitives; the collision aborted
+        # before 'second' (or its colliding child) registered anything.
+        registered = {call.args[0].name for call in setup_orch.call_args_list}
+        assert registered == {"first", "shared"}
+        assert "second" not in registered
+
+    def test_executor_id_with_reserved_separator_is_rejected(self) -> None:
+        """An executor id containing the nested-HITL separator is rejected at registration."""
+        from agent_framework import Executor
+
+        ex = Mock(spec=Executor)
+        ex.id = "bad~id"
+        wf = Mock()
+        wf.name = "orders"
+        wf.executors = {"bad~id": ex}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            pytest.raises(ValueError, match="reserved sub-workflow request separator"),
+        ):
+            AgentFunctionApp(workflow=wf)
+
+
+# NOTE: State snapshot/diff tests were moved to durabletask once the activity
+# execution body was extracted into the host-agnostic execute_workflow_activity.
+# See packages/durabletask/tests/test_workflow_activity.py.
+
+
+class TestWorkflowStatusOutputEncoding:
+    """The workflow status endpoint emits clean domain JSON for reconstructed outputs.
+
+    Reconstructed outputs (see ``deserialize_workflow_output``) may be framework
+    models or dataclasses; ``_json_default`` converts them via their own
+    serialization so the HTTP body is clean domain JSON rather than opaque
+    checkpoint-marker dicts or repr strings.
+    """
+
+    def test_encodes_framework_model_via_to_dict(self) -> None:
+        from agent_framework_azurefunctions._app import _json_default
+
+        response = AgentResponse(messages=[Message(role="assistant", contents=["hello"])])
+
+        encoded = _json_default(response)
+
+        assert encoded == response.to_dict()
+        # The result must be JSON-serializable (no marker dicts, no objects).
+        assert "hello" in json.dumps(encoded)
+
+    def test_encodes_dataclass_via_asdict(self) -> None:
+        from dataclasses import dataclass
+
+        from agent_framework_azurefunctions._app import _json_default
+
+        @dataclass
+        class Decision:
+            approved: bool
+            note: str
+
+        encoded = _json_default(Decision(approved=True, note="ok"))
+
+        assert encoded == {"approved": True, "note": "ok"}
+
+    def test_falls_back_to_str_for_plain_objects(self) -> None:
+        from agent_framework_azurefunctions._app import _json_default
+
+        class Opaque:
+            def __str__(self) -> str:
+                return "opaque-value"
+
+        assert _json_default(Opaque()) == "opaque-value"
+
+
+class TestWorkflowOrchestrationScoping:
+    """Scoping of the workflow status/respond endpoints to the workflow orchestrator.
+
+    Both endpoints address durable instances by ID only, but the durable client resolves
+    IDs across every orchestration in the task hub (agent entities, user-registered
+    orchestrations, other apps on the same hub). ``_is_owned_orchestration`` gates the
+    endpoints so a leaked instance ID for a different orchestration is treated as
+    "not found" instead of leaking its status/HITL details or accepting injected events.
+    """
+
+    def _app_for(self, workflow_name: str) -> AgentFunctionApp:
+        mock_workflow = Mock()
+        mock_workflow.name = workflow_name
+        mock_workflow.executors = {}
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            return AgentFunctionApp(workflow=mock_workflow)
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            workflow_orchestrator_name("orders"),  # exact dafx-orders
+            workflow_orchestrator_name("orders").upper(),  # case-insensitive: must match
+            "DAFX-orders",  # mixed case prefix
+        ],
+    )
+    def test_accepts_matching_workflow_orchestration(self, name: str) -> None:
+        app = self._app_for("orders")
+        status = Mock()
+        status.name = name
+        assert app._is_owned_orchestration(status, "orders") is True
+
+    def test_rejects_none_status(self) -> None:
+        # client.get_status returns None when no instance resolves for the ID.
+        app = self._app_for("orders")
+        assert app._is_owned_orchestration(None, "orders") is False
+
+    def test_rejects_status_without_name(self) -> None:
+        app = self._app_for("orders")
+        status = Mock()
+        status.name = None
+        assert app._is_owned_orchestration(status, "orders") is False
+
+    @pytest.mark.parametrize(
+        "other_name",
+        [
+            "SomeUserOrchestration",
+            "dafx-WeatherAgent",  # an agent entity, not this workflow's orchestration
+            "dafx-billing",  # a *different* workflow's orchestration
+            "workflow_orchestrator",  # the deprecated fixed name
+        ],
+    )
+    def test_rejects_other_orchestration_name(self, other_name: str) -> None:
+        app = self._app_for("orders")
+        status = Mock()
+        status.name = other_name
+        assert app._is_owned_orchestration(status, "orders") is False
+
+
+class TestAgentFunctionAppSubworkflowHitl:
+    """Sub-workflow HITL plumbing: gather nested pending requests and route responses.
+
+    These exercise the host-side helpers the ``workflow/{name}/status`` and
+    ``.../respond`` routes use to support nested sub-workflows behind a single
+    top-level addressing surface (B2 qualified request ids).
+    """
+
+    @staticmethod
+    def _app() -> AgentFunctionApp:
+        mock_workflow = Mock()
+        mock_workflow.name = "orders"
+        mock_workflow.executors = {}
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            return AgentFunctionApp(workflow=mock_workflow)
+
+    @staticmethod
+    def _client(by_instance: dict[str, dict | None]) -> AsyncMock:
+        """An AsyncMock durable client whose get_status returns a per-instance custom status."""
+
+        async def _get_status(instance_id: str) -> Mock | None:
+            if instance_id not in by_instance:
+                return None
+            status = Mock()
+            status.custom_status = by_instance[instance_id]
+            return status
+
+        client = AsyncMock()
+        client.get_status.side_effect = _get_status
+        return client
+
+    async def test_gather_returns_top_level_requests_unqualified(self) -> None:
+        app = self._app()
+        client = self._client({})
+        custom_status = {"pending_requests": {"top-1": {"source_executor_id": "outer"}}}
+
+        gathered = await app._gather_pending_hitl_requests(client, custom_status)
+
+        assert gathered == [("top-1", {"source_executor_id": "outer"})]
+
+    async def test_gather_qualifies_nested_requests(self) -> None:
+        app = self._app()
+        client = self._client({"child-1": {"pending_requests": {"inner-1": {"source_executor_id": "inner"}}}})
+        parent_status = {
+            "pending_requests": {"top-1": {"source_executor_id": "outer"}},
+            "subworkflows": {"sub": ["child-1"]},
+        }
+
+        gathered = await app._gather_pending_hitl_requests(client, parent_status)
+
+        ids = {qid for qid, _ in gathered}
+        assert ids == {"top-1", "sub~0~inner-1"}
+
+    async def test_gather_accumulates_deep_path(self) -> None:
+        app = self._app()
+        client = self._client({
+            "child-1": {"subworkflows": {"leaf": ["child-2"]}},
+            "child-2": {"pending_requests": {"deep": {"source_executor_id": "leaf_node"}}},
+        })
+        parent_status = {"subworkflows": {"mid": ["child-1"]}}
+
+        gathered = await app._gather_pending_hitl_requests(client, parent_status)
+
+        assert [qid for qid, _ in gathered] == ["mid~0~leaf~0~deep"]
+
+    async def test_resolve_unqualified_targets_same_instance(self) -> None:
+        app = self._app()
+        client = self._client({})
+
+        resolved = await app._resolve_hitl_target(client, "parent", "req-1")
+
+        assert resolved == ("parent", "req-1")
+
+    async def test_resolve_qualified_targets_child_instance(self) -> None:
+        app = self._app()
+        client = self._client({"parent": {"subworkflows": {"sub": ["child-1"]}}})
+
+        resolved = await app._resolve_hitl_target(client, "parent", "sub~0~req-9")
+
+        assert resolved == ("child-1", "req-9")
+
+    async def test_resolve_deeply_qualified_targets_leaf(self) -> None:
+        app = self._app()
+        client = self._client({
+            "parent": {"subworkflows": {"mid": ["child-1"]}},
+            "child-1": {"subworkflows": {"leaf": ["child-2"]}},
+        })
+
+        resolved = await app._resolve_hitl_target(client, "parent", "mid~0~leaf~0~deep")
+
+        assert resolved == ("child-2", "deep")
+
+    async def test_resolve_unknown_subworkflow_returns_none(self) -> None:
+        app = self._app()
+        client = self._client({"parent": {"state": "running"}})  # no subworkflows map
+
+        resolved = await app._resolve_hitl_target(client, "parent", "sub~0~req-9")
+
+        assert resolved is None
+
+    async def test_multiple_children_of_one_executor_stay_addressable(self) -> None:
+        app = self._app()
+        client = self._client({
+            "parent": {"subworkflows": {"sub": ["child-1", "child-2"]}},
+            "child-1": {"pending_requests": {"r1": {"source_executor_id": "a"}}},
+            "child-2": {"pending_requests": {"r2": {"source_executor_id": "b"}}},
+        })
+        parent_status = {"subworkflows": {"sub": ["child-1", "child-2"]}}
+
+        gathered = await app._gather_pending_hitl_requests(client, parent_status)
+        assert {qid for qid, _ in gathered} == {"sub~0~r1", "sub~1~r2"}
+
+        # The second child (ordinal 1) resolves distinctly, not shadowed by the first.
+        resolved = await app._resolve_hitl_target(client, "parent", "sub~1~r2")
+        assert resolved == ("child-2", "r2")
+
+    async def test_nested_double_colon_leaf_round_trips(self) -> None:
+        app = self._app()
+        client = self._client({
+            "parent": {"subworkflows": {"sub": ["child-1"]}},
+            "child-1": {"pending_requests": {"auto::0": {"request_id": "auto::0", "source_executor_id": "fn"}}},
+        })
+        parent_status = {"subworkflows": {"sub": ["child-1"]}}
+
+        gathered = await app._gather_pending_hitl_requests(client, parent_status)
+        assert [qid for qid, _ in gathered] == ["sub~0~auto::0"]
+
+        resolved = await app._resolve_hitl_target(client, "parent", "sub~0~auto::0")
+        assert resolved == ("child-1", "auto::0")
+
+    async def test_top_level_double_colon_leaf_is_not_nested(self) -> None:
+        app = self._app()
+        client = self._client({})
+
+        resolved = await app._resolve_hitl_target(client, "parent", "auto::0")
+
+        assert resolved == ("parent", "auto::0")
 
 
 if __name__ == "__main__":

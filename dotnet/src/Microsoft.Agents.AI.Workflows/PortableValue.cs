@@ -96,7 +96,8 @@ public sealed class PortableValue
     /// </summary>
     /// <remarks>If the underlying value implements delayed deserialization, this method will attempt to
     /// deserialize it to the specified type. If the value is already of the requested type, it is returned directly.
-    /// Otherwise, the default value for TValue is returned.
+    /// Otherwise, the default value for TValue is returned. For value types, the default is not <see langword="null"/>,
+    /// UNLESS <typeparamref name="TValue"/> is nullable, e.g. <c>int?</c>.
     /// </remarks>
     /// <typeparam name="TValue">The type to which the value should be cast or deserialized.</typeparam>
     /// <returns>The value cast or deserialized to type TValue if possible; otherwise, the default value for type TValue.</returns>

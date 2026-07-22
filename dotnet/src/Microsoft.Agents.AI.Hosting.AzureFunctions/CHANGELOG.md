@@ -1,6 +1,14 @@
 # Release History
 
-## <version>
+## [Unreleased]
+
+- Scope workflow status/respond endpoints to the route workflow name ([#6608](https://github.com/microsoft/agent-framework/pull/6608))
+- Bind MCP threadId to the current agent and guard cross-agent session dispatch ([#6531](https://github.com/microsoft/agent-framework/pull/6531))
+- Support returning workflow results from HTTP trigger endpoint ([#5321](https://github.com/microsoft/agent-framework/pull/5321))
+- Added MCP tool trigger support for durable workflows ([#4768](https://github.com/microsoft/agent-framework/pull/4768))
+- Added Azure Functions hosting support for durable workflows ([#4436](https://github.com/microsoft/agent-framework/pull/4436))
+
+## v1.0.0-preview.251219.1
 
 - Addressed incompatibility issue with `Microsoft.Azure.Functions.Worker.Extensions.DurableTask` >= 1.11.0 ([#2759](https://github.com/microsoft/agent-framework/pull/2759))
 

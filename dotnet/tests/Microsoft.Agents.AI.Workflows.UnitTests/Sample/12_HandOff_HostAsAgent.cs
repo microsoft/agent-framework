@@ -20,7 +20,7 @@ internal sealed class HandoffTestEchoAgent(string id, string name, string prefix
         {
             IEnumerable<AITool>? handoffs = chatClientOptions.ChatOptions
                                                              .Tools?
-                                                             .Where(tool => tool.Name?.StartsWith(HandoffsWorkflowBuilder.FunctionPrefix,
+                                                             .Where(tool => tool.Name?.StartsWith(HandoffWorkflowBuilder.FunctionPrefix,
                                                                                                   StringComparison.OrdinalIgnoreCase) is true);
 
             if (handoffs != null)
@@ -58,7 +58,7 @@ internal static class Step12EntryPoint
             .Select(i => new HandoffTestEchoAgent($"{EchoAgentIdPrefix}{i}", $"{EchoAgentNamePrefix}{i}", EchoPrefixForAgent(i)))
             .ToArray();
 
-        return new HandoffsWorkflowBuilder(echoAgents[0])
+        return new HandoffWorkflowBuilder(echoAgents[0])
                    .WithHandoff(echoAgents[0], echoAgents[1])
                    .Build();
     }
@@ -67,16 +67,17 @@ internal static class Step12EntryPoint
 
     public static async ValueTask RunAsync(TextWriter writer, IWorkflowExecutionEnvironment executionEnvironment, IEnumerable<string> inputs)
     {
-        AIAgent hostAgent = WorkflowInstance.AsAgent("echo-workflow", "EchoW", executionEnvironment: executionEnvironment);
+        AIAgent hostAgent = WorkflowInstance.AsAIAgent("echo-workflow", "EchoW", executionEnvironment: executionEnvironment);
 
-        AgentThread thread = hostAgent.GetNewThread();
+        AgentSession session = await hostAgent.CreateSessionAsync();
         foreach (string input in inputs)
         {
-            AgentRunResponse response;
+            AgentResponse response;
+
             ResponseContinuationToken? continuationToken = null;
             do
             {
-                response = await hostAgent.RunAsync(input, thread, new AgentRunOptions { ContinuationToken = continuationToken });
+                response = await hostAgent.RunAsync(input, session, new AgentRunOptions { ContinuationToken = continuationToken });
             } while ((continuationToken = response.ContinuationToken) is { });
 
             foreach (ChatMessage message in response.Messages)

@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.AI;
@@ -8,51 +9,31 @@ namespace Microsoft.Agents.AI.Workflows;
 
 internal static class AIAgentsAbstractionsExtensions
 {
-    public static ChatMessage ToChatMessage(this AgentRunResponseUpdate update) =>
-        new()
-        {
-            AuthorName = update.AuthorName,
-            Contents = update.Contents,
-            Role = update.Role ?? ChatRole.User,
-            CreatedAt = update.CreatedAt,
-            MessageId = update.MessageId,
-            RawRepresentation = update.RawRepresentation ?? update,
-        };
+    public static ChatMessage ChatAssistantToUserIfNotFromNamed(this ChatMessage message, string agentName)
+        => message.ChatAssistantToUserIfNotFromNamed(agentName, out _, false);
 
-    /// <summary>
-    /// Iterates through <paramref name="messages"/> looking for <see cref="ChatRole.Assistant"/> messages and swapping
-    /// any that have a different <see cref="ChatMessage.AuthorName"/> from <paramref name="targetAgentName"/> to
-    /// <see cref="ChatRole.User"/>.
-    /// </summary>
-    public static List<ChatMessage>? ChangeAssistantToUserForOtherParticipants(this List<ChatMessage> messages, string targetAgentName)
+    private static ChatMessage ChatAssistantToUserIfNotFromNamed(this ChatMessage message, string agentName, out bool changed, bool inplace = true)
     {
-        List<ChatMessage>? roleChanged = null;
-        foreach (var m in messages)
+        changed = false;
+
+        if (message.Role == ChatRole.Assistant &&
+            !StringComparer.Ordinal.Equals(message.AuthorName, agentName) &&
+            message.Contents.All(c => c is TextContent or DataContent or UriContent or UsageContent))
         {
-            if (m.Role == ChatRole.Assistant &&
-                m.AuthorName != targetAgentName &&
-                m.Contents.All(c => c is TextContent or DataContent or UriContent or UsageContent))
+            if (!inplace)
             {
-                m.Role = ChatRole.User;
-                (roleChanged ??= []).Add(m);
+                message = message.Clone();
             }
+
+            message.Role = ChatRole.User;
+            changed = true;
         }
 
-        return roleChanged;
+        return message;
     }
 
-    /// <summary>
-    /// Undoes changes made by <see cref="ChangeAssistantToUserForOtherParticipants"/> when passed the list of changes
-    /// made by that method.
-    /// </summary>
-    public static void ResetUserToAssistantForChangedRoles(this List<ChatMessage>? roleChanged)
-    {
-        if (roleChanged is not null)
-        {
-            foreach (var m in roleChanged)
-            {
-                m.Role = ChatRole.Assistant;
-            }
-        }
-    }
+    public static List<ChatMessage> CopyWithAssistantToUserForOtherParticipants(
+        this IEnumerable<ChatMessage> messages,
+        string targetAgentName)
+        => messages.Select(m => m.ChatAssistantToUserIfNotFromNamed(targetAgentName, out _, false)).ToList();
 }

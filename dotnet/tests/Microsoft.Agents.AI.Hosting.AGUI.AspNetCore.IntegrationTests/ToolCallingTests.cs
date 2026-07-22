@@ -9,14 +9,13 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using AGUI.Client;
 using FluentAssertions;
-using Microsoft.Agents.AI.AGUI;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests;
 
@@ -43,15 +42,15 @@ public sealed class ToolCallingTests : IAsyncDisposable
         }, "ServerFunction", "A function on the server");
 
         await this.SetupTestServerAsync(serverTools: [serverTool]);
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
-        AgentThread thread = agent.GetNewThread();
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
+        AgentSession session = await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "Call the server function");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -91,15 +90,15 @@ public sealed class ToolCallingTests : IAsyncDisposable
         }, "GetTime", "Gets the current time");
 
         await this.SetupTestServerAsync(serverTools: [getWeatherTool, getTimeTool]);
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
-        AgentThread thread = agent.GetNewThread();
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
+        AgentSession session = await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "What's the weather and time?");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -132,15 +131,15 @@ public sealed class ToolCallingTests : IAsyncDisposable
         }, "ClientFunction", "A function on the client");
 
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
-        AgentThread thread = agent.GetNewThread();
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
+        AgentSession session = await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "Call the client function");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -180,15 +179,15 @@ public sealed class ToolCallingTests : IAsyncDisposable
         }, "FormatText", "Formats text to uppercase");
 
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [calculateTool, formatTool]);
-        AgentThread thread = agent.GetNewThread();
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [calculateTool, formatTool]);
+        AgentSession session = await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "Calculate 5 + 3 and format 'hello'");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -231,15 +230,15 @@ public sealed class ToolCallingTests : IAsyncDisposable
         }, "GetClientData", "Gets data from the client");
 
         await this.SetupTestServerAsync(serverTools: [serverTool]);
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
-        AgentThread thread = agent.GetNewThread();
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
+        AgentSession session = await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "Get both server and client data");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
             this._output.WriteLine($"Update: {update.Contents.Count} contents");
@@ -260,16 +259,13 @@ public sealed class ToolCallingTests : IAsyncDisposable
         // Assert
         this._output.WriteLine($"serverCallCount={serverCallCount}, clientCallCount={clientCallCount}");
 
-        // NOTE: Current limitation - server tool execution doesn't work properly in this scenario
-        // The FakeChatClient generates calls for both tools, but the server's FunctionInvokingChatClient
-        // doesn't execute the server tool. Only the client tool gets executed by the client-side
-        // FunctionInvokingChatClient. This appears to be a product code issue that needs investigation.
+        // Verify both the server and client tools executed and both results round-tripped through
+        // the streaming pipeline. This is now correct behavior thanks to
+        // ConfigureForMixedInvocation in the AGUI.Hosting.AspNetCore package.
 
-        // For now, we verify that:
-        // 1. Client tool executes successfully on the client
+        serverCallCount.Should().Be(1, "server function should execute on server");
         clientCallCount.Should().Be(1, "client function should execute on client");
 
-        // 2. Both function calls are generated and sent
         var functionCallUpdates = updates.Where(u => u.Contents.Any(c => c is FunctionCallContent)).ToList();
         functionCallUpdates.Should().NotBeEmpty("should contain function calls");
 
@@ -278,15 +274,18 @@ public sealed class ToolCallingTests : IAsyncDisposable
         functionCalls.Should().Contain(fc => fc.Name == "GetServerData");
         functionCalls.Should().Contain(fc => fc.Name == "GetClientData");
 
-        // 3. Only client function result is present (server execution not working)
         var functionResults = updates.SelectMany(u => u.Contents.OfType<FunctionResultContent>()).ToList();
-        functionResults.Should().HaveCount(1, "only client function result is present due to current limitation");
+        functionResults.Should().HaveCount(2, "both server and client function results should be present");
 
-        // Client function should succeed
+        var serverResult = functionResults.FirstOrDefault(fr =>
+            functionCalls.Any(fc => fc.Name == "GetServerData" && fc.CallId == fr.CallId));
+        serverResult.Should().NotBeNull("server function call should have a result");
+        serverResult!.Result?.ToString().Should().Contain("Server data");
+
         var clientResult = functionResults.FirstOrDefault(fr =>
             functionCalls.Any(fc => fc.Name == "GetClientData" && fc.CallId == fr.CallId));
         clientResult.Should().NotBeNull("client function call should have a result");
-        clientResult!.Result?.ToString().Should().Be("Client data", "client function should execute successfully");
+        clientResult!.Result?.ToString().Should().Contain("Client data");
     }
 
     [Fact]
@@ -296,15 +295,15 @@ public sealed class ToolCallingTests : IAsyncDisposable
         AIFunction testTool = AIFunctionFactory.Create(() => "Test result", "TestFunction", "A test function");
 
         await this.SetupTestServerAsync(serverTools: [testTool]);
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
-        AgentThread thread = agent.GetNewThread();
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
+        AgentSession session = await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "Call the test function");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -340,15 +339,15 @@ public sealed class ToolCallingTests : IAsyncDisposable
         }, "Function2", "Second function");
 
         await this.SetupTestServerAsync(serverTools: [func1, func2], triggerParallelCalls: true);
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
-        AgentThread thread = agent.GetNewThread();
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
+        AgentSession session = await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "Call both functions in parallel");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -386,7 +385,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         var clientJsonOptions = new JsonSerializerOptions();
         clientJsonOptions.TypeInfoResolverChain.Add(ClientJsonContext.Default);
 
-        _ = new AGUIChatClient(this._client!, "", null, clientJsonOptions);
+        _ = new AGUIChatClient(new(this._client!, "") { JsonSerializerOptions = clientJsonOptions });
 
         // Act - Verify that both AG-UI types and custom types can be serialized
         // The AGUIChatClient should have combined AGUIJsonSerializerContext with ClientJsonContext
@@ -426,15 +425,15 @@ public sealed class ToolCallingTests : IAsyncDisposable
             ServerJsonContext.Default.Options);
 
         await this.SetupTestServerAsync(serverTools: [serverTool], jsonSerializerOptions: ServerJsonContext.Default.Options);
-        var chatClient = new AGUIChatClient(this._client!, "", null, ServerJsonContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
-        AgentThread thread = agent.GetNewThread();
+        var chatClient = new AGUIChatClient(new(this._client!, "") { JsonSerializerOptions = ServerJsonContext.Default.Options });
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
+        AgentSession session = await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "Get server forecast for Seattle for 5 days");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -472,15 +471,15 @@ public sealed class ToolCallingTests : IAsyncDisposable
             ClientJsonContext.Default.Options);
 
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null, ClientJsonContext.Default.Options);
-        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
-        AgentThread thread = agent.GetNewThread();
+        var chatClient = new AGUIChatClient(new(this._client!, "") { JsonSerializerOptions = ClientJsonContext.Default.Options });
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
+        AgentSession session = await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "Get client forecast for Portland with hourly data");
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -505,7 +504,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         JsonSerializerOptions? jsonSerializerOptions = null)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        builder.Services.AddAGUI();
+        builder.Services.AddAGUIServer();
         builder.WebHost.UseTestServer();
 
         // Configure HTTP JSON options if custom serializer options provided
@@ -518,8 +517,8 @@ public sealed class ToolCallingTests : IAsyncDisposable
         this._app = builder.Build();
         // FakeChatClient will receive options.Tools containing both server and client tools (merged by framework)
         var fakeChatClient = new FakeToolCallingChatClient(triggerParallelCalls, this._output, jsonSerializerOptions: jsonSerializerOptions);
-        AIAgent baseAgent = fakeChatClient.CreateAIAgent(instructions: null, name: "base-agent", description: "A base agent for tool testing", tools: serverTools ?? []);
-        this._app.MapAGUI("/agent", baseAgent);
+        AIAgent baseAgent = fakeChatClient.AsAIAgent(instructions: null, name: "base-agent", description: "A base agent for tool testing", tools: serverTools ?? []);
+        this._app.MapAGUIServer("/agent", baseAgent);
 
         await this._app.StartAsync();
 

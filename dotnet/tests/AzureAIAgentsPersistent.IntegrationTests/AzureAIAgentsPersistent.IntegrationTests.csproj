@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <NoWarn>$(NoWarn);CS8793</NoWarn>
     <InjectSharedIntegrationTestCode>True</InjectSharedIntegrationTestCode>
+    <InjectSharedIntegrationTestAzureCredentialsCode>True</InjectSharedIntegrationTestAzureCredentialsCode>
   </PropertyGroup>
 
   <ItemGroup>

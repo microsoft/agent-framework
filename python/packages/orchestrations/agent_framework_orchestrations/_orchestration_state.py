@@ -1,0 +1,93 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+"""Unified state management for group chat orchestrators.
+
+Provides OrchestrationState dataclass for standardized checkpoint serialization
+across GroupChat, Handoff, and Magentic patterns.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from agent_framework._types import Message
+
+
+def _new_chat_message_list() -> list[Message]:
+    """Factory function for typed empty Message list.
+
+    Satisfies the type checker.
+    """
+    return []
+
+
+def _new_metadata_dict() -> dict[str, Any]:
+    """Factory function for typed empty metadata dict.
+
+    Satisfies the type checker.
+    """
+    return {}
+
+
+@dataclass
+class OrchestrationState:
+    """Unified state container for orchestrator checkpointing.
+
+    This dataclass standardizes checkpoint serialization across all three
+    group chat patterns while allowing pattern-specific extensions via metadata.
+
+    Common attributes cover shared orchestration concerns (task, conversation,
+    round tracking). Pattern-specific state goes in the metadata dict.
+
+    Attributes:
+        conversation: Full conversation history (all messages)
+        round_index: Number of coordination rounds completed (0 if not tracked)
+        metadata: Extensible dict for pattern-specific state
+        task: Optional primary task/question being orchestrated
+    """
+
+    conversation: list[Message] = field(default_factory=_new_chat_message_list)
+    round_index: int = 0
+    orchestrator_name: str = ""
+    metadata: dict[str, Any] = field(default_factory=_new_metadata_dict)
+    task: Message | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict for checkpointing.
+
+        Returns:
+            Dict with encoded conversation and metadata for persistence
+        """
+        result: dict[str, Any] = {
+            "conversation": self.conversation,
+            "round_index": self.round_index,
+            "orchestrator_name": self.orchestrator_name,
+            "metadata": dict(self.metadata),
+        }
+        if self.task is not None:
+            result["task"] = self.task
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> OrchestrationState:
+        """Deserialize from checkpointed dict.
+
+        Args:
+            data: Checkpoint data with encoded conversation
+
+        Returns:
+            Restored OrchestrationState instance
+        """
+        task = None
+        if "task" in data:
+            decoded_tasks = [data["task"]]
+            task = decoded_tasks[0] if decoded_tasks else None
+
+        return cls(
+            conversation=data.get("conversation", []),
+            round_index=data.get("round_index", 0),
+            orchestrator_name=data.get("orchestrator_name", ""),
+            metadata=dict(data.get("metadata", {})),
+            task=task,
+        )

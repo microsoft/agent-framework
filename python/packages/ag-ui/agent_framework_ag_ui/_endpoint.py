@@ -2,64 +2,173 @@
 
 """FastAPI endpoint creation for AG-UI agents."""
 
+from __future__ import annotations
+
 import copy
 import logging
-from typing import Any
+from collections.abc import AsyncGenerator, Sequence
+from inspect import isawaitable
+from typing import Any, cast
 
+from ag_ui.core import RunErrorEvent
 from ag_ui.encoder import EventEncoder
-from agent_framework import AgentProtocol
-from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from agent_framework import SupportsAgentRun, Workflow
+from fastapi import FastAPI, HTTPException
+from fastapi.params import Depends
+from fastapi.responses import Response, StreamingResponse
 
 from ._agent import AgentFrameworkAgent
+from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY
+from ._snapshots import (
+    _DEFAULT_STATE_INPUT_KEY,
+    _SNAPSHOT_SCOPE_INPUT_KEY,
+    AGUIThreadSnapshotStore,
+    SnapshotScopeResolver,
+)
+from ._types import AGUIRequest
+from ._workflow import AgentFrameworkWorkflow
 
 logger = logging.getLogger(__name__)
+
+_KEEPALIVE_COMMENT = "keepalive"
+
+
+def _get_snapshot_store(
+    protocol_runner: AgentFrameworkAgent | AgentFrameworkWorkflow,
+) -> AGUIThreadSnapshotStore | None:
+    if isinstance(protocol_runner, AgentFrameworkAgent):
+        return protocol_runner.config.snapshot_store
+    return protocol_runner.snapshot_store
+
+
+def _set_snapshot_store(
+    protocol_runner: AgentFrameworkAgent | AgentFrameworkWorkflow,
+    snapshot_store: AGUIThreadSnapshotStore,
+) -> None:
+    if isinstance(protocol_runner, AgentFrameworkAgent):
+        protocol_runner.config.snapshot_store = snapshot_store
+        return
+    protocol_runner.snapshot_store = snapshot_store
+
+
+def _configure_snapshot_persistence(
+    protocol_runner: AgentFrameworkAgent | AgentFrameworkWorkflow,
+    *,
+    snapshot_store: AGUIThreadSnapshotStore | None,
+    snapshot_scope_resolver: SnapshotScopeResolver | None,
+) -> None:
+    existing_snapshot_store = _get_snapshot_store(protocol_runner)
+    if snapshot_store is not None:
+        if existing_snapshot_store is not None and existing_snapshot_store is not snapshot_store:
+            raise ValueError("snapshot_store is already configured on the AG-UI runner.")
+        if existing_snapshot_store is None:
+            _set_snapshot_store(protocol_runner, snapshot_store)
+        existing_snapshot_store = snapshot_store
+
+    if existing_snapshot_store is not None and snapshot_scope_resolver is None:
+        raise ValueError(
+            "snapshot_scope_resolver is required when snapshot_store is configured. "
+            "AG-UI Thread ids identify threads but do not authorize snapshot access; "
+            "provide a resolver that returns an explicit Snapshot Scope."
+        )
+
+
+def _validate_keepalive_seconds(keepalive_seconds: float | None) -> None:
+    if keepalive_seconds is not None and not keepalive_seconds > 0:
+        raise ValueError("keepalive_seconds must be positive or None.")
 
 
 def add_agent_framework_fastapi_endpoint(
     app: FastAPI,
-    agent: AgentProtocol | AgentFrameworkAgent,
+    agent: SupportsAgentRun | AgentFrameworkAgent | Workflow | AgentFrameworkWorkflow,
     path: str = "/",
     state_schema: Any | None = None,
     predict_state_config: dict[str, dict[str, str]] | None = None,
     allow_origins: list[str] | None = None,
     default_state: dict[str, Any] | None = None,
+    tags: list[str] | None = None,
+    dependencies: Sequence[Depends] | None = None,
+    snapshot_store: AGUIThreadSnapshotStore | None = None,
+    snapshot_scope_resolver: SnapshotScopeResolver | None = None,
+    keepalive_seconds: float | None = 15,
 ) -> None:
     """Add an AG-UI endpoint to a FastAPI app.
 
     Args:
         app: The FastAPI application
-        agent: The agent to expose (can be raw AgentProtocol or wrapped)
+        agent: The agent to expose (can be raw SupportsAgentRun or wrapped)
         path: The endpoint path
         state_schema: Optional state schema for shared state management; accepts dict or Pydantic model/class
         predict_state_config: Optional predictive state update configuration.
             Format: {"state_key": {"tool": "tool_name", "tool_argument": "arg_name"}}
         allow_origins: CORS origins (not yet implemented)
         default_state: Optional initial state to seed when the client does not provide state keys
+        tags: OpenAPI tags for endpoint categorization (defaults to ["AG-UI"])
+        dependencies: Optional FastAPI dependencies for authentication/authorization.
+            These dependencies run before the endpoint handler. Use this to add
+            authentication checks, rate limiting, or other middleware-like behavior.
+            Example: `dependencies=[Depends(verify_api_key)]`
+        snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence is opt-in and requires an
+            explicit Snapshot Scope resolver.
+        snapshot_scope_resolver: Optional resolver for the application-defined Snapshot Scope. Required whenever
+            a snapshot store is configured because an AG-UI Thread id is not an authorization boundary.
+        keepalive_seconds: Endpoint SSE keepalive interval in seconds. Defaults to 15. Positive values emit fixed
+            SSE comments while the stream is open. None disables keepalive and preserves the non-keepalive response
+            path. Keepalive comments are transport traffic and do not change AG-UI events.
     """
-    if isinstance(agent, AgentProtocol):
-        wrapped_agent = AgentFrameworkAgent(
+    _validate_keepalive_seconds(keepalive_seconds)
+
+    protocol_runner: AgentFrameworkAgent | AgentFrameworkWorkflow
+    if isinstance(agent, AgentFrameworkWorkflow):
+        protocol_runner = agent
+    elif isinstance(agent, AgentFrameworkAgent):
+        protocol_runner = agent
+    elif isinstance(agent, Workflow):
+        protocol_runner = AgentFrameworkWorkflow(workflow=agent)
+    elif isinstance(agent, SupportsAgentRun):
+        protocol_runner = AgentFrameworkAgent(
             agent=agent,
             state_schema=state_schema,
             predict_state_config=predict_state_config,
+            snapshot_store=snapshot_store,
         )
     else:
-        wrapped_agent = agent
+        raise TypeError("agent must be SupportsAgentRun, Workflow, AgentFrameworkAgent, or AgentFrameworkWorkflow.")
 
-    @app.post(path)
-    async def agent_endpoint(request: Request):  # type: ignore[misc]
+    _configure_snapshot_persistence(
+        protocol_runner,
+        snapshot_store=snapshot_store,
+        snapshot_scope_resolver=snapshot_scope_resolver,
+    )
+
+    @app.post(path, tags=tags or ["AG-UI"], dependencies=dependencies, response_model=None)  # type: ignore[arg-type]
+    async def agent_endpoint(request_body: AGUIRequest) -> Response:
         """Handle AG-UI agent requests.
 
         Note: Function is accessed via FastAPI's decorator registration,
         despite appearing unused to static analysis.
         """
         try:
-            input_data = await request.json()
+            input_data = request_body.model_dump(exclude_none=True)
+            snapshot_persistence_active = False
+            if snapshot_scope_resolver is not None:
+                snapshot_scope = snapshot_scope_resolver(request_body)
+                if isawaitable(snapshot_scope):
+                    snapshot_scope = await snapshot_scope
+                input_data[_APPROVAL_SCOPE_INPUT_KEY] = snapshot_scope
+                if _get_snapshot_store(protocol_runner) is not None:
+                    input_data[_SNAPSHOT_SCOPE_INPUT_KEY] = snapshot_scope
+                    snapshot_persistence_active = True
             if default_state:
-                state = input_data.setdefault("state", {})
-                for key, value in default_state.items():
-                    if key not in state:
-                        state[key] = copy.deepcopy(value)
+                if snapshot_persistence_active:
+                    # Defer default application to the runner so defaults only fill keys
+                    # missing from both the stored snapshot state and the request state.
+                    input_data[_DEFAULT_STATE_INPUT_KEY] = copy.deepcopy(default_state)
+                else:
+                    state = input_data.setdefault("state", {})
+                    for key, value in default_state.items():
+                        if key not in state:
+                            state[key] = copy.deepcopy(value)
             logger.debug(
                 f"[{path}] Received request - Run ID: {input_data.get('run_id', 'no-run-id')}, "
                 f"Thread ID: {input_data.get('thread_id', 'no-thread-id')}, "
@@ -67,36 +176,82 @@ def add_agent_framework_fastapi_endpoint(
             )
             logger.info(f"Received request at {path}: {input_data.get('run_id', 'no-run-id')}")
 
-            async def event_generator():
+            keepalive_enabled = keepalive_seconds is not None
+
+            def prepare_frame(encoded: str) -> str | bytes:
+                if keepalive_enabled:
+                    return encoded.encode("utf-8")
+                return encoded
+
+            async def event_generator() -> AsyncGenerator[str | bytes]:
                 encoder = EventEncoder()
                 event_count = 0
-                async for event in wrapped_agent.run_agent(input_data):
-                    event_count += 1
-                    logger.debug(f"[{path}] Event {event_count}: {type(event).__name__}")
+                try:
+                    async for event in protocol_runner.run(input_data):
+                        event_count += 1
+                        event_type_name = getattr(event, "type", type(event).__name__)
+                        # Log important events at INFO level
+                        if "TOOL_CALL" in str(event_type_name) or "RUN" in str(event_type_name):
+                            if hasattr(event, "model_dump"):
+                                event_data = event.model_dump(exclude_none=True)
+                                logger.info(f"[{path}] Event {event_count}: {event_type_name} - {event_data}")
+                            else:
+                                logger.info(f"[{path}] Event {event_count}: {event_type_name}")
 
-                    # Log event payload for debugging
-                    if hasattr(event, "model_dump"):
-                        event_data = event.model_dump(exclude_none=True)
-                        logger.debug(f"[{path}] Event payload: {event_data}")
+                        try:
+                            encoded = encoder.encode(event)
+                        except Exception as encode_error:
+                            logger.exception("[%s] Failed to encode event %s", path, event_type_name)
+                            run_error = RunErrorEvent(
+                                message="An internal error has occurred while streaming events.",
+                                code=type(encode_error).__name__,
+                            )
+                            try:
+                                yield prepare_frame(encoder.encode(run_error))
+                            except Exception:
+                                logger.exception("[%s] Failed to encode RUN_ERROR event", path)
+                            return
 
-                    encoded = encoder.encode(event)
-                    logger.debug(
-                        f"[{path}] Encoded as: {encoded[:200]}..."
-                        if len(encoded) > 200
-                        else f"[{path}] Encoded as: {encoded}"
+                        logger.debug(
+                            f"[{path}] Encoded as: {encoded[:200]}..."
+                            if len(encoded) > 200
+                            else f"[{path}] Encoded as: {encoded}"
+                        )
+                        yield prepare_frame(encoded)
+
+                    logger.info(f"[{path}] Completed streaming {event_count} events")
+                except Exception as stream_error:
+                    logger.exception("[%s] Streaming failed", path)
+                    run_error = RunErrorEvent(
+                        message="An internal error has occurred while streaming events.",
+                        code=type(stream_error).__name__,
                     )
-                    yield encoded
-                logger.info(f"[{path}] Completed streaming {event_count} events")
+                    try:
+                        yield prepare_frame(encoder.encode(run_error))
+                    except Exception:
+                        logger.exception("[%s] Failed to encode RUN_ERROR event", path)
 
+            headers = {
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            }
+            if keepalive_seconds is not None:
+                from sse_starlette.event import ServerSentEvent
+                from sse_starlette.sse import EventSourceResponse
+
+                return EventSourceResponse(
+                    event_generator(),
+                    ping=cast(int, keepalive_seconds),
+                    ping_message_factory=lambda: ServerSentEvent(comment=_KEEPALIVE_COMMENT),
+                    headers=headers,
+                    media_type="text/event-stream",
+                )
             return StreamingResponse(
                 event_generator(),
                 media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",
-                },
+                headers=headers,
             )
         except Exception as e:
             logger.error(f"Error in agent endpoint: {e}", exc_info=True)
-            return {"error": "An internal error has occurred."}
+            raise HTTPException(status_code=500, detail="An internal error has occurred.") from e

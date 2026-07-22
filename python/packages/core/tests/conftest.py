@@ -61,13 +61,13 @@ def span_exporter(monkeypatch, enable_instrumentation: bool, enable_sensitive_da
     importlib.reload(observability)
 
     # recreate observability settings with values from above and no file.
-    observability_settings = observability.ObservabilitySettings(env_file_path="test.env")
+    observability_settings = observability.ObservabilitySettings()
 
     # Configure providers manually without calling _configure() to avoid OTLP imports
     if enable_instrumentation or enable_sensitive_data:
         from opentelemetry.sdk.trace import TracerProvider
 
-        tracer_provider = TracerProvider(resource=observability_settings._resource)
+        tracer_provider = TracerProvider(resource=observability.create_resource())
         trace.set_tracer_provider(tracer_provider)
 
     monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", observability_settings, raising=False)  # type: ignore
@@ -78,7 +78,7 @@ def span_exporter(monkeypatch, enable_instrumentation: bool, enable_sensitive_da
     ):
         exporter = InMemorySpanExporter()
         if enable_instrumentation or enable_sensitive_data:
-            tracer_provider = trace.get_tracer_provider()
+            tracer_provider = trace.get_tracer_provider()  # type: ignore[assignment]
             if not hasattr(tracer_provider, "add_span_processor"):
                 raise RuntimeError("Tracer provider does not support adding span processors.")
 

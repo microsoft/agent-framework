@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -16,20 +17,31 @@ internal sealed class WorkflowHostAgent : AIAgent
 {
     private readonly Workflow _workflow;
     private readonly string? _id;
-    private readonly CheckpointManager? _checkpointManager;
     private readonly IWorkflowExecutionEnvironment _executionEnvironment;
+    private readonly bool _includeExceptionDetails;
+    private readonly bool _includeWorkflowOutputsInResponse;
     private readonly Task<ProtocolDescriptor> _describeTask;
 
-    private readonly ConcurrentDictionary<string, string> _assignedRunIds = [];
+    private readonly ConcurrentDictionary<string, string> _assignedSessionIds = [];
 
-    public WorkflowHostAgent(Workflow workflow, string? id = null, string? name = null, string? description = null, CheckpointManager? checkpointManager = null, IWorkflowExecutionEnvironment? executionEnvironment = null)
+    public WorkflowHostAgent(Workflow workflow, string? id = null, string? name = null, string? description = null, IWorkflowExecutionEnvironment? executionEnvironment = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false)
     {
         this._workflow = Throw.IfNull(workflow);
 
         this._executionEnvironment = executionEnvironment ?? (workflow.AllowConcurrent
                                                               ? InProcessExecution.Concurrent
                                                               : InProcessExecution.OffThread);
-        this._checkpointManager = checkpointManager;
+
+        if (!this._executionEnvironment.IsCheckpointingEnabled &&
+             this._executionEnvironment is not InProcessExecutionEnvironment)
+        {
+            // Cannot have an implicit CheckpointManager for non-InProcessExecution environments (or others that
+            // support BYO Checkpointing.
+            throw new InvalidOperationException("Cannot use a non-checkpointed execution environment. Implicit checkpointing is supported only for InProcess.");
+        }
+
+        this._includeExceptionDetails = includeExceptionDetails;
+        this._includeWorkflowOutputsInResponse = includeWorkflowOutputsInResponse;
 
         this._id = id;
         this.Name = name;
@@ -50,7 +62,7 @@ internal sealed class WorkflowHostAgent : AIAgent
         do
         {
             result = Guid.NewGuid().ToString("N");
-        } while (!this._assignedRunIds.TryAdd(result, result));
+        } while (!this._assignedSessionIds.TryAdd(result, result));
 
         return result;
     }
@@ -58,64 +70,127 @@ internal sealed class WorkflowHostAgent : AIAgent
     private async ValueTask ValidateWorkflowAsync()
     {
         ProtocolDescriptor protocol = await this._describeTask.ConfigureAwait(false);
-        protocol.ThrowIfNotChatProtocol();
+        protocol.ThrowIfNotChatProtocol(allowCatchAll: true);
     }
 
-    public override AgentThread GetNewThread() => new WorkflowThread(this._workflow, this.GenerateNewId(), this._executionEnvironment, this._checkpointManager);
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+        => new(new WorkflowSession(this._workflow, this.GenerateNewId(), this._executionEnvironment, this._includeExceptionDetails, this._includeWorkflowOutputsInResponse));
 
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => new WorkflowThread(this._workflow, serializedThread, this._executionEnvironment, this._checkpointManager, jsonSerializerOptions);
-
-    private async ValueTask<WorkflowThread> UpdateThreadAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, CancellationToken cancellationToken = default)
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        thread ??= this.GetNewThread();
+        _ = Throw.IfNull(session);
 
-        if (thread is not WorkflowThread workflowThread)
+        if (session is not WorkflowSession workflowSession)
         {
-            throw new ArgumentException($"Incompatible thread type: {thread.GetType()} (expecting {typeof(WorkflowThread)})", nameof(thread));
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(WorkflowSession)}' can be serialized by this agent.");
         }
 
-        await workflowThread.MessageStore.AddMessagesAsync(messages, cancellationToken).ConfigureAwait(false);
-        return workflowThread;
+        return new(workflowSession.Serialize(jsonSerializerOptions));
+    }
+
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new WorkflowSession(this._workflow, serializedState, this._executionEnvironment, this._includeExceptionDetails, this._includeWorkflowOutputsInResponse, jsonSerializerOptions));
+
+    private async ValueTask<WorkflowSession> UpdateSessionAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, CancellationToken cancellationToken = default)
+    {
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+
+        if (session is not WorkflowSession workflowSession)
+        {
+            throw new ArgumentException($"Incompatible session type: {session.GetType()} (expecting {typeof(WorkflowSession)})", nameof(session));
+        }
+
+        // For workflow threads, messages are added directly via the internal AddMessages method
+        // The MessageStore methods are used for agent invocation scenarios
+        workflowSession.ChatHistoryProvider.AddMessages(session, messages);
+        return workflowSession;
     }
 
     protected override async
-    Task<AgentRunResponse> RunCoreAsync(
+    Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         await this.ValidateWorkflowAsync().ConfigureAwait(false);
 
-        WorkflowThread workflowThread = await this.UpdateThreadAsync(messages, thread, cancellationToken).ConfigureAwait(false);
-        MessageMerger merger = new();
+        WorkflowSession workflowSession = await this.UpdateSessionAsync(messages, session, cancellationToken).ConfigureAwait(false);
+        ResponseMergeState mergeState = new();
 
-        await foreach (AgentRunResponseUpdate update in workflowThread.InvokeStageAsync(cancellationToken)
-                                                                      .ConfigureAwait(false)
-                                                                      .WithCancellation(cancellationToken))
+        await foreach (AgentResponseUpdate update in workflowSession.InvokeStageAsync(cancellationToken)
+                                                                     .ConfigureAwait(false)
+                                                                     .WithCancellation(cancellationToken))
         {
-            merger.AddUpdate(update);
+            mergeState.AddUpdate(update, this.IsTerminalWorkflowOutputUpdate(update));
         }
 
-        return merger.ComputeMerged(workflowThread.LastResponseId!, this.Id, this.Name);
+        AgentResponse response = mergeState.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
+        workflowSession.ChatHistoryProvider.AddMessages(workflowSession, response.Messages);
+        workflowSession.ChatHistoryProvider.UpdateBookmark(workflowSession);
+
+        return response;
     }
 
     protected override async
-    IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+    IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         await this.ValidateWorkflowAsync().ConfigureAwait(false);
 
-        WorkflowThread workflowThread = await this.UpdateThreadAsync(messages, thread, cancellationToken).ConfigureAwait(false);
-        await foreach (AgentRunResponseUpdate update in workflowThread.InvokeStageAsync(cancellationToken)
+        WorkflowSession workflowSession = await this.UpdateSessionAsync(messages, session, cancellationToken).ConfigureAwait(false);
+        ResponseMergeState mergeState = new();
+
+        await foreach (AgentResponseUpdate update in workflowSession.InvokeStageAsync(cancellationToken)
                                                                       .ConfigureAwait(false)
                                                                       .WithCancellation(cancellationToken))
         {
+            mergeState.AddUpdate(update, this.IsTerminalWorkflowOutputUpdate(update));
             yield return update;
         }
+
+        AgentResponse response = mergeState.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
+        workflowSession.ChatHistoryProvider.AddMessages(workflowSession, response.Messages);
+        workflowSession.ChatHistoryProvider.UpdateBookmark(workflowSession);
+    }
+
+    private sealed class ResponseMergeState
+    {
+        private readonly MessageMerger _allUpdates = new();
+        private readonly MessageMerger _terminalWorkflowOutputs = new();
+        private bool _hasTerminalWorkflowOutputs;
+
+        public void AddUpdate(AgentResponseUpdate update, bool isTerminalWorkflowOutput)
+        {
+            this._allUpdates.AddUpdate(update);
+            if (isTerminalWorkflowOutput)
+            {
+                this._terminalWorkflowOutputs.AddUpdate(update);
+                this._hasTerminalWorkflowOutputs = true;
+            }
+        }
+
+        public AgentResponse ComputeMerged(string responseId, string? agentId, string? agentName)
+        {
+            MessageMerger merger = this._hasTerminalWorkflowOutputs
+                ? this._terminalWorkflowOutputs
+                : this._allUpdates;
+            return merger.ComputeMerged(responseId, agentId, agentName);
+        }
+    }
+
+    private bool IsTerminalWorkflowOutputUpdate(AgentResponseUpdate update)
+    {
+        if (update.RawRepresentation is not WorkflowOutputEvent output
+            || output is AgentResponseUpdateEvent
+            || output is AgentResponseEvent)
+        {
+            return false;
+        }
+
+        return this._workflow.IsTerminalOutput(output.ExecutorId);
     }
 }

@@ -17,42 +17,56 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 internal sealed class AIAgentResponseExecutor : IResponseExecutor
 {
     private readonly AIAgent _agent;
+    private readonly Func<OpenAIResponseRequestInfo, AgentRunOptions?> _runOptionsFactory;
 
-    public AIAgentResponseExecutor(AIAgent agent)
+    public AIAgentResponseExecutor(AIAgent agent, OpenAIResponsesMapOptions? mapOptions = null)
     {
         ArgumentNullException.ThrowIfNull(agent);
         this._agent = agent;
+        this._runOptionsFactory = (mapOptions ?? new OpenAIResponsesMapOptions()).RunOptionsFactory;
     }
 
     public ValueTask<ResponseError?> ValidateRequestAsync(
         CreateResponse request,
-        CancellationToken cancellationToken = default) => ValueTask.FromResult<ResponseError?>(null);
+        CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(this.ValidateRunOptions(request));
+
+    internal ResponseError? ValidateRunOptions(CreateResponse request)
+    {
+        try
+        {
+            // Invoke the factory during validation so that unsupported request settings are surfaced
+            // as a clean request error rather than an unhandled exception during execution.
+            _ = this._runOptionsFactory(request.ToRequestInfo());
+            return null;
+        }
+        catch (NotSupportedException ex)
+        {
+            return new ResponseError
+            {
+                Code = "unsupported_parameter",
+                Message = ex.Message
+            };
+        }
+    }
 
     public async IAsyncEnumerable<StreamingResponseEvent> ExecuteAsync(
         AgentInvocationContext context,
         CreateResponse request,
+        IReadOnlyList<ChatMessage>? conversationHistory = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Create options with properties from the request
-        var chatOptions = new ChatOptions
-        {
-            // Note: We intentionally do NOT set ConversationId on ChatOptions here.
-            // The conversation ID from the client request is used by the hosting layer
-            // to manage conversation storage, but should not be forwarded to the underlying
-            // IChatClient as it has its own concept of conversations (or none at all).
-            // ---
-            // ConversationId = request.Conversation?.Id,
+        // The hosting developer controls, via OpenAIResponsesMapOptions.RunOptionsFactory, which (if any)
+        // request settings are mapped onto the agent run. By default no request setting is mapped.
+        AgentRunOptions? options = this._runOptionsFactory(request.ToRequestInfo());
 
-            Temperature = (float?)request.Temperature,
-            TopP = (float?)request.TopP,
-            MaxOutputTokens = request.MaxOutputTokens,
-            Instructions = request.Instructions,
-            ModelId = request.Model,
-        };
-        var options = new ChatClientAgentRunOptions(chatOptions);
-
-        // Convert input to chat messages
+        // Convert input to chat messages, prepending conversation history if available
         var messages = new List<ChatMessage>();
+
+        if (conversationHistory is not null)
+        {
+            messages.AddRange(conversationHistory);
+        }
 
         foreach (var inputMessage in request.Input.GetInputMessages())
         {

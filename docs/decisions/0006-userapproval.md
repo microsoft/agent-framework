@@ -2,7 +2,7 @@
 # These are optional elements. Feel free to remove any of them.
 status: accepted
 contact: westey-m
-date: 2025-09-12 {YYYY-MM-DD when the decision was last updated}
+date: 2025-09-12
 deciders: sergeymenshykh, markwallace-microsoft, rogerbarreto, dmytrostruk, westey-m, eavanvalkenburg, stephentoub, peterychang
 consulted: 
 informed: 
@@ -25,7 +25,7 @@ See various features that would need to be supported via this type of mechanism,
 - Also see [the openai human-in-the-loop guide](https://openai.github.io/openai-agents-js/guides/human-in-the-loop/#approval-requests).
 - Also see [the openai MCP guide](https://openai.github.io/openai-agents-js/guides/mcp/#optional-approval-flow).
 - Also see [MCP Approval Requests from OpenAI](https://platform.openai.com/docs/guides/tools-remote-mcp#approvals).
-- Also see [Azure AI Foundry MCP Approvals](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/model-context-protocol-samples?pivots=rest#submit-your-approval).
+- Also see [Microsoft Foundry MCP Approvals](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/model-context-protocol-samples?pivots=rest#submit-your-approval).
 - Also see [MCP Elicitation requests](https://modelcontextprotocol.io/specification/draft/client/elicitation)
 
 ## Decision Drivers
@@ -161,11 +161,11 @@ while (response.ApprovalRequests.Count > 0)
     response = await agent.RunAsync(messages, thread);
 }
 
-class AgentRunResponse
+class AgentResponse
 {
     ...
 
-    // A new property on AgentRunResponse to aggregate the ApprovalRequestContent items from
+    // A new property on AgentResponse to aggregate the ApprovalRequestContent items from
     // the response messages (Similar to the Text property).
     public IEnumerable<ApprovalRequestContent> ApprovalRequests { get; set; }
 
@@ -251,11 +251,11 @@ while (response.UserInputRequests.Any())
     response = await agent.RunAsync(messages, thread);
 }
 
-class AgentRunResponse
+class AgentResponse
 {
     ...
 
-    // A new property on AgentRunResponse to aggregate the UserInputRequestContent items from
+    // A new property on AgentResponse to aggregate the UserInputRequestContent items from
     // the response messages (Similar to the Text property).
     public IReadOnlyList<UserInputRequestContent> UserInputRequests { get; set; }
 
@@ -366,11 +366,11 @@ while (response.UserInputRequests.Any())
     response = await agent.RunAsync(messages, thread);
 }
 
-class AgentRunResponse
+class AgentResponse
 {
     ...
 
-    // A new property on AgentRunResponse to aggregate the UserInputRequestContent items from
+    // A new property on AgentResponse to aggregate the UserInputRequestContent items from
     // the response messages (Similar to the Text property).
     public IEnumerable<UserInputRequestContent> UserInputRequests { get; set; }
 

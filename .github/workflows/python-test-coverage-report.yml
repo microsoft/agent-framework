@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   pull-requests: write
 
 jobs:
@@ -19,29 +20,46 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Download coverage report
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          github-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+          github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
           path: ./python
           merge-multiple: true
       - name: Display structure of downloaded files
         run: ls
-      - name: Read and set PR number
-        # Need to read the PR number from the file saved in the previous workflow
-        # because the workflow_run event does not have access to the PR number
-        # The PR number is needed to post the comment on the PR
+      - name: Read and validate PR number
+        # Keep the artifact handoff aligned with the workflow run that produced it.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          PR_NUMBER=$(cat pr_number)
-          echo "PR number: $PR_NUMBER"
-          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+          if [ ! -s pr_number ]; then
+            echo "PR number file 'pr_number' is missing or empty"
+            exit 1
+          fi
+
+          ARTIFACT_PR_NUMBER=$(cat pr_number)
+          if ! [[ "$ARTIFACT_PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::PR number file contains invalid content"
+            exit 1
+          fi
+
+          PR_HEAD_SHA=$(gh pr view "$ARTIFACT_PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')
+          if [ "$PR_HEAD_SHA" != "$RUN_HEAD_SHA" ]; then
+            echo "::error::PR head SHA does not match the triggering workflow run"
+            exit 1
+          fi
+
+          echo "PR_NUMBER=$ARTIFACT_PR_NUMBER" >> "$GITHUB_ENV"
       - name: Pytest coverage comment
         id: coverageComment
-        uses: MishaKav/pytest-coverage-comment@v1.2.0
+        uses: MishaKav/pytest-coverage-comment@dd5b80bde6d16941f336518e92929e89069d8451 # v1.7.2
         with:
-          github-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+          github-token: ${{ github.token }}
           issue-number: ${{ env.PR_NUMBER }}
           pytest-xml-coverage-path: python/python-coverage.xml
           title: "Python Test Coverage Report"

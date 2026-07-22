@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Xunit;
-
 namespace Microsoft.Agents.AI.CosmosNoSql.UnitTests;
 
 /// <summary>

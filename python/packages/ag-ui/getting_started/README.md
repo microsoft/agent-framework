@@ -35,9 +35,9 @@ python client_advanced.py
 
 **Note:** This example shows direct `AGUIChatClient` usage. Tool execution and conversation continuity depend on server-side configuration and capabilities.
 
-### ChatAgent Integration (`client_with_agent.py`)
+### Agent Integration (`client_with_agent.py`)
 
-Best practice example using `ChatAgent` wrapper with **AgentThread**
+Best practice example using `Agent` wrapper with **AgentThread**
 - **AgentThread** maintains conversation state
 - Client-side conversation history management via `thread.message_store`
 - **Hybrid tool execution**: client-side + server-side tools simultaneously
@@ -77,7 +77,7 @@ The AG-UI protocol supports two approaches to conversation history:
    - Full message history sent with each request
    - Works with any AG-UI server (stateful or stateless)
 
-The `ChatAgent` wrapper (used in client_with_agent.py) collects messages from local storage and sends the full history to `AGUIChatClient`, which then forwards everything to the server.
+The `Agent` wrapper (used in client_with_agent.py) collects messages from local storage and sends the full history to `AGUIChatClient`, which then forwards everything to the server.
 
 ### Tool/Function Calling
 
@@ -91,14 +91,14 @@ Client defines:           Server defines:
 
 User: "What's the weather in SF and what time is it?"
     ↓
-ChatAgent sends: full history + tool definitions for get_weather, read_sensors
+Agent sends: full history + tool definitions for get_weather, read_sensors
     ↓
 Server LLM decides: "I need get_weather('SF') and get_current_time()"
     ↓
 Server executes get_current_time() → "2025-11-11 14:30:00 UTC"
 Server sends function call request → get_weather('SF')
     ↓
-ChatAgent intercepts get_weather call → executes locally
+Agent intercepts get_weather call → executes locally
     ↓
 Client sends result → "Sunny, 72°F"
     ↓
@@ -110,7 +110,7 @@ Client receives final response
 **How it works:**
 
 1. **Client-Side Tools** (`client_with_agent.py`):
-   - Tools defined in ChatAgent's `tools` parameter execute locally
+   - Tools defined in Agent's `tools` parameter execute locally
    - Tool metadata (name, description, schema) sent to server for planning
    - When server requests client tool → client intercepts → executes locally → sends result
 
@@ -126,10 +126,36 @@ Client receives final response
    - Client tools execute client-side
 
 **Direct AGUIChatClient Usage** (client_advanced.py):
-Even without ChatAgent wrapper, client-side tools work:
+Even without Agent wrapper, client-side tools work:
 - Tools passed in ChatOptions execute locally
 - Server can also have its own tools
 - Hybrid execution works automatically
+
+### Interrupts and Resume Entries
+
+Human-in-the-loop approvals and workflow input requests pause by emitting a terminal `RUN_FINISHED` event whose
+`outcome.type` is `"interrupt"`. Generic AG-UI clients should read prompts from `RUN_FINISHED.outcome.interrupts`
+and resume the same `threadId` with a canonical `resume` array of `ResumeEntry` values.
+
+```json
+{
+  "threadId": "thread-1",
+  "messages": [],
+  "resume": [
+    {
+      "interruptId": "approval_1",
+      "status": "resolved",
+      "payload": {
+        "approved": true
+      }
+    }
+  ]
+}
+```
+
+`Interrupt` and `ResumeEntry` are AG-UI protocol models from `ag_ui.core`; Agent Framework does not define a
+separate interrupt model. New interrupted runs use `RUN_FINISHED.outcome.interrupts`, not a stable top-level
+`RUN_FINISHED.interrupt` field.
 
 ## What is AG-UI?
 
@@ -149,7 +175,7 @@ Before you begin, ensure you have the following:
 - Azure CLI installed and authenticated (for DefaultAzureCredential)
 - User has the `Cognitive Services OpenAI Contributor` role for the Azure OpenAI resource
 
-**Note**: These samples use Azure OpenAI models. For more information, see [how to deploy Azure OpenAI models with Azure AI Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/deploy-models-openai).
+**Note**: These samples use Azure OpenAI models. For more information, see [how to deploy Azure OpenAI models with Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/deploy-models-openai).
 
 **Note**: These samples use `DefaultAzureCredential` for authentication. Make sure you're authenticated with Azure (e.g., via `az login`, or environment variables). For more information, see the [Azure Identity documentation](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential).
 
@@ -184,30 +210,30 @@ Create a file named `server.py`:
 
 import os
 
-from agent_framework import ChatAgent
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from fastapi import FastAPI
 
 # Read required configuration
 endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
+model = os.environ.get("AZURE_OPENAI_MODEL")
 api_key = os.environ.get("AZURE_OPENAI_API_KEY")
 
 if not endpoint:
     raise ValueError("AZURE_OPENAI_ENDPOINT environment variable is required")
-if not deployment_name:
-    raise ValueError("AZURE_OPENAI_DEPLOYMENT_NAME environment variable is required")
+if not model:
+    raise ValueError("AZURE_OPENAI_MODEL environment variable is required")
 if not api_key:
     raise ValueError("AZURE_OPENAI_API_KEY environment variable is required")
 
 # Create the AI agent
-agent = ChatAgent(
+agent = Agent(
     name="AGUIAssistant",
     instructions="You are a helpful assistant.",
-    chat_client=AzureOpenAIChatClient(
-        endpoint=endpoint,
-        deployment_name=deployment_name,
+    client=OpenAIChatCompletionClient(
+        azure_endpoint=endpoint,
+        model=model,
         api_key=api_key,
     ),
 )
@@ -227,19 +253,19 @@ if __name__ == "__main__":
 ### Key Concepts
 
 - **`add_agent_framework_fastapi_endpoint`**: Registers the AG-UI endpoint with automatic request/response handling and SSE streaming
-- **`ChatAgent`**: The agent that will handle incoming requests
+- **`Agent`**: The agent that will handle incoming requests
 - **FastAPI Integration**: Uses FastAPI's native async support for streaming responses
 - **Instructions**: The agent is created with default instructions, which can be overridden by client messages
-- **Configuration**: `AzureOpenAIChatClient` can read from environment variables (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, `AZURE_OPENAI_API_KEY`) or accept parameters directly
+- **Configuration**: `OpenAIChatCompletionClient` can read from environment variables (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_MODEL`, `AZURE_OPENAI_API_KEY`) or accept parameters directly
 
 **Alternative (simpler)**: Use environment variables only:
 
 ```python
 # No need to read environment variables manually
-agent = ChatAgent(
+agent = Agent(
     name="AGUIAssistant",
     instructions="You are a helpful assistant.",
-    chat_client=AzureOpenAIChatClient(),  # Reads from environment automatically
+    client=OpenAIChatCompletionClient(),  # Reads from environment automatically
 )
 ```
 
@@ -249,7 +275,7 @@ Set the required environment variables:
 
 ```bash
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-export AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="gpt-4o-mini"
+export AZURE_OPENAI_MODEL="gpt-4o-mini"
 # Optional: Set API key if not using DefaultAzureCredential
 # export AZURE_OPENAI_API_KEY="your-api-key"
 ```
@@ -292,7 +318,6 @@ Create a file named `client.py`:
 import asyncio
 import os
 
-from agent_framework import TextContent
 from agent_framework.ag_ui import AGUIChatClient
 
 
@@ -323,7 +348,7 @@ async def main():
                 # Use metadata to maintain conversation continuity
                 metadata = {"thread_id": thread_id} if thread_id else None
 
-                async for update in client.get_streaming_response(message, metadata=metadata):
+                async for update in client.get_response(message, metadata=metadata, stream=True):
                     # Extract thread ID from first update
                     if not thread_id and update.additional_properties:
                         thread_id = update.additional_properties.get("thread_id")
@@ -333,7 +358,7 @@ async def main():
 
                     # Stream text content as it arrives
                     for content in update.contents:
-                        if isinstance(content, TextContent) and content.text:
+                        if content.type == "text" and content.text:
                             print(content.text, end="", flush=True)
 
                 print()  # New line after response
@@ -353,9 +378,9 @@ if __name__ == "__main__":
 - **`AGUIChatClient`**: Built-in client that implements the Agent Framework's `BaseChatClient` interface
 - **Automatic Event Handling**: The client automatically converts AG-UI events to Agent Framework types
 - **Thread Management**: Pass `thread_id` in metadata to maintain conversation context across requests
-- **Streaming Responses**: Use `get_streaming_response()` for real-time streaming or `get_response()` for non-streaming
+- **Streaming Responses**: Use `get_response(..., stream=True)` for real-time streaming or `get_response(..., stream=False)` for non-streaming
 - **Context Manager**: Use `async with` for automatic cleanup of HTTP connections
-- **Standard Interface**: Works with all Agent Framework patterns (ChatAgent, tools, etc.)
+- **Standard Interface**: Works with all Agent Framework patterns (Agent, tools, etc.)
 - **Hybrid Tool Execution**: Supports both client-side and server-side tools executing together in the same conversation
 
 ### Configure and Run the Client

@@ -23,12 +23,12 @@ internal abstract class MessageFunction : ReflectionFunction
                     TypeSchema.Message.Fields.Content,
                     FormulaValue.NewTable(
                         RecordType.Empty()
-                            .Add(TypeSchema.Message.Fields.ContentType, FormulaType.String)
-                            .Add(TypeSchema.Message.Fields.ContentValue, FormulaType.String),
+                            .Add(TypeSchema.MessageContent.Fields.Type, FormulaType.String)
+                            .Add(TypeSchema.MessageContent.Fields.Value, FormulaType.String),
                         [
                             FormulaValue.NewRecordFromFields(
-                                new NamedValue(TypeSchema.Message.Fields.ContentType, FormulaValue.New(TypeSchema.Message.ContentTypes.Text)),
-                                new NamedValue(TypeSchema.Message.Fields.ContentValue, input))
+                                new NamedValue(TypeSchema.MessageContent.Fields.Type, FormulaValue.New(TypeSchema.MessageContent.ContentTypes.Text)),
+                                new NamedValue(TypeSchema.MessageContent.Fields.Value, input))
                         ]
                     )
                 )

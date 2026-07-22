@@ -2,6 +2,8 @@
 
 """FastAPI server implementation."""
 
+from __future__ import annotations
+
 import asyncio
 import importlib.metadata
 import inspect
@@ -29,6 +31,29 @@ from .models._discovery_models import Deployment, DeploymentConfig, DiscoveryRes
 
 logger = logging.getLogger(__name__)
 
+
+def _extract_error_details(body: object) -> tuple[str | None, str | None, str | None]:
+    """Extract typed OpenAI-style error payload fields."""
+    if not isinstance(body, dict):
+        return None, None, None
+
+    body_dict = cast(dict[str, object], body)
+    error_obj = body_dict.get("error")
+    if not isinstance(error_obj, dict):
+        return None, None, None
+
+    error_dict = cast(dict[str, object], error_obj)
+    message = error_dict.get("message")
+    error_type = error_dict.get("type")
+    code = error_dict.get("code")
+
+    return (
+        message if isinstance(message, str) else None,
+        error_type if isinstance(error_type, str) else None,
+        code if isinstance(code, str) else None,
+    )
+
+
 # Get package version
 try:
     __version__ = importlib.metadata.version("agent-framework-devui")
@@ -50,6 +75,8 @@ class DevServer:
         cors_origins: list[str] | None = None,
         ui_enabled: bool = True,
         mode: str = "developer",
+        auth_enabled: bool = True,
+        auth_token: str | None = None,
     ) -> None:
         """Initialize the development server.
 
@@ -60,26 +87,82 @@ class DevServer:
             cors_origins: List of allowed CORS origins
             ui_enabled: Whether to enable the UI
             mode: Server mode - 'developer' (full access, verbose errors) or 'user' (restricted APIs, generic errors)
+            auth_enabled: Whether to require Bearer token auth on /v1/* endpoints. Defaults to True.
+            auth_token: Bearer token. If None and auth_enabled, falls back to the DEVUI_AUTH_TOKEN
+                environment variable. Loopback binds may use an auto-generated token logged at startup.
         """
         self.entities_dir = entities_dir
         self.port = port
         self.host = host
 
-        # Smart CORS defaults: permissive for localhost, restrictive for network-exposed deployments
+        # CORS default is same-origin only (empty allowlist) on every host. The
+        # previous wildcard-on-localhost default let any webpage the developer
+        # visited read DevUI's responses cross-origin. Callers who need a real
+        # cross-origin dev frontend pass an explicit allowlist.
         if cors_origins is None:
-            # Localhost development: allow cross-origin for dev tools (e.g., frontend dev server)
-            # Network-exposed: empty list (same-origin only, no CORS)
-            cors_origins = ["*"] if host in ("127.0.0.1", "localhost") else []
+            cors_origins = []
 
         self.cors_origins = cors_origins
         self.ui_enabled = ui_enabled
         self.mode = mode
+        self.auth_enabled = auth_enabled
+        self.auth_token = self._resolve_auth_token(host, auth_enabled, auth_token)
         self.executor: AgentFrameworkExecutor | None = None
         self.openai_executor: OpenAIExecutor | None = None
         self.deployment_manager = DeploymentManager()
         self._app: FastAPI | None = None
         self._pending_entities: list[Any] | None = None
         self._running_tasks: dict[str, asyncio.Task[Any]] = {}  # Track running response tasks for cancellation
+
+    def set_pending_entities(self, entities: list[Any]) -> None:
+        """Set in-memory entities to register on startup."""
+        self._pending_entities = entities
+
+    _AUTH_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
+    _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "[::1]", "::1"})
+
+    @classmethod
+    def _is_auth_loopback_host(cls, host: str) -> bool:
+        """Return True when unauthenticated DevUI may be limited to local loopback."""
+        return host.lower() in cls._AUTH_LOOPBACK_HOSTS
+
+    def _loopback_allowed_hosts(self) -> frozenset[str] | None:
+        """Return the Host-header allowlist when bound to a loopback interface, else None.
+
+        Returning None disables Host-header enforcement (e.g. for 0.0.0.0 / public binds,
+        where the operator is intentionally exposing the service).
+        """
+        host = self.host.lower()
+        if host not in self._LOOPBACK_HOSTS:
+            return None
+        return self._LOOPBACK_HOSTS
+
+    @classmethod
+    def _resolve_auth_token(cls, host: str, auth_enabled: bool, auth_token: str | None) -> str | None:
+        """Resolve the active Bearer token. Returns None when auth is disabled."""
+        is_loopback = cls._is_auth_loopback_host(host)
+        if not auth_enabled:
+            if not is_loopback:
+                raise ValueError(
+                    "DevUI authentication cannot be disabled for non-loopback hosts. "
+                    "Bind to 127.0.0.1/localhost for no-auth local development, or enable auth and provide "
+                    "DEVUI_AUTH_TOKEN or auth_token for network-reachable binds."
+                )
+            return None
+        if auth_token:
+            return auth_token
+        env_token = os.getenv("DEVUI_AUTH_TOKEN")
+        if env_token:
+            return env_token
+        if not is_loopback:
+            raise ValueError("DEVUI_AUTH_TOKEN or auth_token is required when DevUI is bound to a non-loopback host.")
+        generated = secrets.token_urlsafe(32)
+        logger.info("=" * 70)
+        logger.info("DevUI authentication enabled with auto-generated token:")
+        logger.info(f"   {generated}")
+        logger.info("Pass it as: Authorization: Bearer <token>")
+        logger.info("=" * 70)
+        return generated
 
     def _is_dev_mode(self) -> bool:
         """Check if running in developer mode.
@@ -220,8 +303,8 @@ class DevServer:
                 # Step 2: Close chat clients and their credentials (EXISTING)
                 entity_obj = self.executor.entity_discovery.get_entity_object(entity_id)
 
-                if entity_obj and hasattr(entity_obj, "chat_client"):
-                    client = entity_obj.chat_client
+                if entity_obj and hasattr(entity_obj, "client"):
+                    client = entity_obj.client
 
                     # Close the chat client itself
                     if hasattr(client, "close") and callable(client.close):
@@ -248,9 +331,9 @@ class DevServer:
                                 except Exception as e:
                                     logger.warning(f"Error closing credential for {entity_info.id}: {e}")
 
-                # Close MCP tools (framework tracks them in _local_mcp_tools)
-                if entity_obj and hasattr(entity_obj, "_local_mcp_tools"):
-                    for mcp_tool in entity_obj._local_mcp_tools:
+                # Close MCP tools (framework tracks them in mcp_tools)
+                if entity_obj and hasattr(entity_obj, "mcp_tools"):
+                    for mcp_tool in entity_obj.mcp_tools:
                         if hasattr(mcp_tool, "close") and callable(mcp_tool.close):
                             try:
                                 if inspect.iscoroutinefunction(mcp_tool.close):
@@ -287,18 +370,20 @@ class DevServer:
         """Create the FastAPI application."""
 
         @asynccontextmanager
-        async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             # Startup
             logger.info("Starting Agent Framework Server")
             await self._ensure_executor()
             await self._ensure_openai_executor()  # Initialize OpenAI executor
-            yield
-            # Shutdown
-            logger.info("Shutting down Agent Framework Server")
+            try:
+                yield
+            finally:
+                # Shutdown
+                logger.info("Shutting down Agent Framework Server")
 
-            # Cleanup entity resources (e.g., close credentials, clients)
-            if self.executor:
-                await self._cleanup_entities()
+                # Cleanup entity resources (e.g., close credentials, clients)
+                if self.executor:
+                    await self._cleanup_entities()
 
         app = FastAPI(
             title="Agent Framework Server",
@@ -306,6 +391,11 @@ class DevServer:
             version=__version__,
             lifespan=lifespan,
         )
+
+        # Middleware registration order matters: Starlette wraps later-added
+        # middleware around earlier-added ones, so the LAST registered runs
+        # outermost (sees the request first). We want Host-header enforcement
+        # to run before CORS/auth, so it is registered last below.
 
         # Add CORS middleware
         # Note: allow_credentials cannot be True when allow_origins is ["*"]
@@ -321,29 +411,24 @@ class DevServer:
             allow_headers=["*"],
         )
 
-        # Add authentication middleware using decorator pattern
-        # Auth is enabled by presence of DEVUI_AUTH_TOKEN
-        auth_token = os.getenv("DEVUI_AUTH_TOKEN", "")
-        auth_required = bool(auth_token)
-
-        if auth_required:
+        # Bearer-token authentication. Enabled by default; opt out via
+        # DevServer(auth_enabled=False) for embedded/test scenarios.
+        if self.auth_enabled and self.auth_token:
+            expected_token = self.auth_token
             logger.info("Authentication middleware enabled")
 
             @app.middleware("http")
             async def auth_middleware(request: Request, call_next: Callable[[Request], Awaitable[Any]]) -> Any:
                 """Validate Bearer token authentication.
 
-                Skips authentication for health, meta, static UI endpoints, and OPTIONS requests.
+                Skips authentication for health, the UI shell, static assets, and OPTIONS preflight.
                 """
-                # Skip auth for OPTIONS (CORS preflight) requests
                 if request.method == "OPTIONS":
                     return await call_next(request)
 
-                # Skip auth for health checks, meta endpoint, and static files
-                if request.url.path in ["/health", "/meta", "/"] or request.url.path.startswith("/assets"):
+                if request.url.path in ["/health", "/"] or request.url.path.startswith("/assets"):
                     return await call_next(request)
 
-                # Check Authorization header
                 auth_header = request.headers.get("Authorization")
                 if not auth_header or not auth_header.startswith("Bearer "):
                     return JSONResponse(
@@ -359,9 +444,8 @@ class DevServer:
                         },
                     )
 
-                # Extract and validate token
                 token = auth_header.replace("Bearer ", "", 1).strip()
-                if not secrets.compare_digest(token, auth_token):
+                if not secrets.compare_digest(token, expected_token):
                     return JSONResponse(
                         status_code=401,
                         content={
@@ -373,8 +457,39 @@ class DevServer:
                         },
                     )
 
-                # Token valid, proceed
                 return await call_next(request)
+
+            _ = auth_middleware
+
+        # Host-header allowlist for loopback binds: on a loopback interface, only
+        # accept requests whose Host header names a loopback address. Registered LAST
+        # so it runs outermost, rejecting non-loopback Host values before CORS/auth
+        # (and before CORS can short-circuit a preflight on a rebound request).
+        allowed_hosts = self._loopback_allowed_hosts()
+        if allowed_hosts is not None:
+            expected_hosts = allowed_hosts
+
+            @app.middleware("http")
+            async def host_header_middleware(request: Request, call_next: Callable[[Request], Awaitable[Any]]) -> Any:
+                host_header = request.headers.get("host", "")
+                hostname = host_header.split(":", 1)[0].lower()
+                if hostname and hostname not in expected_hosts:
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "error": {
+                                "message": (
+                                    f"Invalid Host header '{host_header}'. DevUI is bound to a "
+                                    "loopback interface and only accepts requests addressed to it."
+                                ),
+                                "type": "invalid_host",
+                                "code": "host_not_allowed",
+                            }
+                        },
+                    )
+                return await call_next(request)
+
+            _ = host_header_middleware
 
         self._register_routes(app)
         self._mount_ui(app)
@@ -396,8 +511,6 @@ class DevServer:
         @app.get("/meta", response_model=MetaResponse)
         async def get_meta() -> MetaResponse:
             """Get server metadata and configuration."""
-            import os
-
             # Ensure executors are initialized to check capabilities
             openai_executor = await self._ensure_openai_executor()
 
@@ -407,11 +520,11 @@ class DevServer:
                 framework="agent_framework",
                 runtime="python",  # Python DevUI backend
                 capabilities={
-                    "tracing": os.getenv("ENABLE_INSTRUMENTATION") == "true",
+                    "instrumentation": os.getenv("ENABLE_INSTRUMENTATION") == "true",
                     "openai_proxy": openai_executor.is_configured,
                     "deployment": True,  # Deployment feature is available
                 },
-                auth_required=bool(os.getenv("DEVUI_AUTH_TOKEN")),
+                auth_required=self.auth_enabled,
             )
 
         @app.get("/v1/entities", response_model=DiscoveryResponse)
@@ -450,15 +563,15 @@ class DevServer:
                 if entity_info.type == "workflow" and entity_obj:
                     # Entity object already loaded by load_entity() above
                     # Get workflow structure
-                    workflow_dump = None
+                    workflow_dump: dict[str, Any] | str | None = None
                     if hasattr(entity_obj, "to_dict") and callable(getattr(entity_obj, "to_dict", None)):
                         try:
-                            workflow_dump = entity_obj.to_dict()  # type: ignore[attr-defined]
+                            workflow_dump = entity_obj.to_dict()
                         except Exception:
                             workflow_dump = None
                     elif hasattr(entity_obj, "to_json") and callable(getattr(entity_obj, "to_json", None)):
                         try:
-                            raw_dump = entity_obj.to_json()  # type: ignore[attr-defined]
+                            raw_dump = entity_obj.to_json()
                         except Exception:
                             workflow_dump = None
                         else:
@@ -473,7 +586,11 @@ class DevServer:
                                 except Exception:
                                     workflow_dump = raw_dump
                                 else:
-                                    workflow_dump = parsed_dump if isinstance(parsed_dump, dict) else raw_dump
+                                    if isinstance(parsed_dump, dict):
+                                        parsed_dump_dict = cast(dict[str, Any], parsed_dump)
+                                        workflow_dump = {str(k): v for k, v in parsed_dump_dict.items()}
+                                    else:
+                                        workflow_dump = raw_dump
                             else:
                                 workflow_dump = raw_dump
                     elif hasattr(entity_obj, "__dict__"):
@@ -623,7 +740,7 @@ class DevServer:
                 entity_path = Path(entity_path_str)
 
                 # Stream deployment events
-                async def event_generator() -> AsyncGenerator[str, None]:
+                async def event_generator() -> AsyncGenerator[str]:
                     async for event in self.deployment_manager.deploy(config, entity_path):
                         # Format as SSE
                         import json
@@ -715,23 +832,19 @@ class DevServer:
                             headers={
                                 "Cache-Control": "no-cache",
                                 "Connection": "keep-alive",
-                                "Access-Control-Allow-Origin": "*",
                             },
                         )
                     return await openai_executor.execute_sync(request)
 
                 # Route to local Agent Framework executor (original behavior)
-                raw_body = await raw_request.body()
-                logger.info(f"Raw request body: {raw_body.decode()}")
-                logger.info(f"Parsed request: metadata={request.metadata}")
-
                 # Get entity_id from metadata
                 entity_id = request.get_entity_id()
-                logger.info(f"Extracted entity_id: {entity_id}")
 
                 if not entity_id:
                     error = OpenAIError.create("Missing entity_id in metadata. Provide metadata.entity_id in request.")
                     return JSONResponse(status_code=400, content=error.to_dict())
+
+                logger.info("Extracted entity_id: %s", entity_id)
 
                 # Get executor and validate entity exists
                 executor = await self._ensure_executor()
@@ -748,13 +861,17 @@ class DevServer:
                     response_id = f"resp_{uuid.uuid4().hex[:8]}"
                     logger.info(f"[CANCELLATION] Creating response {response_id} for entity {entity_id}")
 
+                    # Inject response_id into extra_body for trace context
+                    if request.extra_body is None:
+                        request.extra_body = {}
+                    request.extra_body["response_id"] = response_id
+
                     return StreamingResponse(
                         self._stream_with_cancellation(executor, request, response_id),
                         media_type="text/event-stream",
                         headers={
                             "Cache-Control": "no-cache",
                             "Connection": "keep-alive",
-                            "Access-Control-Allow-Origin": "*",
                             "X-Response-ID": response_id,  # Include ID for debugging/tracking
                         },
                     )
@@ -779,7 +896,7 @@ class DevServer:
                     logger.info(f"[CANCELLATION] Cancelling task for {response_id}")
                     task.cancel()
                     # Wait briefly for cancellation to propagate
-                    try:  # noqa: SIM105
+                    try:  # ruff:ignore[suppressible-exception]
                         await asyncio.wait_for(task, timeout=0.5)
                     except (asyncio.CancelledError, asyncio.TimeoutError):
                         pass
@@ -824,41 +941,37 @@ class DevServer:
 
                     try:
                         metadata = request_data.get("metadata")
-                        logger.debug(f"Creating OpenAI conversation with metadata: {metadata}")
                         conversation = await client.conversations.create(metadata=metadata)
                         logger.info(f"Created OpenAI conversation: {conversation.id}")
                         return conversation.model_dump()
                     except AuthenticationError as e:
                         # 401 - Invalid API key or authentication issue
                         logger.error(f"OpenAI authentication error creating conversation: {e}")
-                        error_body = e.body if hasattr(e, "body") else {}
-                        error_data = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+                        message, error_type, code = _extract_error_details(e.body if hasattr(e, "body") else None)
                         error = OpenAIError.create(
-                            message=error_data.get("message", str(e)),
-                            type=error_data.get("type", "authentication_error"),
-                            code=error_data.get("code", "invalid_api_key"),
+                            message=message or str(e),
+                            type=error_type or "authentication_error",
+                            code=code or "invalid_api_key",
                         )
                         return JSONResponse(status_code=401, content=error.to_dict())
                     except PermissionDeniedError as e:
                         # 403 - Permission denied
                         logger.error(f"OpenAI permission denied creating conversation: {e}")
-                        error_body = e.body if hasattr(e, "body") else {}
-                        error_data = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+                        message, error_type, code = _extract_error_details(e.body if hasattr(e, "body") else None)
                         error = OpenAIError.create(
-                            message=error_data.get("message", str(e)),
-                            type=error_data.get("type", "permission_denied"),
-                            code=error_data.get("code", "insufficient_permissions"),
+                            message=message or str(e),
+                            type=error_type or "permission_denied",
+                            code=code or "insufficient_permissions",
                         )
                         return JSONResponse(status_code=403, content=error.to_dict())
                     except APIStatusError as e:
                         # Other OpenAI API errors (rate limit, etc.)
                         logger.error(f"OpenAI API error creating conversation: {e}")
-                        error_body = e.body if hasattr(e, "body") else {}
-                        error_data = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+                        message, error_type, code = _extract_error_details(e.body if hasattr(e, "body") else None)
                         error = OpenAIError.create(
-                            message=error_data.get("message", str(e)),
-                            type=error_data.get("type", "api_error"),
-                            code=error_data.get("code", "unknown_error"),
+                            message=message or str(e),
+                            type=error_type or "api_error",
+                            code=code or "unknown_error",
                         )
                         return JSONResponse(
                             status_code=e.status_code if hasattr(e, "status_code") else 500, content=error.to_dict()
@@ -895,7 +1008,7 @@ class DevServer:
                 executor = await self._ensure_executor()
 
                 # Build filter criteria
-                filters = {}
+                filters: dict[str, str] = {}
                 if agent_id:
                     filters["agent_id"] = agent_id
                 if entity_id:
@@ -990,20 +1103,27 @@ class DevServer:
                     conversation_id, limit=limit, after=after, order=order
                 )
                 # Handle both Pydantic models and dicts (some stores return raw dicts)
-                serialized_items = []
+                serialized_items: list[dict[str, Any]] = []
                 for item in items:
                     if hasattr(item, "model_dump"):
                         serialized_items.append(item.model_dump())
                     elif isinstance(item, dict):
-                        serialized_items.append(item)
+                        item_dict = cast(dict[str, Any], item)
+                        serialized_items.append({str(k): v for k, v in item_dict.items()})
                     else:
                         logger.warning(f"Unexpected item type: {type(item)}, converting to dict")
-                        serialized_items.append(dict(item))
+                        serialized_items.append({str(k): v for k, v in dict(item).items()})
+
+                # Get stored traces for context inspection (DevUI extension)
+                traces = executor.conversation_store.get_traces(conversation_id)
 
                 return {
                     "object": "list",
                     "data": serialized_items,
                     "has_more": has_more,
+                    "metadata": {
+                        "traces": traces,  # Trace events for token usage, timing, LLM context
+                    },
                 }
             except ValueError as e:
                 raise HTTPException(status_code=404, detail=str(e)) from e
@@ -1025,9 +1145,14 @@ class DevServer:
                 if not item:
                     raise HTTPException(status_code=404, detail="Item not found")
                 # Handle both Pydantic models and dicts
-                result: dict[str, Any] = (
-                    item.model_dump() if hasattr(item, "model_dump") else cast(dict[str, Any], item)
-                )
+                result: dict[str, Any]
+                if hasattr(item, "model_dump"):
+                    result = item.model_dump()
+                elif isinstance(item, dict):
+                    item_dict = cast(dict[str, Any], item)
+                    result = {str(k): v for k, v in item_dict.items()}
+                else:
+                    result = {"value": item}
                 return result
             except HTTPException:
                 raise
@@ -1046,7 +1171,7 @@ class DevServer:
                     # Extract checkpoint_id from item_id (format: "checkpoint_{checkpoint_id}")
                     checkpoint_id = item_id[len("checkpoint_") :]
                     storage = executor.checkpoint_manager.get_checkpoint_storage(conversation_id)
-                    deleted = await storage.delete_checkpoint(checkpoint_id)
+                    deleted = await storage.delete(checkpoint_id)
 
                     if not deleted:
                         raise HTTPException(status_code=404, detail="Checkpoint not found")
@@ -1072,31 +1197,69 @@ class DevServer:
         # Checkpoints are exposed as conversation items with type="checkpoint"
         # ============================================================================
 
+        registered_route_handlers = (
+            health_check,
+            get_meta,
+            discover_entities,
+            get_entity_info,
+            reload_entity,
+            create_deployment,
+            list_deployments,
+            get_deployment,
+            delete_deployment,
+            deploy_entity,
+            create_response,
+            cancel_response,
+            create_conversation,
+            list_conversations,
+            retrieve_conversation,
+            update_conversation,
+            delete_conversation,
+            create_conversation_items,
+            list_conversation_items,
+            retrieve_conversation_item,
+            delete_conversation_item,
+        )
+        _ = registered_route_handlers
+
     async def _stream_execution(
         self, executor: AgentFrameworkExecutor, request: AgentFrameworkRequest
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str]:
         """Stream execution directly through executor."""
         try:
             # Collect events for final response.completed event
-            events = []
+            events: list[Any] = []
+
+            # Get conversation_id for trace storage
+            conversation_getter = getattr(request, "_get_conversation_id", None)
+            conversation_id = conversation_getter() if callable(conversation_getter) else None
 
             # Stream all events
             async for event in executor.execute_streaming(request):
                 events.append(event)
 
+                # Store trace events for context inspection (persisted with conversation)
+                if conversation_id and hasattr(event, "type") and event.type == "response.trace.completed":
+                    try:
+                        trace_data = event.data if hasattr(event, "data") else None
+                        if trace_data and isinstance(conversation_id, str):
+                            executor.conversation_store.add_trace(conversation_id, trace_data)
+                    except Exception as e:
+                        logger.debug(f"Failed to store trace event: {e}")
+
                 # IMPORTANT: Check model_dump_json FIRST because to_json() can have newlines (pretty-printing)
                 # which breaks SSE format. model_dump_json() returns single-line JSON.
                 if hasattr(event, "model_dump_json"):
-                    payload = event.model_dump_json()  # type: ignore[attr-defined]
+                    payload = event.model_dump_json()
                 elif hasattr(event, "to_json") and callable(getattr(event, "to_json", None)):
-                    payload = event.to_json()  # type: ignore[attr-defined]
+                    payload = event.to_json()
                     # Strip newlines from pretty-printed JSON for SSE compatibility
                     payload = payload.replace("\n", "").replace("\r", "")
                 elif isinstance(event, dict):
                     # Handle plain dict events (e.g., error events from executor)
                     payload = json.dumps(event)
                 elif hasattr(event, "to_dict") and callable(getattr(event, "to_dict", None)):
-                    payload = json.dumps(event.to_dict())  # type: ignore[attr-defined]
+                    payload = json.dumps(event.to_dict())
                 else:
                     payload = json.dumps(str(event))
                 yield f"data: {payload}\n\n"
@@ -1111,8 +1274,9 @@ class DevServer:
             # We need to increment from that
             last_seq = 0
             for event in reversed(events):
-                if hasattr(event, "sequence_number") and event.sequence_number is not None:
-                    last_seq = event.sequence_number
+                sequence_number = getattr(event, "sequence_number", None)
+                if isinstance(sequence_number, int):
+                    last_seq = sequence_number
                     break
 
             completed_event = ResponseCompletedEvent(
@@ -1132,7 +1296,7 @@ class DevServer:
 
     async def _stream_openai_execution(
         self, executor: OpenAIExecutor, request: AgentFrameworkRequest
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str]:
         """Stream execution through OpenAI executor.
 
         OpenAI events are already in final format - no conversion or aggregation needed.
@@ -1156,7 +1320,7 @@ class DevServer:
 
                 # OpenAI SDK events have model_dump_json() - use it for single-line JSON
                 if hasattr(event, "model_dump_json"):
-                    payload = event.model_dump_json()  # type: ignore[attr-defined]
+                    payload = event.model_dump_json()
                     yield f"data: {payload}\n\n"
                 else:
                     # Fallback (shouldn't happen with OpenAI SDK)
@@ -1189,7 +1353,7 @@ class DevServer:
 
     async def _stream_with_cancellation(
         self, executor: AgentFrameworkExecutor, request: AgentFrameworkRequest, response_id: str
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str]:
         """Stream execution with automatic cancellation on client disconnect.
 
         This wrapper adds cancellation support to the execution stream:
@@ -1208,7 +1372,7 @@ class DevServer:
         """
         task = None
 
-        async def execution_wrapper() -> AsyncGenerator[str, None]:
+        async def execution_wrapper() -> AsyncGenerator[str]:
             """Inner wrapper to handle the actual execution."""
             try:
                 logger.debug(f"[CANCELLATION] Starting execution for {response_id}")

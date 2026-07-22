@@ -6,19 +6,23 @@ on:
     branches: ["main"]
     paths:
       - "python/**"
+      - "!python/AGENTS.md"
+      - "!python/**/AGENTS.md"
+      - "!python/.github/skills/*"
+      - "!python/.github/skills/**"
 
 env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
 
 jobs:
-  pre-commit:
-    name: Checks
+  pre-commit-hooks:
+    name: Pre-commit Hooks
     if: "!cancelled()"
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.14"]
+        python-version: ["3.11"]
     runs-on: ubuntu-latest
     continue-on-error: true
     defaults:
@@ -27,7 +31,7 @@ jobs:
     env:
       UV_PYTHON: ${{ matrix.python-version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
       - name: Set up python and install the project
@@ -37,17 +41,103 @@ jobs:
           python-version: ${{ matrix.python-version }}
           os: ${{ runner.os }}
         env:
-          # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache
-      - uses: actions/cache@v5
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
-          path: ~/.cache/pre-commit
-          key: pre-commit|${{ matrix.python-version }}|${{ hashFiles('python/.pre-commit-config.yaml') }}
-      - uses: pre-commit/action@v3.0.1
-        name: Run Pre-Commit Hooks
-        with:
-          extra_args: --config python/.pre-commit-config.yaml --all-files
-      - name: Run Mypy
+          path: ~/.cache/prek
+          key: prek|${{ matrix.python-version }}|${{ hashFiles('python/.pre-commit-config.yaml') }}
+      - uses: j178/prek-action@bdca6f102f98e2b4c7029491a53dfd366469e33d # v2.0.4
+        name: Run Pre-commit Hooks (excluding poe-check)
         env:
-          GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref || github.base_ref || 'main' }}
-        run: uv run poe ci-mypy
+          SKIP: poe-check
+        with:
+          extra-args: --cd python --all-files
+
+  package-checks:
+    name: Package Checks
+    if: "!cancelled()"
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: ./python
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ matrix.python-version }}
+          os: ${{ runner.os }}
+        env:
+          UV_CACHE_DIR: /tmp/.uv-cache
+      - name: Run syntax and pyright across packages
+        run: uv run poe check-packages
+
+  samples-markdown:
+    name: Samples & Markdown
+    if: "!cancelled()"
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: ./python
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ matrix.python-version }}
+          os: ${{ runner.os }}
+        env:
+          UV_CACHE_DIR: /tmp/.uv-cache
+      - name: Run samples checks
+        run: uv run poe check -S
+      - name: Run markdown code lint
+        run: uv run poe markdown-code-lint
+
+  test-typing:
+    name: Test Typing Checks
+    if: "!cancelled()"
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: ./python
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ matrix.python-version }}
+          os: ${{ runner.os }}
+        env:
+          UV_CACHE_DIR: /tmp/.uv-cache
+      - name: Run tests/samples type checkers (mypy, pyrefly, ty)
+        run: uv run python scripts/workspace_poe_tasks.py ci-test-typing

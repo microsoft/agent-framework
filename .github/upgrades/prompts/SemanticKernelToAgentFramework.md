@@ -23,16 +23,16 @@ For each project that needs to be migrated, you need to do the following:
 - Identify the specific Semantic Kernel agent types being used:
   - `ChatCompletionAgent` → `ChatClientAgent`
   - `OpenAIAssistantAgent` → `assistantsClient.CreateAIAgent()` (via OpenAI Assistants client extension)
-  - `AzureAIAgent` → `persistentAgentsClient.CreateAIAgent()` (via Azure AI Foundry client extension)
+  - `AzureAIAgent` → `persistentAgentsClient.CreateAIAgent()` (via Microsoft Foundry client extension)
   - `OpenAIResponseAgent` → `responsesClient.CreateAIAgent()` (via OpenAI Responses client extension)
   - `A2AAgent` → `AIAgent` (via A2A card resolver)
   - `BedrockAgent` → Custom implementation required (not supported)
 - Determine if agents are being created new or retrieved from hosted services:
   - **New agents**: Use `CreateAIAgent()` methods
-  - **Existing hosted agents**: Use `GetAIAgent(agentId)` methods for OpenAI Assistants and Azure AI Foundry
+  - **Existing hosted agents**: Use `GetAIAgent(agentId)` methods for OpenAI Assistants and Microsoft Foundry
 </agent_type_identification>
 
-- Determine the AI provider being used (OpenAI, Azure OpenAI, Azure AI Foundry, etc.)
+- Determine the AI provider being used (OpenAI, Azure OpenAI, Microsoft Foundry, etc.)
 - Analyze tool/function registration patterns
 - Review thread management and invocation patterns
 
@@ -90,7 +90,7 @@ below in wrong order or skip any of them):
    you generate report when migration complete. Report should contain:
      - all project dependencies changes (mention what was changed, added or removed, including provider-specific packages)
      - all code files that were changed (mention what was changed in the file, if it was not changed, just mention that the file was not changed)
-     - provider-specific migration patterns used (OpenAI, Azure OpenAI, Azure AI Foundry, A2A, ONNX, etc.)
+     - provider-specific migration patterns used (OpenAI, Azure OpenAI, Microsoft Foundry, A2A, ONNX, etc.)
      - all cases where you could not convert the code because of unsupported features and you were unable to find a workaround
      - unsupported providers that require custom implementation (Bedrock, CopilotStudio)
      - breaking glass pattern migrations (InnerContent → RawRepresentation) and any CodeInterpreter or advanced tool usage
@@ -105,7 +105,7 @@ After completing migration, verify these specific items:
 1. **Compilation**: Execute `dotnet build` on all modified projects - zero errors required
 2. **Namespace Updates**: Confirm all `using Microsoft.SemanticKernel.Agents` statements are replaced
 3. **Method Calls**: Verify all `InvokeAsync` calls are changed to `RunAsync`
-4. **Return Types**: Confirm handling of `AgentRunResponse` instead of `IAsyncEnumerable<AgentResponseItem<ChatMessageContent>>`
+4. **Return Types**: Confirm handling of `AgentResponse` instead of `IAsyncEnumerable<AgentResponseItem<ChatMessageContent>>`
 5. **Thread Creation**: Validate all thread creation uses `agent.GetNewThread()` pattern
 6. **Tool Registration**: Ensure `[KernelFunction]` attributes are removed and `AIFunctionFactory.Create()` is used
 7. **Options Configuration**: Verify `AgentRunOptions` or `ChatClientAgentRunOptions` replaces `AgentInvokeOptions`
@@ -119,7 +119,7 @@ Agent Framework provides functionality for creating and managing AI agents throu
 Key API differences:
 - Agent creation: Remove Kernel dependency, use direct client-based creation
 - Method names: `InvokeAsync` → `RunAsync`, `InvokeStreamingAsync` → `RunStreamingAsync`
-- Return types: `IAsyncEnumerable<AgentResponseItem<ChatMessageContent>>` → `AgentRunResponse`
+- Return types: `IAsyncEnumerable<AgentResponseItem<ChatMessageContent>>` → `AgentResponse`
 - Thread creation: Provider-specific constructors → `agent.GetNewThread()`
 - Tool registration: `KernelPlugin` system → Direct `AIFunction` registration
 - Options: `AgentInvokeOptions` → Provider-specific run options (e.g., `ChatClientAgentRunOptions`)
@@ -166,8 +166,8 @@ Replace these method calls:
 | `thread.DeleteAsync()` | Provider-specific cleanup | Use provider client directly |
 
 Return type changes:
-- `IAsyncEnumerable<AgentResponseItem<ChatMessageContent>>` → `AgentRunResponse`
-- `IAsyncEnumerable<StreamingChatMessageContent>` → `IAsyncEnumerable<AgentRunResponseUpdate>`
+- `IAsyncEnumerable<AgentResponseItem<ChatMessageContent>>` → `AgentResponse`
+- `IAsyncEnumerable<StreamingChatMessageContent>` → `IAsyncEnumerable<AgentResponseUpdate>`
 </api_changes>
 
 <configuration_changes>
@@ -191,8 +191,8 @@ Agent Framework changes these behaviors compared to Semantic Kernel Agents:
 1. **Thread Management**: Agent Framework automatically manages thread state. Semantic Kernel required manual thread updates in some scenarios (e.g., OpenAI Responses).
 
 2. **Return Types**:
-   - Non-streaming: Returns single `AgentRunResponse` instead of `IAsyncEnumerable<AgentResponseItem<ChatMessageContent>>`
-   - Streaming: Returns `IAsyncEnumerable<AgentRunResponseUpdate>` instead of `IAsyncEnumerable<StreamingChatMessageContent>`
+   - Non-streaming: Returns single `AgentResponse` instead of `IAsyncEnumerable<AgentResponseItem<ChatMessageContent>>`
+   - Streaming: Returns `IAsyncEnumerable<AgentResponseUpdate>` instead of `IAsyncEnumerable<StreamingChatMessageContent>`
 
 3. **Tool Registration**: Agent Framework uses direct function registration without requiring `[KernelFunction]` attributes.
 
@@ -223,7 +223,7 @@ using Microsoft.Agents.AI;
 // Provider-specific namespaces (add only if needed):
 using OpenAI; // For OpenAI provider
 using Azure.AI.OpenAI; // For Azure OpenAI provider
-using Azure.AI.Agents.Persistent; // For Azure AI Foundry provider
+using Azure.AI.Agents.Persistent; // For Microsoft Foundry provider
 using Azure.Identity; // For Azure authentication
 ```
 </configuration_changes>
@@ -397,7 +397,7 @@ await foreach (AgentResponseItem<ChatMessageContent> item in agent.InvokeAsync(u
 
 **With this Agent Framework non-streaming pattern:**
 ```csharp
-AgentRunResponse result = await agent.RunAsync(userInput, thread, options);
+AgentResponse result = await agent.RunAsync(userInput, thread, options);
 Console.WriteLine(result);
 ```
 
@@ -411,7 +411,7 @@ await foreach (StreamingChatMessageContent update in agent.InvokeStreamingAsync(
 
 **With this Agent Framework streaming pattern:**
 ```csharp
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(userInput, thread, options))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(userInput, thread, options))
 {
     Console.Write(update);
 }
@@ -420,8 +420,8 @@ await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(userInpu
 **Required changes:**
 1. Replace `agent.InvokeAsync()` with `agent.RunAsync()`
 2. Replace `agent.InvokeStreamingAsync()` with `agent.RunStreamingAsync()`
-3. Change return type handling from `IAsyncEnumerable<AgentResponseItem<ChatMessageContent>>` to `AgentRunResponse`
-4. Change streaming type from `StreamingChatMessageContent` to `AgentRunResponseUpdate`
+3. Change return type handling from `IAsyncEnumerable<AgentResponseItem<ChatMessageContent>>` to `AgentResponse`
+4. Change streaming type from `StreamingChatMessageContent` to `AgentResponseUpdate`
 5. Remove `await foreach` for non-streaming calls
 6. Access message content directly from result object instead of iterating
 </api_changes>
@@ -499,7 +499,7 @@ For every thread created if there's intent to cleanup, the caller should track a
 var assistantClient = new OpenAIClient(apiKey).GetAssistantClient();
 await assistantClient.DeleteThreadAsync(thread.ConversationId);
 
-// For Azure AI Foundry (when cleanup is needed):
+// For Microsoft Foundry (when cleanup is needed):
 var persistentClient = new PersistentAgentsClient(endpoint, credential);
 await persistentClient.Threads.DeleteThreadAsync(thread.ConversationId);
 
@@ -514,7 +514,7 @@ await persistentClient.Threads.DeleteThreadAsync(thread.ConversationId);
 1. Remove `thread.DeleteAsync()` calls
 2. Use provider-specific client for cleanup when required
 3. Access thread ID via `thread.ConversationId` property
-4. Only implement cleanup for providers that require it (Assistants, Azure AI Foundry)
+4. Only implement cleanup for providers that require it (Assistants, Microsoft Foundry)
 </api_changes>
 
 ### Provider-Specific Creation Patterns
@@ -550,13 +550,13 @@ AIAgent agent = new AzureOpenAIClient(endpoint, credential)
     .CreateAIAgent(instructions: instructions);
 ```
 
-**Azure AI Foundry (New):**
+**Microsoft Foundry (New):**
 ```csharp
 AIAgent agent = new PersistentAgentsClient(endpoint, credential)
     .CreateAIAgent(model: deploymentName, instructions: instructions);
 ```
 
-**Azure AI Foundry (Existing):**
+**Microsoft Foundry (Existing):**
 ```csharp
 AIAgent agent = await new PersistentAgentsClient(endpoint, credential)
     .GetAIAgentAsync(agentId);
@@ -661,7 +661,7 @@ await foreach (var result in agent.InvokeAsync(input, thread, options))
 ```csharp
 ChatClientAgentRunOptions options = new(new ChatOptions { MaxOutputTokens = 1000 });
 
-AgentRunResponse result = await agent.RunAsync(input, thread, options);
+AgentResponse result = await agent.RunAsync(input, thread, options);
 Console.WriteLine(result);
 
 // Access underlying content when needed:
@@ -689,7 +689,7 @@ await foreach (var result in agent.InvokeAsync(input, thread, options))
 
 **With this Agent Framework non-streaming usage pattern:**
 ```csharp
-AgentRunResponse result = await agent.RunAsync(input, thread, options);
+AgentResponse result = await agent.RunAsync(input, thread, options);
 Console.WriteLine($"Tokens: {result.Usage.TotalTokenCount}");
 ```
 
@@ -709,7 +709,7 @@ await foreach (StreamingChatMessageContent response in agent.InvokeStreamingAsyn
 
 **With this Agent Framework streaming usage pattern:**
 ```csharp
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(input, thread, options))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(input, thread, options))
 {
     if (update.Contents.OfType<UsageContent>().FirstOrDefault() is { } usageContent)
     {
@@ -1079,7 +1079,7 @@ AgentThread thread = agent.GetNewThread();
 ```
 </api_changes>
 
-### 4. Azure AI Foundry (AzureAIAgent) Migration
+### 4. Microsoft Foundry (AzureAIAgent) Migration
 
 <configuration_changes>
 **Remove Semantic Kernel Packages:**

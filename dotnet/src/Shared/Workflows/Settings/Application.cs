@@ -13,9 +13,8 @@ internal static class Application
     public static class Settings
     {
         public const string FoundryEndpoint = "FOUNDRY_PROJECT_ENDPOINT";
-        public const string FoundryModelMini = "FOUNDRY_MODEL_DEPLOYMENT_NAME";
-        public const string FoundryModelFull = "FOUNDRY_MEDIA_DEPLOYMENT_NAME";
-        public const string FoundryGroundingTool = "FOUNDRY_CONNECTION_GROUNDING_TOOL";
+        public const string FoundryModel = "FOUNDRY_MODEL";
+        public const string FoundryGroundingTool = "FOUNDRY_GROUNDING_TOOL";
     }
 
     public static string GetInput(string[] args)
@@ -38,6 +37,12 @@ internal static class Application
             while (string.IsNullOrWhiteSpace(input))
             {
                 input = Console.ReadLine();
+
+                // Exit gracefully when stdin is closed (e.g. automated test runner).
+                if (input is null)
+                {
+                    return string.Empty;
+                }
             }
 
             return input.Trim();

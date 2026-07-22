@@ -21,21 +21,25 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<HostedAgentResponseExecutor> _logger;
+    private readonly Func<OpenAIResponseRequestInfo, AgentRunOptions?> _runOptionsFactory;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="HostedAgentResponseExecutor"/> class.
     /// </summary>
     /// <param name="serviceProvider">The service provider used to resolve hosted agents.</param>
     /// <param name="logger">The logger instance.</param>
+    /// <param name="mapOptions">Options controlling how incoming requests are mapped onto the agent run.</param>
     public HostedAgentResponseExecutor(
         IServiceProvider serviceProvider,
-        ILogger<HostedAgentResponseExecutor> logger)
+        ILogger<HostedAgentResponseExecutor> logger,
+        OpenAIResponsesMapOptions? mapOptions = null)
     {
         ArgumentNullException.ThrowIfNull(serviceProvider);
         ArgumentNullException.ThrowIfNull(logger);
 
         this._serviceProvider = serviceProvider;
         this._logger = logger;
+        this._runOptionsFactory = (mapOptions ?? new OpenAIResponsesMapOptions()).RunOptionsFactory;
     }
 
     /// <inheritdoc/>
@@ -75,6 +79,21 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
             });
         }
 
+        // Surface unsupported request settings as a clean request error rather than an unhandled
+        // exception during execution.
+        try
+        {
+            _ = this._runOptionsFactory(request.ToRequestInfo());
+        }
+        catch (NotSupportedException ex)
+        {
+            return ValueTask.FromResult<ResponseError?>(new ResponseError
+            {
+                Code = "unsupported_parameter",
+                Message = ex.Message
+            });
+        }
+
         return ValueTask.FromResult<ResponseError?>(null);
     }
 
@@ -82,28 +101,21 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
     public async IAsyncEnumerable<StreamingResponseEvent> ExecuteAsync(
         AgentInvocationContext context,
         CreateResponse request,
+        IReadOnlyList<ChatMessage>? conversationHistory = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         string agentName = GetAgentName(request)!;
         AIAgent agent = this._serviceProvider.GetRequiredKeyedService<AIAgent>(agentName);
 
-        var chatOptions = new ChatOptions
-        {
-            // Note: We intentionally do NOT set ConversationId on ChatOptions here.
-            // The conversation ID from the client request is used by the hosting layer
-            // to manage conversation storage, but should not be forwarded to the underlying
-            // IChatClient as it has its own concept of conversations (or none at all).
-            // ---
-            // ConversationId = request.Conversation?.Id,
-
-            Temperature = (float?)request.Temperature,
-            TopP = (float?)request.TopP,
-            MaxOutputTokens = request.MaxOutputTokens,
-            Instructions = request.Instructions,
-            ModelId = request.Model,
-        };
-        var options = new ChatClientAgentRunOptions(chatOptions);
+        // The hosting developer controls, via OpenAIResponsesMapOptions.RunOptionsFactory, which (if any)
+        // request settings are mapped onto the agent run. By default no request setting is mapped.
+        AgentRunOptions? options = this._runOptionsFactory(request.ToRequestInfo());
         var messages = new List<ChatMessage>();
+
+        if (conversationHistory is not null)
+        {
+            messages.AddRange(conversationHistory);
+        }
 
         foreach (var inputMessage in request.Input.GetInputMessages())
         {

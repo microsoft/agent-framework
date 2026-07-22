@@ -2,17 +2,17 @@
 
 """Event converter for AG-UI protocol events to Agent Framework types."""
 
+from __future__ import annotations
+
+import logging
 from typing import Any
 
 from agent_framework import (
     ChatResponseUpdate,
-    ErrorContent,
-    FinishReason,
-    FunctionCallContent,
-    FunctionResultContent,
-    Role,
-    TextContent,
+    Content,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AGUIEventConverter:
@@ -30,6 +30,16 @@ class AGUIEventConverter:
         self.accumulated_tool_args: str = ""
         self.thread_id: str | None = None
         self.run_id: str | None = None
+
+    @staticmethod
+    def _get_tool_call_id(event: dict[str, Any]) -> str | None:
+        """Return the tool call ID from either AG-UI field spelling."""
+        tool_call_id = event.get("toolCallId")
+        if tool_call_id is None:
+            tool_call_id = event.get("tool_call_id")
+        if tool_call_id is None:
+            return None
+        return str(tool_call_id)
 
     def convert_event(self, event: dict[str, Any]) -> ChatResponseUpdate | None:
         """Convert a single AG-UI event to ChatResponseUpdate.
@@ -58,7 +68,8 @@ class AGUIEventConverter:
                 update = converter.convert_event(event)
                 assert update.contents[0].text == "Hello"
         """
-        event_type = event.get("type", "")
+        raw_event_type = str(event.get("type", ""))
+        event_type = raw_event_type.upper()
 
         if event_type == "RUN_STARTED":
             return self._handle_run_started(event)
@@ -80,6 +91,8 @@ class AGUIEventConverter:
             return self._handle_run_finished(event)
         elif event_type == "RUN_ERROR":
             return self._handle_run_error(event)
+        elif event_type in {"CUSTOM", "CUSTOM_EVENT"}:
+            return self._handle_custom_event(event, raw_event_type)
 
         return None
 
@@ -89,7 +102,7 @@ class AGUIEventConverter:
         self.run_id = event.get("runId")
 
         return ChatResponseUpdate(
-            role=Role.ASSISTANT,
+            role="assistant",
             contents=[],
             additional_properties={
                 "thread_id": self.thread_id,
@@ -101,7 +114,7 @@ class AGUIEventConverter:
         """Handle TEXT_MESSAGE_START event."""
         self.current_message_id = event.get("messageId")
         return ChatResponseUpdate(
-            role=Role.ASSISTANT,
+            role="assistant",
             message_id=self.current_message_id,
             contents=[],
         )
@@ -115,9 +128,9 @@ class AGUIEventConverter:
             self.current_message_id = message_id
 
         return ChatResponseUpdate(
-            role=Role.ASSISTANT,
+            role="assistant",
             message_id=self.current_message_id,
-            contents=[TextContent(text=delta)],
+            contents=[Content.from_text(text=delta)],
         )
 
     def _handle_text_message_end(self, event: dict[str, Any]) -> ChatResponseUpdate | None:
@@ -126,14 +139,14 @@ class AGUIEventConverter:
 
     def _handle_tool_call_start(self, event: dict[str, Any]) -> ChatResponseUpdate:
         """Handle TOOL_CALL_START event."""
-        self.current_tool_call_id = event.get("toolCallId")
+        self.current_tool_call_id = self._get_tool_call_id(event)
         self.current_tool_name = event.get("toolName") or event.get("toolCallName") or event.get("tool_call_name")
         self.accumulated_tool_args = ""
 
         return ChatResponseUpdate(
-            role=Role.ASSISTANT,
+            role="assistant",
             contents=[
-                FunctionCallContent(
+                Content.from_function_call(
                     call_id=self.current_tool_call_id or "",
                     name=self.current_tool_name or "",
                     arguments="",
@@ -141,15 +154,27 @@ class AGUIEventConverter:
             ],
         )
 
-    def _handle_tool_call_args(self, event: dict[str, Any]) -> ChatResponseUpdate:
+    def _handle_tool_call_args(self, event: dict[str, Any]) -> ChatResponseUpdate | None:
         """Handle TOOL_CALL_ARGS event."""
+        event_tool_call_id = self._get_tool_call_id(event)
+        if event_tool_call_id is not None:
+            if self.current_tool_call_id and event_tool_call_id != self.current_tool_call_id:
+                logger.warning(
+                    "Ignoring TOOL_CALL_ARGS for toolCallId=%s while current toolCallId=%s",
+                    event_tool_call_id,
+                    self.current_tool_call_id,
+                )
+                return None
+            if not self.current_tool_call_id:
+                self.current_tool_call_id = event_tool_call_id
+
         delta = event.get("delta", "")
         self.accumulated_tool_args += delta
 
         return ChatResponseUpdate(
-            role=Role.ASSISTANT,
+            role="assistant",
             contents=[
-                FunctionCallContent(
+                Content.from_function_call(
                     call_id=self.current_tool_call_id or "",
                     name=self.current_tool_name or "",
                     arguments=delta,
@@ -159,7 +184,15 @@ class AGUIEventConverter:
 
     def _handle_tool_call_end(self, event: dict[str, Any]) -> ChatResponseUpdate | None:
         """Handle TOOL_CALL_END event."""
-        self.accumulated_tool_args = ""
+        event_tool_call_id = self._get_tool_call_id(event)
+        if (
+            self.current_tool_call_id is None
+            or event_tool_call_id is None
+            or event_tool_call_id == self.current_tool_call_id
+        ):
+            self.current_tool_call_id = None
+            self.current_tool_name = None
+            self.accumulated_tool_args = ""
         return None
 
     def _handle_tool_call_result(self, event: dict[str, Any]) -> ChatResponseUpdate:
@@ -168,9 +201,9 @@ class AGUIEventConverter:
         result = event.get("result") if event.get("result") is not None else event.get("content")
 
         return ChatResponseUpdate(
-            role=Role.TOOL,
+            role="tool",
             contents=[
-                FunctionResultContent(
+                Content.from_function_result(
                     call_id=tool_call_id,
                     result=result,
                 )
@@ -179,14 +212,32 @@ class AGUIEventConverter:
 
     def _handle_run_finished(self, event: dict[str, Any]) -> ChatResponseUpdate:
         """Handle RUN_FINISHED event."""
+        additional_properties: dict[str, Any] = {
+            "thread_id": self.thread_id,
+            "run_id": self.run_id,
+        }
+        if "interrupt" in event:
+            additional_properties["interrupt"] = event.get("interrupt")
+        if "outcome" in event:
+            outcome = event.get("outcome")
+            additional_properties["outcome"] = outcome
+            if not isinstance(outcome, dict):
+                logger.warning(
+                    "RUN_FINISHED outcome should be an object; got %s. Preserving raw outcome.",
+                    type(outcome).__name__,
+                )
+            elif outcome.get("type") == "interrupt":
+                interrupts = outcome.get("interrupts")
+                if isinstance(interrupts, list):
+                    additional_properties["interrupts"] = interrupts
+        if "result" in event:
+            additional_properties["result"] = event.get("result")
+
         return ChatResponseUpdate(
-            role=Role.ASSISTANT,
-            finish_reason=FinishReason.STOP,
+            role="assistant",
+            finish_reason="stop",
             contents=[],
-            additional_properties={
-                "thread_id": self.thread_id,
-                "run_id": self.run_id,
-            },
+            additional_properties=additional_properties,
         )
 
     def _handle_run_error(self, event: dict[str, Any]) -> ChatResponseUpdate:
@@ -194,10 +245,9 @@ class AGUIEventConverter:
         error_message = event.get("message", "Unknown error")
 
         return ChatResponseUpdate(
-            role=Role.ASSISTANT,
-            finish_reason=FinishReason.CONTENT_FILTER,
+            role="assistant",
             contents=[
-                ErrorContent(
+                Content.from_error(
                     message=error_message,
                     error_code="RUN_ERROR",
                 )
@@ -205,5 +255,24 @@ class AGUIEventConverter:
             additional_properties={
                 "thread_id": self.thread_id,
                 "run_id": self.run_id,
+            },
+        )
+
+    def _handle_custom_event(self, event: dict[str, Any], raw_event_type: str) -> ChatResponseUpdate:
+        """Handle CUSTOM/CUSTOM_EVENT events.
+
+        Custom events are surfaced as metadata so callers can inspect protocol-specific payloads.
+        """
+        return ChatResponseUpdate(
+            role="assistant",
+            contents=[],
+            additional_properties={
+                "thread_id": self.thread_id,
+                "run_id": self.run_id,
+                "ag_ui_custom_event": {
+                    "name": event.get("name"),
+                    "value": event.get("value"),
+                    "raw_type": raw_event_type,
+                },
             },
         )

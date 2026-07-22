@@ -116,6 +116,24 @@ public sealed class PurviewClientTests : IDisposable
     }
 
     [Fact]
+    public async Task ProcessContentAsync_WithProcessInline_IncludesPreferHeaderAsync()
+    {
+        // Arrange
+        var request = CreateValidProcessContentRequest();
+        request.ProcessInline = true;
+        var expectedResponse = new ProcessContentResponse { Id = "test-id" };
+
+        this._handler.StatusCodeToReturn = HttpStatusCode.OK;
+        this._handler.ResponseToReturn = JsonSerializer.Serialize(expectedResponse, PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ProcessContentResponse)));
+
+        // Act
+        await this._client.ProcessContentAsync(request, CancellationToken.None);
+
+        // Assert
+        Assert.Equal("evaluateInline", this._handler.PreferHeader);
+    }
+
+    [Fact]
     public async Task ProcessContentAsync_WithRateLimitError_ThrowsPurviewRateLimitExceptionAsync()
     {
         // Arrange
@@ -358,8 +376,8 @@ public sealed class PurviewClientTests : IDisposable
         Assert.NotNull(result);
         Assert.Null(result.Error);
 
-        // Verify request - note the endpoint is different from ProcessContent
-        Assert.Equal("https://graph.microsoft.com/v1.0/test-user-id/dataSecurityAndGovernance/activities/contentActivities", this._handler.RequestUri?.ToString());
+        // Verify request
+        Assert.Equal("https://graph.microsoft.com/v1.0/users/test-user-id/dataSecurityAndGovernance/activities/contentActivities", this._handler.RequestUri?.ToString());
         Assert.Equal(HttpMethod.Post, this._handler.RequestMethod);
     }
 
@@ -478,7 +496,7 @@ public sealed class PurviewClientTests : IDisposable
     private static ContentToProcess CreateValidContentToProcess()
     {
         var content = new PurviewTextContent("Test content");
-        var metadata = new ProcessConversationMetadata(content, "msg-123", false, "Test message");
+        var metadata = new ProcessConversationMetadata(content, "msg-123", false, "Test message", "test-correlation-id");
         var activityMetadata = new ActivityMetadata(Activity.UploadText);
         var deviceMetadata = new DeviceMetadata
         {
@@ -530,6 +548,7 @@ public sealed class PurviewClientTests : IDisposable
         public HttpMethod? RequestMethod { get; private set; }
         public string? AuthorizationHeader { get; private set; }
         public string? IfNoneMatchHeader { get; private set; }
+        public string? PreferHeader { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -545,6 +564,11 @@ public sealed class PurviewClientTests : IDisposable
             if (request.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues))
             {
                 this.IfNoneMatchHeader = string.Join(", ", ifNoneMatchValues);
+            }
+
+            if (request.Headers.TryGetValues("Prefer", out var preferValues))
+            {
+                this.PreferHeader = string.Join(", ", preferValues);
             }
 
             // Throw HttpRequestException if configured

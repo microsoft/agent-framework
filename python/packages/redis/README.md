@@ -10,15 +10,15 @@ pip install agent-framework-redis --pre
 
 ### Memory Context Provider
 
-The `RedisProvider` enables persistent context & memory capabilities for your agents, allowing them to remember user preferences and conversation context across sessions and threads.
+The `RedisContextProvider` enables persistent context and memory capabilities for your agents, allowing them to remember user preferences and conversation context across sessions and threads.
 
 #### Basic Usage Examples
 
-Review the set of [getting started examples](../../samples/getting_started/context_providers/redis/README.md) for using the Redis context provider.
+Review the set of [getting started examples](../../samples/02-agents/context_providers/redis/README.md) for using the Redis context provider.
 
-### Redis Chat Message Store
+### Redis History Provider
 
-The `RedisChatMessageStore` provides persistent conversation storage using Redis Lists, enabling chat history to survive application restarts and support distributed applications.
+The `RedisHistoryProvider` provides persistent conversation storage using Redis Lists, enabling chat history to survive application restarts and support distributed applications.
 
 #### Key Features
 
@@ -30,10 +30,10 @@ The `RedisChatMessageStore` provides persistent conversation storage using Redis
 
 #### Basic Usage Examples
 
-See the complete [Redis chat message store examples](../../samples/getting_started/threads/redis_chat_message_store_thread.py) including:
+See the complete [Redis history provider examples](../../samples/02-agents/conversations/redis_history_provider.py) including:
 - User session management
-- Conversation persistence across restarts  
-- Thread serialization and deserialization
+- Conversation persistence across restarts
+- Session serialization and deserialization
 - Automatic message trimming
 - Error handling patterns
 

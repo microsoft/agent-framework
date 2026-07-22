@@ -23,7 +23,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -56,7 +56,7 @@ jobs:
       - name: Build the package
         run: uv run poe --directory packages/${{ env.PACKAGE }} build
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           files: |
             python/dist/*

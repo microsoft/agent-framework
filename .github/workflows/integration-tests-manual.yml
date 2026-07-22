@@ -1,0 +1,135 @@
+#
+# This workflow allows manually running integration tests against an open PR or a branch.
+# Go to Actions → "Integration Tests (Manual)" → Run workflow → enter a PR number or branch name.
+#
+# It calls dedicated integration-only workflows (dotnet-integration-tests and python-integration-tests),
+# passing an immutable commit SHA so they check out and test the approved code.
+# Changed paths are detected here so only the relevant test suites run.
+#
+
+name: Integration Tests (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: "PR number to run integration tests against (leave empty if using branch)"
+        required: false
+        type: string
+        default: ""
+      branch:
+        description: "Branch name to run integration tests against (leave empty if using PR number)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: integration-tests-manual-${{ github.event.inputs.pr-number || github.event.inputs.branch }}
+  cancel-in-progress: true
+
+jobs:
+  resolve-ref:
+    name: Resolve ref
+    runs-on: ubuntu-latest
+    outputs:
+      checkout-ref: ${{ steps.resolve.outputs.checkout-ref }}
+      base-ref: ${{ steps.resolve.outputs.base-ref }}
+      dotnet-changes: ${{ steps.detect-changes.outputs.dotnet }}
+      python-changes: ${{ steps.detect-changes.outputs.python }}
+    steps:
+      - name: Check out trusted workflow helpers
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Resolve and authorize checkout ref
+        id: resolve
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const resolveIntegrationTestTarget = require(
+              './.github/scripts/resolve_integration_test_target.js'
+            );
+            const target = await resolveIntegrationTestTarget({
+              github,
+              context,
+              core,
+              prNumber: process.env.PR_NUMBER,
+              branch: process.env.BRANCH,
+            });
+            core.setOutput('checkout-ref', target.checkoutRef);
+            core.setOutput('base-ref', target.baseRef);
+            core.info(`Running integration tests for ${target.description} at ${target.checkoutRef}.`);
+        env:
+          PR_NUMBER: ${{ github.event.inputs.pr-number }}
+          BRANCH: ${{ github.event.inputs.branch }}
+
+      - name: Detect changed paths
+        id: detect-changes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_REF: ${{ steps.resolve.outputs.base-ref }}
+          CHECKOUT_REF: ${{ steps.resolve.outputs.checkout-ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          CHANGED_FILES=$(gh api "repos/$REPO/compare/$BASE_REF...$CHECKOUT_REF" \
+            --jq '.files[].filename')
+
+          DOTNET_CHANGES=false
+          PYTHON_CHANGES=false
+
+          if echo "$CHANGED_FILES" | grep -q '^dotnet/'; then
+            DOTNET_CHANGES=true
+          fi
+
+          if echo "$CHANGED_FILES" | grep -q '^python/'; then
+            PYTHON_CHANGES=true
+          fi
+
+          echo "dotnet=$DOTNET_CHANGES" >> "$GITHUB_OUTPUT"
+          echo "python=$PYTHON_CHANGES" >> "$GITHUB_OUTPUT"
+          echo "Detected changes; dotnet: $DOTNET_CHANGES, python: $PYTHON_CHANGES"
+
+  dotnet-integration-tests:
+    name: .NET Integration Tests
+    needs: resolve-ref
+    if: needs.resolve-ref.outputs.dotnet-changes == 'true'
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/dotnet-integration-tests.yml
+    with:
+      checkout-ref: ${{ needs.resolve-ref.outputs.checkout-ref }}
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZUREAI__ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      OPENAI__APIKEY: ${{ secrets.OPENAI__APIKEY }}
+
+  python-integration-tests:
+    name: Python Integration Tests
+    needs: resolve-ref
+    if: needs.resolve-ref.outputs.python-changes == 'true'
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/python-integration-tests.yml
+    with:
+      checkout-ref: ${{ needs.resolve-ref.outputs.checkout-ref }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      FOUNDRY_MODELS_API_KEY: ${{ secrets.FOUNDRY_MODELS_API_KEY }}
+      OPENAI__APIKEY: ${{ secrets.OPENAI__APIKEY }}

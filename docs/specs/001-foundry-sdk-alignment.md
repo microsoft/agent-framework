@@ -125,7 +125,7 @@ The proposed solution is to add helper methods which allow developers to either 
 - [Foundry SDK] Create a `PersistentAgentsClient`
 - [Foundry SDK] Create a `PersistentAgent` using the `PersistentAgentsClient`
 - [Foundry SDK] Retrieve an `AIAgent` using the `PersistentAgentsClient`
-- [Agent Framework SDK] Invoke the `AIAgent` instance and access response from the `AgentRunResponse` 
+- [Agent Framework SDK] Invoke the `AIAgent` instance and access response from the `AgentResponse` 
 - [Foundry SDK] Clean up the agent
 
 
@@ -156,7 +156,7 @@ await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 
 - [Foundry SDK] Create a `PersistentAgentsClient`
 - [Foundry SDK] Create a `AIAgent` using the `PersistentAgentsClient`
-- [Agent Framework SDK] Invoke the `AIAgent` instance and access response from the `AgentRunResponse` 
+- [Agent Framework SDK] Invoke the `AIAgent` instance and access response from the `AgentResponse` 
 - [Foundry SDK] Clean up the agent
 
 ```csharp
@@ -184,7 +184,7 @@ await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 - [Foundry SDK] Create a `PersistentAgentsClient`
 - [Foundry SDK] Create a `AIAgent` using the `PersistentAgentsClient`
 - [Agent Framework SDK] Optionally create an `AgentThread` for the agent run
-- [Agent Framework SDK] Invoke the `AIAgent` instance and access response from the `AgentRunResponse` 
+- [Agent Framework SDK] Invoke the `AIAgent` instance and access response from the `AgentResponse` 
 - [Foundry SDK] Clean up the agent and the agent thread
 
 ```csharp
@@ -227,7 +227,7 @@ await persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 - [Foundry SDK] Create a `PersistentAgentsClient`
 - [Foundry SDK] Create multiple `AIAgent` instances using the `PersistentAgentsClient`
 - [Agent Framework SDK] Create a `SequentialOrchestration` and add all of the agents to it
-- [Agent Framework SDK] Invoke the `SequentialOrchestration` instance and access response from the `AgentRunResponse` 
+- [Agent Framework SDK] Invoke the `SequentialOrchestration` instance and access response from the `AgentResponse` 
 - [Foundry SDK] Clean up the agents
 
 ```csharp
@@ -281,7 +281,7 @@ SequentialOrchestration orchestration =
 // Run the orchestration
 string input = "An eco-friendly stainless steel water bottle that keeps drinks cold for 24 hours";
 Console.WriteLine($"\n# INPUT: {input}\n");
-AgentRunResponse result = await orchestration.RunAsync(input);
+AgentResponse result = await orchestration.RunAsync(input);
 Console.WriteLine($"\n# RESULT: {result}");
 
 // Cleanup

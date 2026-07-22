@@ -16,23 +16,22 @@ namespace ResponseResult.IntegrationTests;
 
 public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 {
-    private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
-
     private ResponsesClient _openAIResponseClient = null!;
+    private string _modelName = null!;
     private ChatClientAgent _agent = null!;
 
     public AIAgent Agent => this._agent;
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
-        var typedThread = (ChatClientAgentThread)thread;
+        var typedSession = (ChatClientAgentSession)session;
 
         if (store)
         {
-            var inputItems = await this._openAIResponseClient.GetResponseInputItemsAsync(typedThread.ConversationId).ToListAsync();
-            var response = await this._openAIResponseClient.GetResponseAsync(typedThread.ConversationId);
+            var inputItems = await this._openAIResponseClient.GetResponseInputItemsAsync(typedSession.ConversationId).ToListAsync();
+            var response = await this._openAIResponseClient.GetResponseAsync(typedSession.ConversationId);
             var responseItem = response.Value.OutputItems.FirstOrDefault()!;
 
             // Take the messages that were the chat history leading up to the current response
@@ -50,7 +49,14 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
             return [.. previousMessages, responseMessage];
         }
 
-        return typedThread.MessageStore is null ? [] : (await typedThread.MessageStore.GetMessagesAsync()).ToList();
+        var chatHistoryProvider = agent.GetService<ChatHistoryProvider>();
+
+        if (chatHistoryProvider is null)
+        {
+            return [];
+        }
+
+        return (await chatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
     }
 
     private static ChatMessage ConvertToChatMessage(ResponseItem item)
@@ -69,7 +75,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null) =>
             new(
-                this._openAIResponseClient.AsIChatClient(),
+                this._openAIResponseClient.AsIChatClient(this._modelName),
                 options: new()
                 {
                     Name = name,
@@ -85,17 +91,22 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
         // Chat Completion does not require/support deleting agents, so this is a no-op.
         Task.CompletedTask;
 
-    public Task DeleteThreadAsync(AgentThread thread) =>
+    public Task DeleteSessionAsync(AgentSession session) =>
         // Chat Completion does not require/support deleting threads, so this is a no-op.
         Task.CompletedTask;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
-        this._openAIResponseClient = new OpenAIClient(s_config.ApiKey)
-            .GetResponsesClient(s_config.ChatModelId);
+        this._modelName = TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName);
+        this._openAIResponseClient = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey))
+            .GetResponsesClient();
 
         this._agent = await this.CreateChatClientAgentAsync();
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        return default;
+    }
 }

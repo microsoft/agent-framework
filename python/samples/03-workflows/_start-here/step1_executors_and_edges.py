@@ -1,0 +1,226 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+import asyncio
+
+from agent_framework import (
+    Executor,
+    Workflow,
+    WorkflowBuilder,
+    WorkflowContext,
+    executor,
+    handler,
+)
+from typing_extensions import Never
+
+"""
+Step 1: Foundational patterns: Executors and edges
+
+What this example shows
+- Two ways to define a unit of work (an Executor node):
+    1) Custom class that subclasses Executor with an async method marked by @handler.
+         Possible handler signatures:
+            - (text: str, ctx: WorkflowContext) -> None,
+            - (text: str, ctx: WorkflowContext[str]) -> None, or
+            - (text: str, ctx: WorkflowContext[Never, str]) -> None.
+         The first parameter is the typed input to this node, the input type is str here.
+         The second parameter is a WorkflowContext[T_Out, T_W_Out].
+         WorkflowContext[T_Out] is used for nodes that send messages to downstream nodes with ctx.send_message(T_Out).
+         WorkflowContext[T_Out, T_W_Out] is used for nodes that also yield workflow
+            output with ctx.yield_output(T_W_Out).
+         WorkflowContext without type parameters is equivalent to WorkflowContext[Never, Never], meaning this node
+            neither sends messages to downstream nodes nor yields workflow output.
+
+    2) Standalone async function decorated with @executor using the same signature.
+         Simple steps can use this form; a terminal step can yield output
+         using ctx.yield_output() to provide workflow results.
+
+- Explicit type parameters with @handler:
+    Instead of relying on type introspection from function signatures, you can explicitly
+    specify `input`, `output`, and/or `workflow_output` on the @handler decorator.
+    This is "all or nothing": when ANY explicit parameter is provided, ALL types come
+    from explicit parameters (introspection is disabled). The `input` parameter is
+    required; `output` and `workflow_output` are optional.
+
+    Examples:
+        @handler(input=str | int)  # Accepts str or int, no outputs
+        @handler(input=str, output=int)  # Accepts str, outputs int
+        @handler(input=str, output=int, workflow_output=bool)  # All three specified
+
+- Fluent WorkflowBuilder API:
+    add_edge(A, B) to connect nodes, set_start_executor(A), then build() -> Workflow.
+
+- State isolation via helper functions:
+    Wrapping executor instantiation and workflow building inside a function
+    (e.g., create_workflow()) ensures each call produces fresh, independent
+    instances. This is the recommended pattern for reuse.
+
+- Running and results:
+    workflow.run(initial_input) executes the graph. Terminal nodes yield
+    outputs using ctx.yield_output(). The workflow runs until idle.
+
+Prerequisites
+- No external services required.
+"""
+
+
+# Example 1: A custom Executor subclass using introspection (traditional approach)
+# ---------------------------------------------------------------------------------
+#
+# Subclassing Executor lets you define a named node with lifecycle hooks if needed.
+# The work itself is implemented in an async method decorated with @handler.
+#
+# Handler signature contract:
+# - First parameter is the typed input to this node (here: text: str)
+# - Second parameter is a WorkflowContext[T_Out], where T_Out is the type of data this
+#   node will emit via ctx.send_message (here: T_Out is str)
+#
+# Within a handler you typically:
+# - Compute a result
+# - Forward that result to downstream node(s) using ctx.send_message(result)
+class UpperCase(Executor):
+    def __init__(self, id: str):
+        super().__init__(id=id)
+
+    @handler
+    async def to_upper_case(self, text: str, ctx: WorkflowContext[str]) -> None:
+        """Convert the input to uppercase and forward it to the next node.
+
+        Note: The WorkflowContext is parameterized with the type this handler will
+        emit. Here WorkflowContext[str] means downstream nodes should expect str.
+        """
+
+        result = text.upper()
+
+        # Send the result to the next executor in the workflow.
+        await ctx.send_message(result)
+
+
+# Example 2: A standalone function-based executor using introspection
+# --------------------------------------------------------------------
+#
+# For simple steps you can skip subclassing and define an async function with the
+# same signature pattern (typed input + WorkflowContext[T_Out, T_W_Out]) and decorate it with
+# @executor. This creates a fully functional node that can be wired into a flow.
+
+
+@executor(id="reverse_text_executor")
+async def reverse_text(text: str, ctx: WorkflowContext[Never, str]) -> None:
+    """Reverse the input string and yield the workflow output.
+
+    This node yields the final output using ctx.yield_output(result).
+    The workflow will complete when it becomes idle (no more work to do).
+
+    The WorkflowContext is parameterized with two types:
+    - T_Out = Never: this node does not send messages to downstream nodes.
+    - T_W_Out = str: this node yields workflow output of type str.
+    """
+    result = text[::-1]
+
+    # Yield the output - the workflow will complete when idle
+    await ctx.yield_output(result)
+
+
+# Example 3: Using explicit type parameters on @handler
+# -----------------------------------------------------
+#
+# Instead of relying on type introspection, you can explicitly specify input,
+# output, and/or workflow_output on the @handler decorator. This is "all or nothing":
+# when ANY explicit parameter is provided, ALL types come from explicit parameters
+# (introspection is completely disabled). The input parameter is required.
+#
+# This is useful when:
+# - You want to accept multiple types (union types) without complex type annotations
+# - The function signature uses Any or a base type for flexibility
+# - You want to decouple the runtime type routing from the static type annotations
+
+
+class ExclamationAdder(Executor):
+    """An executor that adds exclamation marks, demonstrating explicit @handler types.
+
+    This example shows how to use explicit input and output parameters
+    on the @handler decorator instead of relying on introspection from the function
+    signature. This approach is especially useful for union types.
+    """
+
+    def __init__(self, id: str):
+        super().__init__(id=id)
+
+    @handler(input=str, output=str)
+    async def add_exclamation(self, message, ctx) -> None:  # type: ignore
+        """Add exclamation marks to the input.
+
+        Note: The input=str and output=str are explicitly specified on @handler,
+        so the framework uses those instead of introspecting the function signature.
+        The WorkflowContext here has no type parameters because the explicit types
+        on @handler take precedence.
+        """
+        result = f"{message}!!!"
+        await ctx.send_message(result)  # type: ignore
+
+
+def create_workflow() -> Workflow:
+    """Create a fresh workflow with isolated state.
+
+    Wrapping workflow construction in a helper function ensures each call
+    produces independent executor instances. This is the recommended pattern
+    for reuse — call create_workflow() each time you need a new workflow so
+    that no state leaks between runs.
+    """
+    upper_case = UpperCase(id="upper_case_executor")
+
+    return WorkflowBuilder(start_executor=upper_case).add_edge(upper_case, reverse_text).build()
+
+
+async def main():
+    """Build and run workflows using the fluent builder API."""
+
+    # Workflow 1: Using the helper function pattern for state isolation
+    # ------------------------------------------------------------------
+    # Each call to create_workflow() returns a workflow with fresh executor
+    # instances. This is the recommended pattern when you need to run the
+    # same workflow topology multiple times with clean state.
+    workflow1 = create_workflow()
+
+    # Run the workflow by sending the initial message to the start node.
+    # The run(...) call returns an event collection; its get_outputs() method
+    # retrieves the outputs yielded by any terminal nodes.
+    print("Workflow 1 (introspection-based types):")
+    events1 = await workflow1.run("hello world")
+    print(events1.get_outputs())
+    print("Final state:", events1.get_final_state())
+
+    # Workflow 2: Using explicit type parameters on @handler
+    # -------------------------------------------------------
+    upper_case = UpperCase(id="upper_case_executor")
+    exclamation_adder = ExclamationAdder(id="exclamation_adder")
+
+    # This workflow demonstrates the explicit input/output feature:
+    # exclamation_adder uses @handler(input=str, output=str) to
+    # explicitly declare types instead of relying on introspection.
+    workflow2 = (
+        WorkflowBuilder(start_executor=upper_case)
+        .add_edge(upper_case, exclamation_adder)
+        .add_edge(exclamation_adder, reverse_text)
+        .build()
+    )
+
+    print("\nWorkflow 2 (explicit @handler types):")
+    events2 = await workflow2.run("hello world")
+    print(events2.get_outputs())
+    print("Final state:", events2.get_final_state())
+
+    """
+    Sample Output:
+
+    Workflow 1 (introspection-based types):
+    ['DLROW OLLEH']
+    Final state: WorkflowRunState.IDLE
+
+    Workflow 2 (explicit @handler types):
+    ['!!!DLROW OLLEH']
+    Final state: WorkflowRunState.IDLE
+    """
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

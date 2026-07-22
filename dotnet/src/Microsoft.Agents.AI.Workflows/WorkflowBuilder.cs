@@ -33,14 +33,12 @@ public class WorkflowBuilder
     private readonly HashSet<string> _unboundExecutors = [];
     private readonly HashSet<EdgeConnection> _conditionlessConnections = [];
     private readonly Dictionary<string, RequestPort> _requestPorts = [];
-    private readonly HashSet<string> _outputExecutors = [];
+    private readonly Dictionary<string, HashSet<OutputTag>> _outputExecutors = new(StringComparer.Ordinal);
 
     private readonly string _startExecutorId;
     private string? _name;
     private string? _description;
-
-    private static readonly string s_namespace = typeof(WorkflowBuilder).Namespace!;
-    private static readonly ActivitySource s_activitySource = new(s_namespace);
+    private WorkflowTelemetryContext _telemetryContext = WorkflowTelemetryContext.Disabled;
 
     /// <summary>
     /// Initializes a new instance of the WorkflowBuilder class with the specified starting executor.
@@ -99,20 +97,87 @@ public class WorkflowBuilder
     }
 
     /// <summary>
-    /// Register executors as an output source. Executors can use <see cref="IWorkflowContext.YieldOutputAsync"/> to yield output values.
-    /// By default, message handlers with a non-void return type will also be yielded, unless <see cref="ExecutorOptions.AutoYieldOutputHandlerResultObject"/>
-    /// is set to <see langword="false"/>.
+    /// Register executors as a source of terminal workflow outputs. Executors can use
+    /// <see cref="IWorkflowContext.YieldOutputAsync"/> to yield output values; yielded values from
+    /// registered executors are surfaced as <see cref="WorkflowOutputEvent"/> (or one of its
+    /// subclasses) with an empty <see cref="WorkflowOutputEvent.Tags"/> set.
+    /// By default, message handlers with a non-void return type will also be yielded, unless
+    /// <see cref="ExecutorOptions.AutoYieldOutputHandlerResultObject"/> is set to <see langword="false"/>.
     /// </summary>
-    /// <param name="executors"></param>
-    /// <returns></returns>
+    /// <remarks>
+    /// AIAgent payloads (<see cref="AgentResponse"/> / <see cref="AgentResponseUpdate"/>) only
+    /// participate in this designation when
+    /// <see cref="Futures.EnableAgentResponseOutputTaggingAndFiltering"/> is
+    /// <see langword="true"/>; otherwise they are emitted unconditionally and untagged.
+    /// </remarks>
+    /// <param name="executors">The executors to register as output sources.</param>
+    /// <returns>The current <see cref="WorkflowBuilder"/> instance, enabling fluent configuration.</returns>
     public WorkflowBuilder WithOutputFrom(params ExecutorBinding[] executors)
     {
         foreach (ExecutorBinding executor in executors)
         {
-            this._outputExecutors.Add(this.Track(executor).Id);
+            this.EnsureOutputExecutor(this.Track(executor).Id);
         }
 
         return this;
+    }
+
+    /// <summary>
+    /// Register executors as a source of workflow outputs carrying the given <paramref name="tag"/>.
+    /// Tags accumulate across repeated calls; the registered id always exists with the union of all
+    /// tags applied across all calls (and an empty set if only the untagged
+    /// <see cref="WithOutputFrom(ExecutorBinding[])"/> overload was used).
+    /// </summary>
+    /// <remarks>
+    /// Forward-looking surface for when the <see cref="OutputTag"/> constructor opens to
+    /// user-defined tags. Today, prefer
+    /// <see cref="WorkflowBuilderExtensions.WithIntermediateOutputFrom(WorkflowBuilder, IEnumerable{ExecutorBinding})"/>
+    /// for the <see cref="OutputTag.Intermediate"/> case.
+    /// </remarks>
+    /// <param name="executors">The executors to register.</param>
+    /// <param name="tag">The tag to apply to events yielded by the listed executors.</param>
+    /// <returns>The current <see cref="WorkflowBuilder"/> instance, enabling fluent configuration.</returns>
+    public WorkflowBuilder WithOutputFrom(IEnumerable<ExecutorBinding> executors, OutputTag tag)
+    {
+        Throw.IfNull(executors);
+
+        foreach (ExecutorBinding executor in executors)
+        {
+            this.EnsureOutputExecutor(this.Track(executor).Id).Add(tag);
+        }
+
+        return this;
+    }
+
+    /// <summary>
+    /// Register a single executor as a source of workflow outputs carrying the given <paramref name="tag"/>.
+    /// Convenience overload for the single-executor case; equivalent to passing a one-element sequence
+    /// to <see cref="WithOutputFrom(IEnumerable{ExecutorBinding}, OutputTag)"/>.
+    /// </summary>
+    /// <param name="executor">The executor to register.</param>
+    /// <param name="tag">The tag to apply to events yielded by the executor.</param>
+    /// <returns>The current <see cref="WorkflowBuilder"/> instance, enabling fluent configuration.</returns>
+    public WorkflowBuilder WithOutputFrom(ExecutorBinding executor, OutputTag tag)
+    {
+        Throw.IfNull(executor);
+
+        this.EnsureOutputExecutor(this.Track(executor).Id).Add(tag);
+
+        return this;
+    }
+
+    /// <summary>
+    /// Ensures the executor id is present in <see cref="_outputExecutors"/>; if newly added,
+    /// initializes with an empty tag set. Returns the tag set for the id (mutable).
+    /// </summary>
+    private HashSet<OutputTag> EnsureOutputExecutor(string executorId)
+    {
+        if (!this._outputExecutors.TryGetValue(executorId, out HashSet<OutputTag>? tags))
+        {
+            tags = [];
+            this._outputExecutors[executorId] = tags;
+        }
+        return tags;
     }
 
     /// <summary>
@@ -135,6 +200,15 @@ public class WorkflowBuilder
     {
         this._description = description;
         return this;
+    }
+
+    /// <summary>
+    /// Sets the telemetry context for the workflow.
+    /// </summary>
+    /// <param name="context">The telemetry context to use.</param>
+    internal void SetTelemetryContext(WorkflowTelemetryContext context)
+    {
+        this._telemetryContext = Throw.IfNull(context);
     }
 
     /// <summary>
@@ -415,30 +489,26 @@ public class WorkflowBuilder
     }
 
     /// <summary>
-    /// Adds a fan-in edge to the workflow, connecting multiple source executors to a single target executor with an
-    /// optional trigger condition.
+    /// Adds a fan-in "barrier" edge to the workflow, connecting multiple source executors to a single target executor. Messages
+    /// will be held until every source executor has generated at least one message, then they will be streamed to the target
+    /// executor in the following step.
     /// </summary>
-    /// <remarks>This method establishes a fan-in relationship, allowing the target executor to be activated
-    /// based on the completion or state of multiple sources. The trigger parameter can be used to customize activation
-    /// behavior.</remarks>
     /// <param name="sources">One or more source executors that provide input to the target. Cannot be null or empty.</param>
     /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanInEdge(IEnumerable<ExecutorBinding> sources, ExecutorBinding target)
-        => this.AddFanInEdge(sources, target, label: null);
+    public WorkflowBuilder AddFanInBarrierEdge(IEnumerable<ExecutorBinding> sources, ExecutorBinding target)
+        => this.AddFanInBarrierEdge(sources, target, label: null);
 
     /// <summary>
-    /// Adds a fan-in edge to the workflow, connecting multiple source executors to a single target executor with an
-    /// optional trigger condition.
+    /// Adds a fan-in "barrier" edge to the workflow, connecting multiple source executors to a single target executor. Messages
+    /// will be held until every source executor has generated at least one message, then they will be streamed to the target
+    /// executor in the following step.
     /// </summary>
-    /// <remarks>This method establishes a fan-in relationship, allowing the target executor to be activated
-    /// based on the completion or state of multiple sources. The trigger parameter can be used to customize activation
-    /// behavior.</remarks>
     /// <param name="sources">One or more source executors that provide input to the target. Cannot be null or empty.</param>
     /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
     /// <param name="label">An optional label for the edge. Will be used in visualizations.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanInEdge(IEnumerable<ExecutorBinding> sources, ExecutorBinding target, string? label = null)
+    public WorkflowBuilder AddFanInBarrierEdge(IEnumerable<ExecutorBinding> sources, ExecutorBinding target, string? label = null)
     {
         Throw.IfNull(target);
         Throw.IfNull(sources);
@@ -465,10 +535,10 @@ public class WorkflowBuilder
         return this;
     }
 
-    /// <inheritdoc cref="AddFanInEdge(IEnumerable{ExecutorBinding}, ExecutorBinding)"/>
-    [Obsolete("Use AddFanInEdge(IEnumerable<ExecutorBinding>, ExecutorBinding) instead.")]
-    public WorkflowBuilder AddFanInEdge(ExecutorBinding target, params IEnumerable<ExecutorBinding> sources)
-        => this.AddFanInEdge(sources, target);
+    /// <inheritdoc cref="AddFanInBarrierEdge(IEnumerable{ExecutorBinding}, ExecutorBinding)"/>
+    [Obsolete("Use AddFanInBarrierEdge(IEnumerable<ExecutorBinding>, ExecutorBinding) instead.")]
+    public WorkflowBuilder AddFanInBarrierEdge(ExecutorBinding target, params IEnumerable<ExecutorBinding> sources)
+        => this.AddFanInBarrierEdge(sources, target);
 
     private void Validate(bool validateOrphans)
     {
@@ -563,7 +633,7 @@ public class WorkflowBuilder
 
         activity?.AddEvent(new ActivityEvent(EventNames.BuildValidationCompleted));
 
-        var workflow = new Workflow(this._startExecutorId, this._name, this._description)
+        var workflow = new Workflow(this._startExecutorId, this._name, this._description, this._telemetryContext)
         {
             ExecutorBindings = this._executorBindings,
             Edges = this._edges,
@@ -601,7 +671,7 @@ public class WorkflowBuilder
     /// or if the start executor is not bound.</exception>
     public Workflow Build(bool validateOrphans = true)
     {
-        using Activity? activity = s_activitySource.StartActivity(ActivityNames.WorkflowBuild);
+        using Activity? activity = this._telemetryContext.StartWorkflowBuildActivity();
 
         var workflow = this.BuildInternal(validateOrphans, activity);
 

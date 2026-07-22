@@ -311,7 +311,7 @@ class TestSerializationWorkflowClasses:
             SwitchCaseEdgeGroupCase(condition=lambda x: x > 0, target_id="positive"),
             SwitchCaseEdgeGroupDefault(target_id="default"),
         ]
-        edge_group = SwitchCaseEdgeGroup(source_id="source", cases=cases)
+        edge_group = SwitchCaseEdgeGroup(source_id="source", cases=cases)  # type: ignore[arg-type]
 
         # Test to_dict
         data = edge_group.to_dict()
@@ -413,16 +413,14 @@ class TestSerializationWorkflowClasses:
         """
         # Create innermost workflow
         inner_executor = SampleExecutor(id="inner-exec")
-        inner_workflow = WorkflowBuilder().set_start_executor(inner_executor).set_max_iterations(10).build()
+        inner_workflow = WorkflowBuilder(max_iterations=10, start_executor=inner_executor).build()
 
         # Create middle workflow with WorkflowExecutor
         inner_workflow_executor = WorkflowExecutor(workflow=inner_workflow, id="inner-workflow-exec")
         middle_executor = SampleExecutor(id="middle-exec")
         middle_workflow = (
-            WorkflowBuilder()
-            .set_start_executor(middle_executor)
+            WorkflowBuilder(max_iterations=20, start_executor=middle_executor)
             .add_edge(middle_executor, inner_workflow_executor)
-            .set_max_iterations(20)
             .build()
         )
 
@@ -430,10 +428,8 @@ class TestSerializationWorkflowClasses:
         middle_workflow_executor = WorkflowExecutor(workflow=middle_workflow, id="middle-workflow-exec")
         outer_executor = SampleExecutor(id="outer-exec")
         outer_workflow = (
-            WorkflowBuilder()
-            .set_start_executor(outer_executor)
+            WorkflowBuilder(max_iterations=30, start_executor=outer_executor)
             .add_edge(outer_executor, middle_workflow_executor)
-            .set_max_iterations(30)
             .build()
         )
 
@@ -519,7 +515,7 @@ class TestSerializationWorkflowClasses:
             SwitchCaseEdgeGroupCase(condition=is_positive, target_id="positive"),
             SwitchCaseEdgeGroupDefault(target_id="default"),
         ]
-        edge_group = SwitchCaseEdgeGroup(source_id="source", cases=cases)
+        edge_group = SwitchCaseEdgeGroup(source_id="source", cases=cases)  # type: ignore[arg-type]
 
         # Test to_dict
         data = edge_group.to_dict()
@@ -543,7 +539,7 @@ class TestSerializationWorkflowClasses:
         executor1 = SampleExecutor(id="executor1")
         executor2 = SampleExecutor(id="executor2")
 
-        workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+        workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
 
         # Test model_dump
         data = workflow.to_dict()
@@ -616,24 +612,24 @@ class TestSerializationWorkflowClasses:
         executor1 = SampleExecutor(id="executor1")
         executor2 = SampleExecutor(id="executor2")
 
-        workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+        workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
 
         # Test model_dump - should not include private runtime objects
         data = workflow.to_dict()
 
         # These private runtime fields should not be in the serialized data
         assert "_runner_context" not in data
-        assert "_shared_state" not in data
+        assert "_state" not in data
         assert "_runner" not in data
 
     def test_workflow_name_description_serialization(self) -> None:
         """Test that workflow name and description are serialized correctly."""
         # Test 1: With name and description
-        workflow1 = (
-            WorkflowBuilder(name="Test Pipeline", description="Test workflow description")
-            .set_start_executor(SampleExecutor(id="e1"))
-            .build()
-        )
+        workflow1 = WorkflowBuilder(
+            name="Test Pipeline",
+            description="Test workflow description",
+            start_executor=SampleExecutor(id="e1"),
+        ).build()
 
         assert workflow1.name == "Test Pipeline"
         assert workflow1.description == "Test workflow description"
@@ -649,17 +645,16 @@ class TestSerializationWorkflowClasses:
         assert parsed1["description"] == "Test workflow description"
 
         # Test 2: Without name and description (defaults)
-        workflow2 = WorkflowBuilder().set_start_executor(SampleExecutor(id="e2")).build()
+        workflow2 = WorkflowBuilder(start_executor=SampleExecutor(id="e2")).build()
 
-        assert workflow2.name is None
+        assert workflow2.name is not None
         assert workflow2.description is None
 
         data2 = workflow2.to_dict()
-        assert "name" not in data2  # Should not include None values
-        assert "description" not in data2
+        assert "description" not in data2  # Should not include None values
 
         # Test 3: With only name (no description)
-        workflow3 = WorkflowBuilder(name="Named Only").set_start_executor(SampleExecutor(id="e3")).build()
+        workflow3 = WorkflowBuilder(name="Named Only", start_executor=SampleExecutor(id="e3")).build()
 
         assert workflow3.name == "Named Only"
         assert workflow3.description is None
@@ -706,8 +701,7 @@ def test_comprehensive_edge_groups_workflow_serialization() -> None:
 
     # Build workflow with all three edge group types
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(router)
+        WorkflowBuilder(start_executor=router)
         # 1. SwitchCaseEdgeGroup: Conditional routing
         .add_switch_case_edge_group(
             router,
@@ -760,7 +754,7 @@ def test_comprehensive_edge_groups_workflow_serialization() -> None:
 
     # Verify that serialization excludes non-serializable fields
     assert "_runner_context" not in data
-    assert "_shared_state" not in data
+    assert "_state" not in data
     assert "_runner" not in data
 
     # Test that we can identify each edge group type by examining their structure
@@ -805,3 +799,48 @@ def test_comprehensive_edge_groups_workflow_serialization() -> None:
     assert len(fan_in_groups[0]["edges"]) == 2, "FanInEdgeGroup should have 2 edges (from parallel_1 and parallel_2)"
     for single_group in single_groups:
         assert len(single_group["edges"]) == 1, "Each SingleEdgeGroup should have exactly 1 edge"
+
+
+def test_to_dict_preserves_compatibility_wire_keys_for_output_designation() -> None:
+    """to_dict() must emit the compatibility wire keys regardless of the Python kwarg names.
+
+    The Python API renamed ``output_executors`` -> ``output_from`` and
+    uses ``intermediate_output_from`` for intermediate selection, but the serialized
+    dict must keep the old keys so existing checkpoints stay readable. This is a
+    regression guard against accidental renames of the wire format.
+    """
+
+    class _Yielder(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            await ctx.yield_output(message)
+            await ctx.send_message(message)
+
+    class _Terminal(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            await ctx.yield_output(f"final: {message}")
+
+    start = _Yielder(id="start")
+    progress = _Yielder(id="progress")
+    final = _Terminal(id="final")
+
+    workflow = (
+        WorkflowBuilder(
+            start_executor=start,
+            output_from=[final],
+            intermediate_output_from=[progress],
+        )
+        .add_edge(start, progress)
+        .add_edge(progress, final)
+        .build()
+    )
+
+    d = workflow.to_dict()
+
+    assert "output_executors" in d, "wire key 'output_executors' must be preserved"
+    assert "intermediate_executors" in d, "wire key 'intermediate_executors' must be preserved"
+    assert "output_from" not in d, "new Python kwarg name must NOT leak into the wire format"
+    assert "intermediate_output_from" not in d, "new Python kwarg name must NOT leak into the wire format"
+    assert d["output_executors"] == ["final"]
+    assert d["intermediate_executors"] == ["progress"]

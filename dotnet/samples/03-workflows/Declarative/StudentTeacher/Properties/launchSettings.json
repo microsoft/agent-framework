@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "Default": {
+      "commandName": "Project"
+    },
+    "Compute PI": {
+      "commandName": "Project",
+      "commandLineArgs": "\"How would you compute the value of PI based on its fundamental definition?\""
+    }
+  }
+}

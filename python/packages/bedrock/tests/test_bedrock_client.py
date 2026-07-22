@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
+import json
 from typing import Any
 
 import pytest
-from agent_framework import ChatMessage, ChatOptions, Role, TextContent
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework import Agent, Content, Message
 
 from agent_framework_bedrock import BedrockChatClient
 
@@ -33,37 +32,205 @@ class _StubBedrockRuntime:
         }
 
 
-def test_get_response_invokes_bedrock_runtime() -> None:
+def _make_client() -> BedrockChatClient:
+    """Create a BedrockChatClient with a stub runtime for unit tests."""
+    return BedrockChatClient(
+        model="amazon.titan-text",
+        region="us-west-2",
+        client=_StubBedrockRuntime(),  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+
+
+def test_agent_accepts_bedrock_chat_client() -> None:
+    client = _make_client()
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
+
+
+async def test_get_response_invokes_bedrock_runtime() -> None:
     stub = _StubBedrockRuntime()
     client = BedrockChatClient(
-        model_id="amazon.titan-text",
+        model="amazon.titan-text",
         region="us-west-2",
-        client=stub,
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
 
     messages = [
-        ChatMessage(role=Role.SYSTEM, contents=[TextContent(text="You are concise.")]),
-        ChatMessage(role=Role.USER, contents=[TextContent(text="hello")]),
+        Message(role="system", contents=[Content.from_text(text="You are concise.")]),
+        Message(role="user", contents=[Content.from_text(text="hello")]),
     ]
 
-    response = asyncio.run(client.get_response(messages=messages, chat_options=ChatOptions(max_tokens=32)))
+    response = await client.get_response(messages=messages, options={"max_tokens": 32})
 
     assert stub.calls, "Expected the runtime client to be called"
     payload = stub.calls[0]
     assert payload["modelId"] == "amazon.titan-text"
     assert payload["messages"][0]["content"][0]["text"] == "hello"
     assert response.messages[0].contents[0].text == "Bedrock says hi"
-    assert response.usage_details and response.usage_details.input_token_count == 10
+    assert response.usage_details and response.usage_details["input_token_count"] == 10
 
 
 def test_build_request_requires_non_system_messages() -> None:
     client = BedrockChatClient(
-        model_id="amazon.titan-text",
+        model="amazon.titan-text",
         region="us-west-2",
-        client=_StubBedrockRuntime(),
+        client=_StubBedrockRuntime(),  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
 
-    messages = [ChatMessage(role=Role.SYSTEM, contents=[TextContent(text="Only system text")])]
+    messages = [Message(role="system", contents=[Content.from_text(text="Only system text")])]
 
-    with pytest.raises(ServiceInitializationError):
-        client._build_converse_request(messages, ChatOptions())
+    with pytest.raises(ValueError):
+        client._prepare_options(messages, {})
+
+
+def test_prepare_options_tool_choice_none_omits_tool_config() -> None:
+    """When tool_choice='none', toolConfig must be omitted entirely.
+
+    Bedrock's Converse API only accepts 'auto', 'any', or 'tool' as valid
+    toolChoice keys. Sending {"none": {}} causes a ParamValidationError.
+    The fix omits toolConfig so the model won't attempt tool calls.
+
+    Fixes #4529.
+    """
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    # Even when tools are provided, tool_choice="none" should strip toolConfig
+    options: dict[str, Any] = {
+        "tool_choice": "none",
+        "tools": [
+            {"toolSpec": {"name": "get_weather", "description": "Get weather", "inputSchema": {"json": {}}}},
+        ],
+    }
+
+    request = client._prepare_options(messages, options)
+
+    assert "toolConfig" not in request, (
+        f"toolConfig should be omitted when tool_choice='none', got: {request.get('toolConfig')}"
+    )
+
+
+def test_prepare_options_tool_choice_auto_includes_tool_config() -> None:
+    """When tool_choice='auto', toolConfig.toolChoice should be {'auto': {}}."""
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    options: dict[str, Any] = {
+        "tool_choice": "auto",
+        "tools": [
+            {"toolSpec": {"name": "get_weather", "description": "Get weather", "inputSchema": {"json": {}}}},
+        ],
+    }
+
+    request = client._prepare_options(messages, options)
+
+    assert "toolConfig" in request
+    assert request["toolConfig"]["toolChoice"] == {"auto": {}}
+
+
+def test_prepare_options_tool_choice_required_includes_any() -> None:
+    """When tool_choice='required' (no specific function), toolChoice should be {'any': {}}."""
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    options: dict[str, Any] = {
+        "tool_choice": "required",
+        "tools": [
+            {"toolSpec": {"name": "get_weather", "description": "Get weather", "inputSchema": {"json": {}}}},
+        ],
+    }
+
+    request = client._prepare_options(messages, options)
+
+    assert "toolConfig" in request
+    assert request["toolConfig"]["toolChoice"] == {"any": {}}
+
+
+def test_prepare_options_tool_choice_auto_without_tools_omits_tool_config() -> None:
+    """When tool_choice='auto' but no tools are provided, toolConfig must be omitted.
+
+    Without tools, setting toolChoice would cause a ParamValidationError from Bedrock.
+    """
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    options: dict[str, Any] = {
+        "tool_choice": "auto",
+    }
+
+    request = client._prepare_options(messages, options)
+
+    assert "toolConfig" not in request, (
+        f"toolConfig should be omitted when no tools are provided, got: {request.get('toolConfig')}"
+    )
+
+
+def test_prepare_options_tool_choice_required_without_tools_raises() -> None:
+    """When tool_choice='required' but no tools are provided, a ValueError must be raised."""
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    options: dict[str, Any] = {
+        "tool_choice": "required",
+    }
+
+    with pytest.raises(ValueError, match="tool_choice='required' requires at least one tool"):
+        client._prepare_options(messages, options)
+
+
+def test_process_converse_response_preserves_non_ascii_in_json_block() -> None:
+    """Non-ASCII text in a Bedrock ``json`` content block must be preserved, not \\uXXXX-escaped.
+
+    The Converse API can return structured ``json`` content blocks. These are serialized to
+    text via ``json.dumps``; without ``ensure_ascii=False`` CJK characters and emoji are escaped
+    to ``\\uXXXX`` sequences and surface garbled to the user.
+    """
+    client = _make_client()
+    json_payload = {"greeting": "你好世界", "emoji": "🎉"}
+    response: dict[str, Any] = {
+        "modelId": "amazon.titan-text",
+        "output": {
+            "completionReason": "end_turn",
+            "message": {
+                "role": "assistant",
+                "content": [{"json": json_payload}],
+            },
+        },
+    }
+
+    chat_response = client._process_converse_response(response)
+
+    text = chat_response.messages[0].text
+    assert "你好世界" in text
+    assert "🎉" in text
+    # Must not be escaped to Unicode code points.
+    assert "\\u" not in text
+    # Serialized text must remain valid JSON that round-trips to the original payload.
+    assert json.loads(text) == json_payload
+
+
+def test_parse_usage_surfaces_cache_tokens() -> None:
+    """Bedrock Converse reports cache token counts when prompt caching is used."""
+    client = _make_client()
+
+    details = client._parse_usage({
+        "inputTokens": 10,
+        "outputTokens": 5,
+        "totalTokens": 15,
+        "cacheReadInputTokens": 8,
+        "cacheWriteInputTokens": 3,
+    })
+
+    assert details is not None
+    assert details["input_token_count"] == 10
+    assert details["cache_read_input_token_count"] == 8
+    assert details["cache_creation_input_token_count"] == 3
+
+
+def test_parse_usage_returns_none_when_no_recognized_keys() -> None:
+    """A truthy usage payload with no recognized keys yields None, not an empty mapping."""
+    client = _make_client()
+
+    assert client._parse_usage({"unexpected": 1}) is None
+    assert client._parse_usage({}) is None
+    assert client._parse_usage(None) is None

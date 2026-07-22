@@ -10,7 +10,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 using BlankType = Microsoft.PowerFx.Types.BlankType;
@@ -259,7 +259,7 @@ internal static class FormulaValueExtensions
                         [.. value.OfType<ExpandoObject>().Select(element => element.ToRecord())]),
                 _ when typeof(ChatMessage).IsAssignableFrom(elementType) =>
                     FormulaValue.NewTable(
-                        TypeSchema.Message.MessageRecordType,
+                        TypeSchema.Message.RecordType,
                         [.. value.OfType<ChatMessage>().Select(message => message.ToRecord())]),
                 _ when typeof(IDictionary).IsAssignableFrom(elementType) => value.ToTableOfRecords(),
                 _ => throw new DeclarativeModelException($"Unsupported element type: {elementType.Name}"),
