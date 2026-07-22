@@ -535,8 +535,10 @@ class SerializationMixin:
         if dependencies is None:
             dependencies = {}
 
-        # Get the type identifier
-        type_id = cls._get_type_identifier(value)
+        # Resolve the expected identifier from the class, not the payload:
+        # reading it from `value` makes the mismatch check tautological, so
+        # any supplied 'type' would silently match itself.
+        type_id = cls._get_type_identifier()
 
         if (supplied_type := value.get("type")) and supplied_type != type_id:
             raise ValueError(f"Type mismatch: expected '{type_id}', got '{supplied_type}'")
