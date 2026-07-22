@@ -25,12 +25,9 @@ from datetime import datetime
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
-from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from ._serialization import SerializationMixin
-from ._tools import ToolTypes
-from ._tools import normalize_tools as _normalize_tools
 from .exceptions import AdditionItemMismatch, ContentError
 
 if sys.version_info >= (3, 13):
@@ -39,6 +36,11 @@ else:
     from typing_extensions import TypeVar  # pragma: no cover
 
 logger = logging.getLogger("agent_framework")
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from ._tools import ToolTypes
 
 
 # region Content Parsing Utilities
@@ -122,7 +124,11 @@ def detect_media_type_from_base64(
         if data is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
         # Remove data URI prefix if present
-        data_str = data_uri.split(";base64,", 1)[1]
+        if not data_uri.startswith("data:") or "," not in data_uri:
+            raise ValueError("Invalid data URI format.")
+        prefix, data_str = data_uri.split(",", 1)
+        if not prefix.endswith(";base64"):
+            raise ValueError("Data URI must use base64 encoding.")
     if data_str is not None:
         if data is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
@@ -298,9 +304,14 @@ EmbeddingInputT = TypeVar("EmbeddingInputT", default="str")
 ChatResponseT = TypeVar("ChatResponseT", bound="ChatResponse")
 ToolModeT = TypeVar("ToolModeT", bound="ToolMode")
 AgentResponseT = TypeVar("AgentResponseT", bound="AgentResponse")
-ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None, covariant=True)
-ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
-StructuredResponseFormat = type[BaseModel] | Mapping[str, Any] | None
+if TYPE_CHECKING:
+    ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None, covariant=True)
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+    StructuredResponseFormat = type[BaseModel] | Mapping[str, Any] | None
+else:
+    ResponseModelT = TypeVar("ResponseModelT", bound=Any, default=None, covariant=True)
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=Any)
+    StructuredResponseFormat = type[Any] | Mapping[str, Any] | None
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
 
@@ -489,6 +500,7 @@ class Content:
         name: str | None = None,
         arguments: str | Mapping[str, Any] | None = None,
         exception: str | None = None,
+        informational_only: bool = False,
         result: Any = None,
         items: Sequence[Content] | None = None,
         # Hosted file/vector store fields
@@ -549,6 +561,7 @@ class Content:
         self.name = name
         self.arguments = arguments
         self.exception = exception
+        self.informational_only = informational_only or type == "mcp_server_tool_call"
         self.result = result
         self.items = items
         self.file_id = file_id
@@ -798,17 +811,39 @@ class Content:
         *,
         arguments: str | Mapping[str, Any] | None = None,
         exception: str | None = None,
+        informational_only: bool = False,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
     ) -> ContentT:
-        """Create function call content."""
+        """Create function call content.
+
+        Args:
+            call_id: The model- or service-provided identifier for this function call. Function results use the
+                same ID to indicate which call they answer.
+            name: The function name requested by the model or service.
+
+        Keyword Args:
+            arguments: The arguments for the requested function call. May be a JSON string, a mapping that can be
+                serialized as arguments, or None when no arguments were provided.
+            exception: Error information associated with the function call, if the provider returned the call in an
+                error state.
+            informational_only: Whether the function call is present only for transcript fidelity and should not be
+                executed by Agent Framework function invocation.
+            annotations: Optional annotations attached to this content item.
+            additional_properties: Extra provider-specific properties to preserve with the content item.
+            raw_representation: The original provider-specific object or payload this content item was created from.
+
+        Returns:
+            Function call content.
+        """
         return cls(
             "function_call",
             call_id=call_id,
             name=name,
             arguments=arguments,
             exception=exception,
+            informational_only=informational_only,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1177,13 +1212,36 @@ class Content:
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
     ) -> ContentT:
-        """Create MCP server tool call content."""
+        """Create MCP server tool call content.
+
+        MCP server tool calls are provider-hosted tool calls that the model/service
+        already routed to a remote MCP server. They are recorded for transcript
+        fidelity and for matching provider-returned MCP tool results, but they are
+        not local function invocation requests. The returned content is always
+        marked ``informational_only=True``.
+
+        Args:
+            call_id: The model- or service-provided identifier for this MCP tool call.
+            tool_name: The remote MCP tool name that was called.
+
+        Keyword Args:
+            server_name: The remote MCP server label or name, when provided by the service.
+            arguments: The arguments sent to the remote MCP tool. May be a JSON string,
+                a mapping, or None when no arguments were provided.
+            annotations: Optional annotations attached to this content item.
+            additional_properties: Extra provider-specific properties to preserve with the content item.
+            raw_representation: The original provider-specific object or payload this content item was created from.
+
+        Returns:
+            MCP server tool call content.
+        """
         return cls(
             "mcp_server_tool_call",
             call_id=call_id,
             tool_name=tool_name,
             server_name=server_name,
             arguments=arguments,
+            informational_only=True,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1316,6 +1374,7 @@ class Content:
             "name",
             "arguments",
             "exception",
+            "informational_only",
             "result",
             "items",
             "file_id",
@@ -1348,6 +1407,8 @@ class Content:
         for field in fields_to_capture:
             value = getattr(self, field, None)
             if field in exclude:
+                continue
+            if field == "informational_only" and (self.type != "function_call" or not value):
                 continue
             if exclude_none and value is None:
                 continue
@@ -1489,9 +1550,11 @@ class Content:
         return Content(
             "function_call",
             call_id=self_call_id,
-            name=getattr(self, "name", getattr(other, "name", None)),
+            name=getattr(self, "name", None) or getattr(other, "name", None),
             arguments=arguments,
             exception=getattr(self, "exception", None) or getattr(other, "exception", None),
+            informational_only=getattr(self, "informational_only", False)
+            or getattr(other, "informational_only", False),
             additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
             raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),
         )
@@ -2110,8 +2173,11 @@ def _parse_structured_response_value(text: str, response_format: Any | None) -> 
         return None
     if not text:
         return None
-    if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-        return response_format.model_validate_json(text)
+    if isinstance(response_format, type):
+        from pydantic import BaseModel
+
+        if issubclass(response_format, BaseModel):
+            return response_format.model_validate_json(text)
     if isinstance(response_format, Mapping):
         try:
             return json.loads(text)
@@ -2123,6 +2189,16 @@ def _parse_structured_response_value(text: str, response_format: Any | None) -> 
         type(response_format),  # type: ignore[reportUnknownArgumentType]
     )
     return None
+
+
+def _last_non_empty_assistant_message_text(messages: Sequence[Message]) -> str:
+    for message in reversed(messages):
+        if message.role != "assistant":
+            continue
+        text = "".join((content.text or "") for content in message.contents if content.type == "text")
+        if text.strip():
+            return text
+    return ""
 
 
 class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
@@ -2310,7 +2386,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Keyword Args:
             output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
-                response text into structured data.
+                final non-empty assistant message text into structured data.
         """
         msg = cls(messages=[], response_format=output_format_type)
         for update in updates:
@@ -2370,7 +2446,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Keyword Args:
             output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
-                response text into structured data.
+                final non-empty assistant message text into structured data.
         """
         msg = cls(messages=[], response_format=output_format_type)
         async for update in updates:
@@ -2388,16 +2464,22 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         """Get the parsed structured output value.
 
         If a response_format was provided and parsing hasn't been attempted yet,
-        this will attempt to parse the text into the specified type.
+        this will attempt to parse the last non-empty assistant message text into the specified type.
 
         Raises:
-            ValidationError: If the response text doesn't match the expected schema.
-            ValueError: If the response text is not valid JSON for a non-Pydantic structured format.
+            ValidationError: If the assistant message text doesn't match the expected schema.
+            ValueError: If the assistant message text is not valid JSON for a non-Pydantic structured format.
         """
         if self._value_parsed:
             return self._value
         if self._response_format is not None:
-            self._value = cast(ResponseModelT, _parse_structured_response_value(self.text, self._response_format))
+            self._value = cast(
+                ResponseModelT,
+                _parse_structured_response_value(
+                    _last_non_empty_assistant_message_text(self.messages),
+                    self._response_format,
+                ),
+            )
             self._value_parsed = True
         return self._value
 
@@ -2652,16 +2734,22 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         """Get the parsed structured output value.
 
         If a response_format was provided and parsing hasn't been attempted yet,
-        this will attempt to parse the text into the specified type.
+        this will attempt to parse the last non-empty assistant message text into the specified type.
 
         Raises:
-            ValidationError: If the response text doesn't match the expected schema.
-            ValueError: If the response text is not valid JSON for a non-Pydantic structured format.
+            ValidationError: If the assistant message text doesn't match the expected schema.
+            ValueError: If the assistant message text is not valid JSON for a non-Pydantic structured format.
         """
         if self._value_parsed:
             return self._value
         if self._response_format is not None:
-            self._value = cast(ResponseModelT, _parse_structured_response_value(self.text, self._response_format))
+            self._value = cast(
+                ResponseModelT,
+                _parse_structured_response_value(
+                    _last_non_empty_assistant_message_text(self.messages),
+                    self._response_format,
+                ),
+            )
             self._value_parsed = True
         return self._value
 
@@ -2720,7 +2808,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Keyword Args:
             output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
-                response text into structured data.
+                final non-empty assistant message text into structured data.
             value: Optional pre-parsed structured output value to set directly on the response.
         """
         msg = cls(messages=[], response_format=output_format_type, value=value)
@@ -2770,7 +2858,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Keyword Args:
             output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
-                response text into structured data.
+                final non-empty assistant message text into structured data.
         """
         msg = cls(messages=[], response_format=output_format_type)
         async for update in updates:
@@ -2780,6 +2868,30 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
     def __str__(self) -> str:
         return self.text
+
+
+def _build_agent_response_from_chat_response(  # pyright: ignore[reportUnusedFunction]
+    response: ChatResponse[Any],
+    *,
+    response_format: StructuredResponseFormat = None,
+    suppress_response_id: bool = False,
+) -> AgentResponse[Any]:
+    """Build the AgentResponse wrapper for a completed ChatResponse."""
+    agent_response = AgentResponse(
+        messages=response.messages,
+        response_id=None if suppress_response_id else response.response_id,
+        created_at=response.created_at,
+        finish_reason=cast(FinishReasonLiteral | FinishReason | None, response.finish_reason),
+        usage_details=response.usage_details,
+        response_format=response_format,
+        continuation_token=response.continuation_token,
+        raw_representation=response,
+        additional_properties=response.additional_properties,
+    )
+    if response._value_parsed:  # pyright: ignore[reportPrivateUsage]
+        agent_response._value = response._value  # pyright: ignore[reportPrivateUsage]
+        agent_response._value_parsed = True  # pyright: ignore[reportPrivateUsage]
+    return agent_response
 
 
 # region AgentResponseUpdate
@@ -3544,6 +3656,8 @@ def normalize_tools(
             # List of tools
             tools = normalize_tools([my_tool, another_tool])
     """
+    from ._tools import normalize_tools as _normalize_tools
+
     return _normalize_tools(tools)
 
 

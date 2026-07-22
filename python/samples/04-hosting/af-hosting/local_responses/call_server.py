@@ -15,8 +15,10 @@ Then::
 
     uv run python call_server.py
 
-The script sends a follow-up turn ("And what about Amsterdam?") using the
-first response's ``response.id`` as ``previous_response_id``.
+The script sends two follow-up turns, each continuing from the previous
+turn's ``response.id`` as ``previous_response_id``. The third turn asks about
+information from the *first* turn only, so it also exercises session
+continuity across a rotating response id chain, not just a single hop.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from openai import OpenAI
 BASE_URL = "http://127.0.0.1:8000"
 PROMPT = "What is the weather in Tokyo?"
 FOLLOW_UP_PROMPT = "And what about Amsterdam?"
+THIRD_PROMPT = "Which of the two cities we just discussed is warmer?"
 
 
 def main() -> None:
@@ -45,6 +48,15 @@ def main() -> None:
     print(f"User: {FOLLOW_UP_PROMPT}")
     print(f"Agent: {follow_up.output_text}")
     print(f"Response ID: {follow_up.id}")
+
+    third = client.responses.create(
+        input=THIRD_PROMPT,
+        previous_response_id=follow_up.id,
+    )
+    print()
+    print(f"User: {THIRD_PROMPT}")
+    print(f"Agent: {third.output_text}")
+    print(f"Response ID: {third.id}")
 
 
 if __name__ == "__main__":

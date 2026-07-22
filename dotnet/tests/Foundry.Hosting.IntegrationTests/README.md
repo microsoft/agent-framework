@@ -46,7 +46,7 @@ etc.).
 Hosted agent invocation requires the agent's own managed identity to hold the
 `Azure AI User` role on the project scope. Because each agent's MI is created when the
 agent is first provisioned (and recycled on agent delete), the bootstrap creates the
-six stable scenario agents once and grants the role to each MI. The fixture then only
+eleven stable scenario agents once and grants the role to each MI. The fixture then only
 manages versions under those existing agents, so the role grants survive across runs.
 
 ```powershell
@@ -148,9 +148,11 @@ $env:AZURE_AI_MODEL_DEPLOYMENT_NAME = "gpt-4o"
 dotnet test dotnet/tests/Foundry.Hosting.IntegrationTests/Foundry.Hosting.IntegrationTests.csproj
 ```
 
-> **Note:** all tests are currently tagged `[Fact(Skip = ...)]` until end to end smoke
-> verification has run against a live Foundry deployment. Once a scenario has been
-> exercised and the assertions stabilized, remove the Skip annotation on its tests.
+> **Note:** some scenarios are validated and active (for example `happy-path`,
+> `store-config`, `tool-calling`, `azure-search-rag`, `session-files`); the remaining
+> scenarios stay tagged `[Fact(Skip = ...)]` until they have been exercised end to end
+> against a live Foundry deployment. Once a scenario has been exercised and its assertions
+> stabilized, remove the Skip annotation on its tests.
 
 All test classes carry `[Trait("Category", "FoundryHostedAgents")]` so the CI workflow can
 route them to a separate Foundry project than the rest of the integration tests (see
@@ -204,16 +206,19 @@ human-only operation; CI only adds and deletes versions under existing agents.
 
 | Fixture | `IT_SCENARIO` | Agent name | What it tests |
 | --- | --- | --- | --- |
-| `HappyPathHostedAgentFixture` | `happy-path` | `it-happy-path` | Round trip, streaming, multi turn (`previous_response_id` and `conversation_id`), `stored=false` flag in three combinations, instructions obeyed. |
+| `HappyPathHostedAgentFixture` | `happy-path` | `it-happy-path` | Round trip, streaming, and container-instruction behaviour. |
+| `HostedResponsesStoreConfigFixture` | `store-config` | `it-store-config` | Store/session semantics: `store=true` vs `store=false`, `previous_response_id` and `conversation_id` forks (read history without appending), multi-turn recall. |
 | `ToolCallingHostedAgentFixture` | `tool-calling` | `it-tool-calling` | Server side AIFunction invocation; arguments; multi turn referencing prior tool result. |
 | `ToolCallingApprovalHostedAgentFixture` | `tool-calling-approval` | `it-tool-calling-approval` | Approval requests raised, approved, denied. |
 | `McpToolboxHostedAgentFixture` | `mcp-toolbox` | `it-mcp-toolbox` | MCP backed tool invocation against `https://learn.microsoft.com/api/mcp` (placeholder). |
 | `ToolboxOAuthConsentHostedAgentFixture` | `toolbox-oauth-consent` | `it-toolbox-oauth-consent` | Per-user OAuth toolbox consent: pre-registers a consent-gated Foundry toolbox (`IT_TOOLBOX_NAME`), invokes the agent, asserts the consumer captures an `oauth_consent_request` consent link (and the container stays routable, no 424). Requires a consent-gated toolbox in the project (see prerequisite below). |
 | `CustomStorageHostedAgentFixture` | `custom-storage` | `it-custom-storage` | Round trip with custom `IResponsesStorageProvider`; multi turn reads from the custom store (placeholder). |
+| `MemoryHostedAgentFixture` | `memory` | `it-memory` | `FoundryMemoryProvider` (scoped via `HostedSessionContext`) running inside the hosted agent recalls user preferences across multiple turns; the memory store name is randomised per fixture (`IT_MEMORY_STORE_ID`). |
 | `AzureSearchRagHostedAgentFixture` | `azure-search-rag` | `it-azure-search-rag` | RAG against a real Azure AI Search index seeded with Contoso Outdoors documents; verifies the model cites the retrieved sources. |
 | `SessionFilesHostedAgentFixture` | `session-files` | `it-session-files` | End-to-end: upload via `AgentSessionFiles` (alpha) into a pinned `agent_session_id`, invoke the agent, assert it reads the file via the container's `ReadFile` tool. |
 | `AgentSkillsHostedAgentFixture` | `agent-skills` | `it-agent-skills` | Agent skills via `AgentSkillsProvider`: advertises two Contoso Outdoors skills (support-style, escalation-policy) in the system prompt, loads them on demand via `load_skill`, verifies canary tokens prove the skill was loaded. |
 
-The placeholder scenarios will be wired up in the test container `Program.cs` once the
-relevant `Microsoft.Agents.AI.Foundry.Hosting` API surfaces stabilize.
+The scenarios marked (placeholder) are already wired into the test container `Program.cs`,
+but their assertions stay skipped pending live validation and stabilization of the relevant
+`Microsoft.Agents.AI.Foundry.Hosting` API surfaces.
 

@@ -4,7 +4,7 @@
 
 At startup, this agent downloads each Foundry Skill named in
 ``SKILL_NAMES`` from the project's ``beta.skills`` API, unpacks each
-one into a separate runtime directory under ``downloaded_skills/``, and wires
+one into a separate writable runtime directory and wires
 that directory into a :class:`SkillsProvider` so the agent advertises the
 skills to the model and loads them on demand (progressive disclosure).
 
@@ -17,13 +17,13 @@ import io
 import logging
 import os
 import shutil
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Final
 
 from agent_framework import Agent, SkillsProvider
-from agent_framework.foundry import FoundryChatClient
-from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import DefaultAzureCredential
 from dotenv import load_dotenv
@@ -34,7 +34,11 @@ load_dotenv()
 # Kept separate from the static ``skills/`` source folder so the two never
 # get confused: the source folder is the input to ``provision_skills.py``
 # and the runtime folder is the output of this script's bootstrap step.
-DOWNLOADED_SKILLS_DIR: Final = Path(__file__).parent / "downloaded_skills"
+# Defaults to a system temp location because hosted containers may mount the
+# application directory read-only. Set DOWNLOADED_SKILLS_DIR to override it.
+_DEFAULT_DOWNLOADED_SKILLS_DIR: Final = Path(tempfile.gettempdir()) / "maf_downloaded_skills"
+_DOWNLOADED_SKILLS_DIR_ENV = os.environ.get("DOWNLOADED_SKILLS_DIR")
+DOWNLOADED_SKILLS_DIR: Final = Path((_DOWNLOADED_SKILLS_DIR_ENV or "").strip() or _DEFAULT_DOWNLOADED_SKILLS_DIR)
 
 logger = logging.getLogger(__name__)
 

@@ -1,10 +1,9 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "agent-framework",
+#     "agent-framework-foundry",
 #     "textual>=6.2.1",
 #     "rich>=13.7.1",
-#     "azure-identity",
 #     "python-dotenv",
 # ]
 # ///
@@ -49,7 +48,7 @@ Unused harness features (todos, plan/execute mode, web search) are disabled to
 keep this a simple, conversational data-interaction sample.
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint URL
+    FOUNDRY_PROJECT_ENDPOINT — Microsoft Foundry project endpoint URL
     FOUNDRY_MODEL            — Model deployment name
 
 Authentication:
@@ -69,7 +68,7 @@ DATA_ANALYST_INSTRUCTIONS = """\
 You are a data analyst assistant. You have access to a folder of data files via the file_access_* tools.
 
 ## Getting started
-- Start by listing available files with file_access_list_files to see what data is available.
+- Start by listing available files with file_access_ls to see what data is available.
 - Read the files to understand their structure and contents.
 
 ## Working with data
@@ -78,7 +77,7 @@ You are a data analyst assistant. You have access to a folder of data files via 
 - When calculations are needed, work through them step by step and show your reasoning.
 
 ## Writing output
-- When asked to produce output files (e.g., reports, summaries, filtered data), use file_access_save_file to write them.
+- When asked to produce output files (e.g., reports, summaries, filtered data), use file_access_write to write them.
 - Use appropriate file formats: CSV for tabular data, Markdown for reports.
 - Confirm what you wrote and where.
 

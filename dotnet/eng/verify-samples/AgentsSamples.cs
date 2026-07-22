@@ -335,8 +335,8 @@ internal static class AgentsSamples
         {
             Name = "Agent_Step01_FileBasedSkills",
             ProjectPath = "samples/02-agents/AgentSkills/Agent_Step01_FileBasedSkills",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             MustContain =
             [
                 "Converting units with file-based skills",
@@ -354,8 +354,8 @@ internal static class AgentsSamples
         {
             Name = "Agent_Step06_McpBasedSkills",
             ProjectPath = "samples/02-agents/AgentSkills/Agent_Step06_McpBasedSkills",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             MustContain =
             [
                 "Discovering MCP-based skills",
@@ -425,6 +425,15 @@ internal static class AgentsSamples
                 "After the window fills up and overflows, the agent should still be able to recall older information (like a favorite color) from the vector store.",
                 "The output should not contain error messages or stack traces.",
             ],
+        },
+
+        new SampleDefinition
+        {
+            Name = "AgentWithMemory_Step06_MemoryUsingAgentMemory",
+            ProjectPath = "samples/02-agents/AgentWithMemory/AgentWithMemory_Step06_MemoryUsingAgentMemory",
+            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
+            OptionalEnvironmentVariables = ["AZURE_OPENAI_API_KEY", "FOUNDRY_MODEL", "FOUNDRY_EMBEDDING_MODEL", "NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD"],
+            SkipReason = "Requires a running Neo4j instance; standalone sample outside the repo's CPM build.",
         },
 
         // ── AgentWithRAG ────────────────────────────────────────────────────
@@ -701,7 +710,7 @@ internal static class AgentsSamples
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
             [
-                "The output should contain a list of countries or information about countries that use the EUR currency.",
+                "The output should contain the current EUR exchange rate against USD and GBP as numeric values.",
                 "The output should not contain error messages or stack traces.",
             ],
         },
@@ -837,7 +846,7 @@ internal static class AgentsSamples
             ProjectPath = "samples/02-agents/Agents/Agent_Step15_DeepResearch",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT", "AZURE_AI_MODEL_DEPLOYMENT_NAME", "AZURE_AI_BING_CONNECTION_ID"],
             OptionalEnvironmentVariables = ["AZURE_AI_REASONING_DEPLOYMENT_NAME"],
-            SkipReason = "Requires Azure AI Foundry project with Bing search connection.",
+            SkipReason = "Requires Microsoft Foundry project with Bing search connection.",
         },
 
         new SampleDefinition

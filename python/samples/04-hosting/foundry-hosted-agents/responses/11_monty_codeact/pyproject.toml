@@ -5,16 +5,12 @@ description = "Foundry-hosted Agent Framework agent with a Monty-backed CodeAct 
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "agent-framework-foundry",
-    "agent-framework-foundry-hosting",
-    # agent-framework-monty is an alpha (1.0.0a*) release on PyPI.
+    "agent-framework-foundry-hosting>=1.0.0a260630",
+    # agent-framework-monty is a beta (1.0.0b*) release on PyPI.
     "agent-framework-monty",
-    # Azure Monitor OpenTelemetry exporter; used to send agent telemetry to the
-    # Application Insights instance attached to the Foundry project.
-    "azure-monitor-opentelemetry",
 ]
 
 [tool.uv]
-# `agent-framework-monty` is an alpha package; allow the prerelease resolver
-# to pick up 1.0.0a* releases from PyPI.
+# `agent-framework-monty` is a beta package; allow the prerelease resolver
+# to pick up 1.0.0b* releases from PyPI.
 prerelease = "allow"
-

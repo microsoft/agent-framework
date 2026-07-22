@@ -31,7 +31,7 @@ namespace MixedWorkflowWithAgentsAndExecutors;
 /// <remarks>
 /// Pre-requisites:
 /// - Previous foundational samples should be completed first.
-/// - An Azure AI Foundry project endpoint and model must be configured.
+/// - A Microsoft Foundry project endpoint and model must be configured.
 /// </remarks>
 public static class Program
 {
@@ -40,7 +40,7 @@ public static class Program
     {
         Console.WriteLine("\n=== Mixed Workflow: Agents and Executors ===\n");
 
-        // Set up the Azure AI Foundry client
+        // Set up the Microsoft Foundry client
         var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
         var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
         AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());

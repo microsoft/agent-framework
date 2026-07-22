@@ -19,7 +19,7 @@ salesperson). The agent is asked, in a single session, to: list available
 files, inspect the data, compute regional totals, and save a markdown summary.
 
 Prerequisites:
-    - ``FOUNDRY_PROJECT_ENDPOINT``: Your Azure AI Foundry project endpoint.
+    - ``FOUNDRY_PROJECT_ENDPOINT``: Your Microsoft Foundry project endpoint.
     - ``FOUNDRY_MODEL``: Chat model deployment name.
     - Run ``az login`` before executing the sample.
 """
@@ -43,9 +43,9 @@ You are a data analyst assistant. You have access to a folder of data files via
 the file_access_* tools.
 
 ## Getting started
-- Start by listing available files with file_access_list_files to see what data
+- Start by listing available files with file_access_ls to see what data
   is available. Files may be organized into subdirectories — use
-  file_access_list_subdirectories to discover folders and explore the tree level
+  file_access_ls to discover folders and explore the tree level
   by level.
 - Read the files to understand their structure and contents.
 
@@ -58,7 +58,7 @@ the file_access_* tools.
 
 ## Writing output
 - When asked to produce output files (e.g., reports, summaries, filtered data),
-  use file_access_save_file to write them.
+  use file_access_write to write them.
 - Use appropriate file formats: CSV for tabular data, Markdown for reports.
 - Confirm what you wrote and where.
 

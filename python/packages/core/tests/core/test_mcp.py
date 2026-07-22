@@ -6,9 +6,10 @@ import json
 import logging
 import os
 import sys
+import warnings
 from contextlib import _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -21,11 +22,13 @@ from agent_framework import (
     Content,
     FunctionInvocationContext,
     FunctionMiddleware,
+    FunctionTool,
     MCPStdioTool,
     MCPStreamableHTTPTool,
     MCPWebsocketTool,
     Message,
 )
+from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalFeature, ExperimentalWarning
 from agent_framework._mcp import (
     MCPTool,
     _build_prefixed_mcp_name,
@@ -54,6 +57,10 @@ def _mcp_result_to_text(result: str | list[Content]) -> str:
 
 
 _HELPER_MCP_TOOL = MCPTool(name="helper")  # type: ignore[abstract]
+
+
+def _reset_progressive_mcp_warning_state() -> None:
+    _WARNED_FEATURES.discard((ExperimentalWarning, ExperimentalFeature.PROGRESSIVE_TOOLS.value))
 
 
 # Helper function tests
@@ -1707,6 +1714,643 @@ async def test_mcp_tool_allowed_tools(allowed_tools, expected_count, expected_na
         assert sorted(actual_names) == sorted(expected_names)
 
 
+def test_mcp_transport_subclasses_accept_progressive_disclosure_options() -> None:
+    _reset_progressive_mcp_warning_state()
+    with pytest.warns(ExperimentalWarning, match="PROGRESSIVE_TOOLS"):
+        stdio = MCPStdioTool(
+            name="stdio",
+            command="python",
+            use_progressive_disclosure=True,
+            always_load=["search"],
+        )
+    http = MCPStreamableHTTPTool(
+        name="http",
+        url="https://example.com/mcp",
+        use_progressive_disclosure=True,
+        always_load=["search"],
+    )
+    websocket = MCPWebsocketTool(
+        name="ws",
+        url="wss://example.com/mcp",
+        use_progressive_disclosure=True,
+        always_load=["search"],
+    )
+
+    assert stdio.use_progressive_disclosure is True
+    assert http.use_progressive_disclosure is True
+    assert websocket.use_progressive_disclosure is True
+    assert stdio.always_load == ["search"]
+    assert http.always_load == ["search"]
+    assert websocket.always_load == ["search"]
+
+
+def test_mcp_progressive_disclosure_requires_loading_tools() -> None:
+    with pytest.raises(ValueError, match="requires load_tools=True"):
+        MCPTool(  # type: ignore[abstract]
+            name="test_server",
+            load_tools=False,
+            use_progressive_disclosure=True,
+        )
+
+
+def test_mcp_progressive_disclosure_warns_on_construction() -> None:
+    _reset_progressive_mcp_warning_state()
+    with pytest.warns(ExperimentalWarning, match=f"{ExperimentalFeature.PROGRESSIVE_TOOLS.value}"):
+        MCPTool(name="test_server", use_progressive_disclosure=True)  # type: ignore[abstract]
+    assert (ExperimentalWarning, ExperimentalFeature.PROGRESSIVE_TOOLS.value) in _WARNED_FEATURES
+
+
+def test_mcp_tool_base_constructor_preserves_positional_tool_name_prefix() -> None:
+    tool = MCPTool("test_server", "description", None, None, "prefix")  # type: ignore[abstract]
+
+    assert tool.tool_name_prefix == "prefix"
+    assert tool.use_progressive_disclosure is False
+
+
+def _progressive_tool_list_page(*, tools: list[types.Tool] | None = None) -> types.ListToolsResult:
+    if tools is not None:
+        return types.ListToolsResult(tools=tools)
+    return types.ListToolsResult(
+        tools=[
+            types.Tool(
+                name="tool_one",
+                description="First tool",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"param": {"type": "string"}},
+                    "required": ["param"],
+                },
+            ),
+            types.Tool(
+                name="tool_two",
+                description="Second tool",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"value": {"type": "integer"}},
+                    "required": ["value"],
+                },
+            ),
+            types.Tool(
+                name="secret_tool",
+                description="Secret tool",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"secret": {"type": "string"}},
+                },
+            ),
+        ]
+    )
+
+
+async def _load_progressive_test_server(
+    *,
+    allowed_tools: list[str] | None = None,
+    always_load: list[str] | None = None,
+    tool_name_prefix: str | None = None,
+    approval_mode: Any = None,
+    tools: list[types.Tool] | None = None,
+) -> MCPTool:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ExperimentalWarning)
+        server = MCPTool(  # type: ignore[abstract]
+            name="test_server",
+            allowed_tools=allowed_tools,
+            always_load=always_load,
+            tool_name_prefix=tool_name_prefix,
+            approval_mode=approval_mode,
+            use_progressive_disclosure=True,
+        )
+    server.session = AsyncMock()
+    server.session.list_tools = AsyncMock(return_value=_progressive_tool_list_page(tools=tools))
+    server.session.call_tool = AsyncMock(
+        return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
+    )
+    await server.load_tools()
+    return server
+
+
+async def test_mcp_progressive_disclosure_exposes_loaders_and_always_loaded_tools() -> None:
+    server = await _load_progressive_test_server(always_load=["tool_one", "missing_tool"])
+
+    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "unload_tool", "tool_one"]
+
+
+async def test_mcp_progressive_disclosure_filters_always_loaded_loader_name_collisions() -> None:
+    server = await _load_progressive_test_server(
+        always_load=["list_mcp_tools", "tool_one"],
+        tools=[
+            types.Tool(
+                name="list_mcp_tools",
+                description="Remote tool whose local name collides with the list loader.",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+            types.Tool(
+                name="tool_one",
+                description="First tool",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+        ],
+    )
+
+    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "unload_tool", "tool_one"]
+
+
+async def test_mcp_progressive_disclosure_loader_names_honor_tool_name_prefix() -> None:
+    server = await _load_progressive_test_server(tool_name_prefix="github", always_load=["tool_one"])
+
+    assert [func.name for func in server.functions] == [
+        "github_list_mcp_tools",
+        "github_load_tool",
+        "github_unload_tool",
+        "github_tool_one",
+    ]
+    assert server.functions[1].parameters()["properties"]["tool"] == {
+        "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
+        "description": "The MCP tool name, or MCP tool names, to load.",
+    }
+    assert server.functions[2].parameters()["properties"]["tool"] == {
+        "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
+        "description": "The MCP tool name, or MCP tool names, to unload.",
+    }
+
+
+async def test_mcp_progressive_list_mcp_tools_only_reports_allowed_tools() -> None:
+    server = await _load_progressive_test_server(allowed_tools=["tool_one"], always_load=[])
+    list_tool = server.functions[0]
+    context = FunctionInvocationContext(function=list_tool, arguments={}, tools=list(server.functions))
+
+    result = await list_tool.invoke(arguments={}, context=context, skip_parsing=True)
+
+    assert [item["name"] for item in result] == ["tool_one"]
+    assert result[0]["remote_name"] == "tool_one"
+    assert result[0]["description"] == "First tool"
+    assert result[0]["parameters"]["properties"] == {"param": {"type": "string"}}
+    assert result[0]["loaded"] is False
+    assert result[0]["always_loaded"] is False
+
+
+async def test_mcp_progressive_list_mcp_tools_skips_loader_name_collisions() -> None:
+    server = await _load_progressive_test_server(
+        tools=[
+            types.Tool(
+                name="list_mcp_tools",
+                description="Remote tool whose local name collides with the list loader.",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+            types.Tool(
+                name="tool_one",
+                description="First tool",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+        ],
+    )
+    list_tool = server.functions[0]
+    context = FunctionInvocationContext(function=list_tool, arguments={}, tools=list(server.functions))
+
+    result = await list_tool.invoke(arguments={}, context=context, skip_parsing=True)
+
+    assert [item["name"] for item in result] == ["tool_one"]
+
+
+async def test_mcp_progressive_list_mcp_tools_treats_empty_allowed_tools_as_no_tools() -> None:
+    server = await _load_progressive_test_server(allowed_tools=[], always_load=["tool_one"])
+    list_tool = server.functions[0]
+    context = FunctionInvocationContext(function=list_tool, arguments={}, tools=list(server.functions))
+
+    result = await list_tool.invoke(arguments={}, context=context, skip_parsing=True)
+
+    assert result == []
+    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "unload_tool"]
+
+
+async def test_mcp_progressive_load_tool_adds_hidden_tool_to_live_tools() -> None:
+    server = await _load_progressive_test_server()
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "tool_two"},
+        tools=list(server.functions),
+    )
+
+    result = await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+
+    assert result[0].text == "Loaded MCP tool 'tool_two'. It is available on the next model iteration."
+    assert context.tools is not None
+    assert [tool.name for tool in context.tools] == [  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+        "tool_two",
+    ]
+
+    list_tool = server.functions[0]
+    list_result = await list_tool.invoke(arguments={}, context=context, skip_parsing=True)
+
+    assert next(item for item in list_result if item["name"] == "tool_two")["loaded"] is True
+    assert [func.name for func in server.functions] == [
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+        "tool_two",
+    ]
+
+    result = await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+
+    assert result[0].text == "MCP tool 'tool_two' is already available."
+    assert [tool.name for tool in context.tools] == [  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+        "tool_two",
+    ]
+
+
+async def test_mcp_progressive_load_tool_adds_multiple_hidden_tools_to_live_tools() -> None:
+    server = await _load_progressive_test_server()
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": ["tool_one", "tool_two"]},
+        tools=list(server.functions),
+    )
+
+    result = await load_tool.invoke(arguments={"tool": ["tool_one", "tool_two"]}, context=context)
+
+    assert result[0].text == (
+        "Loaded MCP tool 'tool_one'. It is available on the next model iteration.\n"
+        "Loaded MCP tool 'tool_two'. It is available on the next model iteration."
+    )
+    assert context.tools is not None
+    assert [tool.name for tool in context.tools] == [  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+        "tool_one",
+        "tool_two",
+    ]
+    assert [func.name for func in server.functions] == [
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+        "tool_one",
+        "tool_two",
+    ]
+
+
+async def test_mcp_progressive_load_tool_reports_mixed_batch_results() -> None:
+    server = await _load_progressive_test_server(always_load=["tool_one"])
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": ["tool_one", "tool_two", "missing_tool"]},
+        tools=list(server.functions),
+    )
+
+    result = await load_tool.invoke(arguments={"tool": ["tool_one", "tool_two", "missing_tool"]}, context=context)
+
+    assert result[0].text == (
+        "MCP tool 'tool_one' is already available.\n"
+        "Loaded MCP tool 'tool_two'. It is available on the next model iteration.\n"
+        "MCP tool 'missing_tool' is not available. Available tools: tool_one, tool_two, secret_tool."
+    )
+    assert context.tools is not None
+    assert [tool.name for tool in context.tools] == [  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+        "tool_one",
+        "tool_two",
+    ]
+
+
+async def test_mcp_progressive_unload_tool_removes_dynamically_loaded_tool() -> None:
+    server = await _load_progressive_test_server()
+    load_tool = server.functions[1]
+    unload_tool = server.functions[2]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "tool_two"},
+        tools=list(server.functions),
+    )
+    await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+    unload_context = FunctionInvocationContext(
+        function=unload_tool,
+        arguments={"tool": "tool_two"},
+        tools=context.tools,
+    )
+
+    result = await unload_tool.invoke(arguments={"tool": "tool_two"}, context=unload_context)
+
+    assert result[0].text == "Unloaded MCP tool 'tool_two'. It will be removed on the next model iteration."
+    assert unload_context.tools is not None
+    assert [tool.name for tool in unload_context.tools] == [  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+    ]
+    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "unload_tool"]
+
+
+async def test_mcp_progressive_unload_tool_removes_multiple_dynamically_loaded_tools() -> None:
+    server = await _load_progressive_test_server()
+    load_tool = server.functions[1]
+    unload_tool = server.functions[2]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": ["tool_one", "tool_two"]},
+        tools=list(server.functions),
+    )
+    await load_tool.invoke(arguments={"tool": ["tool_one", "tool_two"]}, context=context)
+    unload_context = FunctionInvocationContext(
+        function=unload_tool,
+        arguments={"tool": ["tool_one", "tool_two"]},
+        tools=context.tools,
+    )
+
+    result = await unload_tool.invoke(arguments={"tool": ["tool_one", "tool_two"]}, context=unload_context)
+
+    assert result[0].text == (
+        "Unloaded MCP tool 'tool_one'. It will be removed on the next model iteration.\n"
+        "Unloaded MCP tool 'tool_two'. It will be removed on the next model iteration."
+    )
+    assert unload_context.tools is not None
+    assert [tool.name for tool in unload_context.tools] == [  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+    ]
+    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "unload_tool"]
+
+
+async def test_mcp_progressive_unload_tool_rejects_always_loaded_tool() -> None:
+    server = await _load_progressive_test_server(always_load=["tool_one"])
+    unload_tool = server.functions[2]
+    context = FunctionInvocationContext(
+        function=unload_tool,
+        arguments={"tool": "tool_one"},
+        tools=list(server.functions),
+    )
+
+    result = await unload_tool.invoke(arguments={"tool": "tool_one"}, context=context)
+
+    assert result[0].text == "MCP tool 'tool_one' is configured in always_load and cannot be unloaded."
+    assert context.tools is not None
+    visible_tools = cast(list[FunctionTool], context.tools)
+    assert [tool.name for tool in visible_tools] == [
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+        "tool_one",
+    ]
+
+
+async def test_mcp_progressive_unload_tool_reports_tool_not_loaded() -> None:
+    server = await _load_progressive_test_server()
+    unload_tool = server.functions[2]
+    context = FunctionInvocationContext(
+        function=unload_tool,
+        arguments={"tool": "tool_two"},
+        tools=list(server.functions),
+    )
+
+    result = await unload_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+
+    assert result[0].text == "MCP tool 'tool_two' is not currently loaded."
+
+
+async def test_mcp_progressive_unload_tool_reports_mixed_batch_results() -> None:
+    server = await _load_progressive_test_server(always_load=["tool_one"])
+    load_tool = server.functions[1]
+    unload_tool = server.functions[2]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "tool_two"},
+        tools=list(server.functions),
+    )
+    await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+    unload_context = FunctionInvocationContext(
+        function=unload_tool,
+        arguments={"tool": ["tool_one", "tool_two", "secret_tool", "missing_tool"]},
+        tools=context.tools,
+    )
+
+    result = await unload_tool.invoke(
+        arguments={"tool": ["tool_one", "tool_two", "secret_tool", "missing_tool"]},
+        context=unload_context,
+    )
+
+    assert result[0].text == (
+        "MCP tool 'tool_one' is configured in always_load and cannot be unloaded.\n"
+        "Unloaded MCP tool 'tool_two'. It will be removed on the next model iteration.\n"
+        "MCP tool 'secret_tool' is not currently loaded.\n"
+        "MCP tool 'missing_tool' is not available. Available tools: tool_one, tool_two, secret_tool."
+    )
+    assert unload_context.tools is not None
+    visible_tools = cast(list[FunctionTool], unload_context.tools)
+    assert [tool.name for tool in visible_tools] == [
+        "list_mcp_tools",
+        "load_tool",
+        "unload_tool",
+        "tool_one",
+    ]
+    assert [func.name for func in server.functions] == ["list_mcp_tools", "load_tool", "unload_tool", "tool_one"]
+
+
+async def test_mcp_progressive_load_and_unload_suppress_experimental_context_warnings() -> None:
+    server = await _load_progressive_test_server()
+    load_tool = server.functions[1]
+    unload_tool = server.functions[2]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "tool_two"},
+        tools=list(server.functions),
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ExperimentalWarning)
+        await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+        unload_context = FunctionInvocationContext(
+            function=unload_tool,
+            arguments={"tool": "tool_two"},
+            tools=context.tools,
+        )
+        await unload_tool.invoke(arguments={"tool": "tool_two"}, context=unload_context)
+
+
+async def test_mcp_progressive_load_tool_rejects_filtered_tool() -> None:
+    server = await _load_progressive_test_server(allowed_tools=["tool_one"])
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "tool_two"},
+        tools=list(server.functions),
+    )
+
+    result = await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+
+    assert result[0].text == "MCP tool 'tool_two' is not available. Available tools: tool_one."
+
+
+async def test_mcp_progressive_load_tool_rejects_missing_live_tool_list() -> None:
+    server = await _load_progressive_test_server()
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "tool_two"},
+    )
+
+    with pytest.raises(ToolExecutionException, match="inside an agent function-calling run"):
+        await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+
+
+async def test_mcp_progressive_load_tool_rejects_loader_name_collision() -> None:
+    server = await _load_progressive_test_server(
+        tools=[
+            types.Tool(
+                name="load_tool",
+                description="Remote tool whose local name collides with the load loader.",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+        ],
+    )
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "load_tool"},
+        tools=list(server.functions),
+    )
+
+    result = await load_tool.invoke(arguments={"tool": "load_tool"}, context=context)
+
+    assert result[0].text is not None
+    assert "Set tool_name_prefix" in result[0].text
+
+
+async def test_mcp_progressive_resolve_rejects_ambiguous_tool_name() -> None:
+    def _tool() -> None:
+        return None
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ExperimentalWarning)
+        server = MCPTool(name="test_server", use_progressive_disclosure=True)  # type: ignore[abstract]
+    server._functions = [
+        FunctionTool(
+            func=_tool,
+            name="remote_one",
+            additional_properties={"_mcp_remote_name": "shared", "_mcp_normalized_name": "remote_one"},
+        ),
+        FunctionTool(
+            func=_tool,
+            name="remote_two",
+            additional_properties={"_mcp_remote_name": "shared", "_mcp_normalized_name": "remote_two"},
+        ),
+    ]
+
+    with pytest.raises(ToolExecutionException, match="ambiguous"):
+        server._resolve_progressive_function("shared")
+
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "shared"},
+        tools=list(server.functions),
+    )
+
+    result = await load_tool.invoke(arguments={"tool": "shared"}, context=context)
+
+    assert result[0].text == "MCP tool name 'shared' is ambiguous."
+
+
+async def test_mcp_progressive_loaded_tool_preserves_remote_approval_mode() -> None:
+    server = await _load_progressive_test_server(approval_mode={"always_require_approval": ["tool_two"]})
+    load_tool = server.functions[1]
+    context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "tool_two"},
+        tools=list(server.functions),
+    )
+
+    await load_tool.invoke(arguments={"tool": "tool_two"}, context=context)
+
+    assert context.tools is not None
+    loaded_tool = cast(
+        FunctionTool,
+        next(
+            tool
+            for tool in context.tools
+            if tool.name == "tool_two"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        ),
+    )
+    assert loaded_tool.approval_mode == "always_require"
+
+
+async def test_mcp_progressive_loaded_http_tool_preserves_runtime_kwargs_for_headers() -> None:
+    provider_received: list[dict[str, Any]] = []
+
+    def provider(kwargs: dict[str, Any]) -> dict[str, str]:
+        provider_received.append(dict(kwargs))
+        return {"X-Some-Token": kwargs.get("some_token", "")}
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ExperimentalWarning)
+        server = MCPStreamableHTTPTool(
+            name="test",
+            url="http://example.com/mcp",
+            header_provider=provider,
+            use_progressive_disclosure=True,
+        )
+    server.session = AsyncMock()
+    server.session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="greet",
+                    description="Says hello",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                        "required": ["name"],
+                    },
+                )
+            ]
+        )
+    )
+    server.session.call_tool = AsyncMock(
+        return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
+    )
+    await server.load_tools()
+    load_tool = server.functions[1]
+    load_context = FunctionInvocationContext(
+        function=load_tool,
+        arguments={"tool": "greet"},
+        tools=list(server.functions),
+    )
+
+    await load_tool.invoke(arguments={"tool": "greet"}, context=load_context)
+
+    assert load_context.tools is not None
+    loaded_tool = cast(
+        FunctionTool,
+        next(
+            tool
+            for tool in load_context.tools
+            if tool.name == "greet"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        ),
+    )
+    invoke_context = FunctionInvocationContext(
+        function=loaded_tool,
+        arguments={"name": "Alice"},
+        kwargs={"some_token": "my-secret"},
+    )
+    result = await loaded_tool.invoke(arguments={"name": "Alice"}, context=invoke_context)
+
+    assert result[0].text == "Hello!"
+    assert provider_received[0]["some_token"] == "my-secret"
+    call_args = server.session.call_tool.call_args  # type: ignore[union-attr]
+    assert call_args.kwargs.get("arguments", {}).get("name") == "Alice"
+    assert "some_token" not in call_args.kwargs.get("arguments", {})
+
+
 # Server implementation tests
 def test_local_mcp_stdio_tool_init():
     """Test MCPStdioTool initialization."""
@@ -1833,8 +2477,8 @@ async def test_mcp_tool_message_handler_notification():
     tool = MCPStdioTool(name="test_tool", command="python")
 
     # Mock the load_tools and load_prompts methods
-    tool.load_tools = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
-    tool.load_prompts = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.load_tools = AsyncMock()  # type: ignore[method-assign]
+    tool.load_prompts = AsyncMock()  # type: ignore[method-assign]
 
     # Test tools list changed notification
     tools_notification = Mock(spec=types.ServerNotification)
@@ -1845,10 +2489,10 @@ async def test_mcp_tool_message_handler_notification():
     assert result is None
     # The reload is scheduled as a background task; let it run.
     await asyncio.sleep(0)
-    tool.load_tools.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool.load_tools.assert_called_once()
 
     # Reset mock
-    tool.load_tools.reset_mock()  # ty: ignore[unresolved-attribute]
+    tool.load_tools.reset_mock()
 
     # Test prompts list changed notification
     prompts_notification = Mock(spec=types.ServerNotification)
@@ -1858,7 +2502,7 @@ async def test_mcp_tool_message_handler_notification():
     result = await tool.message_handler(prompts_notification)  # type: ignore[func-returns-value]
     assert result is None
     await asyncio.sleep(0)
-    tool.load_prompts.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool.load_prompts.assert_called_once()
 
     # Test unhandled notification
     unknown_notification = Mock(spec=types.ServerNotification)
@@ -1924,7 +2568,7 @@ async def test_mcp_tool_message_handler_does_not_block_receive_loop():
 async def test_mcp_tool_message_handler_reload_failure_is_logged(caplog: pytest.LogCaptureFixture):
     """Background reload errors are logged, not raised into the receive loop."""
     tool = MCPStdioTool(name="test_tool", command="python")
-    tool.load_tools = AsyncMock(side_effect=RuntimeError("connection lost"))  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.load_tools = AsyncMock(side_effect=RuntimeError("connection lost"))  # type: ignore[method-assign]
 
     tools_notification = Mock(spec=types.ServerNotification)
     tools_notification.root = Mock()
@@ -1936,7 +2580,7 @@ async def test_mcp_tool_message_handler_reload_failure_is_logged(caplog: pytest.
     pending = list(tool._pending_reload_tasks)
     if pending:
         await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), timeout=1)
-    tool.load_tools.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool.load_tools.assert_called_once()
     assert len(tool._pending_reload_tasks) == 0
 
     # Verify the warning was actually logged with exception info.
@@ -2310,6 +2954,65 @@ async def test_mcp_tool_sampling_callback_no_response_and_successful_message_cre
     assert success.content.text == "Hello"
 
 
+async def test_mcp_tool_sampling_callback_returns_tool_use_results():
+    """Test sampling callback returns structured MCP tool-use content from function calls."""
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=_approve)
+
+    mock_chat_client = AsyncMock()
+    mock_chat_client.get_response.return_value = Mock(
+        messages=[
+            Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call-1",
+                        name="Answer",
+                        arguments={"answer": "hello"},
+                    ),
+                ],
+            ),
+            Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call-2",
+                        name="Citations",
+                        arguments={"sources": ["docs"]},
+                    ),
+                ],
+            ),
+        ],
+        model="test-model",
+    )
+    tool.client = mock_chat_client
+
+    params = Mock()
+    params.messages = [types.PromptMessage(role="user", content=types.TextContent(type="text", text="Answer"))]
+    params.temperature = None
+    params.maxTokens = 100
+    params.stopSequences = None
+    params.systemPrompt = None
+    params.tools = [
+        types.Tool(name="Answer", description="Return an answer", inputSchema={"type": "object"}),
+        types.Tool(name="Citations", description="Return source citations", inputSchema={"type": "object"}),
+    ]
+    params.toolChoice = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.CreateMessageResultWithTools)
+    assert result.role == "assistant"
+    assert result.model == "test-model"
+    assert result.stopReason == "toolUse"
+    assert isinstance(result.content, list)
+    tool_use_contents = [content for content in result.content if isinstance(content, types.ToolUseContent)]
+    assert tool_use_contents == result.content
+    assert [(content.id, content.name, content.input) for content in tool_use_contents] == [
+        ("call-1", "Answer", {"answer": "hello"}),
+        ("call-2", "Citations", {"sources": ["docs"]}),
+    ]
+
+
 async def test_mcp_tool_logging_callback_logs_at_requested_level() -> None:
     tool = MCPStdioTool(name="test_tool", command="python")
 
@@ -2356,7 +3059,7 @@ async def test_mcp_tool_sampling_callback_forwards_system_prompt():
 
 async def test_mcp_tool_sampling_callback_forwards_tools():
     """Test sampling callback converts MCP tools to FunctionTools and passes them in options."""
-    from agent_framework import FunctionTool, Message
+    from agent_framework import Message
 
     tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=_approve)
 
@@ -2627,7 +3330,7 @@ async def test_connect_sampling_capabilities_with_client():
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     with patch("mcp.client.session.ClientSession") as mock_session_class:
         mock_session = AsyncMock()
@@ -2657,7 +3360,7 @@ async def test_connect_no_sampling_capabilities_without_client():
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     with patch("mcp.client.session.ClientSession") as mock_session_class:
         mock_session = AsyncMock()
@@ -2686,7 +3389,7 @@ async def test_connect_session_creation_failure():
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     # Mock ClientSession to raise an exception
     with patch("mcp.client.session.ClientSession") as mock_session_class:
@@ -2709,7 +3412,7 @@ async def test_connect_initialization_failure_http_no_command():
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     # Mock successful session creation but failed initialization
     mock_session = Mock()
@@ -2732,28 +3435,28 @@ async def test_connect_cleanup_on_transport_failure():
     tool = MCPStdioTool(name="test", command="test-command")
 
     # Mock _exit_stack.aclose to verify it's called
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
     # Mock get_mcp_client to raise an exception
-    tool.get_mcp_client = Mock(side_effect=RuntimeError("Transport failed"))  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(side_effect=RuntimeError("Transport failed"))  # type: ignore[method-assign]
 
     with pytest.raises(ToolException):
         await tool.connect()
 
     # Verify cleanup was called
-    tool._exit_stack.aclose.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool._exit_stack.aclose.assert_called_once()
 
 
 async def test_connect_cleanup_on_transport_failure_http_uses_generic_message():
     """Test HTTP transport failures use the generic connection message when no command exists."""
     tool = MCPStreamableHTTPTool(name="test", url="https://example.com/mcp")
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
-    tool.get_mcp_client = Mock(side_effect=RuntimeError("Transport failed"))  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
+    tool.get_mcp_client = Mock(side_effect=RuntimeError("Transport failed"))  # type: ignore[method-assign]
 
     with pytest.raises(ToolException, match="Failed to connect to MCP server: Transport failed"):
         await tool.connect()
 
-    tool._exit_stack.aclose.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool._exit_stack.aclose.assert_called_once()
 
 
 async def test_connect_cleanup_on_initialization_failure():
@@ -2761,14 +3464,14 @@ async def test_connect_cleanup_on_initialization_failure():
     tool = MCPStdioTool(name="test", command="test-command")
 
     # Mock _exit_stack.aclose to verify it's called
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
     # Mock successful transport creation
     mock_transport = (Mock(), Mock())
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     # Mock successful session creation but failed initialization
     mock_session = Mock()
@@ -2782,31 +3485,31 @@ async def test_connect_cleanup_on_initialization_failure():
             await tool.connect()
 
         # Verify cleanup was called
-        tool._exit_stack.aclose.assert_called_once()  # ty: ignore[unresolved-attribute]
+        tool._exit_stack.aclose.assert_called_once()
 
 
 async def test_connect_cancelled_error_during_transport_creation_raises_tool_exception():
     """Test that CancelledError from transport creation is wrapped in ToolException."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
-    tool.get_mcp_client = Mock(side_effect=asyncio.CancelledError("cancel scope"))  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
+    tool.get_mcp_client = Mock(side_effect=asyncio.CancelledError("cancel scope"))  # type: ignore[method-assign]
 
     with pytest.raises(ToolException, match="Failed to connect to MCP server"):
         await tool.connect()
 
-    tool._exit_stack.aclose.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool._exit_stack.aclose.assert_called_once()
 
 
 async def test_connect_cancelled_error_during_transport_creation_stdio_raises_tool_exception():
     """Test that CancelledError from transport creation uses the command-specific message for MCPStdioTool."""
     tool = MCPStdioTool(name="test", command="my-server")
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
-    tool.get_mcp_client = Mock(side_effect=asyncio.CancelledError("cancel scope"))  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
+    tool.get_mcp_client = Mock(side_effect=asyncio.CancelledError("cancel scope"))  # type: ignore[method-assign]
 
     with pytest.raises(ToolException, match="Failed to start MCP server 'my-server'"):
         await tool.connect()
 
-    tool._exit_stack.aclose.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool._exit_stack.aclose.assert_called_once()
 
 
 async def test_connect_cancelled_error_during_session_creation_raises_tool_exception():
@@ -2817,7 +3520,7 @@ async def test_connect_cancelled_error_during_session_creation_raises_tool_excep
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     with patch("mcp.client.session.ClientSession") as mock_session_class:
         mock_session_class.return_value.__aenter__ = AsyncMock(side_effect=asyncio.CancelledError("cancel scope"))
@@ -2840,7 +3543,7 @@ async def test_connect_cancelled_error_during_initialize_raises_tool_exception()
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     mock_session = Mock()
     mock_session.initialize = AsyncMock(side_effect=asyncio.CancelledError("Cancelled via cancel scope"))
@@ -2861,7 +3564,7 @@ async def test_connect_cancelled_error_during_initialize_stdio_raises_tool_excep
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     mock_session = Mock()
     mock_session.initialize = AsyncMock(side_effect=asyncio.CancelledError("Cancelled via cancel scope"))
@@ -2878,30 +3581,30 @@ async def test_connect_cancelled_error_during_initialize_stdio_raises_tool_excep
 async def test_connect_genuine_cancellation_during_transport_creation_propagates():
     """Test that genuine task cancellation (task.cancelling() > 0) propagates as CancelledError."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
     mock_cancelled_task = Mock()
     mock_cancelled_task.cancelling.return_value = 1
 
     with patch("asyncio.current_task", return_value=mock_cancelled_task):
-        tool.get_mcp_client = Mock(side_effect=asyncio.CancelledError("task cancelled"))  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+        tool.get_mcp_client = Mock(side_effect=asyncio.CancelledError("task cancelled"))  # type: ignore[method-assign]
         with pytest.raises(asyncio.CancelledError):
             await tool.connect()
 
-    tool._exit_stack.aclose.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool._exit_stack.aclose.assert_called_once()
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 async def test_connect_genuine_cancellation_during_initialize_propagates():
     """Test that genuine task cancellation during initialize() propagates as CancelledError."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
     mock_transport = (Mock(), Mock())
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     mock_session = Mock()
     mock_session.initialize = AsyncMock(side_effect=asyncio.CancelledError("task cancelled"))
@@ -2919,20 +3622,20 @@ async def test_connect_genuine_cancellation_during_initialize_propagates():
         with pytest.raises(asyncio.CancelledError):
             await tool.connect()
 
-    tool._exit_stack.aclose.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool._exit_stack.aclose.assert_called_once()
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 async def test_connect_genuine_cancellation_during_session_creation_propagates():
     """Test that genuine task cancellation during session creation propagates as CancelledError."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
     mock_transport = (Mock(), Mock())
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     mock_cancelled_task = Mock()
     mock_cancelled_task.cancelling.return_value = 1
@@ -2947,7 +3650,7 @@ async def test_connect_genuine_cancellation_during_session_creation_propagates()
         with pytest.raises(asyncio.CancelledError):
             await tool.connect()
 
-    tool._exit_stack.aclose.assert_called_once()  # ty: ignore[unresolved-attribute]
+    tool._exit_stack.aclose.assert_called_once()
 
 
 async def test_aenter_cancelled_error_during_connect_is_catchable_as_exception():
@@ -2965,7 +3668,7 @@ async def test_aenter_cancelled_error_during_connect_is_catchable_as_exception()
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     with patch("mcp.client.session.ClientSession") as mock_session_class:
         mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -3018,7 +3721,7 @@ async def test_connect_cancelled_error_during_session_creation_includes_exceptio
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     with patch("mcp.client.session.ClientSession") as mock_session_class:
         mock_session_class.return_value.__aenter__ = AsyncMock(
@@ -3041,7 +3744,7 @@ async def test_connect_cancelled_error_during_session_creation_logs_with_exc_inf
     mock_context_manager = Mock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     with patch("mcp.client.session.ClientSession") as mock_session_class:
         mock_session_class.return_value.__aenter__ = AsyncMock(side_effect=asyncio.CancelledError("cancel scope"))
@@ -3864,7 +4567,7 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
 
     # Mock _exit_stack.aclose to track cleanup calls
     original_exit_stack = tool._exit_stack
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
     # Mock connect() to avoid trying to start actual process
     with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
@@ -3963,7 +4666,7 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
 
     # Mock _exit_stack.aclose to track cleanup calls
     original_exit_stack = tool._exit_stack
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
     # Mock connect() to avoid trying to start actual process
     with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
@@ -5481,6 +6184,184 @@ async def test_mcp_streamable_http_tool_header_provider_via_invoke_with_context(
         assert call_args.kwargs.get("arguments", {}).get("name") == "Alice"
 
 
+async def test_mcp_streamable_http_tool_header_provider_applies_across_transport_tasks():
+    """Regression test for #7161: header_provider headers must reach tools/call requests.
+
+    The streamable HTTP transport sends requests from tasks spawned at connect time,
+    whose contexts never observe the ContextVar value set later inside call_tool. This
+    drives the real transport against an in-process mock server and asserts the
+    per-call Authorization header arrives on the tools/call HTTP request.
+    """
+    import httpx
+
+    captured_requests: list[tuple[str, str, dict[str, str]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            return httpx.Response(200)
+        if request.method == "GET":
+            return httpx.Response(405)
+        body = json.loads(request.content.decode())
+        method = body.get("method", "")
+        captured_requests.append((request.method, method, {k.lower(): v for k, v in request.headers.items()}))
+        if method == "initialize":
+            result = {
+                "protocolVersion": body["params"]["protocolVersion"],
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "mock-server", "version": "1.0.0"},
+            }
+            return httpx.Response(
+                200,
+                headers={"mcp-session-id": "test-session"},
+                json={"jsonrpc": "2.0", "id": body["id"], "result": result},
+            )
+        if method == "tools/list":
+            result = {
+                "tools": [
+                    {
+                        "name": "greet",
+                        "description": "Says hello",
+                        "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}},
+                    }
+                ]
+            }
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+        if method == "tools/call":
+            result = {"content": [{"type": "text", "text": "Hello!"}], "isError": False}
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+        if "id" in body:
+            # Any other request (e.g. ping) gets an empty result so the session doesn't block on it.
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {}})
+        # Notifications (e.g. notifications/initialized)
+        return httpx.Response(202)
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://127.0.0.1:8000/mcp",
+        load_prompts=False,
+        http_client=http_client,
+        header_provider=lambda kw: {"Authorization": f"Bearer {kw.get('api_key', '')}"},
+    )
+    try:
+        async with tool:
+            await tool.call_tool("greet", name="Alice", api_key="secret-token")
+    finally:
+        await http_client.aclose()
+
+    call_headers = [headers for _, method, headers in captured_requests if method == "tools/call"]
+    assert len(call_headers) == 1
+    assert call_headers[0].get("authorization") == "Bearer secret-token"
+
+
+async def test_mcp_streamable_http_tool_header_provider_snapshot_restored_after_call():
+    """Test that the instance-level header snapshot is set during a call and cleared after."""
+    observed_snapshots: list[dict[str, str] | None] = []
+    original_call_tool = MCPTool.call_tool
+
+    async def spy_call_tool(self, tool_name, **kwargs):
+        # Capture the snapshot value during the super call
+        observed_snapshots.append(self._active_call_headers)
+        return await original_call_tool(self, tool_name, **kwargs)
+
+    class _TestServer(MCPStreamableHTTPTool):
+        async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="greet",
+                            description="Says hello",
+                            inputSchema={"type": "object", "properties": {"name": {"type": "string"}}},
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
+            )
+            self.session.send_ping = AsyncMock()
+            self.is_connected = True
+
+        def get_mcp_client(self):  # pyrefly: ignore[bad-override]
+            return None
+
+    server = _TestServer(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda kw: {"X-Auth": kw.get("auth_token", "")},
+    )
+    async with server:
+        await server.load_tools()
+        with patch.object(MCPTool, "call_tool", spy_call_tool):
+            await server.call_tool("greet", name="Alice", auth_token="bearer-xyz")
+
+    assert observed_snapshots == [{"X-Auth": "bearer-xyz"}]
+    assert server._active_call_headers is None
+
+
+async def test_mcp_streamable_http_tool_header_provider_serializes_concurrent_calls():
+    """Concurrent call_tool invocations on the same tool must not mix per-call headers.
+
+    The framework executes parallel tool invocations concurrently, so a second call
+    must not overwrite the active header snapshot while the first call's requests
+    are still in flight (that would attach the wrong credentials).
+    """
+    release = asyncio.Event()
+    in_call = asyncio.Event()
+
+    async def blocking_call_tool(tool_name, *, arguments=None, meta=None):
+        in_call.set()
+        await release.wait()
+        return types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
+
+    class _TestServer(MCPStreamableHTTPTool):
+        async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="greet",
+                            description="Says hello",
+                            inputSchema={"type": "object", "properties": {"name": {"type": "string"}}},
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(side_effect=blocking_call_tool)
+            self.session.send_ping = AsyncMock()
+            self.is_connected = True
+
+        def get_mcp_client(self):  # pyrefly: ignore[bad-override]
+            return None
+
+    server = _TestServer(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda kw: {"X-Auth": kw.get("auth_token", "")},
+    )
+    async with server:
+        await server.load_tools()
+
+        first = asyncio.create_task(server.call_tool("greet", name="A", auth_token="token-a"))
+        await in_call.wait()
+        assert server._active_call_headers == {"X-Auth": "token-a"}
+
+        second = asyncio.create_task(server.call_tool("greet", name="B", auth_token="token-b"))
+        for _ in range(10):
+            await asyncio.sleep(0)
+        # The second call must be waiting on the first; its headers must not have
+        # replaced the snapshot the request hook reads for the in-flight call.
+        assert server._active_call_headers == {"X-Auth": "token-a"}
+
+        release.set()
+        await asyncio.gather(first, second)
+
+    assert server._active_call_headers is None
+
+
 # endregion
 
 
@@ -5566,7 +6447,7 @@ def _send_request_dispatcher(*responses_by_method: tuple[str, Any]) -> Any:
 
     async def _dispatch(request: Any, _result_type: Any, *_args: Any, **_kw: Any) -> Any:
         method = getattr(request.root, "method", None) or getattr(request, "method", None)
-        queue = queues.get(method)  # type: ignore[arg-type, call-overload]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        queue = queues.get(method)  # type: ignore[arg-type, call-overload]  # pyrefly: ignore[bad-argument-type]
         if not queue:
             raise AssertionError(f"No mocked send_request response for method '{method}'.")
         item = queue.pop(0)

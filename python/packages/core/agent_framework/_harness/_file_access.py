@@ -5,10 +5,10 @@
 Unlike :class:`~agent_framework.MemoryContextProvider`, which provides
 session-scoped memory that may be isolated per session, :class:`FileAccessProvider`
 operates on a shared, persistent storage area whose contents are visible across
-sessions and agents. The provider exposes six tools — ``file_access_save_file``,
-``file_access_read_file``, ``file_access_delete_file``, ``file_access_list_files``,
-``file_access_list_subdirectories``, and ``file_access_search_files`` — by
-registering them on the per-invocation
+sessions and agents. The provider exposes tools — ``file_access_write``,
+``file_access_read``, ``file_access_delete``, ``file_access_ls``,
+``file_access_grep``, ``file_access_replace``, and ``file_access_replace_lines`` —
+by registering them on the per-invocation
 :class:`~agent_framework.SessionContext` in :meth:`FileAccessProvider.before_run`.
 
 The store abstraction is generic so callers can plug in in-memory, local-disk, or
@@ -30,14 +30,14 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, MutableMapping
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, ClassVar, cast
 
 from pydantic import BaseModel, Field
 
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
-from .._tools import tool
+from .._tools import ApprovalMode, tool
 from .._types import Content
 
 logger = logging.getLogger(__name__)
@@ -53,9 +53,9 @@ DEFAULT_FILE_ACCESS_INSTRUCTIONS = (
     "artifacts, and manage any files the user has asked you to work with.\n\n"
     "- Never delete or overwrite existing files unless the user has explicitly "
     "asked you to do so.\n"
-    "- Files may be organized into subdirectories. Use `file_access_list_files` "
-    "and `file_access_list_subdirectories` to explore the tree level by level, "
-    "or `file_access_search_files` to search file contents recursively across "
+    "- Files may be organized into subdirectories. Use `file_access_ls` "
+    "to explore the tree level by level, "
+    "or `file_access_grep` to search file contents recursively across "
     "the whole store."
 )
 
@@ -66,7 +66,7 @@ _SEARCH_SNIPPET_RADIUS = 50
 # Hard cap on the length of a user-supplied search regex. Python's ``re`` module
 # has no built-in timeout, so a catastrophic-backtracking pattern (such as
 # ``(a+)+$``) submitted by the model could spin the CPU indefinitely. The cap
-# alone does not stop short pathological patterns, so :meth:`search_files`
+# alone does not stop short pathological patterns, so :meth:`search`
 # additionally executes the regex scan in a worker thread and bounds the wall
 # clock with :data:`_SEARCH_TIMEOUT_SECONDS`. The thread itself cannot be
 # safely interrupted from Python, so a runaway scan continues until the
@@ -188,7 +188,7 @@ def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
     return result
 
 
-def _matches_glob(file_name: str, pattern: str | None) -> bool:
+def _matches_glob(file_name: str, glob_pattern: str | None) -> bool:
     """Return whether ``file_name`` matches the optional glob pattern (case-insensitive).
 
     ``file_name`` is the forward-slash path of a file relative to the search
@@ -202,9 +202,84 @@ def _matches_glob(file_name: str, pattern: str | None) -> bool:
     markdown files at any depth and ``"reports/*"`` matches everything under
     ``reports``.
     """
-    if pattern is None or not pattern.strip():
+    if glob_pattern is None or not glob_pattern.strip():
         return True
-    return fnmatch.fnmatchcase(file_name.lower(), pattern.lower())
+    return fnmatch.fnmatchcase(file_name.lower(), glob_pattern.lower())
+
+
+def _apply_replace(content: str, old_string: str, new_string: str, replace_all: bool) -> tuple[str, int]:
+    """Replace ``old_string`` with ``new_string`` in ``content``.
+
+    Returns the new content and the number of replacements made. Raises
+    :class:`ValueError` when ``old_string`` is not found, or when more than one
+    occurrence exists and ``replace_all`` is ``False``.
+    """
+    if not old_string:
+        raise ValueError("old_string must not be empty.")
+    count = content.count(old_string)
+    if count == 0:
+        raise ValueError(f"old_string not found: {old_string!r}.")
+    if count > 1 and not replace_all:
+        raise ValueError(
+            f"old_string occurs {count} times; pass replace_all=true to replace all, "
+            "or provide a more specific old_string."
+        )
+    return content.replace(old_string, new_string), count
+
+
+def _split_lines_keepends(content: str) -> list[str]:
+    r"""Split ``content`` into lines on ``\n`` only, keeping the terminator attached.
+
+    Splits solely on ``\n`` (a trailing ``\r`` stays as line content), reproducing
+    :func:`_search_file_content`'s ``content.split("\n")`` enumeration exactly, so a
+    ``line_number`` obtained from ``grep`` always targets the same line here and stays
+    in range. This means the result has ``len(content.split("\n"))`` elements: a
+    trailing ``\n`` yields a final empty (editable) line, and empty content yields a
+    single empty line. ``"".join(...)`` reproduces ``content`` verbatim.
+    """
+    segments = content.split("\n")
+    lines = [segment + "\n" for segment in segments[:-1]]
+    lines.append(segments[-1])
+    return lines
+
+
+def _apply_replace_lines(content: str, edits: list[tuple[int, str]]) -> str:
+    r"""Apply literal 1-based line replacements to ``content``.
+
+    Each ``new_line`` is written **verbatim** in place of the target line,
+    including any trailing newline the caller wants to keep — the editor never
+    adds a separator. An empty ``new_line`` deletes the line entirely (content
+    and its terminator), and a ``new_line`` containing embedded newlines expands
+    one line into several.
+
+    Raises :class:`ValueError` when no edits are provided, when any line number
+    is out of range, or when a line number is targeted more than once.
+    """
+    if not edits:
+        raise ValueError("At least one line edit must be provided.")
+    lines = _split_lines_keepends(content)
+    seen: set[int] = set()
+    for line_number, _ in edits:
+        if line_number in seen:
+            raise ValueError(f"Duplicate line_number {line_number} in edits.")
+        seen.add(line_number)
+        if line_number < 1 or line_number > len(lines):
+            raise ValueError(f"line_number {line_number} is out of range (file has {len(lines)} lines).")
+    for line_number, new_line in edits:
+        lines[line_number - 1] = new_line
+    return "".join(lines)
+
+
+def _line_edits(edits: list[Any]) -> list[tuple[int, str]]:
+    """Normalize ``replace_lines`` edits (pydantic models or dicts) to ``(line_number, new_line)``."""
+    normalized: list[tuple[int, str]] = []
+    for edit in edits:
+        if isinstance(edit, Mapping):
+            mapping = cast("Mapping[str, Any]", edit)
+            normalized.append((int(mapping["line_number"]), str(mapping["new_line"])))
+        else:
+            normalized.append((int(edit.line_number), str(edit.new_line)))
+    return normalized
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
@@ -213,7 +288,6 @@ class FileSearchMatch(SerializationMixin):
 
     line_number: int
     line: str
-    __slots__ = ("line", "line_number")
 
     def __init__(self, line_number: int, line: str) -> None:
         r"""Initialize one search match.
@@ -230,13 +304,12 @@ class FileSearchMatch(SerializationMixin):
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Serialize this match to a JSON-compatible dictionary.
 
-        Overrides :meth:`SerializationMixin.to_dict` because this DTO is
-        declared with ``__slots__``: the base implementation iterates
-        ``self.__dict__`` which is empty for slotted classes and would emit
-        only the auto-injected ``type`` field. The ``exclude`` /
-        ``exclude_none`` arguments are accepted (and discarded) so the
-        signature remains drop-in compatible with the mixin — callers like
-        :meth:`SerializationMixin.to_json` always forward them.
+        Overrides :meth:`SerializationMixin.to_dict` to emit an explicit,
+        stable payload without the auto-injected ``type`` identifier field.
+        The ``exclude`` / ``exclude_none`` arguments are accepted (and
+        discarded) so the signature remains drop-in compatible with the
+        mixin — callers like :meth:`SerializationMixin.to_json` always
+        forward them.
         """
         del exclude, exclude_none
         return {"line_number": self.line_number, "line": self.line}
@@ -271,7 +344,6 @@ class FileSearchResult(SerializationMixin):
     file_name: str
     snippet: str
     matching_lines: list[FileSearchMatch]
-    __slots__ = ("file_name", "matching_lines", "snippet")
 
     def __init__(
         self,
@@ -294,10 +366,10 @@ class FileSearchResult(SerializationMixin):
         """Serialize this result to a JSON-compatible dictionary.
 
         Overrides :meth:`SerializationMixin.to_dict` for the same reason as
-        :meth:`FileSearchMatch.to_dict`: this DTO uses ``__slots__`` so the
-        base implementation cannot introspect the payload. The ``exclude`` /
-        ``exclude_none`` arguments are accepted and ignored to preserve
-        signature compatibility with the mixin.
+        :meth:`FileSearchMatch.to_dict`: to emit an explicit payload without
+        the auto-injected ``type`` field. The ``exclude`` / ``exclude_none``
+        arguments are accepted and ignored to preserve signature
+        compatibility with the mixin.
         """
         del exclude, exclude_none
         return {
@@ -338,6 +410,67 @@ class FileSearchResult(SerializationMixin):
             "FileSearchResult("
             f"file_name={self.file_name!r}, snippet={self.snippet!r}, matching_lines={self.matching_lines!r})"
         )
+
+
+@experimental(feature_id=ExperimentalFeature.HARNESS)
+class FileStoreEntry(SerializationMixin):
+    """Represent one entry in a directory listing: a file or a subdirectory."""
+
+    #: ``type`` value for a file entry.
+    FILE: ClassVar[str] = "file"
+    #: ``type`` value for a subdirectory entry.
+    DIRECTORY: ClassVar[str] = "directory"
+
+    name: str
+    type: str
+
+    def __init__(self, name: str, type: str) -> None:
+        """Initialize one directory-listing entry.
+
+        Args:
+            name: The entry's name (not a full path), relative to the directory
+                being listed.
+            type: Either ``"file"`` or ``"directory"`` (see :attr:`FILE` and
+                :attr:`DIRECTORY`).
+        """
+        if type not in (FileStoreEntry.FILE, FileStoreEntry.DIRECTORY):
+            raise ValueError(f"type must be {FileStoreEntry.FILE!r} or {FileStoreEntry.DIRECTORY!r}, got {type!r}.")
+        self.name = name
+        self.type = type
+
+    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
+        """Serialize this entry to a JSON-compatible dictionary.
+
+        Overrides :meth:`SerializationMixin.to_dict` for the same reason as
+        :meth:`FileSearchResult.to_dict`: to emit an explicit payload without
+        the auto-injected ``type`` field. The ``exclude`` / ``exclude_none``
+        arguments are accepted and ignored to preserve signature
+        compatibility with the mixin.
+        """
+        del exclude, exclude_none
+        return {"name": self.name, "type": self.type}
+
+    @classmethod
+    def from_dict(
+        cls, raw_entry: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
+    ) -> FileStoreEntry:
+        """Parse one directory-listing entry from its dict representation."""
+        del dependencies
+        name = raw_entry.get("name", "")
+        entry_type = raw_entry.get("type")
+        if not isinstance(name, str):
+            raise ValueError("FileStoreEntry.name must be a string.")
+        if not isinstance(entry_type, str):
+            raise ValueError("FileStoreEntry.type must be a string.")
+        return cls(name=name, type=entry_type)
+
+    def __eq__(self, other: object) -> bool:
+        """Return whether two entries have the same values."""
+        return isinstance(other, FileStoreEntry) and self.to_dict() == other.to_dict()
+
+    def __repr__(self) -> str:
+        """Return a helpful debug representation."""
+        return f"FileStoreEntry(name={self.name!r}, type={self.type!r})"
 
 
 def _search_file_content(file_name: str, content: str, regex: re.Pattern[str]) -> FileSearchResult | None:
@@ -386,7 +519,7 @@ class AgentFileStore(ABC):
     """
 
     @abstractmethod
-    async def write_file(self, path: str, content: str, *, overwrite: bool = True) -> None:
+    async def write(self, path: str, content: str, *, overwrite: bool = True) -> None:
         """Write ``content`` to the file at ``path``.
 
         Args:
@@ -405,7 +538,7 @@ class AgentFileStore(ABC):
         """
 
     @abstractmethod
-    async def read_file(self, path: str) -> str | None:
+    async def read(self, path: str) -> str | None:
         """Read the content of the file at ``path``.
 
         Args:
@@ -416,7 +549,7 @@ class AgentFileStore(ABC):
         """
 
     @abstractmethod
-    async def delete_file(self, path: str) -> bool:
+    async def delete(self, path: str) -> bool:
         """Delete the file at ``path``.
 
         Args:
@@ -427,26 +560,16 @@ class AgentFileStore(ABC):
         """
 
     @abstractmethod
-    async def list_files(self, directory: str = "") -> list[str]:
-        """List the direct child files of ``directory``.
+    async def list_children(self, directory: str = "") -> list[FileStoreEntry]:
+        """List the direct child files and subdirectories of ``directory``.
 
         Args:
             directory: The relative directory path to list. Use ``""`` for the root.
 
         Returns:
-            The list of file names (not full paths) in the specified directory.
-        """
-
-    @abstractmethod
-    async def list_directories(self, directory: str = "") -> list[str]:
-        """List the direct child subdirectory names of ``directory``.
-
-        Args:
-            directory: The relative directory path to list. Use ``""`` for the root.
-
-        Returns:
-            The list of subdirectory names (not full paths) directly contained in
-            the specified directory.
+            The direct children of ``directory`` as :class:`FileStoreEntry`
+            instances (names only, not full paths), each tagged as a file or a
+            directory. Implementations should return subdirectories before files.
         """
 
     @abstractmethod
@@ -458,11 +581,11 @@ class AgentFileStore(ABC):
         """
 
     @abstractmethod
-    async def search_files(
+    async def search(
         self,
         directory: str,
         regex_pattern: str,
-        file_pattern: str | None = None,
+        glob_pattern: str | None = None,
         *,
         recursive: bool = False,
     ) -> list[FileSearchResult]:
@@ -473,7 +596,7 @@ class AgentFileStore(ABC):
             regex_pattern: A regular expression matched against file contents
                 (case-insensitive). For example, ``"error|warning"`` matches lines
                 containing ``"error"`` or ``"warning"``.
-            file_pattern: An optional glob pattern (case-insensitive) used to
+            glob_pattern: An optional glob pattern (case-insensitive) used to
                 filter which files are searched. The pattern is matched against
                 each file's path **relative to** ``directory`` (forward slashes).
                 When ``None`` or blank, every file in scope is searched.
@@ -507,8 +630,8 @@ class InMemoryAgentFileStore(AgentFileStore):
         """Initialize an empty in-memory file store."""
         # Keys are case-insensitive (normalized + lowercased) so the store
         # behaves consistently on case-insensitive deployments. Each entry
-        # also records the *original* normalized path so ``list_files`` and
-        # ``search_files`` return display names that match what the caller
+        # also records the *original* normalized path so ``list_children`` and
+        # ``search`` return display names that match what the caller
         # wrote, mirroring how :class:`FileSystemAgentFileStore` preserves the
         # on-disk casing.
         self._files: dict[str, tuple[str, str]] = {}
@@ -518,7 +641,7 @@ class InMemoryAgentFileStore(AgentFileStore):
     def _key(path: str) -> str:
         return _normalize_relative_path(path).lower()
 
-    async def write_file(self, path: str, content: str, *, overwrite: bool = True) -> None:
+    async def write(self, path: str, content: str, *, overwrite: bool = True) -> None:
         """Write ``content`` to the file at ``path``.
 
         When ``overwrite`` is ``False`` the check-and-write happens under the
@@ -532,74 +655,57 @@ class InMemoryAgentFileStore(AgentFileStore):
                 raise FileExistsError(f"File already exists: {path!r}")
             self._files[key] = (display, content)
 
-    async def read_file(self, path: str) -> str | None:
+    async def read(self, path: str) -> str | None:
         """Return the file content, or ``None`` if the file does not exist."""
         key = self._key(path)
         async with self._lock:
             entry = self._files.get(key)
         return entry[1] if entry is not None else None
 
-    async def delete_file(self, path: str) -> bool:
+    async def delete(self, path: str) -> bool:
         """Delete the file and return whether anything was removed."""
         key = self._key(path)
         async with self._lock:
             return self._files.pop(key, None) is not None
 
-    async def list_files(self, directory: str = "") -> list[str]:
-        """Return the direct child files of ``directory``.
+    async def list_children(self, directory: str = "") -> list[FileStoreEntry]:
+        """Return the direct child files and subdirectories of ``directory``.
 
-        Returns the *original-case* file names that were written, so a caller
-        that does ``write_file("Plan.MD", ...)`` then ``list_files()`` gets
-        back ``["Plan.MD"]`` rather than ``["plan.md"]``. This matches the
-        behaviour of :class:`FileSystemAgentFileStore` on case-preserving
-        filesystems.
-        """
-        prefix = _normalize_relative_path(directory, is_directory=True).lower()
-        if prefix and not prefix.endswith("/"):
-            prefix += "/"
-        async with self._lock:
-            entries = [(key, display) for key, (display, _) in self._files.items()]
-        results: list[str] = []
-        for key, display in entries:
-            if not key.startswith(prefix):
-                continue
-            if "/" in key[len(prefix) :]:
-                continue
-            # ``display`` is the original-case normalized path; strip the
-            # directory prefix using the same length we matched on ``key``.
-            results.append(display[len(prefix) :])
-        return results
-
-    async def list_directories(self, directory: str = "") -> list[str]:
-        """Return the direct child subdirectory names of ``directory``.
+        Subdirectories are returned before files. Entry names preserve the
+        *original-case* paths that were written, so a caller that does
+        ``write("Plan.MD", ...)`` then ``list_children()`` gets back ``"Plan.MD"``
+        rather than ``"plan.md"``. This matches the behaviour of
+        :class:`FileSystemAgentFileStore` on case-preserving filesystems.
 
         A subdirectory is the first path segment of any stored key whose
-        remainder (after the directory prefix) still contains a ``/`` separator.
-        Distinct first segments are collected, preserving the *original-case*
-        display name and de-duplicating case-insensitively, mirroring the
-        case-preserving behaviour of :class:`FileSystemAgentFileStore`.
+        remainder (after the directory prefix) still contains a ``/`` separator;
+        distinct first segments are de-duplicated case-insensitively.
         """
         prefix = _normalize_relative_path(directory, is_directory=True).lower()
         if prefix and not prefix.endswith("/"):
             prefix += "/"
         async with self._lock:
             entries = [(key, display) for key, (display, _) in self._files.items()]
-        results: list[str] = []
-        seen: set[str] = set()
+        files: list[str] = []
+        directories: list[str] = []
+        seen_dirs: set[str] = set()
         for key, display in entries:
             if not key.startswith(prefix):
                 continue
             remainder = key[len(prefix) :]
             separator_index = remainder.find("/")
-            if separator_index <= 0:
-                continue
-            segment_key = remainder[:separator_index]
-            if segment_key in seen:
-                continue
-            seen.add(segment_key)
-            # ``display`` is the original-case normalized path; take the matching
-            # first segment after the (case-insensitive) prefix.
-            results.append(display[len(prefix) : len(prefix) + separator_index])
+            if separator_index == -1:
+                # ``display`` is the original-case normalized path; strip the
+                # directory prefix using the same length we matched on ``key``.
+                files.append(display[len(prefix) :])
+            elif separator_index > 0:
+                segment_key = remainder[:separator_index]
+                if segment_key in seen_dirs:
+                    continue
+                seen_dirs.add(segment_key)
+                directories.append(display[len(prefix) : len(prefix) + separator_index])
+        results: list[FileStoreEntry] = [FileStoreEntry(name, FileStoreEntry.DIRECTORY) for name in directories]
+        results.extend(FileStoreEntry(name, FileStoreEntry.FILE) for name in files)
         return results
 
     async def file_exists(self, path: str) -> bool:
@@ -608,11 +714,11 @@ class InMemoryAgentFileStore(AgentFileStore):
         async with self._lock:
             return key in self._files
 
-    async def search_files(
+    async def search(
         self,
         directory: str,
         regex_pattern: str,
-        file_pattern: str | None = None,
+        glob_pattern: str | None = None,
         *,
         recursive: bool = False,
     ) -> list[FileSearchResult]:
@@ -644,7 +750,7 @@ class InMemoryAgentFileStore(AgentFileStore):
                 if not recursive and "/" in relative_key:
                     continue
                 relative_display = display[len(prefix) :]
-                if not _matches_glob(relative_display, file_pattern):
+                if not _matches_glob(relative_display, glob_pattern):
                     continue
                 result = _search_file_content(relative_display, file_content, regex)
                 if result is not None:
@@ -686,7 +792,7 @@ class FileSystemAgentFileStore(AgentFileStore):
 
         The root directory is **not** created here; construction performs no
         filesystem writes. The directory is created lazily on the first
-        ``write_file`` (or ``create_directory``) call, so a store can be
+        ``write`` (or ``create_directory``) call, so a store can be
         constructed in a read-only working directory and only fails if a write
         is actually attempted.
 
@@ -780,7 +886,7 @@ class FileSystemAgentFileStore(AgentFileStore):
             if not current.exists():
                 break
 
-    async def write_file(self, path: str, content: str, *, overwrite: bool = True) -> None:
+    async def write(self, path: str, content: str, *, overwrite: bool = True) -> None:
         """Write ``content`` to the file at ``path``.
 
         When ``overwrite`` is ``False`` the file is created using
@@ -821,7 +927,7 @@ class FileSystemAgentFileStore(AgentFileStore):
         with os.fdopen(fd, "wb") as handle:
             handle.write(encoded)
 
-    async def read_file(self, path: str) -> str | None:
+    async def read(self, path: str) -> str | None:
         """Return the file content, or ``None`` if the file does not exist.
 
         Raises :class:`ValueError` if the file exists but its bytes are not
@@ -850,7 +956,7 @@ class FileSystemAgentFileStore(AgentFileStore):
         except UnicodeDecodeError as exc:
             raise ValueError(f"File '{full_path.name}' is not UTF-8 text and cannot be read.") from exc
 
-    async def delete_file(self, path: str) -> bool:
+    async def delete(self, path: str) -> bool:
         """Delete the file and return whether anything was removed."""
         full_path = self._resolve_safe_path(path)
         return await asyncio.to_thread(self._delete_file_sync, full_path)
@@ -862,44 +968,30 @@ class FileSystemAgentFileStore(AgentFileStore):
         full_path.unlink()
         return True
 
-    async def list_files(self, directory: str = "") -> list[str]:
-        """Return the direct child files of ``directory``."""
-        full_dir = self._resolve_safe_directory_path(directory)
-        return await asyncio.to_thread(self._list_files_sync, full_dir)
+    async def list_children(self, directory: str = "") -> list[FileStoreEntry]:
+        """Return the direct child files and subdirectories of ``directory``.
 
-    @staticmethod
-    def _list_files_sync(full_dir: Path) -> list[str]:
-        if not full_dir.is_dir():
-            return []
-        names: list[str] = []
-        for entry in full_dir.iterdir():
-            if entry.is_symlink():
-                continue
-            if entry.is_file():
-                names.append(entry.name)
-        return names
-
-    async def list_directories(self, directory: str = "") -> list[str]:
-        """Return the direct child subdirectory names of ``directory``.
-
-        Symlinked directories (and reparse points on Windows) are excluded so a
-        listing cannot surface a path that escapes the root. An empty list is
-        returned for a non-existent directory.
+        Subdirectories are returned before files. Symlinked entries (and reparse
+        points on Windows) are excluded so a listing cannot surface a path that
+        escapes the root. An empty list is returned for a non-existent directory.
         """
         full_dir = self._resolve_safe_directory_path(directory)
-        return await asyncio.to_thread(self._list_directories_sync, full_dir)
+        return await asyncio.to_thread(self._list_sync, full_dir)
 
     @staticmethod
-    def _list_directories_sync(full_dir: Path) -> list[str]:
+    def _list_sync(full_dir: Path) -> list[FileStoreEntry]:
         if not full_dir.is_dir():
             return []
-        names: list[str] = []
+        directories: list[FileStoreEntry] = []
+        files: list[FileStoreEntry] = []
         for entry in full_dir.iterdir():
             if entry.is_symlink():
                 continue
             if entry.is_dir():
-                names.append(entry.name)
-        return names
+                directories.append(FileStoreEntry(entry.name, FileStoreEntry.DIRECTORY))
+            elif entry.is_file():
+                files.append(FileStoreEntry(entry.name, FileStoreEntry.FILE))
+        return directories + files
 
     async def file_exists(self, path: str) -> bool:
         """Return whether the file exists."""
@@ -910,11 +1002,11 @@ class FileSystemAgentFileStore(AgentFileStore):
     def _file_exists_sync(full_path: Path) -> bool:
         return full_path.is_file()
 
-    async def search_files(
+    async def search(
         self,
         directory: str,
         regex_pattern: str,
-        file_pattern: str | None = None,
+        glob_pattern: str | None = None,
         *,
         recursive: bool = False,
     ) -> list[FileSearchResult]:
@@ -931,7 +1023,7 @@ class FileSystemAgentFileStore(AgentFileStore):
         """
         full_dir = self._resolve_safe_directory_path(directory)
         regex = _compile_search_regex(regex_pattern)
-        return await _run_search_with_timeout(lambda: self._search_files_sync(full_dir, regex, file_pattern, recursive))
+        return await _run_search_with_timeout(lambda: self._search_files_sync(full_dir, regex, glob_pattern, recursive))
 
     @staticmethod
     def _enumerate_search_files(full_dir: Path, recursive: bool) -> list[tuple[str, Path]]:
@@ -960,14 +1052,14 @@ class FileSystemAgentFileStore(AgentFileStore):
 
     @staticmethod
     def _search_files_sync(
-        full_dir: Path, regex: re.Pattern[str], file_pattern: str | None, recursive: bool
+        full_dir: Path, regex: re.Pattern[str], glob_pattern: str | None, recursive: bool
     ) -> list[FileSearchResult]:
         if not full_dir.is_dir():
             return []
         results: list[FileSearchResult] = []
         skipped: list[str] = []
         for relative_name, entry in FileSystemAgentFileStore._enumerate_search_files(full_dir, recursive):
-            if not _matches_glob(relative_name, file_pattern):
+            if not _matches_glob(relative_name, glob_pattern):
                 continue
             try:
                 file_content = entry.read_text(encoding="utf-8")
@@ -996,60 +1088,103 @@ class FileSystemAgentFileStore(AgentFileStore):
         await asyncio.to_thread(lambda: full_path.mkdir(parents=True, exist_ok=True))
 
 
-class _SaveFileInput(BaseModel):
-    """Input schema for ``file_access_save_file``."""
+class _WriteFileInput(BaseModel):
+    """Input schema for ``file_access_write``."""
 
-    file_name: Annotated[str, Field(description="Name (relative path) of the file to save.")]
+    file_name: Annotated[str, Field(description="Name (relative path) of the file to write.")]
     content: Annotated[str, Field(description="Full text content to write to the file.")]
     overwrite: Annotated[
         bool,
-        Field(default=False, description="When true, replace an existing file; otherwise saving fails if it exists."),
+        Field(default=False, description="When true, replace an existing file; otherwise writing fails if it exists."),
     ] = False
 
 
 class _ReadFileInput(BaseModel):
-    """Input schema for ``file_access_read_file``."""
+    """Input schema for ``file_access_read``."""
 
     file_name: Annotated[str, Field(description="Name (relative path) of the file to read.")]
 
 
 class _DeleteFileInput(BaseModel):
-    """Input schema for ``file_access_delete_file``."""
+    """Input schema for ``file_access_delete``."""
 
     file_name: Annotated[str, Field(description="Name (relative path) of the file to delete.")]
 
 
-class _ListFilesInput(BaseModel):
-    """Input schema for ``file_access_list_files``."""
+class _ListInput(BaseModel):
+    """Input schema for ``file_access_ls``."""
 
     directory: Annotated[
         str | None,
         Field(default=None, description="Relative directory to list; omit or pass empty to list the root."),
     ] = None
-
-
-class _ListSubdirectoriesInput(BaseModel):
-    """Input schema for ``file_access_list_subdirectories``."""
-
-    directory: Annotated[
+    glob_pattern: Annotated[
         str | None,
-        Field(default=None, description="Relative directory to list; omit or pass empty to list the root."),
+        Field(
+            default=None,
+            description='Optional glob (e.g. "*.md") matched against entry names to filter the listing.',
+        ),
     ] = None
+
+
+class _ReplaceInput(BaseModel):
+    """Input schema for ``file_access_replace``."""
+
+    file_name: Annotated[str, Field(description="Name (relative path) of the file to modify.")]
+    old_string: Annotated[str, Field(description="Substring to find and replace.")]
+    new_string: Annotated[str, Field(description="Replacement text.")]
+    replace_all: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="When true, replace every occurrence; when false, fail unless exactly one occurrence exists.",
+        ),
+    ] = False
+
+
+class _LineEdit(BaseModel):
+    """A single literal line replacement for ``file_access_replace_lines``."""
+
+    line_number: Annotated[int, Field(description="1-based line number to replace.")]
+    new_line: Annotated[
+        str,
+        Field(
+            description=(
+                "Literal replacement text for the line, including any trailing newline you want to keep "
+                "(the editor does not add one). Set to an empty string to delete the line entirely, "
+                "including its line break."
+            )
+        ),
+    ]
+
+
+class _ReplaceLinesInput(BaseModel):
+    """Input schema for ``file_access_replace_lines``."""
+
+    file_name: Annotated[str, Field(description="Name (relative path) of the file to modify.")]
+    edits: Annotated[
+        list[_LineEdit],
+        Field(description="List of 1-based line numbers and their literal replacement text."),
+    ]
 
 
 class _SearchFilesInput(BaseModel):
-    """Input schema for ``file_access_search_files``."""
+    """Input schema for ``file_access_grep``."""
 
     regex_pattern: Annotated[
         str,
         Field(description="Case-insensitive regex matched against file contents; 256 characters or fewer."),
     ]
-    file_pattern: Annotated[
+    glob_pattern: Annotated[
         str | None,
         Field(
             default=None,
             description='Optional glob to filter which files are searched (e.g. "*.md", "reports/*").',
         ),
+    ] = None
+    directory: Annotated[
+        str | None,
+        Field(default=None, description="Optional relative directory to search; omit or pass empty for the root."),
     ] = None
 
 
@@ -1057,18 +1192,21 @@ class _SearchFilesInput(BaseModel):
 class FileAccessProvider(ContextProvider):
     """Context provider that gives an agent CRUD/search access to a shared file store.
 
-    The provider exposes six tools to the agent via the per-invocation
+    The provider exposes the following tools to the agent via the per-invocation
     :class:`~agent_framework.SessionContext`:
 
-    - ``file_access_save_file`` — Save a file (refuses to overwrite by default).
-    - ``file_access_read_file`` — Read the content of a file by name.
-    - ``file_access_delete_file`` — Delete a file by name.
-    - ``file_access_list_files`` — List the direct child file names of a directory.
-    - ``file_access_list_subdirectories`` — List the direct child subdirectory
-      names of a directory.
-    - ``file_access_search_files`` — Recursively search file contents from the
-      store root using a case-insensitive regex, optionally filtered by a glob
-      pattern over the store-root-relative file paths.
+    - ``file_access_write`` — Write a file (refuses to overwrite by default).
+    - ``file_access_read`` — Read the content of a file by name.
+    - ``file_access_delete`` — Delete a file by name.
+    - ``file_access_ls`` — List the direct child files and subdirectories of a
+      directory, optionally filtered by a glob pattern.
+    - ``file_access_grep`` — Recursively search file contents using a
+      case-insensitive regex, optionally filtered by a glob pattern and base directory.
+    - ``file_access_replace`` — Replace occurrences of a substring within a file.
+    - ``file_access_replace_lines`` — Replace whole lines within a file.
+
+    When ``disable_write_tools`` is set, only the read-only tools (``file_access_read``,
+    ``file_access_ls``, ``file_access_grep``) are advertised.
 
     Unlike :class:`~agent_framework.MemoryContextProvider`, which provides
     session-scoped memory that may be isolated per session,
@@ -1077,7 +1215,7 @@ class FileAccessProvider(ContextProvider):
     the caller and should already be scoped to the desired folder or storage
     location.
 
-    All six tools always require approval: each is registered with
+    By default all tools require approval: each is registered with
     ``approval_mode="always_require"`` so the host must approve every file
     operation the model proposes. In the auto-invocation flow this means the
     model's calls to these tools are converted into
@@ -1086,16 +1224,21 @@ class FileAccessProvider(ContextProvider):
     use the base agent directly must install
     :class:`~agent_framework.ToolApprovalMiddleware` (or use
     :func:`~agent_framework.create_harness_agent`, which wires it in by default)
-    to drive that handshake; otherwise these tools never run. To run unattended,
-    supply one of the static auto-approval rules to
-    :class:`~agent_framework.ToolApprovalMiddleware` via its
+    to drive that handshake; otherwise these tools never run.
+
+    To run unattended you can disable approval at the source with
+    ``disable_readonly_tool_approval`` (read, ls, grep) and/or
+    ``disable_write_tool_approval`` (write, delete, replace, replace_lines),
+    which register the affected tools with ``approval_mode="never_require"``.
+    Alternatively, keep approval on and supply one of the static auto-approval
+    rules to :class:`~agent_framework.ToolApprovalMiddleware` via its
     ``auto_approval_rules``:
 
     - :meth:`read_only_tools_auto_approval_rule` — auto-approves only the
-      read-only tools (read, list files, list subdirectories, search), while
-      still prompting for the tools that modify the store (save and delete).
+      read-only tools (read, ls, grep), while still prompting for the tools that
+      modify the store (write, delete, replace, replace_lines).
     - :meth:`all_tools_auto_approval_rule` — auto-approves every file-access
-      tool, including save and delete.
+      tool, including the write tools.
 
     For example, to auto-approve only the read-only tools::
 
@@ -1105,36 +1248,38 @@ class FileAccessProvider(ContextProvider):
         )
     """
 
-    #: Name of the tool that saves a file.
-    SAVE_FILE_TOOL_NAME = "file_access_save_file"
+    #: Name of the tool that writes a file.
+    WRITE_TOOL_NAME = "file_access_write"
     #: Name of the tool that reads a file.
-    READ_FILE_TOOL_NAME = "file_access_read_file"
+    READ_TOOL_NAME = "file_access_read"
     #: Name of the tool that deletes a file.
-    DELETE_FILE_TOOL_NAME = "file_access_delete_file"
-    #: Name of the tool that lists the files in a directory.
-    LIST_FILES_TOOL_NAME = "file_access_list_files"
-    #: Name of the tool that lists the subdirectories of a directory.
-    LIST_SUBDIRECTORIES_TOOL_NAME = "file_access_list_subdirectories"
+    DELETE_TOOL_NAME = "file_access_delete"
+    #: Name of the tool that lists the files and subdirectories of a directory.
+    LS_TOOL_NAME = "file_access_ls"
     #: Name of the tool that searches file contents.
-    SEARCH_FILES_TOOL_NAME = "file_access_search_files"
+    GREP_TOOL_NAME = "file_access_grep"
+    #: Name of the tool that replaces a substring in a file.
+    REPLACE_TOOL_NAME = "file_access_replace"
+    #: Name of the tool that replaces whole lines in a file.
+    REPLACE_LINES_TOOL_NAME = "file_access_replace_lines"
 
     #: Names of the tools that only read from (never modify) the file store.
     _READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset({
-        READ_FILE_TOOL_NAME,
-        LIST_FILES_TOOL_NAME,
-        LIST_SUBDIRECTORIES_TOOL_NAME,
-        SEARCH_FILES_TOOL_NAME,
+        READ_TOOL_NAME,
+        LS_TOOL_NAME,
+        GREP_TOOL_NAME,
+    })
+
+    #: Names of the tools that modify the file store.
+    _WRITE_TOOL_NAMES: frozenset[str] = frozenset({
+        WRITE_TOOL_NAME,
+        DELETE_TOOL_NAME,
+        REPLACE_TOOL_NAME,
+        REPLACE_LINES_TOOL_NAME,
     })
 
     #: Names of all tools exposed by this provider.
-    _ALL_TOOL_NAMES: frozenset[str] = frozenset({
-        SAVE_FILE_TOOL_NAME,
-        READ_FILE_TOOL_NAME,
-        DELETE_FILE_TOOL_NAME,
-        LIST_FILES_TOOL_NAME,
-        LIST_SUBDIRECTORIES_TOOL_NAME,
-        SEARCH_FILES_TOOL_NAME,
-    })
+    _ALL_TOOL_NAMES: frozenset[str] = _READ_ONLY_TOOL_NAMES | _WRITE_TOOL_NAMES
 
     def __init__(
         self,
@@ -1142,6 +1287,9 @@ class FileAccessProvider(ContextProvider):
         *,
         source_id: str = DEFAULT_FILE_ACCESS_SOURCE_ID,
         instructions: str | None = None,
+        disable_write_tools: bool = False,
+        disable_readonly_tool_approval: bool = False,
+        disable_write_tool_approval: bool = False,
     ) -> None:
         """Initialize the file access provider.
 
@@ -1154,10 +1302,33 @@ class FileAccessProvider(ContextProvider):
             source_id: Unique source ID for the provider.
             instructions: Optional instruction override. When ``None`` the
                 default file-access instructions are used.
+            disable_write_tools: When ``True``, only the read-only tools
+                (``file_access_read``, ``file_access_ls``, ``file_access_grep``)
+                are advertised; the write tools (``file_access_write``,
+                ``file_access_delete``, ``file_access_replace``,
+                ``file_access_replace_lines``) are hidden from the model.
+            disable_readonly_tool_approval: When ``True``, the read-only tools
+                (``file_access_read``, ``file_access_ls``, ``file_access_grep``)
+                are registered with ``approval_mode="never_require"`` so they run
+                without host approval. Defaults to ``False`` (approval required).
+            disable_write_tool_approval: When ``True``, the write tools
+                (``file_access_write``, ``file_access_delete``,
+                ``file_access_replace``, ``file_access_replace_lines``) are
+                registered with ``approval_mode="never_require"`` so they run
+                without host approval. Defaults to ``False`` (approval required).
         """
         super().__init__(source_id)
         self.store = store
         self.instructions = instructions or DEFAULT_FILE_ACCESS_INSTRUCTIONS
+        self.disable_write_tools = disable_write_tools
+        self.disable_readonly_tool_approval = disable_readonly_tool_approval
+        self.disable_write_tool_approval = disable_write_tool_approval
+        # Serializes mutating tool operations (write/delete/replace/replace_lines).
+        # The provider is shared across sessions/agents, so read-modify-write tools
+        # (replace/replace_lines) could otherwise interleave and lose updates. Note
+        # this only serializes within a single event loop/process, not across
+        # processes sharing a FileSystemAgentFileStore on disk.
+        self._write_lock = asyncio.Lock()
 
     @staticmethod
     def _is_local_tool_call(function_call: Content) -> bool:
@@ -1180,14 +1351,23 @@ class FileAccessProvider(ContextProvider):
         The tools exposed by :class:`FileAccessProvider` always require approval.
         Pass this rule to :class:`~agent_framework.ToolApprovalMiddleware` (via
         ``auto_approval_rules``) to automatically approve the tools that read
-        from the store (``file_access_read_file``, ``file_access_list_files``,
-        ``file_access_list_subdirectories``, and ``file_access_search_files``),
-        while still prompting for the tools that modify it
-        (``file_access_save_file`` and ``file_access_delete_file``).
+        from the store (``file_access_read``, ``file_access_ls``, and
+        ``file_access_grep``), while still prompting for the tools that modify it
+        (``file_access_write``, ``file_access_delete``, ``file_access_replace``,
+        and ``file_access_replace_lines``).
 
         Hosted-tool calls (those carrying a ``server_label``) are never
         auto-approved, even when their name matches a file-access tool, so the
         rule stays scoped to this provider's local tools.
+
+        .. warning::
+            **Security — avoid tool-name collisions.** This rule approves local
+            tool calls by tool name only (``file_access_read``,
+            ``file_access_ls``, and ``file_access_grep``). Any other local tool
+            registered under one of these names — for example a tool with a
+            caller-configurable name such as the shell tool — may also be
+            auto-approved, bypassing the human approval boundary. Ensure no other
+            tool collides with these reserved names.
 
         Args:
             function_call: The pending ``function_call`` content.
@@ -1208,12 +1388,24 @@ class FileAccessProvider(ContextProvider):
         The tools exposed by :class:`FileAccessProvider` always require approval.
         Pass this rule to :class:`~agent_framework.ToolApprovalMiddleware` (via
         ``auto_approval_rules``) to automatically approve every file-access tool,
-        including the tools that modify the store (``file_access_save_file`` and
-        ``file_access_delete_file``).
+        including the tools that modify the store (``file_access_write``,
+        ``file_access_delete``, ``file_access_replace``, and
+        ``file_access_replace_lines``).
 
         Hosted-tool calls (those carrying a ``server_label``) are never
         auto-approved, even when their name matches a file-access tool, so the
         rule stays scoped to this provider's local tools.
+
+        .. warning::
+            **Security — avoid tool-name collisions.** This rule approves local
+            tool calls by tool name only (``file_access_write``,
+            ``file_access_read``, ``file_access_delete``, ``file_access_ls``,
+            ``file_access_grep``, ``file_access_replace``, and
+            ``file_access_replace_lines``). Any other local tool registered under
+            one of these names — for example a tool with a caller-configurable
+            name such as the shell tool — may also be auto-approved, bypassing
+            the human approval boundary. Ensure no other tool collides with these
+            reserved names.
 
         Args:
             function_call: The pending ``function_call`` content.
@@ -1236,117 +1428,152 @@ class FileAccessProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Inject file-access tools and instructions before the model runs."""
+        readonly_approval: ApprovalMode = "never_require" if self.disable_readonly_tool_approval else "always_require"
+        write_approval: ApprovalMode = "never_require" if self.disable_write_tool_approval else "always_require"
 
-        @tool(name=FileAccessProvider.SAVE_FILE_TOOL_NAME, schema=_SaveFileInput, approval_mode="always_require")
-        async def file_access_save_file(file_name: str, content: str, overwrite: bool = False) -> str:
-            """Save a file with the given name and content. By default, does not overwrite an existing file unless overwrite is set to true."""  # noqa: E501
+        @tool(name=FileAccessProvider.WRITE_TOOL_NAME, schema=_WriteFileInput, approval_mode=write_approval)
+        async def file_access_write(file_name: str, content: str, overwrite: bool = False) -> str:
+            """Write a file with the given name and content. By default, does not overwrite an existing file unless overwrite is set to true."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
-                await self.store.write_file(normalized, content, overwrite=overwrite)
+                async with self._write_lock:
+                    await self.store.write(normalized, content, overwrite=overwrite)
             except FileExistsError:
-                return f"File '{file_name}' already exists. To replace it, save again with overwrite set to true."
+                return f"File '{file_name}' already exists. To replace it, write again with overwrite set to true."
             except ValueError as exc:
-                return f"Could not save file '{file_name}': {exc}"
+                return f"Could not write file '{file_name}': {exc}"
             except OSError as exc:
-                return f"Could not save file '{file_name}': {exc.strerror or exc}"
-            return f"File '{file_name}' saved."
+                return f"Could not write file '{file_name}': {exc.strerror or exc}"
+            return f"File '{file_name}' written."
 
-        @tool(name=FileAccessProvider.READ_FILE_TOOL_NAME, schema=_ReadFileInput, approval_mode="always_require")
-        async def file_access_read_file(file_name: str) -> str:
-            """Read the content of a file by name. Returns the file content or a message indicating the file could not be read."""  # noqa: E501
+        @tool(name=FileAccessProvider.READ_TOOL_NAME, schema=_ReadFileInput, approval_mode=readonly_approval)
+        async def file_access_read(file_name: str) -> str:
+            """Read the content of a file by name. Returns the file content or a message indicating the file could not be read."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
-                content = await self.store.read_file(normalized)
+                content = await self.store.read(normalized)
             except ValueError as exc:
                 return f"Could not read file '{file_name}': {exc}"
             except OSError as exc:
                 return f"Could not read file '{file_name}': {exc.strerror or exc}"
             return content if content is not None else f"File '{file_name}' not found."
 
-        @tool(name=FileAccessProvider.DELETE_FILE_TOOL_NAME, schema=_DeleteFileInput, approval_mode="always_require")
-        async def file_access_delete_file(file_name: str) -> str:
+        @tool(name=FileAccessProvider.DELETE_TOOL_NAME, schema=_DeleteFileInput, approval_mode=write_approval)
+        async def file_access_delete(file_name: str) -> str:
             """Delete a file by name."""
             try:
                 normalized = _normalize_relative_path(file_name)
-                deleted = await self.store.delete_file(normalized)
+                async with self._write_lock:
+                    deleted = await self.store.delete(normalized)
             except ValueError as exc:
                 return f"Could not delete file '{file_name}': {exc}"
             except OSError as exc:
                 return f"Could not delete file '{file_name}': {exc.strerror or exc}"
             return f"File '{file_name}' deleted." if deleted else f"File '{file_name}' not found."
 
-        @tool(name=FileAccessProvider.LIST_FILES_TOOL_NAME, schema=_ListFilesInput, approval_mode="always_require")
-        async def file_access_list_files(directory: str | None = None) -> list[str] | str:
-            """List the direct child file names of a directory. Omit ``directory`` (or pass an empty string) to list the root. To enumerate files in a subdirectory, pass its relative path, for example ``"reports"`` or ``"reports/2024"``."""  # noqa: E501
+        @tool(name=FileAccessProvider.LS_TOOL_NAME, schema=_ListInput, approval_mode=readonly_approval)
+        async def file_access_ls(
+            directory: str | None = None,
+            glob_pattern: str | None = None,
+        ) -> list[dict[str, str]] | str:
+            """List the direct child files and subdirectories of a directory. Omit ``directory`` (or pass an empty string) to list the root. To enumerate a subdirectory, pass its relative path, for example ``"reports"`` or ``"reports/2024"``. Optionally filter entries with a ``glob_pattern`` (e.g. ``"*.md"``). Subdirectories are listed before files, and each entry is ``{"name": <name>, "type": "file"|"directory"}``."""  # ruff:ignore[line-too-long]
             target = directory if directory and directory.strip() else ""
             try:
-                return await self.store.list_files(target)
+                listed = await self.store.list_children(target)
             except ValueError as exc:
                 return f"Could not list directory '{directory or ''}': {exc}"
             except OSError as exc:
                 return f"Could not list directory '{directory or ''}': {exc.strerror or exc}"
+            return [
+                {"name": entry.name, "type": entry.type} for entry in listed if _matches_glob(entry.name, glob_pattern)
+            ]
+
+        @tool(name=FileAccessProvider.REPLACE_TOOL_NAME, schema=_ReplaceInput, approval_mode=write_approval)
+        async def file_access_replace(
+            file_name: str,
+            old_string: str,
+            new_string: str,
+            replace_all: bool = False,
+        ) -> str:
+            """Replace occurrences of old_string with new_string in a file. Fails if old_string is not found, or if it occurs more than once and replace_all is false. Returns the number of occurrences replaced."""  # ruff:ignore[line-too-long]
+            try:
+                normalized = _normalize_relative_path(file_name)
+                async with self._write_lock:
+                    content = await self.store.read(normalized)
+                    if content is None:
+                        return f"File '{file_name}' not found."
+                    new_content, count = _apply_replace(content, old_string, new_string, replace_all)
+                    await self.store.write(normalized, new_content, overwrite=True)
+            except ValueError as exc:
+                return f"Could not replace in file '{file_name}': {exc}"
+            except OSError as exc:
+                return f"Could not replace in file '{file_name}': {exc.strerror or exc}"
+            return f"Replaced {count} occurrence(s) in '{file_name}'."
 
         @tool(
-            name=FileAccessProvider.LIST_SUBDIRECTORIES_TOOL_NAME,
-            schema=_ListSubdirectoriesInput,
-            approval_mode="always_require",
+            name=FileAccessProvider.REPLACE_LINES_TOOL_NAME,
+            schema=_ReplaceLinesInput,
+            approval_mode=write_approval,
         )
-        async def file_access_list_subdirectories(directory: str | None = None) -> list[str] | str:
-            """List the direct child subdirectory names of a directory.
-
-            Omit ``directory`` (or pass an empty string) to list the root.
-            To enumerate subdirectories of a subdirectory, pass its relative path, for example
-            ``"reports"`` or ``"reports/2024"``.
-            Use this together with file_access_list_files to explore the directory tree level by level.
-            """
-            target = directory if directory and directory.strip() else ""
+        async def file_access_replace_lines(file_name: str, edits: list[_LineEdit]) -> str:
+            """Replace lines in a file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers."""  # ruff:ignore[line-too-long]
             try:
-                return await self.store.list_directories(target)
+                normalized = _normalize_relative_path(file_name)
+                async with self._write_lock:
+                    content = await self.store.read(normalized)
+                    if content is None:
+                        return f"File '{file_name}' not found."
+                    new_content = _apply_replace_lines(content, _line_edits(edits))
+                    await self.store.write(normalized, new_content, overwrite=True)
             except ValueError as exc:
-                return f"Could not list directory '{directory or ''}': {exc}"
+                return f"Could not edit file '{file_name}': {exc}"
             except OSError as exc:
-                return f"Could not list directory '{directory or ''}': {exc.strerror or exc}"
+                return f"Could not edit file '{file_name}': {exc.strerror or exc}"
+            return f"Replaced {len(edits)} line(s) in '{file_name}'."
 
-        @tool(name=FileAccessProvider.SEARCH_FILES_TOOL_NAME, schema=_SearchFilesInput, approval_mode="always_require")
-        async def file_access_search_files(
+        @tool(name=FileAccessProvider.GREP_TOOL_NAME, schema=_SearchFilesInput, approval_mode=readonly_approval)
+        async def file_access_grep(
             regex_pattern: str,
-            file_pattern: str | None = None,
+            glob_pattern: str | None = None,
+            directory: str | None = None,
         ) -> list[dict[str, Any]] | str:
-            """Search the contents of all files in the store using a case-insensitive regular expression.
+            """Search the contents of files in the store using a case-insensitive regular expression.
 
-            The search runs recursively across all subdirectories.
-            Optionally filter which files to search using a glob pattern matched against each file's
-            path relative to the store root.
+            The search runs recursively across all subdirectories. Optionally restrict the search to a
+            ``directory`` (relative path), and filter which files to search using a glob ``glob_pattern``
+            matched against each file's path relative to that directory.
             The glob uses fnmatch semantics where ``*`` matches any characters including ``/``: use
             ``"*.md"`` to match markdown files at any depth,
             or ``"reports/*"`` to restrict the search to the ``reports`` subtree.
             Leave empty or omit to search all files.
             Returns matching results whose file_name values are paths relative to the store root
-            (usable with file_access_read_file),
-            along with snippets and matching lines with line numbers. The regex_pattern must be
-            256 characters or fewer.
+            (directly usable with file_access_read), along with snippets and matching lines with line numbers.
+            The regex_pattern must be 256 characters or fewer.
             """
-            pattern = file_pattern if file_pattern and file_pattern.strip() else None
+            glob_filter = glob_pattern if glob_pattern and glob_pattern.strip() else None
+            target = directory if directory and directory.strip() else ""
             try:
-                results = await self.store.search_files("", regex_pattern, pattern, recursive=True)
+                results = await self.store.search(target, regex_pattern, glob_filter, recursive=True)
             except ValueError as exc:
                 return f"Could not search files: {exc}"
             except OSError as exc:
                 return f"Could not search files: {exc.strerror or exc}"
-            return [result.to_dict() for result in results]
+            # ``store.search`` returns ``file_name`` relative to ``target``; re-root it to the store
+            # root so the names compose directly with file_access_read/replace/delete.
+            prefix = target.strip("/")
+            output: list[dict[str, Any]] = []
+            for result in results:
+                entry = result.to_dict()
+                if prefix:
+                    entry["file_name"] = f"{prefix}/{entry['file_name']}"
+                output.append(entry)
+            return output
 
         context.extend_instructions(self.source_id, [self.instructions])
-        context.extend_tools(
-            self.source_id,
-            [
-                file_access_save_file,
-                file_access_read_file,
-                file_access_delete_file,
-                file_access_list_files,
-                file_access_list_subdirectories,
-                file_access_search_files,
-            ],
-        )
+        tools = [file_access_read, file_access_ls, file_access_grep]
+        if not self.disable_write_tools:
+            tools.extend([file_access_write, file_access_delete, file_access_replace, file_access_replace_lines])
+        context.extend_tools(self.source_id, tools)
 
 
 __all__ = [
@@ -1356,6 +1583,7 @@ __all__ = [
     "FileAccessProvider",
     "FileSearchMatch",
     "FileSearchResult",
+    "FileStoreEntry",
     "FileSystemAgentFileStore",
     "InMemoryAgentFileStore",
 ]

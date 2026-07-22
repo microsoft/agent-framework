@@ -18,12 +18,18 @@ from mcp.types import (
 )
 from pydantic import AnyUrl
 
-from agent_framework import MCPSkill, MCPSkillResource, MCPSkillsSource
+from agent_framework import MCPSkill, MCPSkillResource, MCPSkillsSource, SkillsSourceContext
 from agent_framework._skills import _parse_mcp_skill_index
+
+from .conftest import MockAgent
 
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
 # ---------------------------------------------------------------------------
+
+
+# Shared context for exercising skill sources where the agent/session are irrelevant.
+_SOURCE_CTX = SkillsSourceContext(agent=MockAgent())  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]
 
 SAMPLE_SKILL_MD = """\
 ---
@@ -132,17 +138,33 @@ class TestParseMCPSkillIndex:
 # ---------------------------------------------------------------------------
 
 
+class TestMCPSkillsExperimentalStage:
+    """Tests confirming the MCP skills types remain experimental (MCP_SKILLS)."""
+
+    def test_docstrings_include_experimental_warning(self) -> None:
+        assert MCPSkillResource.__doc__ is not None
+        assert MCPSkill.__doc__ is not None
+        assert MCPSkillsSource.__doc__ is not None
+
+        assert ".. warning:: Experimental" in MCPSkillResource.__doc__
+        assert ".. warning:: Experimental" in MCPSkill.__doc__
+        assert ".. warning:: Experimental" in MCPSkillsSource.__doc__
+
+    def test_feature_metadata_is_set(self) -> None:
+        for cls in (MCPSkillResource, MCPSkill, MCPSkillsSource):
+            assert getattr(cls, "__feature_stage__", None) == "experimental"
+            assert getattr(cls, "__feature_id__", None) == "MCP_SKILLS"
+
+
 class TestMCPSkillResource:
     """Tests for MCPSkillResource."""
 
-    @pytest.mark.asyncio
     async def test_read_text_content(self) -> None:
         result = _make_text_result("hello world")
         resource = MCPSkillResource(name="test.md", result=result)
         content = await resource.read()
         assert content == "hello world"
 
-    @pytest.mark.asyncio
     async def test_read_binary_content(self) -> None:
         data = bytes([0x01, 0x02, 0x03, 0x04])
         result = _make_blob_result(data)
@@ -150,14 +172,12 @@ class TestMCPSkillResource:
         content = await resource.read()
         assert content == data
 
-    @pytest.mark.asyncio
     async def test_read_empty_returns_none(self) -> None:
         result = _make_empty_result()
         resource = MCPSkillResource(name="empty", result=result)
         content = await resource.read()
         assert content is None
 
-    @pytest.mark.asyncio
     async def test_read_multiple_text_contents_joined(self) -> None:
         result = ReadResourceResult(
             contents=[
@@ -169,7 +189,6 @@ class TestMCPSkillResource:
         content = await resource.read()
         assert content == "line1\nline2"
 
-    @pytest.mark.asyncio
     async def test_binary_takes_precedence_over_text(self) -> None:
         data = b"\xff\xfe"
         result = ReadResourceResult(
@@ -197,7 +216,6 @@ class TestMCPSkillResource:
 class TestMCPSkill:
     """Tests for MCPSkill."""
 
-    @pytest.mark.asyncio
     async def test_get_content_fetches_and_caches(self) -> None:
         client = _make_client(**{"skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD)})
         from agent_framework import SkillFrontmatter
@@ -213,7 +231,6 @@ class TestMCPSkill:
         # Only one MCP call should be made (cached)
         assert client.read_resource.call_count == 1
 
-    @pytest.mark.asyncio
     async def test_get_content_raises_on_empty(self) -> None:
         client = _make_client(**{"skill://empty/SKILL.md": _make_empty_result()})
         from agent_framework import SkillFrontmatter
@@ -224,7 +241,6 @@ class TestMCPSkill:
         with pytest.raises(ValueError, match="no text content"):
             await skill.get_content()
 
-    @pytest.mark.asyncio
     async def test_get_resource_text(self) -> None:
         client = _make_client(**{
             "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
@@ -240,7 +256,6 @@ class TestMCPSkill:
         content = await resource.read()
         assert content == "- check thing 1\n- check thing 2"
 
-    @pytest.mark.asyncio
     async def test_get_resource_binary(self) -> None:
         data = bytes([0x01, 0x02, 0x03, 0x04])
         client = _make_client(**{
@@ -257,7 +272,6 @@ class TestMCPSkill:
         content = await resource.read()
         assert content == data
 
-    @pytest.mark.asyncio
     async def test_get_resource_unknown_returns_none(self) -> None:
         client = _make_client(**{"skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD)})
         from agent_framework import SkillFrontmatter
@@ -268,7 +282,6 @@ class TestMCPSkill:
         resource = await skill.get_resource("references/does-not-exist.md")
         assert resource is None
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "name",
         [
@@ -296,7 +309,6 @@ class TestMCPSkill:
         assert resource is None
         client.read_resource.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_get_resource_empty_name_returns_none(self) -> None:
         client = _make_client()
         from agent_framework import SkillFrontmatter
@@ -307,7 +319,6 @@ class TestMCPSkill:
         assert await skill.get_resource("") is None
         assert await skill.get_resource("   ") is None
 
-    @pytest.mark.asyncio
     async def test_get_script_returns_none(self) -> None:
         client = _make_client()
         from agent_framework import SkillFrontmatter
@@ -326,6 +337,46 @@ class TestMCPSkill:
     def test_compute_skill_root_uri_no_suffix_adds_slash(self) -> None:
         assert MCPSkill._compute_skill_root_uri("skill://unit-converter") == "skill://unit-converter/"
 
+    async def test_session_provider_resolves_live_session(self) -> None:
+        # A session_provider is resolved on every fetch, so a skill built against
+        # one session follows a reconnect that swaps the session object.
+        from agent_framework import SkillFrontmatter
+
+        old_client = _make_client(**{"skill://unit-converter/SKILL.md": _make_text_result("# Old\nold body")})
+        new_client = _make_client(**{"skill://unit-converter/SKILL.md": _make_text_result("# New\nnew body")})
+        current = {"session": old_client}
+
+        fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
+        skill = MCPSkill(
+            frontmatter=fm,
+            skill_md_uri="skill://unit-converter/SKILL.md",
+            session_provider=lambda: current["session"],
+        )
+
+        # Swap the session (as a reconnect would) before the first fetch.
+        current["session"] = new_client
+        content = await skill.get_content()
+
+        assert "new body" in content
+        old_client.read_resource.assert_not_called()
+        new_client.read_resource.assert_called_once()
+
+    def test_requires_exactly_one_of_client_or_session_provider(self) -> None:
+        from agent_framework import SkillFrontmatter
+
+        fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
+        client = _make_client()
+
+        with pytest.raises(ValueError, match="exactly one"):
+            MCPSkill(frontmatter=fm, skill_md_uri="skill://x/SKILL.md")
+        with pytest.raises(ValueError, match="exactly one"):
+            MCPSkill(
+                frontmatter=fm,
+                skill_md_uri="skill://x/SKILL.md",
+                client=client,
+                session_provider=lambda: client,
+            )
+
 
 # ---------------------------------------------------------------------------
 # MCPSkillsSource tests
@@ -335,14 +386,13 @@ class TestMCPSkill:
 class TestMCPSkillsSource:
     """Tests for MCPSkillsSource."""
 
-    @pytest.mark.asyncio
     async def test_index_based_discovery_returns_skill(self) -> None:
         client = _make_client(**{
             "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
             "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
         })
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
 
         assert len(skills) == 1
         assert skills[0].frontmatter.name == "unit-converter"
@@ -352,25 +402,22 @@ class TestMCPSkillsSource:
         content = await skills[0].get_content()
         assert "Body content here." in content
 
-    @pytest.mark.asyncio
     async def test_no_index_returns_empty(self) -> None:
         client = _make_client()  # No resources at all
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    @pytest.mark.asyncio
     async def test_does_not_read_skill_md_during_discovery(self) -> None:
         # Index points to a skill, but SKILL.md is not registered on the server.
         # Discovery should succeed because it only reads the index.
         client = _make_client(**{"skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
 
         assert len(skills) == 1
         assert skills[0].frontmatter.name == "unit-converter"
 
-    @pytest.mark.asyncio
     async def test_invalid_name_is_skipped(self) -> None:
         index_json = json.dumps({
             "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
@@ -385,10 +432,9 @@ class TestMCPSkillsSource:
         })
         client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    @pytest.mark.asyncio
     async def test_missing_required_fields_is_skipped(self) -> None:
         index_json = json.dumps({
             "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
@@ -402,10 +448,9 @@ class TestMCPSkillsSource:
         })
         client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    @pytest.mark.asyncio
     async def test_unsupported_type_is_skipped(self) -> None:
         index_json = json.dumps({
             "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
@@ -420,10 +465,9 @@ class TestMCPSkillsSource:
         })
         client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    @pytest.mark.asyncio
     async def test_template_type_is_skipped(self) -> None:
         index_json = json.dumps({
             "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
@@ -437,24 +481,21 @@ class TestMCPSkillsSource:
         })
         client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    @pytest.mark.asyncio
     async def test_empty_index_returns_empty(self) -> None:
         client = _make_client(**{"skill://index.json": _make_text_result('{"skills": []}', uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    @pytest.mark.asyncio
     async def test_malformed_index_json_returns_empty(self) -> None:
         client = _make_client(**{"skill://index.json": _make_text_result("not valid json", uri="skill://index.json")})
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    @pytest.mark.asyncio
     async def test_sibling_text_resource(self) -> None:
         client = _make_client(**{
             "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
@@ -462,13 +503,12 @@ class TestMCPSkillsSource:
             "skill://unit-converter/references/checklist.md": _make_text_result("- check thing 1\n- check thing 2"),
         })
         source = MCPSkillsSource(client=client)
-        skill = (await source.get_skills())[0]
+        skill = (await source.get_skills(_SOURCE_CTX))[0]
         resource = await skill.get_resource("references/checklist.md")
         assert resource is not None
         content = await resource.read()
         assert content == "- check thing 1\n- check thing 2"
 
-    @pytest.mark.asyncio
     async def test_sibling_binary_resource(self) -> None:
         data = bytes([0x01, 0x02, 0x03, 0x04])
         client = _make_client(**{
@@ -477,11 +517,41 @@ class TestMCPSkillsSource:
             "skill://unit-converter/assets/icon.bin": _make_blob_result(data),
         })
         source = MCPSkillsSource(client=client)
-        skill = (await source.get_skills())[0]
+        skill = (await source.get_skills(_SOURCE_CTX))[0]
         resource = await skill.get_resource("assets/icon.bin")
         assert resource is not None
         content = await resource.read()
         assert content == data
+
+    async def test_session_provider_resolves_live_session(self) -> None:
+        # Discovery and the resulting skills' on-demand fetches both resolve the
+        # provider, so a source built before a reconnect follows the swapped session.
+        old_client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            "skill://unit-converter/SKILL.md": _make_text_result("# Old\nold body"),
+        })
+        new_client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            "skill://unit-converter/SKILL.md": _make_text_result("# New\nnew body"),
+        })
+        current = {"session": old_client}
+
+        source = MCPSkillsSource(session_provider=lambda: current["session"])
+        skills = await source.get_skills(_SOURCE_CTX)
+        assert len(skills) == 1
+
+        # A reconnect swaps the session; the already-discovered skill must fetch
+        # its content from the new session, not the closed one.
+        current["session"] = new_client
+        content = await skills[0].get_content()
+        assert "new body" in content
+
+    def test_requires_exactly_one_of_client_or_session_provider(self) -> None:
+        client = _make_client()
+        with pytest.raises(ValueError, match="exactly one"):
+            MCPSkillsSource()
+        with pytest.raises(ValueError, match="exactly one"):
+            MCPSkillsSource(client=client, session_provider=lambda: client)
 
 
 # ---------------------------------------------------------------------------
@@ -498,16 +568,14 @@ class TestMCPSkillsSourceErrorCodeBranching:
     crashes, and connection drops are visible.
     """
 
-    @pytest.mark.asyncio
     async def test_index_method_not_found_returns_empty(self) -> None:
         """METHOD_NOT_FOUND (-32601) -> server doesn't support resources/read."""
         client = AsyncMock()
         client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=-32601, message="Method not found")))
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    @pytest.mark.asyncio
     async def test_index_resource_not_found_returns_empty(self) -> None:
         """MCP-spec "Resource not found" (-32002) -> server has no index."""
         client = AsyncMock()
@@ -515,28 +583,25 @@ class TestMCPSkillsSourceErrorCodeBranching:
             side_effect=McpError(error=ErrorData(code=-32002, message="Resource not found"))
         )
         source = MCPSkillsSource(client=client)
-        skills = await source.get_skills()
+        skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    @pytest.mark.asyncio
     async def test_index_invalid_params_propagates(self) -> None:
         """INVALID_PARAMS (-32602) is a real bug, must propagate (not "not found")."""
         client = AsyncMock()
         client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=-32602, message="Invalid params")))
         source = MCPSkillsSource(client=client)
         with pytest.raises(McpError):
-            await source.get_skills()
+            await source.get_skills(_SOURCE_CTX)
 
-    @pytest.mark.asyncio
     async def test_index_internal_error_propagates(self) -> None:
         """INTERNAL_ERROR (-32603) must propagate, not silently return empty."""
         client = AsyncMock()
         client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=-32603, message="Internal error")))
         source = MCPSkillsSource(client=client)
         with pytest.raises(McpError):
-            await source.get_skills()
+            await source.get_skills(_SOURCE_CTX)
 
-    @pytest.mark.asyncio
     async def test_index_connection_closed_propagates(self) -> None:
         """CONNECTION_CLOSED (-32000) must propagate."""
         client = AsyncMock()
@@ -545,27 +610,24 @@ class TestMCPSkillsSourceErrorCodeBranching:
         )
         source = MCPSkillsSource(client=client)
         with pytest.raises(McpError):
-            await source.get_skills()
+            await source.get_skills(_SOURCE_CTX)
 
-    @pytest.mark.asyncio
     async def test_index_generic_error_code_propagates(self) -> None:
         """Generic handler error (code 0) must propagate."""
         client = AsyncMock()
         client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=0, message="Some handler error")))
         source = MCPSkillsSource(client=client)
         with pytest.raises(McpError):
-            await source.get_skills()
+            await source.get_skills(_SOURCE_CTX)
 
-    @pytest.mark.asyncio
     async def test_index_non_mcp_error_propagates(self) -> None:
         """Non-McpError exceptions (connection drop, timeout) must propagate."""
         client = AsyncMock()
         client.read_resource = AsyncMock(side_effect=ConnectionError("connection lost"))
         source = MCPSkillsSource(client=client)
         with pytest.raises(ConnectionError):
-            await source.get_skills()
+            await source.get_skills(_SOURCE_CTX)
 
-    @pytest.mark.asyncio
     async def test_get_resource_internal_error_propagates(self) -> None:
         """McpError with INTERNAL_ERROR on get_resource must propagate."""
         from agent_framework import SkillFrontmatter
@@ -577,7 +639,6 @@ class TestMCPSkillsSourceErrorCodeBranching:
         with pytest.raises(McpError):
             await skill.get_resource("references/file.md")
 
-    @pytest.mark.asyncio
     async def test_get_resource_not_found_returns_none(self) -> None:
         """McpError with RESOURCE_NOT_FOUND (-32002) on get_resource returns None."""
         from agent_framework import SkillFrontmatter
@@ -591,7 +652,6 @@ class TestMCPSkillsSourceErrorCodeBranching:
         result = await skill.get_resource("references/file.md")
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_get_resource_connection_error_propagates(self) -> None:
         """A plain ConnectionError on get_resource must propagate, not return None."""
         from agent_framework import SkillFrontmatter
@@ -603,7 +663,6 @@ class TestMCPSkillsSourceErrorCodeBranching:
         with pytest.raises(ConnectionError):
             await skill.get_resource("references/file.md")
 
-    @pytest.mark.asyncio
     async def test_get_resource_timeout_error_propagates(self) -> None:
         """A TimeoutError on get_resource must propagate, not return None."""
         from agent_framework import SkillFrontmatter
@@ -615,7 +674,6 @@ class TestMCPSkillsSourceErrorCodeBranching:
         with pytest.raises(TimeoutError):
             await skill.get_resource("references/file.md")
 
-    @pytest.mark.asyncio
     async def test_get_resource_generic_mcp_error_propagates(self) -> None:
         """McpError with a generic code (0) on get_resource must propagate."""
         from agent_framework import SkillFrontmatter
@@ -627,11 +685,10 @@ class TestMCPSkillsSourceErrorCodeBranching:
         with pytest.raises(McpError):
             await skill.get_resource("references/file.md")
 
-    @pytest.mark.asyncio
     async def test_index_timeout_error_propagates(self) -> None:
         """A TimeoutError reading skill://index.json must propagate."""
         client = AsyncMock()
         client.read_resource = AsyncMock(side_effect=TimeoutError("read timed out"))
         source = MCPSkillsSource(client=client)
         with pytest.raises(TimeoutError):
-            await source.get_skills()
+            await source.get_skills(_SOURCE_CTX)

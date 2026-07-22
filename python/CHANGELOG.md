@@ -7,32 +7,179 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.10.0] - 2026-06-25
+## [1.12.0] - 2026-07-21
 
 ### Added
-- **agent-framework-core**: Add hosting core and Responses channel ([#6580](https://github.com/microsoft/agent-framework/pull/6580))
+- **agent-framework-azure-cosmos-memory**: Add an alpha Azure Cosmos DB semantic-memory context provider with fact extraction, user profiles, samples, and integration coverage ([#6719](https://github.com/microsoft/agent-framework/pull/6719))
+- **agent-framework-azurefunctions**, **agent-framework-core**, **agent-framework-durabletask**: Add HITL response-URL addressing for requests raised from inside workflows ([#7001](https://github.com/microsoft/agent-framework/pull/7001))
+- **agent-framework-core**: Add cross-session origin attribution to context-injected messages ([#7041](https://github.com/microsoft/agent-framework/pull/7041))
+- **agent-framework-core**, **agent-framework-tools**: Warn when auto-approved tools have name collisions ([#7090](https://github.com/microsoft/agent-framework/pull/7090))
+- **agent-framework-core**: Add a `session_provider` option to `MCPSkillsSource` and `MCPSkill` (mutually exclusive with `client`) that resolves the MCP session on every fetch, keeping cached skills reconnect-safe when the underlying session is replaced ([#7135](https://github.com/microsoft/agent-framework/pull/7135))
+- **agent-framework-hosting-a2a**: Add app-owned A2A hosting helpers ([#7050](https://github.com/microsoft/agent-framework/pull/7050))
+- **agent-framework-hosting-mcp**: Add app-owned MCP hosting helpers for exposing agents and workflows as native MCP tools ([#7209](https://github.com/microsoft/agent-framework/pull/7209))
+- **agent-framework-hosting-responses**: [BREAKING] Add Responses conversation ID creation and parsing helpers, and distinguish conversation IDs from previous response IDs ([#7234](https://github.com/microsoft/agent-framework/pull/7234))
+- **agent-framework-hosting-telegram**: Add Telegram hosting helpers and samples ([#7047](https://github.com/microsoft/agent-framework/pull/7047))
+- **samples**: Add a Microsoft OpenTelemetry Distro observability sample ([#5632](https://github.com/microsoft/agent-framework/pull/5632))
+
+### Changed
+- **agent-framework-ag-ui**: [BREAKING] Emit `TOOL_CALL` events for workflow participant tool calls ([#7039](https://github.com/microsoft/agent-framework/pull/7039))
+- **agent-framework-a2a**: Reduce `A2AExecutor` log noise for content types without protocol mappings ([#7034](https://github.com/microsoft/agent-framework/pull/7034))
+- **agent-framework-ag-ui**, **agent-framework-core**: Optimize shared serialization paths ([#7165](https://github.com/microsoft/agent-framework/pull/7165))
+- **agent-framework-ag-ui**, **agent-framework-bedrock**, **agent-framework-claude**, **agent-framework-core**, **agent-framework-github-copilot**, **agent-framework-ollama**, **agent-framework-openai**: Normalize chat finish reasons across providers ([#7105](https://github.com/microsoft/agent-framework/pull/7105))
+- **agent-framework-anthropic**, **agent-framework-azure-contentunderstanding**, **agent-framework-azure-cosmos**, **agent-framework-core**, **agent-framework-declarative**, **agent-framework-devui**, **agent-framework-foundry**, **agent-framework**: Update Microsoft Foundry branding in shipped APIs and package documentation ([#6999](https://github.com/microsoft/agent-framework/pull/6999))
+- **agent-framework-azure-contentunderstanding**, **agent-framework-azure-cosmos-memory**, **agent-framework-chatkit**, **agent-framework-core**, **agent-framework-durabletask**, **agent-framework-foundry**, **agent-framework-foundry-hosting**, **agent-framework-gemini**, **agent-framework-hyperlight**, **agent-framework-lab**, **agent-framework-monty**, **agent-framework-openai**, **agent-framework-tools**, **agent-framework**: Consolidate dependency updates and compatibility adjustments ([#7204](https://github.com/microsoft/agent-framework/pull/7204))
+- **agent-framework-azurefunctions**, **agent-framework-devui**, **agent-framework-foundry**, **agent-framework-hosting-responses**, **agent-framework-lab**, **agent-framework-mistral**, **agent-framework**: Clean up dependency groups and compatibility handling ([#7046](https://github.com/microsoft/agent-framework/pull/7046))
+- **agent-framework-azurefunctions**, **agent-framework-durabletask**: Normalize initial durable workflow inputs across hosting paths ([#7205](https://github.com/microsoft/agent-framework/pull/7205))
+- **agent-framework-core**: [BREAKING — experimental] Correct harness before-strategy compaction when state persists per service call ([#7055](https://github.com/microsoft/agent-framework/pull/7055))
+- **agent-framework-core**: [BREAKING] Graduate `create_harness_agent` from experimental to stable ([#7120](https://github.com/microsoft/agent-framework/pull/7120))
+- **agent-framework-core**: Graduate the mode and todo providers from experimental to stable ([#7053](https://github.com/microsoft/agent-framework/pull/7053))
+- **agent-framework-core**: Graduate `ToolApprovalMiddleware` from experimental to stable ([#7106](https://github.com/microsoft/agent-framework/pull/7106))
+- **agent-framework-core**: Graduate `FileMemoryProvider` from experimental to stable ([#7113](https://github.com/microsoft/agent-framework/pull/7113))
+- **agent-framework-core**: Make `FileAccessProvider` opt-in for harness agents ([#7094](https://github.com/microsoft/agent-framework/pull/7094))
+- **agent-framework-core**: Serialize tool definitions best-effort for observability ([#7029](https://github.com/microsoft/agent-framework/pull/7029))
+- **agent-framework-declarative**: Promote declarative workflows from release candidate to stable ([#7065](https://github.com/microsoft/agent-framework/pull/7065))
+- **agent-framework-devui**: Refine request logging ([#7083](https://github.com/microsoft/agent-framework/pull/7083))
+- **agent-framework-foundry-hosting**: Promote the package to beta and add it to the main installation surface; make the Foundry Toolbox MCP skills sample self-contained ([#7099](https://github.com/microsoft/agent-framework/pull/7099))
+- **agent-framework-azure-contentunderstanding**, **agent-framework-gemini**, **agent-framework-mistral**, **agent-framework-monty**, **agent-framework-tools**: Promote the packages to beta, add them to the main installation surface, expose lazy-loading namespaces, and move package-local samples into the root sample tree
+- **agent-framework-github-copilot**: Forward `GitHubCopilotOptions` verbatim when creating sessions ([#7155](https://github.com/microsoft/agent-framework/pull/7155))
+- **docs**: Add self-hosting sample snippets ([#7104](https://github.com/microsoft/agent-framework/pull/7104))
+- **docs**: Add environment-file templates for Durable Task hosting samples ([#5948](https://github.com/microsoft/agent-framework/pull/5948))
+- **samples**: Keep ChatKit attachments close to the sample application that owns them ([#7038](https://github.com/microsoft/agent-framework/pull/7038))
+
+### Fixed
+- **agent-framework-ag-ui**: Bind streamed tool arguments to their call ids ([#6342](https://github.com/microsoft/agent-framework/pull/6342))
+- **agent-framework-ag-ui**: Accept state data URIs whose media type includes parameters ([#6905](https://github.com/microsoft/agent-framework/pull/6905))
+- **agent-framework-ag-ui**: Coalesce reasoning deltas without content ids into a single reasoning block ([#6804](https://github.com/microsoft/agent-framework/pull/6804))
+- **agent-framework-ag-ui**: Bridge request state and session continuity ([#7084](https://github.com/microsoft/agent-framework/pull/7084))
+- **agent-framework-ag-ui**: Replay workflow handoff results correctly ([#7102](https://github.com/microsoft/agent-framework/pull/7102))
+- **agent-framework-ag-ui**: Clarify `require_confirmation` documentation for `confirm_changes` HITL gating ([#6884](https://github.com/microsoft/agent-framework/pull/6884))
+- **agent-framework-anthropic**: Prevent per-run `additional_beta_flags` from leaking into request keyword arguments ([#7060](https://github.com/microsoft/agent-framework/pull/7060))
+- **agent-framework-core**: Clear `service_session_id` in the agent wrapper when session propagation is enabled ([#5875](https://github.com/microsoft/agent-framework/pull/5875))
+- **agent-framework-core**: Preserve tool span context for parallel calls ([#6512](https://github.com/microsoft/agent-framework/pull/6512))
+- **agent-framework-core**: Parse structured values assembled from split text chunks ([#6990](https://github.com/microsoft/agent-framework/pull/6990))
+- **agent-framework-core**: Raise `ValueError` for malformed data URIs ([#6916](https://github.com/microsoft/agent-framework/pull/6916))
+- **agent-framework-core**: Preserve function-call names when merging streaming deltas ([#6809](https://github.com/microsoft/agent-framework/pull/6809))
+- **agent-framework-core**, **agent-framework-durabletask**: Handle checkpoint encodings consistently ([#6579](https://github.com/microsoft/agent-framework/pull/6579))
+- **agent-framework-core**: Preserve explicit null arguments during automatic function calling ([#7108](https://github.com/microsoft/agent-framework/pull/7108))
+- **agent-framework-core**: Count non-ASCII text correctly during compaction ([#7124](https://github.com/microsoft/agent-framework/pull/7124))
+- **agent-framework-core**: Forward `header_provider` headers to streamable HTTP MCP transports ([#7218](https://github.com/microsoft/agent-framework/pull/7218))
+- **agent-framework-core**: Prevent compaction from emitting empty projections ([#7219](https://github.com/microsoft/agent-framework/pull/7219))
+- **agent-framework-core**: Return MCP tool-use sampling results to the requesting server ([#7189](https://github.com/microsoft/agent-framework/pull/7189))
+- **agent-framework-foundry-hosting**: Make `FoundryToolbox.as_skills_provider()` cache toolbox skill discovery by default so `skill://index.json` is read once instead of on every agent run, give `disable_caching` an observable effect, and add a `cache_refresh_interval` option ([#7135](https://github.com/microsoft/agent-framework/pull/7135))
+- **agent-framework-hosting**, **agent-framework-hosting-responses**: Isolate stored session snapshots from later mutations ([#7141](https://github.com/microsoft/agent-framework/pull/7141))
+- **agent-framework-ollama**: Generate distinct call ids for parallel tool calls ([#6822](https://github.com/microsoft/agent-framework/pull/6822))
+- **agent-framework-orchestrations**: Prevent the Magentic manager from duplicating conversation history ([#6297](https://github.com/microsoft/agent-framework/pull/6297))
+- **samples**: Correct the concurrent agents sample's handling of workflow output ([#6548](https://github.com/microsoft/agent-framework/pull/6548))
+
+## [1.11.0] - 2026-07-09
+
+### Added
+- **agent-framework-core**: Add message injection middleware so tools or host code can enqueue messages into an active run and drain them into the next model call within the same `AgentSession` ([#6998](https://github.com/microsoft/agent-framework/pull/6998))
+- **agent-framework-core**: Integrate message injection into `create_harness_agent` and the harness console sample so a running harness agent can be nudged mid-turn ([#7027](https://github.com/microsoft/agent-framework/pull/7027))
+- **agent-framework-core**: Add progressive MCP disclosure so agents can discover, load, and unload MCP tool schemas on demand while keeping the `allowed_tools` boundary intact ([#6850](https://github.com/microsoft/agent-framework/pull/6850))
+- **agent-framework-core**: Add `refresh_interval` (TTL) to `CachingSkillsSource` so cached skill lists expire and re-fetch on a configured interval ([#6977](https://github.com/microsoft/agent-framework/pull/6977))
+- **agent-framework-core**, **agent-framework-foundry-hosting**: Add `SkillsSourceContext` (invoking agent plus optional session) threaded through the skills source pipeline, enabling context-aware filtering and per-key cache isolation ([#6895](https://github.com/microsoft/agent-framework/pull/6895))
+- **agent-framework-core**: Allow disabling approval for `SkillsProvider` tools ([#6867](https://github.com/microsoft/agent-framework/pull/6867))
+- **agent-framework-core**: Allow opting out of `FileAccessProvider` tool approval ([#6879](https://github.com/microsoft/agent-framework/pull/6879))
+- **agent-framework-core**: Allow custom argument parsing for inline skill scripts so non-conforming tool-call argument shapes (for example, vLLM) can be handled ([#6817](https://github.com/microsoft/agent-framework/pull/6817))
+- **agent-framework-hosting**, **agent-framework-hosting-responses**: Add a hosting protocol helper surface (`AgentState`, `WorkflowState`, `SessionStore`, `AgentRunArgs`, `WorkflowRunArgs`) and Responses helpers (`create_response_id`, `responses_session_id`, `responses_to_run`, `responses_from_run`, `responses_from_streaming_run`) ([#6891](https://github.com/microsoft/agent-framework/pull/6891))
+- **agent-framework-ag-ui**: Add FastAPI SSE keepalive support for long, output-silent streams ([#6980](https://github.com/microsoft/agent-framework/pull/6980))
+- **agent-framework-github-copilot**: Forward `skill_directories` and `disabled_skills` to the Copilot session ([#6937](https://github.com/microsoft/agent-framework/pull/6937))
+- **agent-framework-openai**: Allow `tool_choice: required` when `allowed_tools` is set ([#7024](https://github.com/microsoft/agent-framework/pull/7024))
+- **agent-framework-anthropic**, **agent-framework-core**, **agent-framework-foundry-hosting**, **agent-framework-gemini**, **agent-framework-openai**: Mark hosted/provider-executed tool calls as informational-only via `Content.informational_only` so they remain visible in transcripts without local re-invocation ([#6997](https://github.com/microsoft/agent-framework/pull/6997))
+- **samples**: Add a deterministic action-boundary validation middleware sample ([#6528](https://github.com/microsoft/agent-framework/pull/6528))
+- **samples**: Add Agent Harness blog post accompanying samples, part 3 ([#6741](https://github.com/microsoft/agent-framework/pull/6741))
+- **samples**: Add a declarative Foundry Hosted Agent workflow sample ([#6897](https://github.com/microsoft/agent-framework/pull/6897))
+
+### Changed
+- **agent-framework-core**: [BREAKING — experimental] Extract caching from `SkillsProvider` into a `CachingSkillsSource` decorator ([#6847](https://github.com/microsoft/agent-framework/pull/6847))
+- **agent-framework-core**: [BREAKING — experimental] Treat nested `SKILL.md` content as part of the parent skill instead of discovering it as a separate skill root ([#6849](https://github.com/microsoft/agent-framework/pull/6849))
+- **agent-framework-core**: [BREAKING — experimental] `FileAccess`/`FileMemory` `replace_lines` now performs literal replacement (including line deletion) instead of always re-adding a line terminator ([#6859](https://github.com/microsoft/agent-framework/pull/6859))
+- **agent-framework-core**: Remove the experimental marker from the Skills API now that its surface is stable ([#6974](https://github.com/microsoft/agent-framework/pull/6974))
+- **agent-framework-core**: Lazy-load root `agent_framework` exports to reduce import cost for narrow-surface scenarios ([#6962](https://github.com/microsoft/agent-framework/pull/6962))
+- **agent-framework-a2a**, **agent-framework-claude**, **agent-framework-copilotstudio**, **agent-framework-core**, **agent-framework-durabletask**, **agent-framework-github-copilot**, **agent-framework-purview**: Implement ADR-0029 `service_session_id` lifecycle mapping, separating durable continuation state, per-run identity forwarding, and telemetry conversation-id extraction ([#6724](https://github.com/microsoft/agent-framework/pull/6724))
+- **agent-framework-azurefunctions**, **agent-framework-core**, **agent-framework-durabletask**: [BREAKING] Support multi-workflow hosting and sub-workflows on the Durable Task host, including per-workflow durable naming and nested human-in-the-loop request routing ([#6696](https://github.com/microsoft/agent-framework/pull/6696))
+- **agent-framework-ag-ui**: [BREAKING] Canonicalize AG-UI interrupt and resume handling around `RUN_FINISHED.outcome.interrupts` and canonical `ResumeEntry` payloads ([#6925](https://github.com/microsoft/agent-framework/pull/6925))
+- **agent-framework-mem0**: Support the mem0ai 2.x OSS search call shape ([#7004](https://github.com/microsoft/agent-framework/pull/7004))
+- **agent-framework-mistral**: Widen the `uv_build` backend requirement to allow newer `uv` releases ([#7033](https://github.com/microsoft/agent-framework/pull/7033))
+- **agent-framework-lab**: Raise the `agentlightning` dependency ceiling for the `lightning` extra ([#6984](https://github.com/microsoft/agent-framework/pull/6984))
+- **agent-framework-claude**, **agent-framework-durabletask**, **agent-framework-gemini**, **agent-framework-monty**, **agent-framework-openai**: Raise dependency floors to the first versions that provide the SDK APIs and typing consumed by these packages
+- **docs**: Clarify `AgentSession.service_session_id` scoping to document backing API key/project boundaries and hosted multi-tenant guidance ([#6993](https://github.com/microsoft/agent-framework/pull/6993))
+- **docs**: Add security guidance for external skill sources and script execution to harness feature docstrings ([#6936](https://github.com/microsoft/agent-framework/pull/6936))
+- **samples**: Bump `vite` and `@vitejs/plugin-react-swc` in the ChatKit integration sample frontend ([#6613](https://github.com/microsoft/agent-framework/pull/6613))
+- **samples**: Add a multi-tenant hosting security consideration note to the A2A sample ([#6983](https://github.com/microsoft/agent-framework/pull/6983))
+- **samples**: Update Foundry Hosted Agent samples for the v2 protocol changes ([#6841](https://github.com/microsoft/agent-framework/pull/6841))
+- **samples**: Use a writable runtime directory for the Foundry Skills sample ([#6606](https://github.com/microsoft/agent-framework/pull/6606))
+- **tests**: Add Agent typing smoke tests across chat clients ([#6950](https://github.com/microsoft/agent-framework/pull/6950))
+- **tests**: Skip NumPy stubs during mypy typing to unblock scheduled dependency-maintenance typing runs ([#6969](https://github.com/microsoft/agent-framework/pull/6969))
+- **tests**: Consolidate Dependabot dependency updates for dev tooling (`uv`, `ruff`, `pytest`, `mypy`, `pyright`, `mcp`, `opentelemetry-sdk`, `poethepoet`) across the workspace and package dev-dependency groups ([#6984](https://github.com/microsoft/agent-framework/pull/6984), [#7033](https://github.com/microsoft/agent-framework/pull/7033))
+- **tests**: Bump the transitive `js-yaml` dependency in the DevUI frontend lockfile ([#6813](https://github.com/microsoft/agent-framework/pull/6813))
+
+### Fixed
+- **agent-framework-core**: Parse the structured response value from the final message instead of concatenated text, avoiding spurious `ValidationError`/`JSONDecodeError` ([#6383](https://github.com/microsoft/agent-framework/pull/6383))
+- **agent-framework-core**: Fix `read_skill_resource` instruction dropping the `.md` extension ([#7031](https://github.com/microsoft/agent-framework/pull/7031))
+- **agent-framework-core**: Bind policy-enforcement approvals to a single tool invocation (call id, function, arguments, security label, and session) and consume them on first use ([#6966](https://github.com/microsoft/agent-framework/pull/6966))
+- **agent-framework-core**: Process messages to an executor serially within a superstep to prevent concurrent handler invocations for the same target executor ([#6776](https://github.com/microsoft/agent-framework/pull/6776))
+- **agent-framework-core**: Auto-inject local conversation history on stateless clients even when non-history context providers (for example, `SkillsProvider` and `FileAccessProvider`) are registered ([#6810](https://github.com/microsoft/agent-framework/pull/6810))
+- **agent-framework-core**: Improve the error message when a `TypeVar` is used in handler/executor registration ([#4553](https://github.com/microsoft/agent-framework/pull/4553))
+- **agent-framework-anthropic**, **agent-framework-core**: Fix Anthropic requests that mix tool calls and tool results in one assistant message, and return a deterministic result when the function-loop limit is reached with a blank final response ([#6794](https://github.com/microsoft/agent-framework/pull/6794))
+- **agent-framework-anthropic**, **agent-framework-core**, **agent-framework-foundry-hosting**, **agent-framework-openai**: Fix Foundry reasoning/MCP compaction so reasoning output keeps its provider id and reasoning plus MCP call pairs stay atomic ([#6907](https://github.com/microsoft/agent-framework/pull/6907))
+- **agent-framework-anthropic**: Normalize a single Anthropic tool value the same as a one-item sequence during request preparation ([#6903](https://github.com/microsoft/agent-framework/pull/6903))
+- **agent-framework-anthropic**: Migrate structured outputs to the stable `output_config.format` shape to avoid malformed/concatenated JSON when tools are also present ([#5884](https://github.com/microsoft/agent-framework/pull/5884))
+- **agent-framework-azure-ai-search**: Pass `include_reference_source_data` in agentic search requests so `source_data` is populated on returned references ([#5100](https://github.com/microsoft/agent-framework/pull/5100))
+- **agent-framework-bedrock**: Fix non-ASCII escaping in JSON content blocks returned by the Converse API ([#6628](https://github.com/microsoft/agent-framework/pull/6628))
+- **agent-framework-foundry**: Strip tools from the Foundry agent request on the preview path (`allow_preview=True`) to avoid `invalid_payload` errors ([#6644](https://github.com/microsoft/agent-framework/pull/6644))
+- **agent-framework-gemini**: Fix `GeminiChatClient` dropping image/file content on multimodal messages ([#6751](https://github.com/microsoft/agent-framework/pull/6751))
+- **agent-framework-claude**, **agent-framework-core**, **agent-framework-github-copilot**, **agent-framework-ollama**: Fix response metadata construction so usage, finish reason, raw response, continuation token, and structured value are propagated consistently across providers ([#6955](https://github.com/microsoft/agent-framework/pull/6955))
+- **agent-framework-a2a**: Accept A2A data URIs whose media type includes parameters before the `;base64` marker ([#6818](https://github.com/microsoft/agent-framework/pull/6818))
+- **agent-framework-ag-ui**: Prefer explicit AG-UI resume payloads over message-derived responses ([#6360](https://github.com/microsoft/agent-framework/pull/6360))
+- **agent-framework-ag-ui**: Clear queued approvals on cancel so cancelled flows do not leave stale prompts for later turns ([#6947](https://github.com/microsoft/agent-framework/pull/6947))
+- **agent-framework-ag-ui**: Preserve the streamed text message id in mixed snapshots with pending tool calls and streamed trailing text ([#6269](https://github.com/microsoft/agent-framework/pull/6269))
+- **agent-framework-devui**: Fix `list[Message]` input handling for declarative `ToolAgent` entries ([#6534](https://github.com/microsoft/agent-framework/pull/6534))
+- **agent-framework-devui**: Fix DevUI deployment Dockerfile auth args ([#6150](https://github.com/microsoft/agent-framework/pull/6150))
+- **agent-framework-hyperlight**: Harden workspace staging against symlinks and reparse points that could escape the sandbox workspace/mount root ([#6856](https://github.com/microsoft/agent-framework/pull/6856))
+- **agent-framework-openai**: Fix `web_search_options` sent to the Azure OpenAI Chat Completions API ([#6225](https://github.com/microsoft/agent-framework/pull/6225))
+- **docs**: Fix stale `ChatAgent` references in `_clients.py` docstrings and make tool-support examples copy/paste-safe ([#6924](https://github.com/microsoft/agent-framework/pull/6924))
+- **samples**: Fix an invalid `options` kwarg in the workflow shared-session sample ([#6294](https://github.com/microsoft/agent-framework/pull/6294))
+- **docs**: Add prerequisite command documentation for Python hosting samples ([#5935](https://github.com/microsoft/agent-framework/pull/5935))
+
+### Removed
+- **agent-framework-hosting-telegram**: [BREAKING] Remove the unreleased hosting-telegram package and the earlier host/channel surface from the workspace, superseded by the new hosting protocol helper surface ([#6891](https://github.com/microsoft/agent-framework/pull/6891))
+
+## [1.10.0] - 2026-06-30
+
+### Added
 - **agent-framework-core**: Explicitly emit `available_resources` and `available_scripts` in skill content ([#6694](https://github.com/microsoft/agent-framework/pull/6694))
+- **agent-framework-core**: Autolabelling MCP servers based on hints and GitHub MCP server interface labels ([#6171](https://github.com/microsoft/agent-framework/pull/6171))
+- **agent-framework-core**: `create_harness_agent` `skills_paths` accepts `str | Path | Sequence[str | Path] | None` ([#6717](https://github.com/microsoft/agent-framework/pull/6717))
+- **agent-framework-core**: Background agent loop resolves provider automatically and adds feedback message builder ([#6735](https://github.com/microsoft/agent-framework/pull/6735))
+- **agent-framework-core**: Stop swallowing skill script and resource errors so the model can self-correct ([#6755](https://github.com/microsoft/agent-framework/pull/6755))
 - **agent-framework-foundry**: Add `FoundryAgent` conversation session helper ([#6623](https://github.com/microsoft/agent-framework/pull/6623))
 - **agent-framework-foundry**: Add support for Foundry Adaptive evals ([#6267](https://github.com/microsoft/agent-framework/pull/6267))
 - **agent-framework-bedrock**, **agent-framework-gemini**: Surface cache and reasoning token counts ([#6640](https://github.com/microsoft/agent-framework/pull/6640))
 - **agent-framework-durabletask**: Host MAF workflows on a standalone Durable Task worker ([#6418](https://github.com/microsoft/agent-framework/pull/6418))
-- **agent-framework-hosting**: New hosting core package with OTel parent context support ([#6580](https://github.com/microsoft/agent-framework/pull/6580), [#6709](https://github.com/microsoft/agent-framework/pull/6709))
-- **agent-framework-hosting-responses**: New Responses channel for hosting ([#6580](https://github.com/microsoft/agent-framework/pull/6580))
-- **agent-framework-hosting-telegram**: Add Telegram channel for agent-framework-hosting ([#6698](https://github.com/microsoft/agent-framework/pull/6698))
+- **agent-framework-azure-ai-search**: Support stable and preview Azure AI Search (Foundry IQ) API versions ([#6603](https://github.com/microsoft/agent-framework/pull/6603))
+- **agent-framework-github-copilot**: Align function approval to use SDK `on_pre_tool_use` hook ([#6750](https://github.com/microsoft/agent-framework/pull/6750))
 
 ### Changed
 - **agent-framework-core**: [BREAKING — experimental] Refactor `FileSkillsSource` for depth-based discovery and predicate filters ([#6488](https://github.com/microsoft/agent-framework/pull/6488))
 - **agent-framework-core**: [BREAKING — experimental] Require approval for file-access tools with read-only auto-approval ([#6599](https://github.com/microsoft/agent-framework/pull/6599))
 - **agent-framework-core**: [BREAKING — experimental] Integrate looping into `HarnessAgent` ([#6607](https://github.com/microsoft/agent-framework/pull/6607))
 - **agent-framework-core**: [BREAKING — experimental] Port `FileMemoryProvider` and integrate into harness agent ([#6547](https://github.com/microsoft/agent-framework/pull/6547))
+- **agent-framework-core**: [BREAKING — experimental] Make all `SkillsProvider` tools require approval by default ([#6754](https://github.com/microsoft/agent-framework/pull/6754))
+- **agent-framework-core**: [BREAKING — experimental] Improve FileAccess/FileMemory harness providers (surgical edits, read-only tier, consistent naming) ([#6801](https://github.com/microsoft/agent-framework/pull/6801))
 - **agent-framework-core**: Align serialized tool format to OTel GenAI tool definition format ([#6556](https://github.com/microsoft/agent-framework/pull/6556))
+- **agent-framework-foundry-hosting**: [BREAKING] Foundry Hosted Agent V2 protocol upgrade ([#6811](https://github.com/microsoft/agent-framework/pull/6811))
 - **agent-framework-foundry-hosting**: Add MCP as a hard dependency ([#6634](https://github.com/microsoft/agent-framework/pull/6634))
 - **agent-framework-purview**: Prefer token principal for user identity ([#6693](https://github.com/microsoft/agent-framework/pull/6693))
+- **agent-framework-ollama**: Convert Pydantic model class `response_format` to JSON schema in `OllamaChatClient` ([#6782](https://github.com/microsoft/agent-framework/pull/6782))
 
 ### Fixed
+- **agent-framework-core**: Fix background agent telemetry context error ([#6764](https://github.com/microsoft/agent-framework/pull/6764))
 - **agent-framework-core**: Fix MCP metadata and tool name handling ([#6656](https://github.com/microsoft/agent-framework/pull/6656))
 - **agent-framework-core**: Ensure spans created inside sync preparations in streaming call are correctly nested ([#6552](https://github.com/microsoft/agent-framework/pull/6552))
 - **agent-framework-openai**: Preserve OTel parent context for deferred streams ([#6709](https://github.com/microsoft/agent-framework/pull/6709))
+- **agent-framework-openai**: Fix `FunctionShellTool` throw and empty streaming shell command ([#6763](https://github.com/microsoft/agent-framework/pull/6763))
 - **agent-framework-ag-ui**: Fix tool history replay sanitization ([#6581](https://github.com/microsoft/agent-framework/pull/6581))
 - **agent-framework-anthropic**: Re-role trailing assistant message to user for Anthropic compatibility ([#6207](https://github.com/microsoft/agent-framework/pull/6207))
 - **agent-framework-hyperlight**: Fix CodeAct span parenting ([#6712](https://github.com/microsoft/agent-framework/pull/6712))
@@ -417,7 +564,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **agent-framework-openai**: New package extracted from core for OpenAI and Azure OpenAI provider support ([#4818](https://github.com/microsoft/agent-framework/pull/4818))
-- **agent-framework-foundry**: New package for Azure AI Foundry integration ([#4818](https://github.com/microsoft/agent-framework/pull/4818))
+- **agent-framework-foundry**: New package for Microsoft Foundry integration ([#4818](https://github.com/microsoft/agent-framework/pull/4818))
 - **agent-framework-core**: Support `structuredContent` in MCP tool results and fix sampling options type ([#4763](https://github.com/microsoft/agent-framework/pull/4763))
 - **agent-framework-core**: Include reasoning messages in `MESSAGES_SNAPSHOT` events ([#4844](https://github.com/microsoft/agent-framework/pull/4844))
 - **agent-framework-core**: [BREAKING] Add context mode to `AgentExecutor` ([#4668](https://github.com/microsoft/agent-framework/pull/4668))
@@ -1242,7 +1389,7 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 - First release of Agent Framework for Python
 - agent-framework-core: Main abstractions, types and implementations for OpenAI and Azure OpenAI
-- agent-framework-azure-ai: Integration with Azure AI Foundry Agents
+- agent-framework-azure-ai: Integration with Microsoft Foundry Agents
 - agent-framework-copilotstudio: Integration with Microsoft Copilot Studio agents
 - agent-framework-a2a: Create A2A agents
 - agent-framework-devui: Browser-based UI to chat with agents and workflows, with tracing visualization
@@ -1251,7 +1398,9 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.10.0...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.12.0...HEAD
+[1.12.0]: https://github.com/microsoft/agent-framework/compare/python-1.11.0...python-1.12.0
+[1.11.0]: https://github.com/microsoft/agent-framework/compare/python-1.10.0...python-1.11.0
 [1.10.0]: https://github.com/microsoft/agent-framework/compare/python-1.9.0...python-1.10.0
 [1.9.0]: https://github.com/microsoft/agent-framework/compare/python-1.8.1...python-1.9.0
 [1.8.1]: https://github.com/microsoft/agent-framework/compare/python-1.8.0...python-1.8.1

@@ -2,6 +2,11 @@
 
 This sample demonstrates how to **host** Agent Framework agents as A2A-compliant servers using the [A2A (Agent2Agent) protocol](https://a2a-protocol.org/latest/).
 
+`agent-framework-hosting-a2a` only converts between native A2A values and
+Agent Framework run values. The sample deliberately keeps the A2A SDK's
+`AgentExecutor`, task lifecycle, event queue, task store, and Starlette routes
+in application code. The helper package does not choose a web framework.
+
 > **Looking for client samples?** See [`samples/02-agents/a2a/`](../../02-agents/a2a/) for consuming remote A2A agents.
 
 ## Server Samples
@@ -22,7 +27,7 @@ This sample demonstrates how to **host** Agent Framework agents as A2A-compliant
 ## Environment Variables
 
 ### Required (Server)
-- `FOUNDRY_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
+- `FOUNDRY_PROJECT_ENDPOINT` — Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL` — Model deployment name (e.g. `gpt-4o`)
 
 ## Quick Start
@@ -79,3 +84,33 @@ cd python/samples/02-agents/a2a
 $env:A2A_AGENT_HOST = "http://localhost:5001/"
 uv run python agent_with_a2a.py
 ```
+
+## Security considerations for multi-tenant hosting
+
+These runnable samples intentionally configure no authentication or
+authorization. Their `context.tenant`, `context.context_id`, and task IDs come
+from protocol requests and are not trusted caller identities. Do not expose the
+sample servers as multi-user services without an authenticated outer server,
+middleware layer, or gateway.
+
+A production host must authenticate the caller before the A2A request handler,
+derive a trusted tenant and subject from that authentication context, authorize
+all task/context continuation and cancellation IDs, and bind Agent Framework
+session ownership to that trusted identity. The sample session key is only a
+protocol-level demonstration; it is not sufficient isolation on its own.
+
+The default `a2a-sdk` task/push-config stores scope ownership by `user_name`
+only. A multi-tenant host must also pass an `owner_resolver` that uses the same
+trusted tenant and subject to its stores, for example:
+
+```python
+from a2a.server.tasks import InMemoryTaskStore
+
+def resolve_tenant_user_scope(context):
+    # These values must be populated from the outer server's trusted auth context.
+    return f"{context.tenant}:{context.user.user_name}"
+task_store = InMemoryTaskStore(owner_resolver=resolve_tenant_user_scope)
+```
+
+Production applications must also use a durable session store when running
+multiple replicas or transient workers.

@@ -160,6 +160,56 @@ public sealed class FileSystemJsonCheckpointStoreTests
 #endif
     }
 
+    [Fact]
+    public async Task RetrieveIndexAsync_ShouldNotReturnDuplicates_WhenIndexContainsDuplicateEntriesAsync()
+    {
+        // Arrange: create a checkpoint, then simulate a duplicated index entry on disk (the same CheckpointInfo
+        // written a second time). This captures the reviewer's question of whether duplicate index entries can
+        // surface as duplicate checkpoints; the load path guards each add with the membership set, so they cannot.
+        using TempDirectory tempDirectory = new();
+        string sessionId = Guid.NewGuid().ToString("N");
+        CheckpointInfo checkpoint;
+        string fileName;
+
+        using (FileSystemJsonCheckpointStore store = new(tempDirectory))
+        {
+            checkpoint = await store.CreateCheckpointAsync(sessionId, TestData);
+            fileName = store.GetFileNameForCheckpoint(sessionId, checkpoint);
+        }
+
+        // Append a second, identical index line for the same checkpoint.
+        string indexPath = Path.Combine(tempDirectory.FullName, "index.jsonl");
+        string duplicateEntry = JsonSerializer.Serialize(new CheckpointFileIndexEntry(checkpoint, fileName));
+        File.AppendAllText(indexPath, duplicateEntry + Environment.NewLine);
+
+        // Act: reopen so the store reloads the now-duplicated index from disk.
+        using FileSystemJsonCheckpointStore reopenedStore = new(tempDirectory);
+        CheckpointInfo[] index = (await reopenedStore.RetrieveIndexAsync(sessionId)).ToArray();
+
+        // Assert: the load path dedupes, so the checkpoint appears exactly once.
+        index.Should().ContainSingle().Which.Should().Be(checkpoint);
+    }
+
+    [Fact]
+    public async Task RetrieveIndexAsync_ShouldReturnDistinctCheckpointsInCommitOrderAsync()
+    {
+        // Arrange: several checkpoints for one session must each appear exactly once, in commit order.
+        using TempDirectory tempDirectory = new();
+        using FileSystemJsonCheckpointStore store = new(tempDirectory);
+        string sessionId = Guid.NewGuid().ToString("N");
+
+        CheckpointInfo first = await store.CreateCheckpointAsync(sessionId, TestData);
+        CheckpointInfo second = await store.CreateCheckpointAsync(sessionId, TestData);
+        CheckpointInfo third = await store.CreateCheckpointAsync(sessionId, TestData);
+
+        // Act
+        CheckpointInfo[] index = (await store.RetrieveIndexAsync(sessionId)).ToArray();
+
+        // Assert: no duplicates, and commit order preserved.
+        index.Should().OnlyHaveUniqueItems();
+        index.Should().Equal(first, second, third);
+    }
+
     private const string InvalidPathCharsWin32 = "\\/:*?\"<>|";
     private const string InvalidPathCharsUnix = "/";
     private const string InvalidPathCharsMacOS = "/:";

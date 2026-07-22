@@ -90,7 +90,7 @@ class ContentUnderstandingSettings(TypedDict, total=False):
     ``AZURE_CONTENTUNDERSTANDING_``.
 
     Keys:
-        endpoint: Azure AI Foundry endpoint URL.
+        endpoint: Microsoft Foundry endpoint URL.
             Can be set via environment variable ``AZURE_CONTENTUNDERSTANDING_ENDPOINT``.
     """
 
@@ -108,7 +108,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
     support it.
 
     Args:
-        endpoint: Azure AI Foundry endpoint URL
+        endpoint: Microsoft Foundry endpoint URL
             (e.g., ``"https://<your-foundry-resource>.services.ai.azure.com/"``).
             Can also be set via environment variable
             ``AZURE_CONTENTUNDERSTANDING_ENDPOINT``.

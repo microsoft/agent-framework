@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pytest
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentSession,
     ChatContext,
@@ -107,6 +108,20 @@ def test_raw_foundry_agent_chat_client_init_with_agent_name() -> None:
     assert client.agent_name == "test-agent"
     assert client.agent_version == "1.0"
     mock_project.get_openai_client.assert_called_once_with()
+
+
+def test_agent_accepts_raw_foundry_agent_chat_client() -> None:
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+        agent_version="1.0",
+    )
+
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
 
 
 def test_raw_foundry_agent_chat_client_init_passes_agent_name_when_preview_enabled() -> None:
@@ -288,7 +303,9 @@ async def test_raw_foundry_agent_chat_client_prepare_options_accepts_function_to
     }
 
 
-async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_fields() -> None:
+async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_fields(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Test that _prepare_options strips client-side fields for Prompt Agent requests."""
 
     mock_project = MagicMock()
@@ -306,15 +323,18 @@ async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_
 
         return "ok"
 
-    with patch(
-        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
-        new_callable=AsyncMock,
-        return_value={
-            "model": "gpt-4.1",
-            "tools": [{"type": "function", "function": {"name": "my_func"}}],
-            "tool_choice": "auto",
-            "parallel_tool_calls": True,
-        },
+    with (
+        patch(
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+            new_callable=AsyncMock,
+            return_value={
+                "model": "gpt-4.1",
+                "tools": [{"type": "function", "function": {"name": "my_func"}}],
+                "tool_choice": "auto",
+                "parallel_tool_calls": True,
+            },
+        ),
+        caplog.at_level("WARNING", logger="agent_framework.foundry"),
     ):
         result = await client._prepare_options(
             messages=[Message(role="user", contents="hi")],
@@ -329,6 +349,94 @@ async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_
     assert result == {
         "extra_body": {"agent_reference": {"name": "test-agent", "type": "agent_reference"}},
     }
+    # A single warning is emitted because the caller supplied tools that cannot be sent (#5130).
+    assert sum("cannot be sent when an agent is specified" in record.message for record in caplog.records) == 1
+
+
+async def test_raw_foundry_agent_chat_client_prepare_options_strips_tools_when_allow_preview(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Hosted-agent (allow_preview=True) requests must also strip tool fields.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/5130. On the preview
+    path the agent identity is injected via ``project_client.get_openai_client(agent_name=...)``,
+    so an agent is still specified and the Foundry service rejects any ``tools`` in the body with
+    HTTP 400 "Not allowed when agent is specified." The earlier fix (#5101) only stripped tools on
+    the non-preview path, leaving this branch broken.
+    """
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="hosted-agent",
+        allow_preview=True,
+    )
+
+    @tool(approval_mode="never_require")
+    def my_func() -> str:
+        """A test function."""
+
+        return "ok"
+
+    with (
+        patch(
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+            new_callable=AsyncMock,
+            return_value={
+                "model": "gpt-4.1",
+                "tools": [{"type": "function", "function": {"name": "my_func"}}],
+                "tool_choice": "auto",
+                "parallel_tool_calls": True,
+            },
+        ),
+        caplog.at_level("WARNING", logger="agent_framework.foundry"),
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={"tools": [my_func]},
+        )
+
+    # Tool fields must be gone even though allow_preview=True.
+    assert "tools" not in result
+    assert "tool_choice" not in result
+    assert "parallel_tool_calls" not in result
+    # Preview path keeps model and does not inject agent_reference (identity is on the OpenAI client).
+    assert result["model"] == "gpt-4.1"
+    assert "extra_body" not in result
+    # Exactly one warning explaining that tools are dropped.
+    assert sum("cannot be sent when an agent is specified" in record.message for record in caplog.records) == 1
+
+
+async def test_raw_foundry_agent_chat_client_prepare_options_no_tool_warning_when_no_tools(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No warning should be emitted when the caller did not supply any tools."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+    )
+
+    with (
+        patch(
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+            new_callable=AsyncMock,
+            return_value={"model": "gpt-4.1"},
+        ),
+        caplog.at_level("WARNING", logger="agent_framework.foundry"),
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={},
+        )
+
+    assert "tools" not in result
+    assert not any("cannot be sent when an agent is specified" in record.message for record in caplog.records)
 
 
 async def test_raw_foundry_agent_chat_client_prepare_options_strips_model_for_hosted_session() -> None:
@@ -850,6 +958,7 @@ async def test_raw_foundry_agent_prepare_run_context_creates_service_session_fro
 
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = MagicMock()
+    mock_project.agents = SimpleNamespace()
     mock_project.beta = SimpleNamespace(
         agents=SimpleNamespace(
             create_session=AsyncMock(return_value=SimpleNamespace(agent_session_id="agent-session-123"))
@@ -887,6 +996,32 @@ async def test_raw_foundry_agent_prepare_run_context_creates_service_session_fro
     assert create_session_kwargs["isolation_key"] == "iso-key"
     assert "version_indicator" in create_session_kwargs
     mock_prepare_run_context.assert_awaited_once()
+
+
+async def test_raw_foundry_agent_create_service_session_uses_stable_agents_operations() -> None:
+    """Test that hosted sessions use the stable agents operations when available."""
+
+    create_session = AsyncMock(return_value=SimpleNamespace(agent_session_id="agent-session-123"))
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    mock_project.agents = SimpleNamespace(create_session=create_session)
+
+    agent = RawFoundryAgent(
+        project_client=mock_project,
+        agent_name="test-agent",
+        agent_version="1.0",
+        allow_preview=True,
+    )
+
+    result = await agent._create_service_session_id(isolation_key="iso-key")
+
+    assert result == "agent-session-123"
+    create_session.assert_awaited_once()
+    assert create_session.await_args is not None
+    create_session_kwargs = create_session.await_args.kwargs
+    assert create_session_kwargs["agent_name"] == "test-agent"
+    assert create_session_kwargs["isolation_key"] == "iso-key"
+    assert "version_indicator" in create_session_kwargs
 
 
 async def test_raw_foundry_agent_prepare_run_context_requires_preview_for_hosted_sessions() -> None:

@@ -25,7 +25,7 @@ jobs:
       pythonChanges: ${{ steps.filter.outputs.python}}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter
         with:
           filters: |
@@ -71,7 +71,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           os: ${{ runner.os }}
-          exclude-packages: ${{ matrix.python-version == '3.10' && 'agent-framework-github-copilot' || '' }}
+          exclude-packages: ${{ matrix.python-version == '3.10' && 'agent-framework-github-copilot agent-framework-azure-cosmos-memory' || '' }}
         env:
           # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache

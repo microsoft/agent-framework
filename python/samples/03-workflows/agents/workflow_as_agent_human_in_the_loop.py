@@ -46,7 +46,7 @@ to a human, receives the human response, and then forwards that response back
 to the Worker. The workflow completes when idle.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Familiarity with WorkflowBuilder, Executor, and WorkflowContext from agent_framework.
 - Understanding of request-response message handling in executors.
