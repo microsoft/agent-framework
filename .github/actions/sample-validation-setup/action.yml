@@ -48,3 +48,16 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
         os: ${{ inputs.os }}
+
+    - name: Cache sample playbooks
+      # Combined cache action: restores here and registers a post-job hook to save
+      # automatically. Keyed per job so each validate-* job keeps its own playbooks.
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        # Must match the sample_validation --playbooks-dir default, which resolves to
+        # samples/sample_validation/playbooks (see python/scripts/sample_validation/__main__.py).
+        # If a job overrides --playbooks-dir, update this path to match.
+        path: python/samples/sample_validation/playbooks/
+        key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
+        restore-keys: |
+          sample-playbooks-${{ github.job }}-

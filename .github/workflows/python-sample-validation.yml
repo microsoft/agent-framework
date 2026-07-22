@@ -44,24 +44,9 @@ jobs:
           echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
           echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 01-get-started --save-report --report-name 01-get-started
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -122,24 +107,9 @@ jobs:
           echo "OPENAI_CHAT_MODEL=$OPENAI_CHAT_MODEL" >> .env
           echo "GITHUB_PAT=$GITHUB_PAT" >> .env
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents --exclude providers harness tools --save-report --report-name 02-agents
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -180,24 +150,9 @@ jobs:
           echo "FOUNDRY_EMBEDDING_MODEL=$FOUNDRY_EMBEDDING_MODEL" >> .env
           echo "FOUNDRY_MEMORY_STORE=$FOUNDRY_MEMORY_STORE" >> .env
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/harness --save-report --report-name 02-agents-harness
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -233,24 +188,9 @@ jobs:
           echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
           echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/tools --save-report --report-name 02-agents-tools
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -290,24 +230,9 @@ jobs:
           echo "OPENAI_CHAT_COMPLETION_MODEL=$OPENAI_CHAT_COMPLETION_MODEL" >> .env
           echo "OPENAI_CHAT_MODEL=$OPENAI_CHAT_MODEL" >> .env
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/openai --save-report --report-name 02-agents-openai
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -345,24 +270,9 @@ jobs:
           echo "AZURE_OPENAI_MODEL=$AZURE_OPENAI_MODEL" >> .env
           echo "AZURE_OPENAI_API_VERSION=$AZURE_OPENAI_API_VERSION" >> .env
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/azure --save-report --report-name 02-agents-azure
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -398,24 +308,9 @@ jobs:
           echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" >> .env
           echo "ANTHROPIC_CHAT_MODEL=$ANTHROPIC_CHAT_MODEL" >> .env
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/anthropic --save-report --report-name 02-agents-anthropic
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -443,24 +338,9 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/github_copilot --save-report --report-name 02-agents-github-copilot
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -490,24 +370,9 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/amazon --save-report --report-name 02-agents-amazon
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -537,24 +402,9 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/ollama --save-report --report-name 02-agents-ollama
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -594,24 +444,9 @@ jobs:
           echo "FOUNDRY_AGENT_NAME=$FOUNDRY_AGENT_NAME" >> .env
           echo "FOUNDRY_AGENT_VERSION=$FOUNDRY_AGENT_VERSION" >> .env
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/foundry --save-report --report-name 02-agents-foundry
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -651,24 +486,9 @@ jobs:
           echo "COPILOTSTUDIOAGENT__TENANTID=$COPILOTSTUDIOAGENT__TENANTID" >> .env
           echo "COPILOTSTUDIOAGENT__AGENTAPPID=$COPILOTSTUDIOAGENT__AGENTAPPID" >> .env
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/copilotstudio --save-report --report-name 02-agents-copilotstudio
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -695,24 +515,9 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/custom --save-report --report-name 02-agents-custom
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -748,24 +553,9 @@ jobs:
           echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
           echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 03-workflows --save-report --report-name 03-workflows
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -805,25 +595,10 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         # Maximum parallel workers is set to 1 because all samples use the same port
         run: |
           cd scripts && uv run python -m sample_validation --subdir 04-hosting/foundry-hosted-agents --save-report --report-name 04-hosting-foundry-hosted-agents --max-parallel-workers 1 --agent-timeout 1800
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -856,24 +631,9 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 04-hosting --exclude foundry-hosted-agents --save-report --report-name 04-hosting-other
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -914,24 +674,9 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 05-end-to-end --save-report --report-name 05-end-to-end
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -979,24 +724,12 @@ jobs:
           echo "OPENAI_CHAT_COMPLETION_MODEL=$OPENAI_CHAT_COMPLETION_MODEL" >> .env
           echo "OPENAI_CHAT_MODEL=$OPENAI_CHAT_MODEL" >> .env
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
+      - name: Pre-install AutoGen dependencies for migration samples
+        run: uv pip install "autogen-agentchat" "autogen-ext[openai]"
 
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir autogen-migration --save-report --report-name autogen-migration
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -1059,24 +792,9 @@ jobs:
           echo "COPILOTSTUDIOAGENT__TENANTID=$COPILOTSTUDIOAGENT__TENANTID" >> .env
           echo "COPILOTSTUDIOAGENT__AGENTAPPID=$COPILOTSTUDIOAGENT__AGENTAPPID" >> .env
 
-      - name: Restore sample playbooks
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
-          restore-keys: |
-            sample-playbooks-${{ github.job }}-
-
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir semantic-kernel-migration --save-report --report-name semantic-kernel-migration
-
-      - name: Save sample playbooks
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
-        with:
-          path: python/samples/sample_validation/playbooks/
-          key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
