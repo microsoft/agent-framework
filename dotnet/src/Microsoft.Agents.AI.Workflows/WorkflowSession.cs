@@ -455,6 +455,7 @@ internal sealed class WorkflowSession : AgentSession
 #pragma warning restore CA2007
 
         ResumeDispatchInfo dispatchInfo = resumeResult.DispatchInfo;
+        HashSet<(string ExecutorId, string MessageId)> streamedMessageIds = [];
 
         // Send a TurnToken to the start executor unless the only activity is an external
         // response directed at the start executor itself (which self-emits a TurnToken via
@@ -485,6 +486,11 @@ internal sealed class WorkflowSession : AgentSession
             switch (evt)
             {
                 case AgentResponseUpdateEvent agentUpdate:
+                    string? messageId = agentUpdate.Update.MessageId;
+                    if (!string.IsNullOrWhiteSpace(messageId))
+                    {
+                        streamedMessageIds.Add((agentUpdate.ExecutorId, messageId));
+                    }
                     yield return agentUpdate.Update;
                     break;
 
@@ -559,9 +565,28 @@ internal sealed class WorkflowSession : AgentSession
                     // _includeWorkflowOutputInResponse flag is set. Reason being: The user specifies
                     // exclusion of an event by enabling filtering and then _not_ marking an Executor
                     // as an output executor.
+                    bool emittedMessage = false;
+                    bool suppressedStreamedMessage = false;
                     foreach (ChatMessage message in agentResponse.Response.Messages)
                     {
+                        string? completedMessageId = message.MessageId;
+                        bool messageWasStreamed =
+                            !string.IsNullOrWhiteSpace(completedMessageId)
+                            && streamedMessageIds.Contains((agentResponse.ExecutorId, completedMessageId));
+                        if (messageWasStreamed)
+                        {
+                            suppressedStreamedMessage = true;
+                            continue;
+                        }
+
+                        emittedMessage = true;
                         yield return this.CreateUpdate(this.LastResponseId, evt, message);
+                    }
+                    if (!emittedMessage && suppressedStreamedMessage)
+                    {
+                        // Preserve the completion event for observability after its correlated
+                        // streamed content has already been forwarded.
+                        yield return CreateObservabilityUpdate(evt);
                     }
                     break;
 
