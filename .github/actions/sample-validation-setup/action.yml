@@ -36,13 +36,6 @@ runs:
       shell: bash
       run: copilot --version && copilot -p "What can you do in one sentence?"
 
-    - name: Azure CLI Login
-      uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
-      with:
-        client-id: ${{ inputs.azure-client-id }}
-        tenant-id: ${{ inputs.azure-tenant-id }}
-        subscription-id: ${{ inputs.azure-subscription-id }}
-
     - name: Set up python and install the project
       uses: ./.github/actions/python-setup
       with:
@@ -61,3 +54,10 @@ runs:
         key: sample-playbooks-${{ github.job }}-${{ github.run_id }}
         restore-keys: |
           sample-playbooks-${{ github.job }}-
+
+    - name: Azure CLI Login
+      uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+      with:
+        client-id: ${{ inputs.azure-client-id }}
+        tenant-id: ${{ inputs.azure-tenant-id }}
+        subscription-id: ${{ inputs.azure-subscription-id }}
