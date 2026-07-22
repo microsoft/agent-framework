@@ -62,7 +62,7 @@ async def run_autogen() -> None:
     team = MagenticOneGroupChat(
         participants=[researcher, coder, reviewer],
         model_client=client,  # Coordinator uses this client
-        max_turns=20,
+        max_turns=10,
         max_stalls=3,
     )
 
@@ -109,7 +109,7 @@ async def run_agent_framework() -> None:
             instructions="You coordinate a team to complete complex tasks efficiently.",
             description="Orchestrator for team coordination",
         ),
-        max_round_count=20,
+        max_round_count=10,
         max_stall_count=3,
         max_reset_count=1,
     ).build()
