@@ -595,6 +595,26 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
+      - name: Grant Azure AI Search access to the CI identity
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          # Derive the search service name from the endpoint (https://<name>.search.windows.net)
+          service_name="$(echo "$AZURE_SEARCH_ENDPOINT" | sed -E 's#^https?://([^.]+)\..*#\1#')"
+          # Look up the full resource ID so we don't need a hardcoded resource group
+          scope="$(az resource list --name "$service_name" --resource-type Microsoft.Search/searchServices --query "[0].id" -o tsv)"
+          if [ -z "$scope" ]; then
+            echo "Could not resolve resource ID for search service '$service_name'" >&2
+            exit 1
+          fi
+          # Idempotent: az returns the existing assignment if it already exists
+          az role assignment create \
+            --assignee "$AZURE_CLIENT_ID" \
+            --role "Search Index Data Reader" \
+            --scope "$scope"
+
       - name: Run sample validation
         # Maximum parallel workers is set to 1 because all samples use the same port
         run: |
