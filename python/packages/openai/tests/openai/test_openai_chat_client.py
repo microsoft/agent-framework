@@ -58,7 +58,7 @@ from openai.types.responses.response_text_delta_event import ResponseTextDeltaEv
 from pydantic import BaseModel
 from pytest import param
 
-from agent_framework_openai import OpenAIChatClient, RawOpenAIChatClient
+from agent_framework_openai import OpenAIChatClient, OpenAIChatOptions, RawOpenAIChatClient
 from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
@@ -6621,14 +6621,15 @@ async def test_integration_stateless_reasoning_survives_json_and_checkpoint_roun
         role="user",
         contents=["Call get_round_trip_marker, then answer with exactly the value returned by the tool."],
     )
-    first_response = await client.get_response(
+    first_options: OpenAIChatOptions[None] = {
+        "store": False,
+        "reasoning": {"effort": "low", "summary": "auto"},
+        "tools": [get_round_trip_marker],
+        "tool_choice": {"mode": "required", "required_function_name": "get_round_trip_marker"},
+    }
+    first_response: ChatResponse[Any] = await client.get_response(
         [initial_message],
-        options={
-            "store": False,
-            "reasoning": {"effort": "low", "summary": "auto"},
-            "tools": [get_round_trip_marker],
-            "tool_choice": {"mode": "required", "required_function_name": "get_round_trip_marker"},
-        },
+        options=first_options,
     )
 
     first_message = first_response.messages[0]
@@ -6636,27 +6637,30 @@ async def test_integration_stateless_reasoning_survives_json_and_checkpoint_roun
     assert reasoning_contents
     assert any(content.protected_data for content in reasoning_contents)
     function_call = next(content for content in first_message.contents if content.type == "function_call")
+    call_id = function_call.call_id
+    assert call_id is not None
 
     message_restored_from_json = Message.from_json(first_message.to_json())
     checkpoint_payload = json.loads(json.dumps(encode_checkpoint_value(message_restored_from_json)))
     restored_message = decode_checkpoint_value(checkpoint_payload)
     assert isinstance(restored_message, Message)
 
-    final_response = await client.get_response(
+    final_options: OpenAIChatOptions[None] = {
+        "store": False,
+        "reasoning": {"effort": "low", "summary": "auto"},
+        "tools": [get_round_trip_marker],
+        "tool_choice": "none",
+    }
+    final_response: ChatResponse[Any] = await client.get_response(
         [
             initial_message,
             restored_message,
             Message(
                 role="tool",
-                contents=[Content.from_function_result(call_id=function_call.call_id, result=marker)],
+                contents=[Content.from_function_result(call_id=call_id, result=marker)],
             ),
         ],
-        options={
-            "store": False,
-            "reasoning": {"effort": "low", "summary": "auto"},
-            "tools": [get_round_trip_marker],
-            "tool_choice": "none",
-        },
+        options=final_options,
     )
 
     assert marker in final_response.text
