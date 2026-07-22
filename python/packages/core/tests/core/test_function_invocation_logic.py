@@ -2338,6 +2338,39 @@ def test_replace_approval_contents_with_results_uses_result_call_ids_without_pla
     ]
 
 
+def test_replace_approval_contents_with_results_dedupes_call_across_messages() -> None:
+    """A function call and its approval request may arrive in separate messages.
+
+    Hosting layers replay a stored ``function_call`` item and its
+    ``mcp_approval_request`` item as two assistant messages. The approval request
+    must not restore a second copy of the call, or that copy is left without a
+    result and the service rejects the turn with "No tool output found for
+    function call".
+    """
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    call, request, response = _build_approved_tool_roundtrip(
+        call_id="call_1", approval_id="approval_1", tool_name="run_skill_script"
+    )
+
+    messages = [
+        Message(role="assistant", contents=[call]),
+        Message(role="assistant", contents=[request]),
+        Message(role="user", contents=[response]),
+    ]
+
+    _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [Content.from_function_result(call_id="call_1", result="script output")],
+    )
+
+    function_calls = [c for m in messages for c in m.contents if c.type == "function_call"]
+    assert [c.call_id for c in function_calls] == ["call_1"]
+    results = [c for m in messages for c in m.contents if c.type == "function_result"]
+    assert [(c.call_id, c.result) for c in results] == [("call_1", "script output")]
+
+
 def test_replace_approval_contents_with_results_uses_result_call_ids_for_placeholders() -> None:
     from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
 

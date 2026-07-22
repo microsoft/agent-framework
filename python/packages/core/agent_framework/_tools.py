@@ -2119,12 +2119,19 @@ def _replace_approval_contents_with_results(
     # Track which call_ids had their placeholders replaced
     placeholders_replaced: set[str] = set()
 
-    for msg in messages:
-        # First pass - collect existing function call IDs to avoid duplicates
-        existing_call_ids = {
-            content.call_id for content in msg.contents if content.type == "function_call" and content.call_id
-        }
+    # Collect existing function call IDs across *all* messages to avoid duplicates. The
+    # function call and its approval request are frequently carried in separate messages
+    # (e.g. when a hosting layer replays them as separate items on an approval round
+    # trip), so scoping this per-message would let the same call_id be restored twice and
+    # leave the copy without a result unanswered.
+    existing_call_ids = {
+        content.call_id
+        for msg in messages
+        for content in msg.contents
+        if content.type == "function_call" and content.call_id
+    }
 
+    for msg in messages:
         # Track approval requests that should be removed (duplicates)
         contents_to_remove: list[int] = []
 
@@ -2140,6 +2147,8 @@ def _replace_approval_contents_with_results(
                 elif content.function_call is not None:
                     # Put back the function call content only if it doesn't exist
                     msg.contents[content_idx] = content.function_call
+                    if content.function_call.call_id:
+                        existing_call_ids.add(content.function_call.call_id)
             elif content.type == "function_approval_response":
                 # Skip hosted tool approvals — they must pass through to the API unchanged
                 if _is_hosted_tool_approval(content):
