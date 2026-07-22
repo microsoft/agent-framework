@@ -5,7 +5,7 @@ import logging
 import os
 from collections.abc import MutableMapping
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, Union, cast, overload
 
 from agent_framework._serialization import SerializationMixin
 
@@ -203,6 +203,52 @@ class ObjectProperty(Property):
         self.properties = converted_properties
 
 
+def _normalize_nested_schemas(node: dict[str, Any]) -> None:
+    """Recursively convert a node's nested schemas to JSON Schema form.
+
+    Nested schemas (array ``items``, object ``properties``) keep the declarative
+    shape after serialization: ``kind`` instead of ``type``, empty ``enum``
+    placeholders, and object properties as a list of ``{"name": ..., ...}``
+    entries. OpenAI rejects schemas whose nested nodes lack a ``type`` key, so
+    apply the same conversion the top-level properties loop performs.
+    """
+    items = node.get("items")
+    if isinstance(items, dict):
+        _normalize_schema_node(cast("dict[str, Any]", items))
+    props = node.get("properties")
+    if not isinstance(props, list):
+        return
+    # Serialized PropertySchema shape: [{"name": ..., "kind": ..., ...}, ...].
+    # Validate every element BEFORE mutating any, so an unexpected shape
+    # leaves the node fully untouched rather than half-converted.
+    if not all(isinstance(prop, dict) and "name" in prop for prop in cast("list[Any]", props)):
+        return
+    new_props: dict[str, Any] = {}
+    required_fields: list[str] = []
+    for prop in cast("list[dict[str, Any]]", props):
+        prop_name = prop.pop("name")
+        if prop.pop("required", False):
+            required_fields.append(prop_name)
+        _normalize_schema_node(prop)
+        new_props[prop_name] = prop
+    node["properties"] = new_props
+    if required_fields:
+        node["required"] = required_fields
+
+
+def _normalize_schema_node(node: dict[str, Any]) -> None:
+    """Rename ``kind`` -> ``type``, drop empty ``enum``, and recurse into children."""
+    if "kind" in node:
+        node["type"] = node.pop("kind")
+    if not node.get("enum"):
+        node.pop("enum", None)
+    if node.get("type") == "object":
+        # OpenAI strict structured outputs require additionalProperties: false on
+        # every object node; chat clients only inject it at the schema root.
+        node.setdefault("additionalProperties", False)
+    _normalize_nested_schemas(node)
+
+
 class PropertySchema(SerializationMixin):
     """Object representing a property schema."""
 
@@ -244,13 +290,10 @@ class PropertySchema(SerializationMixin):
         required_fields: list[str] = []
         for prop in json_schema.get("properties", []):
             prop_name = prop.pop("name")
-            prop["type"] = prop.pop("kind", None)
             # Convert property-level 'required' boolean to a top-level 'required' array
             if prop.pop("required", False):
                 required_fields.append(prop_name)
-            # Remove empty enum arrays
-            if not prop.get("enum"):
-                prop.pop("enum", None)
+            _normalize_schema_node(prop)
             new_props[prop_name] = prop
         json_schema["type"] = "object"
         json_schema["properties"] = new_props
