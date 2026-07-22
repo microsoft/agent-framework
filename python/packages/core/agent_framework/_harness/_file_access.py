@@ -1360,6 +1360,15 @@ class FileAccessProvider(ContextProvider):
         auto-approved, even when their name matches a file-access tool, so the
         rule stays scoped to this provider's local tools.
 
+        .. warning::
+            **Security — avoid tool-name collisions.** This rule approves local
+            tool calls by tool name only (``file_access_read``,
+            ``file_access_ls``, and ``file_access_grep``). Any other local tool
+            registered under one of these names — for example a tool with a
+            caller-configurable name such as the shell tool — may also be
+            auto-approved, bypassing the human approval boundary. Ensure no other
+            tool collides with these reserved names.
+
         Args:
             function_call: The pending ``function_call`` content.
 
@@ -1387,6 +1396,17 @@ class FileAccessProvider(ContextProvider):
         auto-approved, even when their name matches a file-access tool, so the
         rule stays scoped to this provider's local tools.
 
+        .. warning::
+            **Security — avoid tool-name collisions.** This rule approves local
+            tool calls by tool name only (``file_access_write``,
+            ``file_access_read``, ``file_access_delete``, ``file_access_ls``,
+            ``file_access_grep``, ``file_access_replace``, and
+            ``file_access_replace_lines``). Any other local tool registered under
+            one of these names — for example a tool with a caller-configurable
+            name such as the shell tool — may also be auto-approved, bypassing
+            the human approval boundary. Ensure no other tool collides with these
+            reserved names.
+
         Args:
             function_call: The pending ``function_call`` content.
 
@@ -1413,7 +1433,7 @@ class FileAccessProvider(ContextProvider):
 
         @tool(name=FileAccessProvider.WRITE_TOOL_NAME, schema=_WriteFileInput, approval_mode=write_approval)
         async def file_access_write(file_name: str, content: str, overwrite: bool = False) -> str:
-            """Write a file with the given name and content. By default, does not overwrite an existing file unless overwrite is set to true."""  # noqa: E501
+            """Write a file with the given name and content. By default, does not overwrite an existing file unless overwrite is set to true."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
                 async with self._write_lock:
@@ -1428,7 +1448,7 @@ class FileAccessProvider(ContextProvider):
 
         @tool(name=FileAccessProvider.READ_TOOL_NAME, schema=_ReadFileInput, approval_mode=readonly_approval)
         async def file_access_read(file_name: str) -> str:
-            """Read the content of a file by name. Returns the file content or a message indicating the file could not be read."""  # noqa: E501
+            """Read the content of a file by name. Returns the file content or a message indicating the file could not be read."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
                 content = await self.store.read(normalized)
@@ -1456,7 +1476,7 @@ class FileAccessProvider(ContextProvider):
             directory: str | None = None,
             glob_pattern: str | None = None,
         ) -> list[dict[str, str]] | str:
-            """List the direct child files and subdirectories of a directory. Omit ``directory`` (or pass an empty string) to list the root. To enumerate a subdirectory, pass its relative path, for example ``"reports"`` or ``"reports/2024"``. Optionally filter entries with a ``glob_pattern`` (e.g. ``"*.md"``). Subdirectories are listed before files, and each entry is ``{"name": <name>, "type": "file"|"directory"}``."""  # noqa: E501
+            """List the direct child files and subdirectories of a directory. Omit ``directory`` (or pass an empty string) to list the root. To enumerate a subdirectory, pass its relative path, for example ``"reports"`` or ``"reports/2024"``. Optionally filter entries with a ``glob_pattern`` (e.g. ``"*.md"``). Subdirectories are listed before files, and each entry is ``{"name": <name>, "type": "file"|"directory"}``."""  # ruff:ignore[line-too-long]
             target = directory if directory and directory.strip() else ""
             try:
                 listed = await self.store.list_children(target)
@@ -1475,7 +1495,7 @@ class FileAccessProvider(ContextProvider):
             new_string: str,
             replace_all: bool = False,
         ) -> str:
-            """Replace occurrences of old_string with new_string in a file. Fails if old_string is not found, or if it occurs more than once and replace_all is false. Returns the number of occurrences replaced."""  # noqa: E501
+            """Replace occurrences of old_string with new_string in a file. Fails if old_string is not found, or if it occurs more than once and replace_all is false. Returns the number of occurrences replaced."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
                 async with self._write_lock:
@@ -1496,7 +1516,7 @@ class FileAccessProvider(ContextProvider):
             approval_mode=write_approval,
         )
         async def file_access_replace_lines(file_name: str, edits: list[_LineEdit]) -> str:
-            """Replace lines in a file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers."""  # noqa: E501
+            """Replace lines in a file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
                 async with self._write_lock:

@@ -688,6 +688,20 @@ message_data = message.to_dict(exclude_none=True)  # and this does so again!
 logger.info(message_data, extra={...})
 ```
 
+When converting arbitrary values for telemetry, protocol, or event payloads, reuse the optimized framework
+converter instead of adding a package-local recursive serializer:
+
+```python
+from agent_framework._serialization import make_json_safe  # pyright: ignore[reportPrivateUsage]
+
+payload = make_json_safe(value)
+```
+
+Use a model's `to_dict()` directly when its type is known. Use `make_json_safe()` for heterogeneous values that may
+contain framework models, Pydantic models, dataclasses, containers, or primitives. Keep provider-specific conversion
+local when an API requires exact aliases, JSON modes, or opaque JSON strings, and avoid `json.dumps()` followed by
+`json.loads()` unless crossing such a required wire-format boundary.
+
 ## Test Organization
 
 ### Test Directory Structure

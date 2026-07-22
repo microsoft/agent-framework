@@ -20,6 +20,7 @@ since only the state object has both the store and the resolved target.
 from __future__ import annotations
 
 import asyncio
+import copy
 import inspect
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Generic, Protocol, TypedDict, TypeVar, cast, runtime_checkable
@@ -50,6 +51,15 @@ class SessionStore:
     database, ...), you are responsible for that store's own TTL/eviction
     policy; this in-memory reference implementation does not model that
     concern.
+
+    The ``get`` method creates a copy of the session in order to ensure multiple
+    callers using the same response id can continue the session.
+    The behavior for that is controlled by the developer.
+
+    So if there should be branching, then make sure to store the session with the new
+    session id, if the conversation should continue, then store them with the same ID.
+    Ensuring that multiple callers cannot simultaneously overwrite the same session is
+    the responsibility of the developer.
     """
 
     def __init__(self) -> None:
@@ -57,7 +67,9 @@ class SessionStore:
         self._sessions: dict[str, AgentSession] = {}
 
     async def get(self, session_id: str) -> AgentSession | None:
-        """Return the stored session for ``session_id``, or ``None`` if absent.
+        """Return a copy of the stored session for ``session_id``, or ``None`` if absent.
+
+        When overriding this method ensure the semantics stay the same and a copy is returned.
 
         Args:
             session_id: Opaque app-selected session id.
@@ -67,7 +79,8 @@ class SessionStore:
         """
         if not session_id:
             raise ValueError("session_id must be a non-empty string")
-        return self._sessions.get(session_id)
+        session = self._sessions.get(session_id)
+        return copy.deepcopy(session) if session is not None else None
 
     async def set(self, session_id: str, session: AgentSession) -> None:
         """Store ``session`` under ``session_id``, replacing any existing entry.
@@ -226,7 +239,8 @@ class AgentState(Generic[AgentT]):
             session_id: Opaque app-selected session id.
 
         Returns:
-            The stored or newly created ``AgentSession``.
+            An independent working copy of the stored or newly created
+            ``AgentSession``.
         """
         if not session_id:
             raise ValueError("session_id must be a non-empty string")
@@ -235,8 +249,9 @@ class AgentState(Generic[AgentT]):
             session = await self._session_store.get(session_id)
             if session is None:
                 target = await self.get_target()
-                session = target.create_session(session_id=session_id)
-                await self._session_store.set(session_id, session)
+                stored_session = target.create_session(session_id=session_id)
+                await self._session_store.set(session_id, stored_session)
+                session = copy.deepcopy(stored_session)
             return session
 
     async def set_session(self, session_id: str, session: AgentSession) -> None:

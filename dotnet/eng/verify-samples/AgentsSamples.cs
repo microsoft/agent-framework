@@ -427,6 +427,15 @@ internal static class AgentsSamples
             ],
         },
 
+        new SampleDefinition
+        {
+            Name = "AgentWithMemory_Step06_MemoryUsingAgentMemory",
+            ProjectPath = "samples/02-agents/AgentWithMemory/AgentWithMemory_Step06_MemoryUsingAgentMemory",
+            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
+            OptionalEnvironmentVariables = ["AZURE_OPENAI_API_KEY", "FOUNDRY_MODEL", "FOUNDRY_EMBEDDING_MODEL", "NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD"],
+            SkipReason = "Requires a running Neo4j instance; standalone sample outside the repo's CPM build.",
+        },
+
         // ── AgentWithRAG ────────────────────────────────────────────────────
 
         new SampleDefinition
@@ -837,7 +846,7 @@ internal static class AgentsSamples
             ProjectPath = "samples/02-agents/Agents/Agent_Step15_DeepResearch",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT", "AZURE_AI_MODEL_DEPLOYMENT_NAME", "AZURE_AI_BING_CONNECTION_ID"],
             OptionalEnvironmentVariables = ["AZURE_AI_REASONING_DEPLOYMENT_NAME"],
-            SkipReason = "Requires Azure AI Foundry project with Bing search connection.",
+            SkipReason = "Requires Microsoft Foundry project with Bing search connection.",
         },
 
         new SampleDefinition

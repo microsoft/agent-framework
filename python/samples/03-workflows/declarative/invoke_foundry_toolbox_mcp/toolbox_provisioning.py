@@ -8,6 +8,8 @@ end-to-end without manual steps. ``main.py`` owns the workflow
 execution path.
 """
 
+from typing import Any, cast
+
 from azure.identity import AzureCliCredential
 
 
@@ -27,8 +29,12 @@ def create_sample_toolbox(*, name: str, docs_server_label: str, project_endpoint
         AzureCliCredential() as credential,
         AIProjectClient(credential=credential, endpoint=project_endpoint) as project_client,
     ):
+        toolboxes = getattr(project_client, "toolboxes", None)
+        if toolboxes is None:
+            toolboxes = cast(Any, project_client.beta).toolboxes
+
         try:
-            project_client.beta.toolboxes.delete(name)
+            toolboxes.delete(name)
             print(f"Toolbox '{name}' deleted (replacing with a fresh version).")
         except ResourceNotFoundError:
             pass
@@ -41,7 +47,7 @@ def create_sample_toolbox(*, name: str, docs_server_label: str, project_endpoint
             ),
         ]
 
-        created = project_client.beta.toolboxes.create_version(
+        created = toolboxes.create_version(
             name=name,
             description="Sample toolbox exposing the Microsoft Learn Docs MCP server.",
             tools=tools,

@@ -8,6 +8,7 @@ import copy
 import json
 import logging
 import uuid
+from collections import OrderedDict
 from collections.abc import AsyncIterable, Awaitable, Mapping
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
@@ -29,6 +30,9 @@ from ag_ui.core import (
 from agent_framework import (
     AgentSession,
     Content,
+    HistoryProvider,
+    InMemoryHistoryProvider,
+    MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
     Message,
     SupportsAgentRun,
 )
@@ -580,6 +584,7 @@ def _restore_tool_approval_state(
     thread_id: str,
 ) -> None:
     """Restore only core tool-approval state into the per-run AgentSession."""
+    session.state.pop(_TOOL_APPROVAL_STATE_KEY, None)
     if approval_state_store is None:
         return
     stored_state = approval_state_store.tool_approval_states.get(thread_id)
@@ -853,12 +858,62 @@ def _pending_approval_alias_keys(
     return {_pending_approval_key(thread_id, alias) for alias in aliases}
 
 
+def _remove_pending_approval(registry: dict[PendingApprovalKey, PendingApprovalEntry], key: PendingApprovalKey) -> None:
+    """Remove one pending approval and every alias that references the same entry."""
+    entry = registry.pop(key, None)
+    if entry is None or isinstance(entry, str):
+        return
+
+    for alias_key, alias_entry in list(registry.items()):
+        if alias_entry is entry:
+            registry.pop(alias_key, None)
+
+
+def _register_pending_approval(
+    registry: dict[PendingApprovalKey, PendingApprovalEntry],
+    thread_ids: list[str],
+    name: str,
+    arguments: str | None,
+    *,
+    request_id: str,
+    interrupt_id: str | None,
+    already_approved_requests: list[dict[str, Any]] | None = None,
+) -> None:
+    """Register one pending approval under each distinct thread identity."""
+    keys = list(
+        dict.fromkeys(
+            _pending_approval_key(thread_id, approval_id)
+            for thread_id in thread_ids
+            for approval_id in (request_id, interrupt_id)
+            if approval_id
+        )
+    )
+    for key in keys:
+        _remove_pending_approval(registry, key)
+
+    entry = _make_pending_approval_entry(
+        name,
+        arguments,
+        request_id=request_id,
+        interrupt_id=interrupt_id,
+        already_approved_requests=already_approved_requests,
+    )
+    for key in keys:
+        registry[key] = entry
+
+
 def _consume_pending_approval_entry(
     pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry],
     thread_id: str,
     entry: PendingApprovalEntry,
     *ids: str | None,
 ) -> None:
+    if not isinstance(entry, str):
+        for key, candidate in list(pending_approvals.items()):
+            if candidate is entry:
+                pending_approvals.pop(key, None)
+        return
+
     for alias_key in _pending_approval_alias_keys(thread_id, entry, *ids):
         pending_approvals.pop(alias_key, None)
 
@@ -1138,13 +1193,11 @@ def _evict_oldest_approvals(registry: dict[PendingApprovalKey, PendingApprovalEn
     Only effective when *registry* is an ``OrderedDict``;  plain dicts are
     left untouched because insertion-order eviction is unreliable for them.
     """
-    if len(registry) <= max_size:
+    if len(registry) <= max_size or not isinstance(registry, OrderedDict):
         return
-    try:
-        while len(registry) > max_size:
-            registry.popitem(last=False)  # type: ignore[call-arg]
-    except (TypeError, KeyError):
-        pass
+    while len(registry) > max_size:
+        oldest_key = next(iter(registry))
+        _remove_pending_approval(registry, oldest_key)
 
 
 async def _resolve_approval_responses(
@@ -1575,8 +1628,9 @@ async def _save_thread_snapshot(
     messages: list[dict[str, Any]],
     state: dict[str, Any] | None,
     interrupt: list[dict[str, Any]] | None,
+    session_state: dict[str, Any] | None,
 ) -> None:
-    """Save the latest replayable AG-UI Thread Snapshot when persistence is configured."""
+    """Save the latest AG-UI Thread Snapshot when persistence is configured."""
     if config.snapshot_store is None or scope is None:
         return
 
@@ -1584,7 +1638,12 @@ async def _save_thread_snapshot(
         await config.snapshot_store.save(
             scope=scope,
             thread_id=thread_id,
-            snapshot=AGUIThreadSnapshot(messages=messages, state=state, interrupt=interrupt),
+            snapshot=AGUIThreadSnapshot(
+                messages=messages,
+                state=state,
+                interrupt=interrupt,
+                session_state=session_state,
+            ),
         )
     except Exception:
         # The run itself already streamed successfully; a transient store failure
@@ -1595,6 +1654,90 @@ async def _save_thread_snapshot(
             scope,
             thread_id,
         )
+
+
+def _restore_session_continuation_state(session: AgentSession, snapshot: AGUIThreadSnapshot | None) -> None:
+    """Restore typed private state from trusted snapshot storage."""
+    if snapshot is None or snapshot.session_state is None:
+        return
+    try:
+        restored = AgentSession.from_dict(
+            {
+                "type": "session",
+                "session_id": session.session_id,
+                "state": snapshot.session_state,
+            }
+        )
+    except Exception:
+        logger.exception(
+            "Failed to restore AG-UI Session Continuation State for session_id=%s; continuing without it.",
+            session.session_id,
+        )
+        return
+    session.state.update(restored.state)
+
+
+def _request_state_protected_keys(agent: SupportsAgentRun) -> set[str]:
+    """Return session-state namespaces that client Shared State cannot own."""
+    context_providers = cast(list[Any], getattr(agent, "context_providers", []))
+    return {
+        _TOOL_APPROVAL_STATE_KEY,
+        InMemoryHistoryProvider.DEFAULT_SOURCE_ID,
+        MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
+        *(provider.source_id for provider in context_providers),
+    }
+
+
+def _serialize_session_continuation_state(
+    session: AgentSession,
+    agent: SupportsAgentRun,
+    *,
+    shared_state_keys: set[str],
+) -> dict[str, Any] | None:
+    """Serialize server-owned state while preserving each AG-UI State Authority."""
+    context_providers = cast(list[Any], getattr(agent, "context_providers", []))
+    excluded_keys = {
+        *shared_state_keys,
+        _TOOL_APPROVAL_STATE_KEY,
+        *(provider.source_id for provider in context_providers if isinstance(provider, HistoryProvider)),
+    }
+    continuation_state = {key: value for key, value in session.state.items() if key not in excluded_keys}
+    if not continuation_state:
+        return None
+
+    serialized_session = AgentSession(session_id=session.session_id)
+    serialized_session.state.update(continuation_state)
+    return cast(dict[str, Any], serialized_session.to_dict()["state"])
+
+
+def _safe_serialize_session_continuation_state(
+    session: AgentSession,
+    agent: SupportsAgentRun,
+    *,
+    shared_state_keys: set[str],
+) -> dict[str, Any] | None:
+    """Return JSON-safe continuation state without failing a completed run."""
+    try:
+        serialized_state = _serialize_session_continuation_state(
+            session,
+            agent,
+            shared_state_keys=shared_state_keys,
+        )
+        if serialized_state is None:
+            return None
+        safe_state = make_json_safe(serialized_state)
+        if isinstance(safe_state, dict):
+            return cast(dict[str, Any], safe_state)
+        logger.warning(
+            "Ignoring AG-UI Session Continuation State with unsupported serialized type: %s",
+            type(safe_state).__name__,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to serialize AG-UI Session Continuation State for session_id=%s; saving snapshot without it.",
+            session.session_id,
+        )
+    return None
 
 
 async def run_agent_stream(
@@ -1772,6 +1915,15 @@ async def run_agent_stream(
         session = AgentSession(session_id=thread_id, service_session_id=supplied_thread_id)
     else:
         session = AgentSession(session_id=thread_id)
+    _restore_session_continuation_state(session, stored_snapshot)
+    protected_session_state_keys = _request_state_protected_keys(agent)
+    session.state.update(
+        {
+            key: copy.deepcopy(value)
+            for key, value in flow.current_state.items()
+            if key not in protected_session_state_keys
+        }
+    )
     _restore_tool_approval_state(session, approval_state_store, approval_thread_id)
 
     # Inject metadata for AG-UI orchestration (Feature #2: Azure-safe truncation)
@@ -1845,6 +1997,11 @@ async def run_agent_stream(
             messages=persisted_messages,
             state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
             interrupt=None,
+            session_state=_safe_serialize_session_continuation_state(
+                session,
+                agent,
+                shared_state_keys=set(flow.current_state).difference(protected_session_state_keys),
+            ),
         )
         _save_tool_approval_state(session, approval_state_store, approval_thread_id)
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id)
@@ -1913,7 +2070,10 @@ async def run_agent_stream(
             if content_type == "function_approval_request" and pending_approvals is not None:
                 if content.id and content.function_call and content.function_call.name:
                     canonical_interrupt_id = content.function_call.call_id or content.id
-                    pending_entry = _make_pending_approval_entry(
+                    provider_approval_thread_id = approval_state_thread_id(scope=approval_scope, thread_id=thread_id)
+                    _register_pending_approval(
+                        pending_approvals,
+                        [approval_thread_id, provider_approval_thread_id],
                         content.function_call.name,
                         canonical_function_arguments(content.function_call),
                         request_id=str(content.id),
@@ -1923,13 +2083,6 @@ async def run_agent_stream(
                             str(content.id),
                             str(canonical_interrupt_id) if canonical_interrupt_id else None,
                         ),
-                    )
-                    _register_pending_approval_entry(
-                        pending_approvals,
-                        approval_thread_id,
-                        pending_entry,
-                        str(content.id),
-                        str(canonical_interrupt_id) if canonical_interrupt_id else None,
                     )
                     # Evict oldest entries if the registry exceeds a safe bound (LRU)
                     _evict_oldest_approvals(pending_approvals, max_size=10_000)
@@ -1954,6 +2107,9 @@ async def run_agent_stream(
         # Stop if waiting for approval
         if flow.waiting_for_approval:
             break
+
+    if flow.waiting_for_approval and isinstance(stream, ResponseStream):
+        await stream.get_final_response()
 
     # If no updates at all, still emit RunStarted
     if not run_started_emitted:
@@ -2143,6 +2299,11 @@ async def run_agent_stream(
         messages=persisted_messages,
         state=latest_state_snapshot,
         interrupt=flow.interrupts or None,
+        session_state=_safe_serialize_session_continuation_state(
+            session,
+            agent,
+            shared_state_keys=set(flow.current_state).difference(protected_session_state_keys),
+        ),
     )
     _save_tool_approval_state(session, approval_state_store, approval_thread_id)
     yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=flow.interrupts)

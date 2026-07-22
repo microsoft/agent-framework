@@ -17,8 +17,8 @@ This sample creates three agents with different trigger configurations:
 - PlantAdvisor: Both HTTP and MCP tool triggers enabled
 
 Required environment variables:
-- FOUNDRY_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
-- FOUNDRY_MODEL: Your Azure AI Foundry deployment name
+- FOUNDRY_PROJECT_ENDPOINT: Your Microsoft Foundry project endpoint
+- FOUNDRY_MODEL: Your Microsoft Foundry deployment name
 
 Authentication uses AzureCliCredential (Azure Identity).
 """

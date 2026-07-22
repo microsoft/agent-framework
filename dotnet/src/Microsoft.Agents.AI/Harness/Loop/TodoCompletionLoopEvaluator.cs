@@ -109,7 +109,7 @@ public sealed class TodoCompletionLoopEvaluator : LoopEvaluator
                 ?? throw new InvalidOperationException(
                     $"{nameof(TodoCompletionLoopEvaluator)} was configured with modes but no {nameof(AgentModeProvider)} could be resolved from the agent via GetService.");
 
-            string currentMode = modeProvider.GetMode(context.Session);
+            string currentMode = await modeProvider.GetModeAsync(context.Session, cancellationToken).ConfigureAwait(false);
             if (!this._modes.Contains(currentMode))
             {
                 return LoopEvaluation.Stop();

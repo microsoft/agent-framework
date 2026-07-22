@@ -20,7 +20,7 @@ The agent is hosted using the [Agent Framework](https://github.com/microsoft/age
 
 ## Prerequisites
 
-- An Azure AI Foundry project with a deployed model (e.g., `gpt-4.1-mini`)
+- A Microsoft Foundry project with a deployed model (e.g., `gpt-4.1-mini`)
 - An Azure AI Search service ([create one](https://learn.microsoft.com/azure/search/search-create-service-portal))
 - **A pre-provisioned search index** with the schema and content described below
 - Azure CLI logged in (`az login`)

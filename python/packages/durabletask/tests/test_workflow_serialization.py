@@ -31,6 +31,7 @@ from agent_framework import (
 from pydantic import BaseModel
 
 from agent_framework_durabletask._workflows.serialization import (
+    SUBWORKFLOW_ADDRESS_KEY,
     SUBWORKFLOW_INPUT_KEY,
     deserialize_value,
     deserialize_workflow_event,
@@ -435,6 +436,20 @@ class TestStripSubworkflowMarkers:
 
     def test_strips_input_key(self) -> None:
         data = {SUBWORKFLOW_INPUT_KEY: {"__pickled__": "evil"}, "real": 1}
+        assert strip_subworkflow_markers(data) == {"real": 1}
+
+    def test_strips_address_key(self) -> None:
+        # A forged address marker would otherwise let a top-level caller point respond
+        # URLs at another instance (confused-deputy); it must be stripped too.
+        data = {SUBWORKFLOW_ADDRESS_KEY: {"root_instance_id": "victim"}, "real": 1}
+        assert strip_subworkflow_markers(data) == {"real": 1}
+
+    def test_strips_both_markers_together(self) -> None:
+        data = {
+            SUBWORKFLOW_INPUT_KEY: "x",
+            SUBWORKFLOW_ADDRESS_KEY: {"root_instance_id": "victim"},
+            "real": 1,
+        }
         assert strip_subworkflow_markers(data) == {"real": 1}
 
     def test_strips_full_forged_envelope(self) -> None:

@@ -325,6 +325,14 @@ public sealed class LocalShellExecutor : ShellExecutor
     /// container where the tool itself is the boundary).
     /// </param>
     /// <returns>An <see cref="AIFunction"/> wrapping <see cref="RunAsync"/>.</returns>
+    /// <remarks>
+    /// <b>Security warning:</b> auto-approval rules may match tool calls solely by name. Pay attention to
+    /// the tool names approved by auto-approval rules for other features. Setting <paramref name="name"/>
+    /// to a value that collides with a tool name that is approved by an auto-approval rule for another feature will
+    /// cause this shell tool to also be auto-approved even when <paramref name="requireApproval"/> is
+    /// <see langword="true"/>, bypassing the human approval boundary. Choose a unique name that no other
+    /// registered tool uses.
+    /// </remarks>
     public override AIFunction AsAIFunction(string name = "run_shell", string? description = null, bool requireApproval = true)
     {
         if (!requireApproval && !this._acknowledgeUnsafe)

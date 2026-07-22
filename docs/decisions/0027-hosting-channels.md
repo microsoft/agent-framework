@@ -181,8 +181,8 @@ The app chooses which helper to call for that route and deployment. For example:
 
 - `responses_session_id(body)` from `agent-framework-hosting-responses`, which can return either a `resp_*` previous
   response id or a `conv_*` conversation id when present;
-- `telegram_session_id(update)` from `agent-framework-hosting-telegram`, which can choose the chat, user, thread, or
-  other Telegram-native partitioning logic for that helper;
+- `telegram_session_id(update, bot_id=...)` from `agent-framework-hosting-telegram`, which uses the bot and sender for
+  private chats and the bot and chat for shared group sessions;
 - `activity_session_id(activity)`, `discord_session_id(interaction_or_message)`, or
   `a2a_session_id(request_context)` from their respective protocol packages;
 - `foundry_user_isolation_key()` or `foundry_chat_isolation_key()` from `agent-framework-foundry-hosting`.
@@ -204,7 +204,8 @@ safe to use:
   transient execution.
 
 A `SessionStore` stores `session_id -> AgentSession`, but it does not create sessions. `AgentState` resolves the agent
-target and creates the session on first use:
+target and creates the session on first use. Reads return independent working copies so running from one continuation
+point does not mutate the stored snapshot or another simultaneous branch:
 
 For agent targets:
 
@@ -226,6 +227,11 @@ await state.set_session(response_id, session)
 
 `agent.run(...)` may update the session object (for example, with service continuation state), so the explicit store call
 belongs after the run, not before it.
+
+Response ids are immutable continuation points, so simultaneous callers can branch from one `previous_response_id` and
+store their completed sessions under different new response ids. A stable `conversation_id` is a mutable head: the app
+must explicitly update it after the run and provide single-writer coordination. The hosting state helper does not lock
+an entire run or resolve concurrent updates to that stable key.
 
 The session id is a partition key, not proof of identity. App or platform code must authenticate and authorize any
 externally supplied key before using it.

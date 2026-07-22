@@ -66,8 +66,11 @@ must be aligned with the helper-first model before implementation. Old vocabular
 | Package | Import surface | v1 helper-first contents |
 |---|---|---|
 | `agent-framework-hosting` | `agent_framework_hosting` | `AgentState`, `WorkflowState`, `SessionStore`, and run-argument `TypedDict`s. |
+| `agent-framework-hosting-a2a` | `agent_framework_hosting_a2a` | A2A `Message` to run conversion and Agent Framework output to A2A `Part` conversion. |
+| `agent-framework-hosting-mcp` | `agent_framework_hosting_mcp` | Agent and workflow MCP tool adapters, MCP tool arguments to run conversion, and Agent Framework output to MCP `ContentBlock` conversion. |
 | `agent-framework-hosting-responses` | `agent_framework_hosting_responses` | Responses helpers: request parsing, session id extraction, response id creation, response rendering, streaming rendering. |
-| Future protocol packages | e.g. `agent_framework_hosting_telegram` | Protocol-specific helpers such as `telegram_to_run(...)`, `telegram_from_run(...)`, `telegram_session_id(...)`, and command/media helpers when useful. |
+| `agent-framework-hosting-telegram` | `agent_framework_hosting_telegram` | Telegram Bot API helpers: update parsing, chat/session/command/media extraction, final rendering, and streaming edit rendering. |
+| Future protocol packages | e.g. `agent_framework_hosting_activity_protocol` | Protocol-specific helpers such as `activity_to_run(...)`, `activity_from_run(...)`, `activity_session_id(...)`, and command/media helpers when useful. |
 
 The core hosting package must not depend on protocol SDKs. Protocol packages may depend on their native protocol SDKs if
 needed, but helper functions should stay usable from plain app code and tests.
@@ -90,6 +93,7 @@ Examples:
 
 - `responses_to_run(...)`, `responses_from_run(...)`, `responses_from_streaming_run(...)`,
   `responses_session_id(...)`;
+- `a2a_to_run(...)`, `a2a_from_run(...)`;
 - `telegram_to_run(...)`, `telegram_from_run(...)`, `telegram_from_streaming_run(...)`,
   `telegram_session_id(...)`, `telegram_command(...)`;
 - `activity_to_run(...)`, `activity_from_run(...)`, `activity_session_id(...)`, `activity_command(...)`;
@@ -177,6 +181,9 @@ The target may be:
 - `await get_target()`;
 - synchronous `target` only after a target is already available/resolved.
 
+A workflow instance permits one active run. Concurrent hosts use a factory or
+builder with `cache_target=False` to resolve a fresh instance per run.
+
 Workflow checkpointing uses Agent Framework's existing `CheckpointStorage` abstraction directly. Apps that need
 per-session workflow resume should keep an app-owned cursor such as `session_id -> checkpoint_id`. When the app uses
 file-backed cursor storage, the file-based checkpoint storage should share the same app storage root and should be
@@ -243,6 +250,146 @@ OpenAI Responses output item types supported by Agent Framework content.
 text deltas, and a completed event. The final completed payload is produced through `responses_from_run(...)`; the helper
 also preserves the model id observed on streaming updates when the finalized `AgentResponse` no longer carries raw model
 metadata.
+
+## `agent-framework-hosting-a2a`
+
+The A2A package provides only the conversion seam between the native A2A SDK
+and Agent Framework:
+
+- `a2a_to_run(message, *, stream=False) -> AgentRunArgs`
+- `a2a_from_run(result) -> list[a2a.types.Part]`
+
+`a2a_to_run(...)` accepts a native A2A `Message` and converts its text, URL,
+raw-byte, and structured-data parts into one Agent Framework user message.
+
+`a2a_from_run(...)` accepts an `AgentResponse`, `Message`, or
+`AgentResponseUpdate` and converts supported text, URI, and data content into
+native A2A `Part` values. This one helper is usable for both completed and
+streaming runs.
+
+The package does not provide an A2A `AgentExecutor`, application, route,
+request handler, task store, event queue, `TaskUpdater`, task-state policy,
+artifact-id policy, or session-key policy. Application code composes the two
+helpers with those native A2A SDK constructs and may use any server framework
+supported by the SDK.
+
+## `agent-framework-hosting-mcp`
+
+The MCP package provides only the conversion seam between native MCP SDK values
+and Agent Framework:
+
+- `MCPAgentTool(target, ...)`
+- `MCPWorkflowTool(target, ...)`
+- `mcp_to_run(arguments, *, argument_name="task", chat_option_arguments=()) -> AgentRunArgs`
+- `mcp_from_run(result) -> list[mcp.types.ContentBlock]`
+
+`MCPAgentTool` represents one Agent Framework agent as one native MCP tool. It
+derives the default tool name and description from the agent, accepts
+overrides for those values and the main text parameter, includes app-owned
+additional parameter schemas, and explicitly maps selected parameter schemas
+to ChatOptions. Its asynchronous `list_tools()` returns the native `Tool` list,
+and `call_tool(...)` performs conversion, agent execution, and final result
+conversion.
+
+The adapter accepts either an agent or an existing `AgentState`. With a
+configured `session_id_parameter`, it loads and stores the corresponding
+`AgentSession`. The application remains responsible for deriving and
+authorizing the session id and preventing concurrent updates to the same
+session.
+
+`MCPWorkflowTool` represents one Agent Framework workflow as one native MCP
+tool. It derives the tool name and description from the workflow and derives
+the input schema from the start executor's single declared input type.
+Object-shaped dataclass and Pydantic inputs become top-level MCP arguments;
+primitive inputs are wrapped in one configurable argument. The adapter
+validates the arguments against that type, runs the workflow, and converts
+terminal outputs to MCP content blocks.
+
+Workflow instances preserve state and reject concurrent runs. Applications
+that need independent calls should provide a `WorkflowState` factory with
+`cache_target=False`. Checkpoint restoration, human-in-the-loop responses, and
+continuation identifiers remain application-owned contracts. If a workflow
+stops to request external input, the adapter raises rather than returning an
+empty successful tool result.
+
+`mcp_to_run(...)` accepts the argument mapping from a native MCP `call_tool`
+handler. The application owns the tool schema and may select which required
+string argument contains the user request. The application should define that
+argument name once and use the same value in the native tool schema and the
+`argument_name` parameter so those two sides of the contract remain aligned.
+Applications may also expose selected ChatOptions fields in their native tool
+schema and pass those names through `chat_option_arguments`. Only explicitly
+selected names are copied to run options; the helper does not forward all MCP
+arguments or own their JSON Schema validation.
+
+MCP `tools/call` arguments are JSON-only and do not have a native multimodal
+content-block union. The package does not impose a non-standard JSON
+representation for multimodal tool arguments.
+
+`mcp_from_run(...)` accepts an `AgentResponse` or `Message`. It converts text,
+URI, image data, audio data, and other binary data into native MCP content
+blocks.
+
+Its output is specifically the content union accepted by `CallToolResult`.
+Sampling-only values such as `ToolUseContent` belong to the separate MCP
+sampling response path and are not emitted by this hosting helper.
+
+MCP `tools/call` returns one final `CallToolResult`. Streamable HTTP can carry
+multiple MCP messages and progress notifications can report operation status,
+but the protocol does not define partial tool-result content chunks.
+Experimental MCP tasks defer retrieval of the same final result. Therefore the
+conversion helpers do not expose Agent Framework streaming updates.
+
+The package does not provide an MCP `Server`, handler registration, transport, route,
+session policy, authentication, authorization, or deployment wrapper.
+Application code composes the adapters and conversion helpers with native MCP SDK constructs and
+may use stdio, streamable HTTP, or another transport supported by the SDK.
+
+## `agent-framework-hosting-telegram`
+
+The Telegram package provides side-effect-free helpers around Telegram Bot API
+update and method payloads. It does not provide a Bot API client, polling loop,
+webhook route, command registry, retry policy, or rate limiter.
+
+### Update helpers
+
+- `telegram_to_run(update, *, resolve_file_url=None, stream=False) -> AgentRunArgs`
+- `telegram_chat_id(update) -> int | None`
+- `telegram_session_id(update, *, bot_id) -> str | None`
+- `telegram_command(update) -> str | None`
+- `telegram_callback_query_id(update) -> str | None`
+- `telegram_media_file_id(update_or_message) -> tuple[str, str] | None`
+
+`telegram_to_run(...)` handles `message`, `edited_message`, and
+`callback_query` updates. Text and captions become AF text content. When the
+app supplies an async `resolve_file_url` callback, supported Telegram media
+file ids can become AF URI content. The package does not call Telegram's
+`getFile` method itself.
+
+`telegram_session_id(..., bot_id=...)` includes the bot identity in every key.
+Private chats return `telegram:<bot_id>:<user_id>`; other chats return
+`telegram:<bot_id>:<chat_id>`, giving groups a shared session by default. This
+matches Telegram's native isolation boundaries while preventing two bots from
+sharing state accidentally. Apps that want per-user sessions inside a group
+can construct a key that includes both chat and sender ids. The app must
+authorize those Telegram identities before loading session state.
+
+`telegram_command(...)` parses Telegram's `/name` and `/name@bot` syntax. It
+does not register commands or invoke handlers.
+
+### Response helpers
+
+- `telegram_from_run(result, *, chat_id, parse_mode=None)`
+- `telegram_from_streaming_run(stream, *, chat_id, message_id, initial_text=None, parse_mode=None)`
+
+The helpers produce Telegram method/payload values for app-owned Bot API
+calls. Final rendering supports text and image URI output and applies
+Telegram's text-length boundary. Streaming rendering produces cumulative
+`editMessageText` payloads for a placeholder message id supplied by the app,
+omitting edits that match an optional `initial_text`, then renders the final
+rich output. Image-only responses remove the placeholder with `deleteMessage`
+before sending the image. The app owns the initial placeholder send, Bot API
+calls, edit throttling, retries, and failure policy.
 
 ## Security responsibilities
 
@@ -346,3 +493,6 @@ Implementation validation must cover:
 - Responses streaming SSE rendering;
 - HTTP round-trip tests showing a native FastAPI route using `AgentState` and Responses helpers;
 - sample type checking for the local Responses sample.
+- Telegram update parsing, chat/session/command/media extraction, final
+  rendering, and streaming edit rendering;
+- sample type checking for the local Telegram polling and webhook entry points.

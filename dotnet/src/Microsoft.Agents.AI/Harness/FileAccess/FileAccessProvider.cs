@@ -174,9 +174,23 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// The rule matches on the tool name, returning <see langword="true"/> for read-only file access tools
     /// and <see langword="false"/> for all other tool calls so that subsequent rules continue to be evaluated.
     /// </para>
+    /// <para>
+    /// This rule approves calls to exactly the following tool names:
+    /// <list type="bullet">
+    /// <item><description><see cref="ReadFileToolName"/> (<c>file_access_read</c>)</description></item>
+    /// <item><description><see cref="LsToolName"/> (<c>file_access_ls</c>)</description></item>
+    /// <item><description><see cref="GrepToolName"/> (<c>file_access_grep</c>)</description></item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// <b>Security note:</b> because matching is by tool name only, any other registered tool that
+    /// shares one of these names — for example a configurable-name tool that was assigned the same
+    /// name — will also be auto-approved, bypassing the
+    /// human approval boundary. Ensure no other tool collides with these reserved names.
+    /// </para>
     /// </remarks>
-    public static Func<FunctionCallContent, ValueTask<bool>> ReadOnlyToolsAutoApprovalRule { get; } =
-        functionCall => new ValueTask<bool>(s_readOnlyToolNames.Contains(functionCall.Name));
+    public static Func<ToolAutoApprovalRuleContext, ValueTask<bool>> ReadOnlyToolsAutoApprovalRule { get; } =
+        context => new ValueTask<bool>(s_readOnlyToolNames.Contains(context.FunctionCallContent.Name));
 
     /// <summary>
     /// Gets an auto-approval rule that approves all file access tools, including the tools that modify the
@@ -193,9 +207,27 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// The rule matches on the tool name, returning <see langword="true"/> for any file access tool
     /// and <see langword="false"/> for all other tool calls so that subsequent rules continue to be evaluated.
     /// </para>
+    /// <para>
+    /// This rule approves calls to exactly the following tool names:
+    /// <list type="bullet">
+    /// <item><description><see cref="WriteToolName"/> (<c>file_access_write</c>)</description></item>
+    /// <item><description><see cref="ReadFileToolName"/> (<c>file_access_read</c>)</description></item>
+    /// <item><description><see cref="DeleteFileToolName"/> (<c>file_access_delete</c>)</description></item>
+    /// <item><description><see cref="LsToolName"/> (<c>file_access_ls</c>)</description></item>
+    /// <item><description><see cref="GrepToolName"/> (<c>file_access_grep</c>)</description></item>
+    /// <item><description><see cref="ReplaceToolName"/> (<c>file_access_replace</c>)</description></item>
+    /// <item><description><see cref="ReplaceLinesToolName"/> (<c>file_access_replace_lines</c>)</description></item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// <b>Security note:</b> because matching is by tool name only, any other registered tool that
+    /// shares one of these names — for example a configurable-name tool that was assigned the same
+    /// name — will also be auto-approved, bypassing the
+    /// human approval boundary. Ensure no other tool collides with these reserved names.
+    /// </para>
     /// </remarks>
-    public static Func<FunctionCallContent, ValueTask<bool>> AllToolsAutoApprovalRule { get; } =
-        functionCall => new ValueTask<bool>(s_allToolNames.Contains(functionCall.Name));
+    public static Func<ToolAutoApprovalRuleContext, ValueTask<bool>> AllToolsAutoApprovalRule { get; } =
+        context => new ValueTask<bool>(s_allToolNames.Contains(context.FunctionCallContent.Name));
 
     /// <inheritdoc />
     public override IReadOnlyList<string> StateKeys => [];

@@ -7,7 +7,6 @@ dependencies = [
     "agent-framework-foundry",
     "agent-framework-hosting",
     "agent-framework-hosting-responses",
-    "azure-identity",
     "aiohttp>=3.13.5",
     "fastapi>=0.115.0,<0.138.1",
     "hypercorn>=0.17",

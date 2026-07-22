@@ -2,11 +2,9 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI;
@@ -143,7 +141,6 @@ public static class ChatClientBuilderExtensions
     /// </remarks>
     /// <param name="builder">The <see cref="ChatClientBuilder"/> to add the decorator to.</param>
     /// <returns>The <paramref name="builder"/> for chaining.</returns>
-    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public static ChatClientBuilder UseMessageInjection(this ChatClientBuilder builder)
     {
         return builder.Use(innerClient => new MessageInjectingChatClient(innerClient));
@@ -184,5 +181,44 @@ public static class ChatClientBuilderExtensions
     {
         return builder.Use((innerClient, services) =>
             new ApprovalNotRequiredFunctionBypassingChatClient(innerClient, loggerFactory ?? services.GetService<ILoggerFactory>()));
+    }
+
+    /// <summary>
+    /// Adds an <see cref="ApprovalResponseBindingChatClient"/> to the chat client pipeline.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This decorator should be positioned as the outermost decorator, above the
+    /// <see cref="FunctionInvokingChatClient"/> in the pipeline, so that it can bind the caller's inbound
+    /// tool-approval responses to the model-originated approval requests the framework surfaced. It records each
+    /// <see cref="ToolApprovalRequestContent"/> emitted by the pipeline and, on the next request, rebinds every
+    /// <see cref="ToolApprovalResponseContent"/> to its recorded request while honoring only approvals tied to a
+    /// genuine, framework-issued request. This keeps an approved call aligned with exactly what a human was asked to
+    /// approve.
+    /// </para>
+    /// <para>
+    /// This extension method is intended for use with custom chat client stacks when
+    /// <see cref="ChatClientAgentOptions.UseProvidedChatClientAsIs"/> is <see langword="true"/>.
+    /// When <see cref="ChatClientAgentOptions.UseProvidedChatClientAsIs"/> is <see langword="false"/> (the default),
+    /// the <see cref="ChatClientAgent"/> automatically injects this decorator unless
+    /// <see cref="ChatClientAgentOptions.DisableApprovalResponseBinding"/> is <see langword="true"/>.
+    /// </para>
+    /// <para>
+    /// This decorator is intended for use within the context of a running <see cref="ChatClientAgent"/> with
+    /// an active session. When invoked outside of an agent run (for example when the built chat client is used
+    /// directly), the decorator becomes a no-op, passing the request through unchanged and logging a warning.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The <see cref="ChatClientBuilder"/> to add the decorator to.</param>
+    /// <param name="loggerFactory">
+    /// An optional <see cref="ILoggerFactory"/> used to create a logger for the decorator. When not provided,
+    /// the factory is resolved from the pipeline's <see cref="IServiceProvider"/>; if none is available,
+    /// logging is a no-op.
+    /// </param>
+    /// <returns>The <paramref name="builder"/> for chaining.</returns>
+    public static ChatClientBuilder UseApprovalResponseBinding(this ChatClientBuilder builder, ILoggerFactory? loggerFactory = null)
+    {
+        return builder.Use((innerClient, services) =>
+            new ApprovalResponseBindingChatClient(innerClient, loggerFactory ?? services.GetService<ILoggerFactory>()));
     }
 }

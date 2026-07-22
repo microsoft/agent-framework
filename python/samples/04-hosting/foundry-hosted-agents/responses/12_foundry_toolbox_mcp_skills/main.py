@@ -4,8 +4,7 @@ import asyncio
 import os
 
 from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient
-from agent_framework_foundry_hosting import FoundryToolbox, ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient, FoundryToolbox, ResponsesHostServer
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
@@ -26,8 +25,11 @@ async def main() -> None:
 
     # as_skills_provider() discovers skills from skill://index.json on the toolbox
     # MCP session and exposes them as an agent context provider; SKILL.md bodies are
-    # fetched on demand via resources/read.
-    skills_provider = toolbox.as_skills_provider()
+    # fetched on demand via resources/read. disable_load_skill_approval=True registers
+    # the load_skill tool with approval_mode="never_require" so this unattended agent
+    # can load skills without an approval round-trip -- the Responses host runs the
+    # agent without an AgentSession, which the default approval flow requires.
+    skills_provider = toolbox.as_skills_provider(disable_load_skill_approval=True)
 
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],

@@ -32,22 +32,25 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class AGUIThreadSnapshot:
-    """Replayable AG-UI Thread state.
+    """AG-UI Thread state.
 
-    AG-UI Thread Snapshots intentionally contain only data that can be replayed
-    to a UI: message snapshots, optional Shared State, and optional interruption
-    state. They do not include raw events, request metadata, auth claims,
+    AG-UI Thread Snapshots contain client-replayable message, Shared State, and
+    interruption data plus optional private Session Continuation State. Private
+    continuation is trusted server data and must never be replayed to the client.
+    Snapshots do not include raw events, request metadata, auth claims,
     diagnostics, traces, or provider responses.
 
     Attributes:
         messages: Replayable AG-UI message snapshots.
         state: Optional AG-UI Shared State snapshot.
         interrupt: Optional interruption state from ``RUN_FINISHED.outcome.interrupts``.
+        session_state: Optional private serialized ``AgentSession.state`` payload.
     """
 
     messages: list[dict[str, Any]] = field(default_factory=list)
     state: dict[str, Any] | None = None
     interrupt: list[dict[str, Any]] | None = None
+    session_state: dict[str, Any] | None = None
 
 
 @runtime_checkable

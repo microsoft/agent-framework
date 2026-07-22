@@ -46,12 +46,14 @@ def main() -> None:
     else:
         band = "Highly concentrated"
 
-    print(json.dumps({
-        "positions": len(positions),
-        "score": score,
-        "band": band,
-        "largest_weight_pct": round(max(weights) * 100, 1),
-    }))
+    print(
+        json.dumps({
+            "positions": len(positions),
+            "score": score,
+            "band": band,
+            "largest_weight_pct": round(max(weights) * 100, 1),
+        })
+    )
 
 
 if __name__ == "__main__":

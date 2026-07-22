@@ -124,7 +124,11 @@ def detect_media_type_from_base64(
         if data is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
         # Remove data URI prefix if present
-        data_str = data_uri.split(";base64,", 1)[1]
+        if not data_uri.startswith("data:") or "," not in data_uri:
+            raise ValueError("Invalid data URI format.")
+        prefix, data_str = data_uri.split(",", 1)
+        if not prefix.endswith(";base64"):
+            raise ValueError("Data URI must use base64 encoding.")
     if data_str is not None:
         if data is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
@@ -1546,7 +1550,7 @@ class Content:
         return Content(
             "function_call",
             call_id=self_call_id,
-            name=getattr(self, "name", getattr(other, "name", None)),
+            name=getattr(self, "name", None) or getattr(other, "name", None),
             arguments=arguments,
             exception=getattr(self, "exception", None) or getattr(other, "exception", None),
             informational_only=getattr(self, "informational_only", False)
@@ -2191,7 +2195,7 @@ def _last_non_empty_assistant_message_text(messages: Sequence[Message]) -> str:
     for message in reversed(messages):
         if message.role != "assistant":
             continue
-        text = message.text
+        text = "".join((content.text or "") for content in message.contents if content.type == "text")
         if text.strip():
             return text
     return ""

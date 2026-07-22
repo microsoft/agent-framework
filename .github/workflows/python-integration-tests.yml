@@ -13,13 +13,27 @@ on:
   workflow_call:
     inputs:
       checkout-ref:
-        description: "Git ref to checkout (e.g., refs/pull/123/head)"
+        description: "Immutable commit SHA to check out"
         required: true
         type: string
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+      COPILOT_GITHUB_TOKEN:
+        required: true
+      FOUNDRY_MODELS_API_KEY:
+        required: false
+      OPENAI__APIKEY:
+        required: true
 
 permissions:
   contents: read
-  id-token: write
 
 env:
   UV_CACHE_DIR: /tmp/.uv-cache
@@ -99,6 +113,9 @@ jobs:
   # Azure OpenAI integration tests
   python-tests-azure-openai:
     name: Python Integration Tests - Azure OpenAI
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     environment: integration
     timeout-minutes: 60
@@ -224,6 +241,7 @@ jobs:
           packages/hyperlight/tests
           packages/ollama/tests
           packages/core/tests/core/test_mcp.py
+          packages/hosting-mcp/tests
           -m integration
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
@@ -260,6 +278,9 @@ jobs:
   # Azure Functions + Durable Task integration tests
   python-tests-functions:
     name: Python Integration Tests - Functions
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     environment: integration
     timeout-minutes: 60
@@ -324,6 +345,9 @@ jobs:
   # Foundry integration tests
   python-tests-foundry:
     name: Python Integration Tests - Foundry
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     environment: integration
     timeout-minutes: 60
@@ -378,6 +402,9 @@ jobs:
   # Foundry Hosting integration tests
   python-tests-foundry-hosting:
     name: Python Integration Tests - Foundry Hosting
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     environment: integration
     timeout-minutes: 60
@@ -551,7 +578,7 @@ jobs:
           pattern: test-results-*
           path: test-results/
       - name: Restore report history cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: python/integration-report-history.json
           key: integration-report-history-integration-${{ github.run_id }}
@@ -568,7 +595,7 @@ jobs:
         run: cat integration-test-report.md >> $GITHUB_STEP_SUMMARY
       - name: Save report history cache
         if: always()
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: python/integration-report-history.json
           key: integration-report-history-integration-${{ github.run_id }}

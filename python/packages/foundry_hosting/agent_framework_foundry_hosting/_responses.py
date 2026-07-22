@@ -334,7 +334,7 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
         # The error message is structured with the following format:
         # "tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {"errors":[{"name": ..."
         # where the second part is a JSON string that can be deserialized into an object with the following shape:
-        # ruff: disable[ERA001]
+        # ruff: disable[commented-out-code]
         # {
         #   "errors" : [
         #       {
@@ -347,7 +347,7 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
         #       }
         #   ]
         # }
-        # ruff: enable[ERA001]
+        # ruff: enable[commented-out-code]
         try:
             consent_errors: list[ConsentError] = []
             error_message_start = inner_exception.error.message.find("{")

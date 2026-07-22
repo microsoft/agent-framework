@@ -22,6 +22,14 @@ prompt for safe operations.
 
 Both rules reject any call carrying a `server_label`, so they stay scoped to this provider's local tools and never auto-approve a same-named hosted tool.
 
+> ⚠️ **Security — avoid tool-name collisions:** these rules approve local skill
+> tools by tool name only (`load_skill`, `read_skill_resource`, and — for
+> `all_tools_auto_approval_rule` — `run_skill_script`). Auto-approval rules may
+> match by name, so any other local tool registered under one of these names —
+> for example a tool with a caller-configurable name such as the shell tool — may
+> also be auto-approved, bypassing the human approval boundary. Ensure no other
+> tool collides with these reserved names.
+
 > **Note:** To use auto-approval rules, the agent must have `ToolApprovalMiddleware` in its middleware stack.
 
 ## Key Components
@@ -34,13 +42,13 @@ Both rules reject any call carrying a `server_label`, so they stay scoped to thi
 ## Running the Sample
 
 ### Prerequisites
-- An [Azure AI Foundry](https://ai.azure.com/) project with a deployed model (e.g. `gpt-4o-mini`)
+- A [Microsoft Foundry](https://ai.azure.com/) project with a deployed model (e.g. `gpt-4o-mini`)
 
 ### Environment Variables
 
 Set the required environment variables in a `.env` file (see `python/.env.example`):
 
-- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
+- `FOUNDRY_PROJECT_ENDPOINT`: Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL`: The name of your model deployment (defaults to `gpt-4o-mini`)
 
 ### Authentication

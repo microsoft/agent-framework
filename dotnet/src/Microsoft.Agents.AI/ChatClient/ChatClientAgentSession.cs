@@ -21,8 +21,13 @@ public sealed class ChatClientAgentSession : AgentSession
     {
     }
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ChatClientAgentSession"/> class with optional conversation and state data.
+    /// </summary>
+    /// <param name="conversationId">The underlying service chat history identifier, if available.</param>
+    /// <param name="stateBag">The state bag to initialize the session with.</param>
     [JsonConstructor]
-    internal ChatClientAgentSession(string? conversationId, AgentSessionStateBag? stateBag) : base(stateBag ?? new())
+    internal ChatClientAgentSession(string? conversationId = null, AgentSessionStateBag? stateBag = null) : base(stateBag ?? new())
     {
         this.ConversationId = conversationId;
     }

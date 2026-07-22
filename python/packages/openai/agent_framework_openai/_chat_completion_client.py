@@ -808,7 +808,7 @@ class RawOpenAIChatCompletionClient(
         for choice in response.choices:
             response_metadata.update(self._get_metadata_from_chat_choice(choice))
             if choice.finish_reason:
-                finish_reason = choice.finish_reason  # type: ignore[assignment]
+                finish_reason = "tool_calls" if choice.finish_reason == "function_call" else choice.finish_reason  # type: ignore[assignment]
             contents: list[Content] = []
             contents.extend(self._parse_text_from_openai(choice))
             if parsed_tool_calls := [tool for tool in self._parse_tool_calls_from_openai(choice)]:
@@ -845,7 +845,7 @@ class RawOpenAIChatCompletionClient(
         for choice in chunk.choices:
             chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
             if choice.finish_reason:
-                finish_reason = choice.finish_reason  # type: ignore[assignment]
+                finish_reason = "tool_calls" if choice.finish_reason == "function_call" else choice.finish_reason  # type: ignore[assignment]
 
             # Some OpenAI-compatible providers (e.g. Azure) send `"delta": null`
             # on finish chunks instead of the spec-compliant `"delta": {}`.

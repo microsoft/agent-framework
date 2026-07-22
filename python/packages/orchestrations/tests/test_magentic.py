@@ -8,10 +8,13 @@ from typing import Any, ClassVar, cast
 
 import pytest
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
     BaseAgent,
+    BaseChatClient,
+    ChatResponse,
     Content,
     Executor,
     Message,
@@ -1207,39 +1210,95 @@ async def test_standard_manager_propagates_session_to_agent():
 
     await mgr.plan(ctx.clone())
 
-    # plan() calls _complete twice (facts + plan), both should receive the same session
+    # plan() calls _complete twice (facts + plan). Each call must receive a non-None
+    # session so context providers configured on the manager agent are still invoked
+    # (the original intent of regression #4371).
     assert len(captured_sessions) == 2
     assert all(s is not None for s in captured_sessions), "session must be passed to agent.run()"
-    assert captured_sessions[0] is captured_sessions[1], "same session instance must be reused across calls"
-    assert captured_sessions[0] is mgr._session
+    # Each call must use a *fresh* session rather than one shared, accumulating session.
+    # The manager re-passes the full conversation on every call, so a reused session
+    # would make the agent's history provider re-inject prior turns and duplicate the
+    # task/facts/plan each round. See test_standard_manager_does_not_duplicate_history.
+    assert captured_sessions[0] is not captured_sessions[1], "each call must use a fresh session"
 
 
-def test_standard_manager_checkpoint_preserves_session():
-    """Verify that checkpoint save/restore preserves the manager's session identity."""
-    agent = StubManagerAgent()
+async def test_standard_manager_does_not_duplicate_history():
+    """Regression: the manager must not re-send already-sent turns to the model.
+
+    The manager rebuilds the full conversation it wants the model to see on every call
+    (``[*chat_history, facts_user]`` then ``[*chat_history, facts_user, facts_msg, plan_user]``).
+    Previously it reused one persistent ``AgentSession`` across calls, so the agent's
+    default ``InMemoryHistoryProvider`` reloaded the first call's stored messages and
+    prepended them to the second call's input, duplicating the facts pre-survey (and, over
+    multiple rounds, compounding the whole task/facts/plan). This drives a real ``Agent``
+    through the real session machinery and asserts no such duplication reaches the client.
+    """
+    facts_marker = "Below I will present you a request."
+    plan_marker = "Fantastic. To address this request"
+
+    class RecordingChatClient(BaseChatClient):
+        """Captures the exact message list handed to the model on each call."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[list[Message]] = []
+
+        @override
+        def _inner_get_response(self, *, messages, stream, options, **kwargs):  # type: ignore[override]
+            # Snapshot the fully-merged messages (session history + input) the model sees.
+            self.calls.append(list(messages))
+
+            async def _get() -> ChatResponse:
+                return ChatResponse(messages=Message(role="assistant", contents=["recorded"]))
+
+            return _get()
+
+    client = RecordingChatClient()
+    agent = Agent(name="MagenticManager", client=client)
     mgr = StandardMagenticManager(agent=agent)
-    original_session_id = mgr._session.session_id
+    ctx = MagenticContext(task="Is the system healthy?", participant_descriptions={"a": "desc"})
+
+    await mgr.plan(ctx.clone())
+
+    # plan() makes two model calls: the facts call, then the plan call.
+    assert len(client.calls) == 2
+    facts_call, plan_call = client.calls
+
+    # The facts pre-survey is sent once on the facts call...
+    assert sum(facts_marker in m.text for m in facts_call) == 1
+    # ...and must appear exactly once on the plan call too (the manager includes it
+    # manually). A reused/accumulating session would make it appear twice.
+    assert sum(facts_marker in m.text for m in plan_call) == 1, "facts pre-survey duplicated across calls"
+    # The plan prompt itself is present exactly once on the plan call.
+    assert sum(plan_marker in m.text for m in plan_call) == 1
+
+
+def test_standard_manager_checkpoint_preserves_task_ledger():
+    """Checkpoint save/restore round-trips the manager's task ledger (its only persisted state)."""
+    from agent_framework_orchestrations._magentic import _MagenticTaskLedger  # type: ignore
+
+    mgr = StandardMagenticManager(agent=StubManagerAgent())
+    mgr.task_ledger = _MagenticTaskLedger(
+        facts=Message("assistant", ["Custom facts"]),
+        plan=Message("assistant", ["Custom plan"]),
+    )
 
     state = mgr.on_checkpoint_save()
-    assert "agent_session" in state
+    assert "task_ledger" in state
 
-    # Restore into a fresh manager and verify session_id is preserved
-    mgr2 = StandardMagenticManager(agent=agent)
-    assert mgr2._session.session_id != original_session_id
+    mgr2 = StandardMagenticManager(agent=StubManagerAgent())
+    assert mgr2.task_ledger is None
     mgr2.on_checkpoint_restore(state)
-    assert mgr2._session.session_id == original_session_id
+    assert mgr2.task_ledger is not None
+    assert mgr2.task_ledger.facts.text == "Custom facts"
+    assert mgr2.task_ledger.plan.text == "Custom plan"
 
 
 def test_standard_manager_checkpoint_restore_empty_state():
-    """Verify that restoring from a state without agent_session leaves the session intact."""
-    agent = StubManagerAgent()
-    mgr = StandardMagenticManager(agent=agent)
-    original_session = mgr._session
-    original_session_id = original_session.session_id
-
+    """Restoring from a state without a task ledger leaves the manager unchanged."""
+    mgr = StandardMagenticManager(agent=StubManagerAgent())
     mgr.on_checkpoint_restore({})
-    assert mgr._session is original_session
-    assert mgr._session.session_id == original_session_id
+    assert mgr.task_ledger is None
 
 
 # endregion

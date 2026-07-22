@@ -11,8 +11,8 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
-    <PackageVersion Include="Anthropic" Version="12.31.0" />
-    <PackageVersion Include="Anthropic.Foundry" Version="0.6.0" />
+    <PackageVersion Include="Anthropic" Version="12.35.1" />
+    <PackageVersion Include="Anthropic.Foundry" Version="0.7.1" />
     <PackageVersion Include="Aspire.Hosting" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.0.0-preview.1.25560.3" />
     <PackageVersion Include="Aspire.Azure.AI.Inference" Version="13.1.0-preview.1.25616.3" />
@@ -122,6 +122,7 @@
     <PackageVersion Include="Hyperlight.HyperlightSandbox.Api" Version="0.4.0" />
     <PackageVersion Include="Hyperlight.HyperlightSandbox.Guest.Python" Version="0.4.0" />
     <!-- Inference SDKs -->
+    <PackageVersion Include="Dapr.AI.Microsoft.Extensions" Version="1.18.4" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
     <PackageVersion Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
     <PackageVersion Include="OllamaSharp" Version="5.4.8" />
