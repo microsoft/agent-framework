@@ -913,14 +913,12 @@ class RawOpenAIChatCompletionClient(
         if message.role in ("system", "developer"):
             text_contents = [content for content in message.contents if content.type == "text" and content.text]
             if text_contents:
-                # A prompt cache breakpoint lives on a typed part; plain-string content
-                # cannot carry it, so keep the typed list form when one is present.
+                # Keep list form only if a breakpoint actually landed on a built part
+                # (mirrors the flatten logic below); a non-mapping value stays a string.
+                parts = [self._prepare_content_for_openai(content) for content in text_contents]
                 content_value: str | list[dict[str, Any]]
-                if any(
-                    (content.additional_properties or {}).get(PROMPT_CACHE_BREAKPOINT_KEY) is not None
-                    for content in text_contents
-                ):
-                    content_value = [self._prepare_content_for_openai(content) for content in text_contents]
+                if any(PROMPT_CACHE_BREAKPOINT_KEY in part for part in parts):
+                    content_value = parts
                 else:
                     content_value = "\n".join(content.text for content in text_contents if content.text)
                 sys_args: dict[str, Any] = {"role": message.role, "content": content_value}

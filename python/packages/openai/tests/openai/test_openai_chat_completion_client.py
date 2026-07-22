@@ -2135,6 +2135,49 @@ def test_prepare_message_system_without_breakpoint_keeps_string_form() -> None:
     assert msgs[0]["content"] == "plain system"
 
 
+def test_prepare_message_system_non_mapping_breakpoint_stays_string_form() -> None:
+    """A non-mapping breakpoint value must not switch a system message to list content.
+
+    Only a mapping value is a real breakpoint, so a malformed value leaves the message
+    in its default plain-string form rather than an empty shape change.
+    """
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text("system prefix", additional_properties={"prompt_cache_breakpoint": "explicit"})
+    msgs = client._prepare_message_for_openai(Message(role="system", contents=[content]))
+    assert msgs[0]["content"] == "system prefix"
+    assert "prompt_cache_breakpoint" not in json.dumps(msgs)
+
+
+def test_prepare_message_developer_prompt_cache_breakpoint_keeps_parts() -> None:
+    """A developer message with a breakpoint keeps typed content parts, like system."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text(
+        "developer prefix",
+        additional_properties={"prompt_cache_breakpoint": {"mode": "explicit"}},
+    )
+    msgs = client._prepare_message_for_openai(Message(role="developer", contents=[content]))
+    assert isinstance(msgs[0]["content"], list)
+    assert msgs[0]["content"][0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+
+
+def test_prepare_message_developer_non_mapping_breakpoint_stays_string_form() -> None:
+    """A non-mapping breakpoint value must not switch a developer message to list content."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text("developer prefix", additional_properties={"prompt_cache_breakpoint": "explicit"})
+    msgs = client._prepare_message_for_openai(Message(role="developer", contents=[content]))
+    assert msgs[0]["content"] == "developer prefix"
+    assert "prompt_cache_breakpoint" not in json.dumps(msgs)
+
+
+def test_prepare_message_user_non_mapping_breakpoint_stays_string_form() -> None:
+    """A non-mapping breakpoint value on a user message flattens to a string, same as the other roles."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text("user prefix", additional_properties={"prompt_cache_breakpoint": "explicit"})
+    msgs = client._prepare_message_for_openai(Message(role="user", contents=[content]))
+    assert msgs[0]["content"] == "user prefix"
+    assert "prompt_cache_breakpoint" not in json.dumps(msgs)
+
+
 def test_prepare_content_for_openai_image_prompt_cache_breakpoint() -> None:
     """An image part carries an explicit prompt cache breakpoint onto the request."""
     client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
