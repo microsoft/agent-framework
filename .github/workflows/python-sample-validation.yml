@@ -749,7 +749,7 @@ jobs:
 
       - name: Run sample validation
         run: |
-          cd scripts && uv run python -m sample_validation --subdir autogen-migration --save-report --report-name autogen-migration
+          cd scripts && uv run python -m sample_validation --subdir autogen-migration --save-report --report-name autogen-migration --agent-timeout 600
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
