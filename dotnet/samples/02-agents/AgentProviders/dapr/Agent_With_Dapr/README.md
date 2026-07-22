@@ -26,6 +26,9 @@ run the following; otherwise, replace `./Components` with the path to your compo
 dapr run --app-id agents --resources-path ./Components --dapr-grpc-port 3501
 ```
 
+The sample connects to the sidecar at `http://localhost:3501` by default. If you start the sidecar on a
+different gRPC port, set the `DAPR_GRPC_ENDPOINT` environment variable to match before running the sample.
+
 Because the Dapr sidecar needs to continue running while your application is running, please open another terminal
 window and run the following command from this project's directory to start the demo.
 

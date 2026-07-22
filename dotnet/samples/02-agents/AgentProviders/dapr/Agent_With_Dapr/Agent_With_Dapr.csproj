@@ -12,6 +12,12 @@
 
   <ItemGroup>
     <PackageReference Include="Dapr.AI.Microsoft.Extensions" />
+    <!--
+      Dapr.AI.Microsoft.Extensions depends on Microsoft.Extensions.* 10.0.8, which is higher than the
+      versions pinned centrally in Directory.Packages.props. Central transitive pinning is disabled above
+      for this sample and these two direct references are overridden to that minimum. Remove the overrides
+      (and the CentralPackageTransitivePinningEnabled setting) once the central versions are >= 10.0.8.
+    -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" VersionOverride="10.0.8" />
     <PackageReference Include="Microsoft.Extensions.Hosting" VersionOverride="10.0.8" />
   </ItemGroup>

@@ -10,12 +10,17 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
+// The Dapr sidecar's gRPC endpoint. This must match the --dapr-grpc-port used when starting
+// the sidecar (see this sample's README). Override it with the DAPR_GRPC_ENDPOINT environment
+// variable if you run the sidecar on a different port.
+var daprGrpcEndpoint = Environment.GetEnvironmentVariable("DAPR_GRPC_ENDPOINT") ?? "http://localhost:3501";
+
 // Register the Dapr Conversation client with dependency injection.
 var app = Host.CreateDefaultBuilder()
     .ConfigureServices(services =>
     {
         // Configure the gRPC endpoint for the Dapr sidecar.
-        services.AddDaprConversationClient((_, builder) => builder.UseGrpcEndpoint("http://localhost:3501"));
+        services.AddDaprConversationClient((_, builder) => builder.UseGrpcEndpoint(daprGrpcEndpoint));
         // Provide the name of the Conversation component loaded in the sidecar to use.
         services.AddDaprChatClient(opt => opt.ConversationComponentName = "ollama");
     }).Build();
