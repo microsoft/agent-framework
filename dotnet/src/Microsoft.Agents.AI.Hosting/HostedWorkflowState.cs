@@ -362,16 +362,9 @@ public sealed class HostedWorkflowState
     }
 
     private void WarnOnNoProgress(string sessionId)
-    {
         // The resumed turn drove no work: the checkpoint may be stale or the input may not match the workflow's
         // expected type, so the session's state may not have progressed.
-        if (this._logger.IsEnabled(LogLevel.Warning))
-        {
-            this._logger.LogWarning(
-                "Resuming workflow session '{SessionId}' produced no events; the checkpoint may be stale or the input may not match the workflow's expected input type. Session state may not have progressed.",
-                sessionId);
-        }
-    }
+        => this._logger.LogWorkflowResumeMadeNoProgress(sessionId);
 
     /// <summary>
     /// Gets the recorded head checkpoint for <paramref name="sessionId"/>, if any.
@@ -387,4 +380,12 @@ public sealed class HostedWorkflowState
         _ = Throw.IfNullOrEmpty(sessionId);
         return this._cursor.TryGetValue(sessionId, out checkpoint);
     }
+}
+
+internal static partial class HostedWorkflowStateLogMessages
+{
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Resuming workflow session '{SessionId}' produced no events; the checkpoint may be stale or the input may not match the workflow's expected input type. Session state may not have progressed.")]
+    public static partial void LogWorkflowResumeMadeNoProgress(this ILogger logger, string sessionId);
 }
