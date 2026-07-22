@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock
 
@@ -214,12 +216,13 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     sentinel_session = object()
     toolbox.session = sentinel_session  # type: ignore
 
-    captured: dict[str, object] = {}
+    captured: dict[str, Callable[[], object]] = {}
+    captured_kwargs: dict[str, object] = {}
 
     class _StubSkillsSource:
-        def __init__(self, *, client: object, **kwargs: object) -> None:
-            captured["client"] = client
-            captured["kwargs"] = kwargs
+        def __init__(self, *, session_provider: Callable[[], object], **kwargs: object) -> None:
+            captured["session_provider"] = session_provider
+            captured_kwargs.update(kwargs)
 
         async def get_skills(self, context: SkillsSourceContext) -> list[str]:
             return ["skill-a"]
@@ -229,9 +232,15 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     result = await _FoundryToolboxSkillsSource(toolbox).get_skills(_source_context())
 
     assert result == ["skill-a"]
-    assert captured["client"] is sentinel_session
+    # The source hands MCPSkillsSource a provider (not a fixed session) that resolves
+    # the toolbox's current session, so it survives a reconnect that swaps it.
+    provider = captured["session_provider"]
+    assert provider() is sentinel_session
+    new_session = object()
+    toolbox.session = new_session  # type: ignore
+    assert provider() is new_session
     # No archive options set -> MCPSkillsSource is constructed with defaults.
-    assert captured["kwargs"] == {}
+    assert captured_kwargs == {}
 
 
 async def test_skills_source_forwards_archive_options(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -244,7 +253,7 @@ async def test_skills_source_forwards_archive_options(monkeypatch: pytest.Monkey
     captured: dict[str, object] = {}
 
     class _StubSkillsSource:
-        def __init__(self, *, client: object, **kwargs: object) -> None:
+        def __init__(self, *, session_provider: object, **kwargs: object) -> None:
             captured["kwargs"] = kwargs
 
         async def get_skills(self, context: SkillsSourceContext) -> list[str]:
@@ -262,19 +271,119 @@ async def test_skills_source_forwards_archive_options(monkeypatch: pytest.Monkey
     assert captured["kwargs"] == {"archive_resource_search_depth": 3, "archive_max_file_count": 5}
 
 
+async def test_skills_source_requires_connection_via_provider() -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/tb/mcp",
+    )
+    toolbox.session = object()  # type: ignore
+    source = _FoundryToolboxSkillsSource(toolbox)
+    # Discovery captures the bound provider; a later reconnect gap (session is None)
+    # surfaces the same clear error when the provider is resolved.
+    toolbox.session = None  # type: ignore
+    with pytest.raises(RuntimeError, match="not connected"):
+        source._require_session()  # pyright: ignore[reportPrivateUsage]
+
+
+class _FakeSkill:
+    """Minimal stand-in for a :class:`~agent_framework.Skill` for caching tests."""
+
+    def __init__(self, name: str) -> None:
+        self.frontmatter = SimpleNamespace(name=name)
+
+
+def _patch_counting_mcp_source(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Patch ``MCPSkillsSource`` with a stub that counts index reads.
+
+    Returns a single-element list whose value tracks how many times
+    ``get_skills`` (i.e. a ``skill://index.json`` read) has been invoked.
+    """
+    read_count = [0]
+
+    class _CountingSkillsSource:
+        def __init__(self, *, session_provider: object) -> None:
+            self._session_provider = session_provider
+
+        async def get_skills(self, context: SkillsSourceContext) -> list[_FakeSkill]:
+            read_count[0] += 1
+            return [_FakeSkill("skill-a")]
+
+    monkeypatch.setattr("agent_framework_foundry_hosting._toolbox.MCPSkillsSource", _CountingSkillsSource)
+    return read_count
+
+
+async def test_as_skills_provider_caches_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/tb/mcp",
+    )
+    toolbox.session = object()  # type: ignore
+    read_count = _patch_counting_mcp_source(monkeypatch)
+
+    provider = toolbox.as_skills_provider()
+    context = _source_context()
+    for _ in range(3):
+        await provider._source.get_skills(context)  # pyright: ignore[reportPrivateUsage]
+
+    # By default the toolbox index is read once and reused across agent runs.
+    assert read_count[0] == 1
+
+
+async def test_as_skills_provider_disable_caching_rereads_every_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/tb/mcp",
+    )
+    toolbox.session = object()  # type: ignore
+    read_count = _patch_counting_mcp_source(monkeypatch)
+
+    provider = toolbox.as_skills_provider(disable_caching=True)
+    context = _source_context()
+    for _ in range(3):
+        await provider._source.get_skills(context)  # pyright: ignore[reportPrivateUsage]
+
+    # With caching disabled the index is re-read on every agent run.
+    assert read_count[0] == 3
+
+
+async def test_as_skills_provider_cache_refresh_interval_rereads_after_staleness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/tb/mcp",
+    )
+    toolbox.session = object()  # type: ignore
+    read_count = _patch_counting_mcp_source(monkeypatch)
+
+    # A zero interval makes every cached result immediately stale, so each run
+    # re-reads the index -- proving cache_refresh_interval is wired through.
+    provider = toolbox.as_skills_provider(cache_refresh_interval=timedelta(0))
+    context = _source_context()
+    for _ in range(3):
+        await provider._source.get_skills(context)  # pyright: ignore[reportPrivateUsage]
+
+    assert read_count[0] == 3
+
+
 def test_as_skills_provider_forwards_only_set_archive_options() -> None:
     toolbox = FoundryToolbox(
         _FakeCredential(),  # type: ignore
         url="https://h/toolboxes/tb/mcp",
     )
     # Unset archive kwargs are not forwarded (fall back to MCPSkillsSource defaults);
-    # set ones are collected for forwarding.
-    default_source = cast(_FoundryToolboxSkillsSource, toolbox.as_skills_provider()._source)  # pyright: ignore[reportPrivateUsage]
+    # set ones are collected for forwarding. ``disable_caching=True`` keeps ``_source``
+    # the bare ``_FoundryToolboxSkillsSource`` (no caching/dedup decorators wrapping it).
+    default_source = cast(
+        _FoundryToolboxSkillsSource,
+        toolbox.as_skills_provider(disable_caching=True)._source,  # pyright: ignore[reportPrivateUsage]
+    )
     assert default_source._archive_options == {}  # pyright: ignore[reportPrivateUsage]
 
     source = cast(
         _FoundryToolboxSkillsSource,
         toolbox.as_skills_provider(
+            disable_caching=True,
             archive_max_size_bytes=2048,
             archive_resource_search_depth=1,
         )._source,  # pyright: ignore[reportPrivateUsage]

@@ -4101,6 +4101,40 @@ def _parse_mcp_skill_index(text: str) -> _McpSkillIndex:
     return _McpSkillIndex(schema=raw.get("$schema"), skills=entries)
 
 
+def _resolve_mcp_session_provider(
+    client: ClientSession | None,
+    session_provider: Callable[[], ClientSession] | None,
+) -> Callable[[], ClientSession]:
+    """Normalize the two MCP session inputs into a single session resolver.
+
+    Callers supply **exactly one** of a fixed ``client`` or a
+    ``session_provider`` callable. A fixed client is wrapped in a provider that
+    always returns it; a provider is used as-is so the session is resolved on
+    every call (reconnect-safe for sources whose underlying session is replaced
+    over time, e.g. a reconnecting :class:`~agent_framework.MCPTool`).
+
+    Args:
+        client: A fixed MCP client session, or ``None``.
+        session_provider: A callable returning the current MCP client session,
+            or ``None``.
+
+    Returns:
+        A callable that returns the MCP client session to use.
+
+    Raises:
+        ValueError: If both or neither of *client* and *session_provider* are
+            provided.
+    """
+    if client is not None and session_provider is not None:
+        raise ValueError("Provide exactly one of 'client' or 'session_provider', not both.")
+    if session_provider is not None:
+        return session_provider
+    if client is None:
+        raise ValueError("Provide exactly one of 'client' or 'session_provider'.")
+    fixed: ClientSession = client
+    return lambda: fixed
+
+
 @experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
 class MCPSkillResource(SkillResource):
     """A :class:`SkillResource` backed by content fetched from an MCP server.
@@ -4163,21 +4197,39 @@ class MCPSkill(Skill):
         self,
         frontmatter: SkillFrontmatter,
         skill_md_uri: str,
-        client: ClientSession,
+        client: ClientSession | None = None,
+        *,
+        session_provider: Callable[[], ClientSession] | None = None,
     ) -> None:
         """Initialize an MCPSkill.
+
+        Provide **exactly one** of *client* or *session_provider*.
 
         Args:
             frontmatter: The parsed frontmatter metadata for this skill.
             skill_md_uri: The full MCP resource URI of the ``SKILL.md`` resource
                 (e.g. ``skill://unit-converter/SKILL.md``). The skill's root URI
                 is derived by stripping the trailing ``SKILL.md`` segment.
-            client: The MCP client session used to fetch resources on demand.
+            client: A fixed MCP client session used to fetch resources on demand.
+                Use this when the session outlives the skill (e.g. a caller-owned
+                long-lived session).
+
+        Keyword Args:
+            session_provider: A callable returning the current MCP client session,
+                resolved on every fetch. Prefer this over *client* when the
+                underlying session may be replaced over the skill's lifetime (for
+                example, a reconnecting :class:`~agent_framework.MCPTool` whose
+                ``session`` is swapped on reconnect), so a cached skill keeps
+                using the live session instead of a closed one.
+
+        Raises:
+            ValueError: If both or neither of *client* and *session_provider* are
+                provided.
         """
         self._frontmatter = frontmatter
         self._skill_md_uri = skill_md_uri
         self._skill_root_uri = self._compute_skill_root_uri(skill_md_uri)
-        self._client = client
+        self._session_provider = _resolve_mcp_session_provider(client, session_provider)
         self._content: str | None = None
 
     @property
@@ -4201,7 +4253,7 @@ class MCPSkill(Skill):
         if self._content is not None:
             return self._content
 
-        result = await self._client.read_resource(_mcp_any_url(self._skill_md_uri))
+        result = await self._session_provider().read_resource(_mcp_any_url(self._skill_md_uri))
         text = _mcp_join_text(result)
         if not text:
             raise ValueError(f"The MCP server returned no text content for SKILL.md resource '{self._skill_md_uri}'.")
@@ -4231,7 +4283,7 @@ class MCPSkill(Skill):
 
         uri = self._skill_root_uri + normalized
         try:
-            result = await self._client.read_resource(_mcp_any_url(uri))
+            result = await self._session_provider().read_resource(_mcp_any_url(uri))
         except Exception as ex:
             if _is_mcp_resource_not_found(ex):
                 logger.debug("MCP resource '%s' not available: %s", uri, ex)
@@ -4523,7 +4575,7 @@ class _ArchiveEntryLoader:
 
     def __init__(
         self,
-        client: ClientSession,
+        session_provider: Callable[[], ClientSession],
         *,
         resource_extensions: tuple[str, ...] | None,
         resource_search_depth: int,
@@ -4531,7 +4583,7 @@ class _ArchiveEntryLoader:
         max_size_bytes: int,
         max_uncompressed_size_bytes: int,
     ) -> None:
-        self._client = client
+        self._session_provider = session_provider
         self._resource_extensions: tuple[str, ...] = (
             resource_extensions if resource_extensions is not None else DEFAULT_RESOURCE_EXTENSIONS
         )
@@ -4602,7 +4654,7 @@ class _ArchiveEntryLoader:
                 while reading the archive resource is re-raised.
         """
         try:
-            result = await self._client.read_resource(_mcp_any_url(cast(str, entry.url)))
+            result = await self._session_provider().read_resource(_mcp_any_url(cast(str, entry.url)))
         except Exception as ex:
             if _is_mcp_resource_not_found(ex):
                 logger.debug("Archive resource '%s' for skill '%s' not available: %s", entry.url, entry.name, ex)
@@ -4811,8 +4863,9 @@ class MCPSkillsSource(SkillsSource):
 
     def __init__(
         self,
-        client: ClientSession,
+        client: ClientSession | None = None,
         *,
+        session_provider: Callable[[], ClientSession] | None = None,
         archive_resource_extensions: tuple[str, ...] | None = None,
         archive_resource_search_depth: int = DEFAULT_SEARCH_DEPTH,
         archive_max_file_count: int = _DEFAULT_ARCHIVE_MAX_FILE_COUNT,
@@ -4821,11 +4874,22 @@ class MCPSkillsSource(SkillsSource):
     ) -> None:
         """Initialize an MCPSkillsSource.
 
+        Provide **exactly one** of *client* or *session_provider*.
+
         Args:
-            client: An MCP client session connected to a server that
-                exposes Agent Skills resources.
+            client: A fixed MCP client session connected to a server that exposes
+                Agent Skills resources. Use this when the session outlives the
+                source (e.g. a caller-owned long-lived session).
 
         Keyword Args:
+            session_provider: A callable returning the current MCP client session,
+                resolved on every discovery and on each skill's on-demand fetch.
+                Prefer this over *client* when the underlying session may be
+                replaced over time (for example, a reconnecting
+                :class:`~agent_framework.MCPTool` whose ``session`` is swapped on
+                reconnect), so cached skills keep using the live session. The
+                provider is forwarded to every :class:`MCPSkill` this source
+                creates.
             archive_resource_extensions: Allowed file extensions for resources discovered
                 in ``archive``-type skills. When ``None`` (the default), the file-source
                 default set (``.md``, ``.json``, ``.yaml``, ``.yml``, ``.csv``, ``.xml``,
@@ -4842,10 +4906,14 @@ class MCPSkillsSource(SkillsSource):
             archive_max_uncompressed_size_bytes: Maximum total uncompressed size, in bytes,
                 of all files extracted from a single archive skill (decompression-bomb
                 guard). Defaults to ``1 MB``. An archive that exceeds the limit is skipped.
+
+        Raises:
+            ValueError: If both or neither of *client* and *session_provider* are
+                provided.
         """
-        self._client = client
+        self._session_provider = _resolve_mcp_session_provider(client, session_provider)
         self._archive_loader = _ArchiveEntryLoader(
-            client,
+            self._session_provider,
             resource_extensions=archive_resource_extensions,
             resource_search_depth=archive_resource_search_depth,
             max_file_count=archive_max_file_count,
@@ -4914,7 +4982,7 @@ class MCPSkillsSource(SkillsSource):
             absent, empty, or malformed.
         """
         try:
-            result = await self._client.read_resource(_mcp_any_url(self._INDEX_URI))
+            result = await self._session_provider().read_resource(_mcp_any_url(self._INDEX_URI))
         except Exception as ex:
             if _is_mcp_resource_not_found(ex):
                 logger.debug("No skill://index.json resource available on MCP server: %s", ex)
@@ -4964,7 +5032,7 @@ class MCPSkillsSource(SkillsSource):
             logger.debug("Skipping entry '%s': invalid metadata: %s", entry.name, ex)
             return None
 
-        return MCPSkill(frontmatter=fm, skill_md_uri=entry.url, client=self._client)
+        return MCPSkill(frontmatter=fm, skill_md_uri=entry.url, session_provider=self._session_provider)
 
 
 # endregion

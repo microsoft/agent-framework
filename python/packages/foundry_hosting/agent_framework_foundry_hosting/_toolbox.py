@@ -9,6 +9,8 @@ from urllib.parse import urlsplit
 
 import httpx
 from agent_framework import (
+    CachingSkillsSource,
+    DeduplicatingSkillsSource,
     MCPSkillsSource,
     MCPStreamableHTTPTool,
     SkillsProvider,
@@ -19,10 +21,12 @@ from azure.ai.agentserver.core import get_request_context
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+    from datetime import timedelta
     from typing import Any
 
     from agent_framework import Skill
     from azure.core.credentials import TokenCredential
+    from mcp.client.session import ClientSession
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +200,7 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         source_id: str | None = None,
         instruction_template: str | None = None,
         disable_caching: bool = False,
+        cache_refresh_interval: timedelta | None = None,
         disable_load_skill_approval: bool = False,
         disable_read_skill_resource_approval: bool = False,
         disable_run_skill_script_approval: bool = False,
@@ -227,8 +232,18 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             source_id: Unique identifier for the provider instance.
             instruction_template: Custom system-prompt template for advertising
                 skills; see :class:`~agent_framework.SkillsProvider`.
-            disable_caching: Re-query the toolbox on every agent run instead of
-                caching after the first discovery.
+            disable_caching: When ``True``, re-query the toolbox on every agent run,
+                re-reading ``skill://index.json`` each time. When ``False`` (the
+                default), the toolbox's skill discovery is cached after the first run
+                so the index is read once. The toolbox's advertised skill set is the
+                same for every caller (the per-request call-id governs execution/
+                authorization, not which skills are listed), so a single shared cache
+                is safe.
+            cache_refresh_interval: Optional duration after which the cached skill
+                discovery is considered stale and re-read from the toolbox on the next
+                agent run. Useful when a toolbox's attached skills change over the
+                process lifetime. When ``None`` (the default), the cache never expires.
+                Ignored when ``disable_caching=True``.
             disable_load_skill_approval: When ``True``, register the provider's
                 ``load_skill`` tool with ``approval_mode="never_require"`` so loading
                 a skill body needs no host approval. Set this for unattended agents
@@ -289,11 +304,17 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         if archive_max_uncompressed_size_bytes is not None:
             archive_options["archive_max_uncompressed_size_bytes"] = archive_max_uncompressed_size_bytes
 
+        # The toolbox advertises the same skill set to every caller (the per-request
+        # call-id governs execution/authorization, not which skills are listed), so a
+        # single shared cache is safe. SkillsProvider won't auto-cache a caller source,
+        # so we compose the caching ourselves.
+        source: SkillsSource = _FoundryToolboxSkillsSource(self, archive_options=archive_options)
+        if not disable_caching:
+            source = DeduplicatingSkillsSource(CachingSkillsSource(source, refresh_interval=cache_refresh_interval))
         return SkillsProvider(
-            _FoundryToolboxSkillsSource(self, archive_options=archive_options),
+            source,
             source_id=source_id,
             instruction_template=instruction_template,
-            disable_caching=disable_caching,
             disable_load_skill_approval=disable_load_skill_approval,
             disable_read_skill_resource_approval=disable_read_skill_resource_approval,
             disable_run_skill_script_approval=disable_run_skill_script_approval,
@@ -304,8 +325,10 @@ class _FoundryToolboxSkillsSource(SkillsSource):
     """Discovers skills from a connected :class:`FoundryToolbox` MCP session.
 
     The toolbox's MCP ``session`` is established lazily when the toolbox connects
-    (via the agent or an ``async with`` block), so the session is resolved at
-    discovery time rather than captured at construction.
+    (via the agent or an ``async with`` block) and is **replaced** with a new
+    object whenever the toolbox reconnects. Skills are therefore bound to a
+    ``session_provider`` that resolves the toolbox's current session on every
+    fetch, so cached skills keep using the live session instead of a closed one.
     """
 
     def __init__(self, toolbox: FoundryToolbox, *, archive_options: dict[str, Any] | None = None) -> None:
@@ -313,7 +336,8 @@ class _FoundryToolboxSkillsSource(SkillsSource):
         # Explicitly-set MCPSkillsSource archive kwargs; empty means use its defaults.
         self._archive_options: dict[str, Any] = archive_options or {}
 
-    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
+    def _require_session(self) -> ClientSession:
+        """Return the toolbox's current MCP session, or raise if not connected."""
         session = self._toolbox.session
         if session is None:
             raise RuntimeError(
@@ -321,4 +345,12 @@ class _FoundryToolboxSkillsSource(SkillsSource):
                 "Pass the toolbox to the agent (tools=...) or enter it as an async "
                 "context manager before the agent runs."
             )
-        return await MCPSkillsSource(client=session, **self._archive_options).get_skills(context)
+        return session
+
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
+        # Fail fast at discovery if not connected, then hand the source a provider
+        # (not a fixed session) so skills survive a reconnect that swaps the session.
+        self._require_session()
+        return await MCPSkillsSource(session_provider=self._require_session, **self._archive_options).get_skills(
+            context
+        )
