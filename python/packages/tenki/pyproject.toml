@@ -4,7 +4,7 @@ description = "Tenki Sandbox CodeAct integrations for Microsoft Agent Framework.
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.1.0a260720"
+version = "1.0.0a260722"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,7 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.11.0,<2",
-    "tenki-sandbox>=0.1.0,<1",
+    "tenki-sandbox>=0.4.0,<0.5",
 ]
 
 [tool.uv]

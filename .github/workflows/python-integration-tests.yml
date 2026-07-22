@@ -164,7 +164,7 @@ jobs:
           path: ./python/pytest.xml
           if-no-files-found: ignore
 
-  # Misc integration tests (Anthropic, Hyperlight, Ollama, MCP)
+  # Misc integration tests (Anthropic, Hyperlight, Ollama, MCP, Tenki)
   python-tests-misc-integration:
     name: Python Integration Tests - Misc
     runs-on: ubuntu-latest
@@ -176,6 +176,8 @@ jobs:
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
       OLLAMA_MODEL: qwen2.5:1.5b
       OLLAMA_EMBEDDING_MODEL: nomic-embed-text
+      TENKI_API_KEY: ${{ secrets.TENKI_API_KEY }}
+      TENKI_PROJECT_ID: ${{ vars.TENKI_PROJECT_ID }}
     defaults:
       run:
         working-directory: python
@@ -234,12 +236,13 @@ jobs:
           fallback_url: ${{ env.LOCAL_MCP_URL }}
       - name: Prefer local MCP URL when available
         run: echo "LOCAL_MCP_URL=${{ steps.local-mcp.outputs.effective_url }}" >> "$GITHUB_ENV"
-      - name: Test with pytest (Anthropic, Hyperlight, Ollama, MCP integration)
+      - name: Test with pytest (Anthropic, Hyperlight, Ollama, MCP, Tenki integration)
         run: >
           uv run pytest --import-mode=importlib
           packages/anthropic/tests
           packages/hyperlight/tests
           packages/ollama/tests
+          packages/tenki/tests
           packages/core/tests/core/test_mcp.py
           -m integration
           -n logical --dist worksteal

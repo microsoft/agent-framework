@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import os
 import threading
+import time
 import uuid
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from agent_framework import Content, FunctionTool
 from agent_framework._tools import ApprovalMode
-from tenki_sandbox import Sandbox
+from tenki_sandbox import CommandResult, Sandbox
 
 logger = logging.getLogger(__name__)
 
@@ -41,16 +41,35 @@ EXECUTE_CODE_INPUT_SCHEMA: dict[str, Any] = {
     "required": ["code"],
 }
 
+_DEFAULT_SANDBOX_NAME_PREFIX = "agent-framework"
 
-def _default_sandbox_name() -> str:
-    """Return a unique, source-attributable sandbox name.
+# Server-side duration cap applied when the caller does not pass an explicit
+# ``max_duration_seconds``. Without it, a crashed process or cancelled task
+# would leave the sandbox running until Tenki's workspace policies stop it.
+# On expiry Tenki pauses project/workspace-scoped sandboxes (compute stops,
+# disk state is retained) and terminates unscoped ones.
+_DEFAULT_MAX_DURATION_SECONDS = 60 * 15
 
-    The ``agent-framework-`` prefix lets operators inspecting the Tenki dashboard or the
-    ``tenki sandbox list`` CLI attribute the sandbox back to Agent Framework — matching
-    the client-attributable naming already used elsewhere in the workspace (for example
-    ``WorkflowBuilder-<uuid>`` in ``agent-framework-durabletask``).
-    """
-    return f"agent-framework-{uuid.uuid4().hex[:8]}"
+# Poll-until-RUNNING budget for the reconcile loop (resume + transitional
+# states). Sized for the slowest observed path: a ``USER_SHUTDOWN`` resume
+# must first wait out the server's async rootfs capture (resume is rejected
+# with "session has no pause snapshot" / "pause snapshot is not ready" until
+# it completes — ~60s measured live), then cold-boot from that snapshot.
+_RESUME_POLL_TIMEOUT_SECONDS = 120.0
+_RESUME_POLL_INTERVAL_SECONDS = 0.5
+
+# State groupings (SDK returns strings). ``PAUSED`` and ``USER_SHUTDOWN`` are
+# both stopped-but-resumable server-side: filesystem state is retained and
+# ``resume()`` is a legal transition. Only ``TERMINATED`` is truly terminal;
+# ``TERMINATING`` can no longer be resumed, so both are grouped for re-provision.
+_RUNNABLE_STATE = "RUNNING"
+_RESUMABLE_STATES = frozenset({"PAUSED", "USER_SHUTDOWN"})
+_TERMINAL_STATES = frozenset({"TERMINATING", "TERMINATED"})
+
+
+def _generate_sandbox_name(prefix: str) -> str:
+    """Return ``<prefix>-<8-hex>``. Used by both standalone and run-scoped tools."""
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
 class TenkiExecuteCodeTool(FunctionTool):
@@ -61,35 +80,36 @@ class TenkiExecuteCodeTool(FunctionTool):
     `Tenki Sandbox quick start <https://tenki.cloud/docs/sandbox/quick-start-sandbox>`_
     to create a workspace and generate a key, then export it as ``TENKI_API_KEY``.
 
-    Lifecycle: the tool lazily provisions a sandbox on the first ``_run_code`` invocation
-    and reuses the same sandbox for every subsequent call within the tool's lifetime.
-    Before each call the tool reconciles remote sandbox state — a sandbox that has
-    transitioned to ``PAUSED`` (Tenki server-side idle policy, ``idle_timeout_minutes``
-    from ``extra_create_kwargs``, or an external ``tenki sandbox pause``) is
-    transparently resumed, and a sandbox that has transitioned to ``TERMINATING`` or
-    ``TERMINATED`` (workspace timeout, ``max_duration_seconds``, or an external
-    ``tenki sandbox terminate``) is replaced by a fresh provision. Callers therefore
-    never have to track pause/terminate transitions manually. Each call runs
+    Lifecycle when used standalone: the tool lazily provisions a sandbox on the first
+    ``execute_code`` invocation and reuses the same sandbox for every subsequent call.
+    Before each call the tool reconciles remote sandbox state — a sandbox stopped in
+    ``PAUSED`` or ``USER_SHUTDOWN`` (both resumable, filesystem retained) is
+    transparently resumed and polled until ``RUNNING``; a sandbox in ``TERMINATING``
+    or ``TERMINATED`` is replaced by a fresh provision. A transient ``refresh()``
+    failure surfaces as a ``RuntimeError`` without dropping the handle, so the next
+    call retries the same sandbox rather than leaking it. Each call runs
     ``python3 -c <code>`` inside the sandbox, so the sandbox filesystem and installed
     packages persist across calls but the Python interpreter state does not —
-    variables defined in one call are not reachable in the next. Filesystem and
-    installed packages are also lost when the sandbox is re-provisioned after a
-    termination; use ``extra_create_kwargs={"snapshot_id": ...}`` on a new tool if you
-    need to preserve state across that boundary. Persist intermediate state through
-    files or environment variables when a later call needs it. Call :meth:`close` (or
-    use the tool via ``async with``) to terminate the sandbox and release the
-    underlying microVM. A new sandbox is created on the next call if the tool is
-    reused after being closed.
+    variables defined in one call are not reachable in the next. Persist intermediate
+    state through files or environment variables when a later call needs it. Call
+    `close` (or use the tool via ``async with``) to terminate the sandbox and release
+    the underlying microVM.
+
+    Lifecycle when used through `TenkiCodeActProvider`: the provider mints a
+    fresh run-scoped tool per agent run via `create_run_tool`, and the run tool
+    provisions its own sandbox that is terminated by ``after_run``. Agent runs never
+    share filesystem/secret state through this tool.
 
     Args:
         approval_mode (ApprovalMode | None): Approval policy passed through to
-            :class:`agent_framework.FunctionTool`. Defaults to ``"never_require"``.
+            `agent_framework.FunctionTool`. Defaults to ``"never_require"``.
         api_key (str | None): Optional Tenki API key. When ``None`` the SDK reads
-            :envvar:`TENKI_API_KEY` from the environment.
-        sandbox_name (str | None): Optional sandbox identifier. When ``None`` the tool
-            generates ``agent-framework-<8-hex>`` — matching the naming convention already
-            used by other Agent Framework packages that create externally visible
-            resources.
+            `TENKI_API_KEY` from the environment.
+        sandbox_name (str | None): Optional literal sandbox identifier. Tenki does
+            not enforce name uniqueness — names are display labels. When ``None``
+            the tool generates ``agent-framework-<8-hex>`` and refreshes the suffix
+            on every re-provision so successive sandboxes stay distinguishable in
+            the Tenki dashboard. When set, the literal name is used as-is.
         image (str | None): Optional Tenki base-image identifier. When ``None`` the
             Tenki service picks its default sandbox image (which ships ``python3``).
         project_id (str | None): Optional Tenki project ID scoping the sandbox.
@@ -100,28 +120,31 @@ class TenkiExecuteCodeTool(FunctionTool):
         memory_mb (int | None): Optional memory (MB). ``None`` uses the service default.
         disk_size_gb (int | None): Optional ephemeral disk (GB). ``None`` uses the
             service default.
-        max_duration_seconds (int | None): Optional cost-safety cap on sandbox
-            lifetime, enforced server-side. When ``None`` the sandbox lives until
-            explicitly terminated (or the workspace timeout applies). Recommended for
-            production use to avoid runaway sandboxes in agent loops.
-        exec_timeout_seconds (int): Per-``_run_code`` timeout in seconds. Defaults to 60.
+        max_duration_seconds (int | None): Server-side duration cap enforced by
+            Tenki. Defaults to 900 (15 minutes) so a crashed process or cancelled
+            task cannot leave a sandbox running indefinitely. On expiry Tenki
+            pauses project/workspace-scoped sandboxes (compute stops, disk state
+            retained) and terminates unscoped ones. Pass an explicit value for
+            longer evals; pass ``None`` to explicitly opt out (not recommended in
+            production).
+        exec_timeout_seconds (int): Per-``execute_code`` timeout in seconds. Defaults to 60.
         extra_create_kwargs (dict[str, Any] | None): Optional keyword arguments passed
-            straight to :meth:`tenki_sandbox.Sandbox.create` — for advanced knobs not
+            straight to `tenki_sandbox.Sandbox.create` — for advanced knobs not
             surfaced individually (e.g. ``snapshot_id``, ``allow_inbound``,
             ``allow_outbound``).
 
     Notes:
         * In-sandbox tool callbacks are not supported — code executing inside the sandbox
-          cannot invoke host-side :class:`~agent_framework.FunctionTool` instances (the
+          cannot invoke host-side `agent_framework.FunctionTool` instances (the
           Tenki SDK does not expose a callback bridge).
-        * File mounts and outbound network allow-lists are not modeled by this package.
-          Bake dependencies and files into a custom Tenki image, or configure them
-          through ``extra_create_kwargs``.
-        * The sandbox lifecycle is *reuse-per-tool*, not per-agent-run. If the tool is
-          shared across many agent runs, filesystem state from run N is visible to run
-          N+1 (same sandbox), though each individual ``execute_code`` invocation is a
-          fresh Python process. Create a fresh :class:`TenkiExecuteCodeTool` per agent
-          instance if isolation between agents matters.
+        * File mounts and outbound network allow-lists are not surfaced as first-class
+          kwargs; pass them through ``extra_create_kwargs``.
+        * Cancellation latency: ``execute_code`` runs ``sandbox.exec`` inside
+          ``asyncio.to_thread``. Python cannot cancel an in-flight thread, so a
+          cancel raised during exec propagates to the awaiter immediately but the
+          underlying sandbox call keeps running server-side until it completes
+          or hits ``exec_timeout_seconds``. Worst-case wall time from cancel to
+          full quiescence is therefore ``exec_timeout_seconds``.
     """
 
     SUPPORTED_LANGUAGES: ClassVar[list[str]] = ["python"]
@@ -138,9 +161,10 @@ class TenkiExecuteCodeTool(FunctionTool):
         cpu_cores: int | None = None,
         memory_mb: int | None = None,
         disk_size_gb: int | None = None,
-        max_duration_seconds: int | None = None,
+        max_duration_seconds: int | None = _DEFAULT_MAX_DURATION_SECONDS,
         exec_timeout_seconds: int = 60,
         extra_create_kwargs: dict[str, Any] | None = None,
+        _sandbox_name_prefix: str | None = None,
     ) -> None:
         if exec_timeout_seconds < 1:
             raise ValueError("exec_timeout_seconds must be greater than or equal to 1.")
@@ -154,14 +178,19 @@ class TenkiExecuteCodeTool(FunctionTool):
         )
 
         self._api_key = api_key
-        # An explicit ``sandbox_name`` is preserved as-is across the tool's lifetime,
-        # even across re-provisioning after termination — the user asked for that
-        # name specifically, so if Tenki rejects reuse we surface the error. An
-        # auto-generated name is refreshed on every re-provision to avoid
-        # ``ALREADY_EXISTS`` collisions when Tenki holds a name reservation after
-        # termination.
-        self._explicit_sandbox_name: str | None = sandbox_name
-        self._sandbox_name = sandbox_name if sandbox_name is not None else _default_sandbox_name()
+        # Two naming modes (names are display labels; Tenki does not enforce uniqueness):
+        # (1) explicit literal — ``sandbox_name="my-agent"`` on standalone use, passed
+        #     verbatim and preserved across re-provision.
+        # (2) prefix-with-suffix — ``_sandbox_name_prefix`` set by `create_run_tool`
+        #     (or the default prefix): every provision mints ``<prefix>-<8-hex>`` so
+        #     sandboxes stay distinguishable in the Tenki dashboard.
+        self._explicit_sandbox_name: str | None = sandbox_name if _sandbox_name_prefix is None else None
+        self._sandbox_name_prefix: str = _sandbox_name_prefix or _DEFAULT_SANDBOX_NAME_PREFIX
+        if self._explicit_sandbox_name is not None:
+            self._sandbox_name = self._explicit_sandbox_name
+        else:
+            self._sandbox_name = _generate_sandbox_name(self._sandbox_name_prefix)
+
         self._image = image
         self._project_id = project_id
         self._workspace_id = workspace_id
@@ -173,19 +202,47 @@ class TenkiExecuteCodeTool(FunctionTool):
         self._extra_create_kwargs: dict[str, Any] = dict(extra_create_kwargs) if extra_create_kwargs else {}
 
         # A single sandbox is created lazily on first use and reused across calls.
-        # A lock guards the create/close race between concurrent ``_run_code`` invocations.
+        # A lock guards the create/close race between concurrent ``execute_code`` invocations.
         self._sandbox_lock = threading.Lock()
         self._sandbox: Sandbox | None = None
 
     @property
     def sandbox_name(self) -> str:
-        """The name of the underlying Tenki sandbox."""
+        """The name of the current or next-provisioned Tenki sandbox."""
         return self._sandbox_name
 
     @property
     def exec_timeout_seconds(self) -> int:
         """Per-invocation execution timeout in seconds."""
         return self._exec_timeout_seconds
+
+    def create_run_tool(self) -> TenkiExecuteCodeTool:
+        """Return a fresh, run-scoped ``TenkiExecuteCodeTool`` with the same config.
+
+        Called by `TenkiCodeActProvider.before_run` to create a per-agent-run
+        tool. The returned tool has a unique ``<prefix>-<8-hex>`` sandbox name derived
+        from the user's explicit ``sandbox_name`` (used as prefix) or the default
+        ``agent-framework`` prefix. All other kwargs are copied verbatim.
+        """
+        prefix = self._explicit_sandbox_name if self._explicit_sandbox_name is not None else self._sandbox_name_prefix
+        # ``FunctionTool.__init__`` stores ``approval_mode`` after applying its own
+        # ``or "never_require"`` fallback, so the runtime value is always a valid
+        # ``ApprovalMode``. Cast so the constructor's stricter ``ApprovalMode | None``
+        # type annotation stays satisfied.
+        return TenkiExecuteCodeTool(
+            approval_mode=cast("ApprovalMode | None", self.approval_mode),
+            api_key=self._api_key,
+            image=self._image,
+            project_id=self._project_id,
+            workspace_id=self._workspace_id,
+            cpu_cores=self._cpu_cores,
+            memory_mb=self._memory_mb,
+            disk_size_gb=self._disk_size_gb,
+            max_duration_seconds=self._max_duration_seconds,
+            exec_timeout_seconds=self._exec_timeout_seconds,
+            extra_create_kwargs=dict(self._extra_create_kwargs),
+            _sandbox_name_prefix=prefix,
+        )
 
     def _build_create_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"name": self._sandbox_name}
@@ -194,6 +251,12 @@ class TenkiExecuteCodeTool(FunctionTool):
         # ``is not None`` (rather than ``or``) so that an explicit empty string on the
         # constructor still wins over the env var — the contract is "explicit args
         # override env vars when provided", not "truthy args override env vars".
+        #
+        # Env-var ownership: ``TENKI_API_KEY`` is also read by the SDK
+        # (``resolve_auth_token``); the duplicate read here preserves the
+        # explicit-arg-wins semantics above. ``TENKI_PROJECT_ID`` and
+        # ``TENKI_WORKSPACE_ID`` are **not** read by the SDK — this module
+        # owns them.
         api_key = self._api_key if self._api_key is not None else os.environ.get("TENKI_API_KEY")
         if api_key is not None:
             kwargs["auth_token"] = api_key
@@ -202,9 +265,7 @@ class TenkiExecuteCodeTool(FunctionTool):
         project_id = self._project_id if self._project_id is not None else os.environ.get("TENKI_PROJECT_ID")
         if project_id is not None:
             kwargs["project_id"] = project_id
-        workspace_id = (
-            self._workspace_id if self._workspace_id is not None else os.environ.get("TENKI_WORKSPACE_ID")
-        )
+        workspace_id = self._workspace_id if self._workspace_id is not None else os.environ.get("TENKI_WORKSPACE_ID")
         if workspace_id is not None:
             kwargs["workspace_id"] = workspace_id
         if self._cpu_cores is not None:
@@ -220,15 +281,19 @@ class TenkiExecuteCodeTool(FunctionTool):
         return kwargs
 
     def _ensure_sandbox_sync(self) -> Sandbox:
-        """Return a usable sandbox — provision on first use, resume if paused, re-provision if gone.
+        """Return a runnable sandbox — provision on first use, resume if stopped, re-provision if gone.
 
-        Tenki sandboxes can transition to ``PAUSED`` between calls (server-side idle
-        policies, external ``tenki sandbox pause``) and to ``TERMINATED`` if the
-        workspace timeout or ``max_duration`` elapsed. This method reconciles the
-        remote state on every call so ``_run_code`` never hands the SDK a
-        ``sandbox.exec`` that would fail with ``sandbox is not RUNNING``.
+        Called inside ``asyncio.to_thread``. Reconciles remote state on every call:
 
-        Called inside ``asyncio.to_thread``.
+        - ``TERMINATING`` / ``TERMINATED`` → drop the handle, provision a fresh
+          sandbox (auto-generated names refresh their suffix; explicit names are
+          preserved).
+        - any other non-``RUNNING`` state → `_wait_for_running_locked`, which
+          resumes stopped-but-resumable sandboxes (``PAUSED`` / ``USER_SHUTDOWN``)
+          and polls transitional states (``PAUSING`` / ``RESUMING`` / ``CREATING``)
+          until ``RUNNING``.
+        - ``refresh()`` raising → surface as ``RuntimeError`` without dropping the
+          handle. Next call retries the same sandbox rather than leaking it.
         """
         with self._sandbox_lock:
             sandbox = self._sandbox
@@ -238,36 +303,79 @@ class TenkiExecuteCodeTool(FunctionTool):
             try:
                 sandbox.refresh()
             except Exception as exc:
-                # Remote state is unknowable — drop the stale handle and re-provision.
-                logger.debug("Dropping Tenki sandbox handle after refresh failure: %s", exc)
+                # Do not drop the handle — the sandbox may still be alive.
+                # Surface the error so the next call retries the same session
+                # rather than provisioning a duplicate.
+                raise RuntimeError(f"Failed to refresh Tenki sandbox state: {exc}") from exc
+
+            if sandbox.state in _TERMINAL_STATES:
+                logger.debug("Tenki sandbox reached remote state=%s; re-provisioning", sandbox.state)
+                # The session can no longer be resumed or terminated again, but the
+                # SDK-owned control-plane channel is still open on our side.
+                self._close_owning_client_sync(sandbox)
                 self._sandbox = None
                 self._refresh_autogenerated_name_locked()
                 return self._create_sandbox_locked()
+            return self._wait_for_running_locked(sandbox)
 
-            state = getattr(sandbox, "state", None)
-            if state == "PAUSED":
+    def _wait_for_running_locked(self, sandbox: Sandbox) -> Sandbox:
+        """Poll until the sandbox reaches ``RUNNING``, resuming it if stopped. Lock must be held.
+
+        Resume attempts are retried within the poll budget. Two failure shapes
+        require this — both observed live: ``USER_SHUTDOWN`` links its pause
+        snapshot asynchronously (the rootfs capture runs *after* the state
+        flips), so the server rejects resume with FAILED_PRECONDITION ("session
+        has no pause snapshot" / "pause snapshot is not ready") until the
+        capture completes; and a dispatched resume that fails on the node is
+        reverted server-side to the source state (``RESUMING`` →
+        ``USER_SHUTDOWN``/``PAUSED``), which the loop sees as the sandbox
+        settling back and simply retries. Unknown states are treated as
+        transitional so an SDK upgrade that adds new states doesn't fail
+        closed. Raises ``RuntimeError`` on timeout so the caller sees a clear
+        error rather than a "sandbox is not RUNNING" exec failure.
+
+        Concurrency: the sandbox lock is held for the full poll window (up to
+        `_RESUME_POLL_TIMEOUT_SECONDS`); concurrent ``execute_code`` calls block
+        on the lock rather than racing the resume.
+        """
+        deadline = time.monotonic() + _RESUME_POLL_TIMEOUT_SECONDS
+        while True:
+            state = sandbox.state
+            if state == _RUNNABLE_STATE:
+                return sandbox
+            if state in _TERMINAL_STATES:
+                raise RuntimeError(f"Tenki sandbox reached state={state} while waiting for RUNNING.")
+            if state in _RESUMABLE_STATES:
                 try:
                     sandbox.resume()
                 except Exception as exc:
-                    raise RuntimeError(f"Failed to resume paused Tenki sandbox: {exc}") from exc
-                return sandbox
-            if state in {"TERMINATING", "TERMINATED"}:
-                logger.debug("Dropping Tenki sandbox handle after remote state=%s", state)
-                self._sandbox = None
-                self._refresh_autogenerated_name_locked()
-                return self._create_sandbox_locked()
-            return sandbox
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(f"Failed to resume Tenki sandbox from state={state}: {exc}") from exc
+                    logger.debug("Tenki sandbox resume from state=%s failed; retrying: %s", state, exc)
+                else:
+                    # Local state is now RESUMING; fall through to poll. If the
+                    # server reverts the resume, the next refresh shows the
+                    # resumable state again and the loop retries.
+                    continue
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"Tenki sandbox did not reach RUNNING within {_RESUME_POLL_TIMEOUT_SECONDS}s (last state={state})."
+                )
+            time.sleep(_RESUME_POLL_INTERVAL_SECONDS)
+            try:
+                sandbox.refresh()
+            except Exception as exc:
+                raise RuntimeError(f"Failed to refresh Tenki sandbox state while polling: {exc}") from exc
 
     def _refresh_autogenerated_name_locked(self) -> None:
-        """Mint a fresh auto-generated name so re-provision never reuses the prior one.
+        """Mint a fresh suffix on re-provision for auto-generated names.
 
-        Tenki may hold the terminated sandbox's name (``ALREADY_EXISTS``); a fresh
-        8-hex suffix avoids the collision. Explicit user-supplied names are
-        preserved — the caller chose that name deliberately, and any reuse
-        rejection surfaces as a ``RuntimeError`` they can act on.
+        Tenki does not enforce name uniqueness; the fresh suffix keeps
+        successive sandboxes distinguishable in the Tenki dashboard and logs.
+        An explicit user-supplied literal name is preserved as-is.
         """
         if self._explicit_sandbox_name is None:
-            self._sandbox_name = _default_sandbox_name()
+            self._sandbox_name = _generate_sandbox_name(self._sandbox_name_prefix)
 
     def _create_sandbox_locked(self) -> Sandbox:
         """Provision a fresh sandbox. The sandbox lock must be held by the caller."""
@@ -284,7 +392,7 @@ class TenkiExecuteCodeTool(FunctionTool):
         try:
             sandbox = await asyncio.to_thread(self._ensure_sandbox_sync)
         except RuntimeError as exc:
-            return [Content.from_error(message="Failed to provision Tenki sandbox", error_details=str(exc))]
+            return [Content.from_error(message="Failed to prepare Tenki sandbox", error_details=str(exc))]
 
         try:
             result = await asyncio.to_thread(sandbox.exec, "python3", "-c", code, timeout=self._exec_timeout_seconds)
@@ -308,21 +416,32 @@ class TenkiExecuteCodeTool(FunctionTool):
         "characters were intended.]"
     )
 
-    def _build_contents(self, result: Any) -> list[Content]:
-        """Convert a Tenki exec result into a list of :class:`Content` values."""
-        stdout = getattr(result, "stdout_text", "") or ""
-        stderr = getattr(result, "stderr_text", "") or ""
-        exit_code = int(getattr(result, "exit_code", 1))
+    def _build_contents(self, result: CommandResult) -> list[Content]:
+        """Convert a Tenki ``CommandResult`` into a list of `Content` values.
+
+        ``result.ok`` accounts for the process being killed by a signal
+        (SIGKILL, SIGTERM, …), which ``exit_code`` alone misses. ``signal``,
+        ``reason``, and ``errno`` are surfaced in the error message so operators
+        can distinguish timeouts, OOM kills, and spawn failures.
+        """
+        stdout = result.stdout_text
+        stderr = result.stderr_text
 
         contents: list[Content] = []
         if stdout:
             contents.append(Content.from_text(stdout))
-        if exit_code != 0:
-            # Inline a truncated stderr into the message so downstream LLM
-            # consumers see the traceback in the primary field, not just in
-            # error_details — small models tend to under-weight secondary fields.
-            stderr_snippet = stderr.strip()[: self._ERROR_MESSAGE_STDERR_LIMIT] if stderr else ""
-            message = f"Code exited with status {exit_code}"
+        if not result.ok:
+            # Inline a truncated stderr into the message so LLM consumers see the
+            # traceback in the primary field, not just in error_details.
+            stderr_snippet = stderr.strip()[: self._ERROR_MESSAGE_STDERR_LIMIT]
+            failure_bits: list[str] = [f"status {result.exit_code}"]
+            if result.signal:
+                failure_bits.append(f"signal {result.signal}")
+            if result.reason:
+                failure_bits.append(f"reason {result.reason}")
+            if result.errno is not None:
+                failure_bits.append(f"errno {result.errno}")
+            message = f"Code exited with {', '.join(failure_bits)}"
             if stderr_snippet:
                 message = f"{message}. stderr: {stderr_snippet}"
             if stderr and "SyntaxError" in stderr:
@@ -342,23 +461,78 @@ class TenkiExecuteCodeTool(FunctionTool):
         return contents
 
     async def close(self) -> None:
-        """Terminate the underlying Tenki sandbox and release its resources.
+        """Terminate the underlying Tenki sandbox and its owning SDK client.
 
-        Safe to call multiple times; a no-op if the sandbox was never created. After
-        close, a subsequent ``_run_code`` invocation lazily provisions a new sandbox.
+        Safe to call multiple times; a no-op if the sandbox was never created.
+        On terminate failure the handle is **preserved** so the caller can retry
+        — a swallowed failure would otherwise leak the microVM. The SDK-owned
+        `tenki_sandbox.Client` created by ``Sandbox.create`` (when
+        ``_owns_client=True``) is closed after a successful terminate to release
+        the gRPC channel.
+        """
+        await asyncio.to_thread(self._close_sync)
+
+    def _close_sync(self) -> None:
+        """Sync body of `close`, run inside ``asyncio.to_thread``.
+
+        Holds ``_sandbox_lock`` for the whole terminate so it never races
+        `_ensure_sandbox_sync`, and — like all lock acquisitions in this class —
+        only ever blocks a worker thread, never the event loop (a reconcile can
+        hold the lock for up to the resume-poll budget).
         """
         with self._sandbox_lock:
             sandbox = self._sandbox
+            if sandbox is None:
+                return
+
+            # Terminate first. If it fails, the raised error propagates and the
+            # handle is kept so the caller can retry — dropping it here would
+            # leak the sandbox.
+            sandbox.close_if_open()
+
             self._sandbox = None
-        if sandbox is None:
+            # Close the owning Client (see `_close_owning_client_sync`).
+            self._close_owning_client_sync(sandbox)
+
+    def _close_owning_client_sync(self, sandbox: Sandbox) -> None:
+        """Close the SDK-owned control-plane `tenki_sandbox.Client`.
+
+        Called both after a successful ``close_if_open`` and from the
+        terminal-state re-provision branch in `_ensure_sandbox_sync`. The
+        SDK's own ``Sandbox.close()`` only closes the data-plane RPC, so
+        without this the gRPC control channel would stay open until the
+        process exits — a real leak under long-lived standalone tools that
+        re-provision on ``TERMINATED``.
+
+        ``_owns_client`` / ``_client`` are private SDK attributes read via
+        ``getattr``; if Tenki renames them we log loudly rather than silently
+        leak. A public ``sandbox.close_client()`` would let us drop this.
+        Errors are logged and suppressed — callers must not block on channel
+        cleanup.
+        """
+        if not getattr(sandbox, "_owns_client", False):
             return
-        # SDK errors on shutdown are ignored — the sandbox is server-side managed and will
-        # be reaped by Tenki's own idle timeout even if our terminate call fails.
-        with contextlib.suppress(Exception):  # pragma: no cover - defensive
-            await asyncio.to_thread(sandbox.close_if_open)
+        client = getattr(sandbox, "_client", None)
+        client_close = getattr(client, "close", None) if client is not None else None
+        if not callable(client_close):
+            logger.warning(
+                "Tenki sandbox %s reports _owns_client=True but no closable Client is "
+                "accessible; gRPC channel may leak. Tenki SDK internals may have changed.",
+                sandbox.id,
+            )
+            return
+        try:
+            client_close()
+        except Exception as exc:
+            logger.debug("Ignoring error closing Tenki Client: %s", exc)
 
     async def __aenter__(self) -> TenkiExecuteCodeTool:
         return self
 
-    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
         await self.close()

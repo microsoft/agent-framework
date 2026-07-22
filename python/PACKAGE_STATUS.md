@@ -47,6 +47,7 @@ Status is grouped into these buckets:
 | `agent-framework-orchestrations` | `python/packages/orchestrations` | `released` |
 | `agent-framework-purview` | `python/packages/purview` | `beta` |
 | `agent-framework-redis` | `python/packages/redis` | `beta` |
+| `agent-framework-tenki` | `python/packages/tenki` | `alpha` |
 
 ## Deprecated / removed packages
 
