@@ -58,8 +58,8 @@ from openai.types.responses.response_text_delta_event import ResponseTextDeltaEv
 from pydantic import BaseModel
 from pytest import param
 
-from agent_framework_openai import OpenAIChatClient
-from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY, RawOpenAIChatClient
+from agent_framework_openai import OpenAIChatClient, RawOpenAIChatClient
+from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
@@ -6554,6 +6554,64 @@ async def test_integration_tool_rich_content_image() -> None:
     assert len(response.text) > 0
     # sample_image.jpg contains a photo of a house; the model should mention it.
     assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_openai_integration_tests_disabled
+async def test_integration_stateless_reasoning_survives_json_and_checkpoint_round_trip() -> None:
+    """Encrypted reasoning can be restored from durable storage and replayed on a later request."""
+    marker = "STATELESS-REASONING-ROUND-TRIP-7233"
+
+    @tool(name="get_round_trip_marker", approval_mode="never_require")
+    def get_round_trip_marker() -> str:
+        """Return the marker that must be repeated in the final answer."""
+        return marker
+
+    client = RawOpenAIChatClient(model="gpt-5-mini")
+    initial_message = Message(
+        role="user",
+        contents=["Call get_round_trip_marker, then answer with exactly the value returned by the tool."],
+    )
+    first_response = await client.get_response(
+        [initial_message],
+        options={
+            "store": False,
+            "reasoning": {"effort": "low", "summary": "auto"},
+            "tools": [get_round_trip_marker],
+            "tool_choice": {"mode": "required", "required_function_name": "get_round_trip_marker"},
+        },
+    )
+
+    first_message = first_response.messages[0]
+    reasoning_contents = [content for content in first_message.contents if content.type == "text_reasoning"]
+    assert reasoning_contents
+    assert any(content.protected_data for content in reasoning_contents)
+    function_call = next(content for content in first_message.contents if content.type == "function_call")
+
+    message_restored_from_json = Message.from_json(first_message.to_json())
+    checkpoint_payload = json.loads(json.dumps(encode_checkpoint_value(message_restored_from_json)))
+    restored_message = decode_checkpoint_value(checkpoint_payload)
+    assert isinstance(restored_message, Message)
+
+    final_response = await client.get_response(
+        [
+            initial_message,
+            restored_message,
+            Message(
+                role="tool",
+                contents=[Content.from_function_result(call_id=function_call.call_id, result=marker)],
+            ),
+        ],
+        options={
+            "store": False,
+            "reasoning": {"effort": "low", "summary": "auto"},
+            "tools": [get_round_trip_marker],
+            "tool_choice": "none",
+        },
+    )
+
+    assert marker in final_response.text
 
 
 @pytest.mark.flaky
