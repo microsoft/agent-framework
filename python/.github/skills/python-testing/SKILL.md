@@ -7,7 +7,9 @@ description: >
 
 # Python Testing
 
-We strive for at least 85% test coverage across the codebase, with a focus on core packages and critical paths. Tests should be fast, reliable, and maintainable.
+CI enforces at least 85% line coverage for every package classified Beta or Production/Stable.
+Alpha packages are report-only, and the DevUI and experimental Lab packages are excluded from
+aggregate coverage enforcement. Tests should be fast, reliable, and maintainable.
 When adding new code, check that the relevant sections of the codebase are covered by tests, and add new tests as needed. When modifying existing code, update or add tests to cover the changes.
 We run tests in two stages, for a PR each commit is tested with unit tests only (using `-m "not integration"`), and the full suite including integration tests is run when merging.
 
@@ -82,6 +84,7 @@ packages/core/
 ## File Naming
 
 - Files starting with `test_` are test files — do not use this prefix for helpers
+- Prefer extending an existing test file that already covers the same component or behavior; create a new file only for a distinct surface without an appropriate existing file
 - Use `conftest.py` for shared utilities
 
 ## Integration Tests

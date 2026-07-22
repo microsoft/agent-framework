@@ -178,6 +178,10 @@ uv run poe test -A -C
 
 This will show you which files are not covered by the tests, including the specific lines not covered. Make sure to consider the untested lines from the code you are working on, but feel free to add other tests as well, that is always welcome!
 
+CI automatically enforces at least 85% line coverage for every package classified Beta or
+Production/Stable. Alpha packages are reported without blocking, and the DevUI and experimental Lab
+packages are excluded from aggregate coverage enforcement.
+
 ## Catching up with the latest changes
 
 There are many people committing to Agent Framework, so it is important to keep your local repository up to date. To do this, you can run the following commands:
