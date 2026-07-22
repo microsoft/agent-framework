@@ -2575,6 +2575,34 @@ def test_prepare_message_for_openai_with_function_approval_response() -> None:
     assert prepared_message["approve"] is True
 
 
+def test_prepare_message_for_openai_keeps_approval_response_under_service_side_storage() -> None:
+    """The approval response resumes an approval-paused run and must survive service-side storage.
+
+    It references the prior approval request by id and is not itself a server-stored item, so
+    stripping it (as the #3295 duplicate-item fix used to) leaves the run paused forever (#7125).
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    function_call = Content.from_function_call(
+        call_id="call_789",
+        name="execute_command",
+        arguments='{"command": "ls"}',
+    )
+    approval_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_003",
+        function_call=function_call,
+    )
+    message = Message(role="user", contents=[approval_response])
+
+    result = client._prepare_message_for_openai(message, request_uses_service_side_storage=True)
+
+    assert len(result) == 1
+    assert result[0]["type"] == "mcp_approval_response"
+    assert result[0]["approval_request_id"] == "approval_003"
+    assert result[0]["approve"] is True
+
+
 def test_prepare_message_for_openai_includes_reasoning_with_function_call() -> None:
     """Test _prepare_message_for_openai includes reasoning items alongside function_calls.
 
