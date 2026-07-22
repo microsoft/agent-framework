@@ -90,4 +90,36 @@ describe('GitHub App token creation', () => {
     );
     assert.equal(signed, false);
   });
+
+  it('rejects an empty Key Vault signature', async () => {
+    await assert.rejects(
+      createInstallationToken(CONFIG, {
+        execute: () => '\n',
+      }),
+      /Key Vault returned an empty signature/,
+    );
+  });
+
+  it('rejects a failed GitHub token request', async () => {
+    await assert.rejects(
+      createInstallationToken(CONFIG, {
+        execute: () => '+/8=\n',
+        fetch: async () => ({ ok: false, status: 403 }),
+      }),
+      /GitHub installation token request failed with HTTP 403/,
+    );
+  });
+
+  it('rejects an empty GitHub installation token', async () => {
+    await assert.rejects(
+      createInstallationToken(CONFIG, {
+        execute: () => '+/8=\n',
+        fetch: async () => ({
+          ok: true,
+          json: async () => ({ token: '' }),
+        }),
+      }),
+      /GitHub returned an empty installation token/,
+    );
+  });
 });

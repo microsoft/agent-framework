@@ -66,11 +66,13 @@ jobs:
           echo "pr_number=${pr_number}" >> "$GITHUB_OUTPUT"
           echo "repo=${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout GitHub token action
+      - name: Checkout GitHub automation
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
-          sparse-checkout: .github/actions/github-app-token
+          sparse-checkout: |
+            .github/actions/github-app-token
+            .github/scripts/check_team_membership.js
           fetch-depth: 1
           persist-credentials: false
 
@@ -98,29 +100,14 @@ jobs:
         with:
           github-token: ${{ steps.github-auth.outputs.token }}
           script: |
-            let author = context.payload.pull_request?.user?.login;
-            if (!author) {
-              const { data: pr } = await github.rest.pulls.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: Number(process.env.PR_NUMBER),
-              });
-              author = pr.user.login;
-            }
-
-            let isTeamMember = false;
-            try {
-              const teamMembership = await github.rest.teams.getMembershipForUserInOrg({
-                org: context.repo.owner,
-                team_slug: process.env.TEAM_NAME,
-                username: author,
-              });
-              isTeamMember = teamMembership.data.state === 'active';
-            } catch (error) {
-              console.log(`Team membership lookup failed for ${author}: ${error.message}`);
-              isTeamMember = false;
-            }
-
+            const checkTeamMembership = require('./.github/scripts/check_team_membership.js');
+            const { author, isTeamMember } = await checkTeamMembership({
+              github,
+              context,
+              core,
+              teamSlug: process.env.TEAM_NAME,
+              issueNumber: process.env.PR_NUMBER,
+            });
             core.setOutput('is_team_member', isTeamMember ? 'true' : 'false');
             if (isTeamMember) {
               core.info(`Author ${author} is a team member; proceeding with review.`);
