@@ -231,7 +231,6 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     result = await _FoundryToolboxSkillsSource(toolbox).get_skills(_source_context())
 
     assert result == ["skill-a"]
-    assert captured["client"] is sentinel_session
     # The source hands MCPSkillsSource a provider (not a fixed session) that resolves
     # the toolbox's current session, so it survives a reconnect that swaps it.
     provider = captured["session_provider"]
