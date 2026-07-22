@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -94,6 +95,23 @@ _AZURE_WEB_SEARCH_UNSUPPORTED_MSG = (
 )
 
 DEFAULT_AZURE_OPENAI_CHAT_COMPLETION_API_VERSION = "2024-12-01-preview"
+
+# The Chat Completions API validates a message ``name`` against ``^[^\s<|\\/>]+$``, so an
+# author name containing whitespace (or ``< | \ / >``) fails the whole request with a 400.
+# Mirrors SanitizeAuthorName in the .NET client (dotnet/extensions): strip characters outside
+# ``[a-zA-Z0-9_]``, drop the name entirely when nothing remains, truncate to 64 characters.
+# See https://github.com/microsoft/agent-framework/issues/7126
+_INVALID_AUTHOR_NAME_RE = re.compile(r"[^a-zA-Z0-9_]+")
+_MAX_AUTHOR_NAME_LENGTH = 64
+
+
+def _sanitize_author_name(name: str | None) -> str | None:
+    """Sanitize an author name for use as the Chat Completions message ``name`` field."""
+    if not name:
+        return None
+    sanitized = _INVALID_AUTHOR_NAME_RE.sub("", name)
+    return sanitized[:_MAX_AUTHOR_NAME_LENGTH] if sanitized else None
+
 
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
@@ -879,8 +897,8 @@ class RawOpenAIChatCompletionClient(
             texts = [content.text for content in message.contents if content.type == "text" and content.text]
             if texts:
                 sys_args: dict[str, Any] = {"role": message.role, "content": "\n".join(texts)}
-                if message.author_name:
-                    sys_args["name"] = message.author_name
+                if author_name := _sanitize_author_name(message.author_name):
+                    sys_args["name"] = author_name
                 return [sys_args]
             return []
 
@@ -894,8 +912,8 @@ class RawOpenAIChatCompletionClient(
             args: dict[str, Any] = {
                 "role": message.role,
             }
-            if message.author_name and message.role != "tool":
-                args["name"] = message.author_name
+            if message.role != "tool" and (author_name := _sanitize_author_name(message.author_name)):
+                args["name"] = author_name
             if "reasoning_details" in message.additional_properties and (
                 details := message.additional_properties["reasoning_details"]
             ):
@@ -951,8 +969,8 @@ class RawOpenAIChatCompletionClient(
                     "content": "",
                     "reasoning_details": pending_reasoning,
                 }
-                if message.author_name and message.role != "tool":
-                    pending_args["name"] = message.author_name
+                if message.role != "tool" and (author_name := _sanitize_author_name(message.author_name)):
+                    pending_args["name"] = author_name
                 all_messages.append(pending_args)
 
         # Flatten text-only content lists to plain strings for broader
