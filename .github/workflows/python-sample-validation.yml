@@ -581,7 +581,6 @@ jobs:
       MEMORY_STORE_NAME: ${{ vars.FOUNDRY_HOSTED_AGENT_MEMORY_STORE }}
       AZURE_SEARCH_ENDPOINT: ${{ vars.AZURE_SEARCH_ENDPOINT }}
       AZURE_SEARCH_INDEX_NAME: ${{ vars.FOUNDRY_HOSTED_AGENT_SEARCH_INDEX_NAME }}
-      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
     defaults:
       run:
         working-directory: python
@@ -595,29 +594,6 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
-
-      - name: Grant Azure AI Search access to the CI identity
-        shell: bash
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-        run: |
-          set -euo pipefail
-          # Derive the search service name from the endpoint (https://<name>.search.windows.net)
-          service_name="$(echo "$AZURE_SEARCH_ENDPOINT" | sed -E 's#^https?://([^.]+)\..*#\1#')"
-          if [ -z "$AZURE_RESOURCE_GROUP" ]; then
-            echo "AZURE_RESOURCE_GROUP variable is not set" >&2
-            exit 1
-          fi
-          # Build the resource ID deterministically. The CI identity can create role
-          # assignments but may not have resource-read permission to enumerate resources,
-          # so avoid 'az resource list' and construct the scope directly.
-          subscription_id="$(az account show --query id -o tsv)"
-          scope="/subscriptions/${subscription_id}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.Search/searchServices/${service_name}"
-          # Idempotent: az returns the existing assignment if it already exists
-          az role assignment create \
-            --assignee "$AZURE_CLIENT_ID" \
-            --role "Search Index Data Reader" \
-            --scope "$scope"
 
       - name: Run sample validation
         # Maximum parallel workers is set to 1 because all samples use the same port
