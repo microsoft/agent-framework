@@ -498,6 +498,72 @@ def test_snapshot_without_segment_tracking_keeps_legacy_layout():
     assert [kind for kind, _ in kinds] == ["tool_calls", "result", "text"]
 
 
+def test_snapshot_includes_text_when_message_preopened_by_tool_only_path():
+    """Text that arrives after a tool-only preopen still lands in the snapshot."""
+    flow = FlowState()
+    # The tool-only detection in agent_run.py preopens message_id without
+    # going through _emit_text, so the first text has no segment yet.
+    flow.message_id = "preopened"
+    _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+    _emit_text(Content.from_text("Let me check the docs."), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls", "text"]
+    assert kinds[1][1]["content"] == "Let me check the docs."
+    assert kinds[1][1]["id"] == "preopened"
+
+
+def test_snapshot_separates_calls_across_results():
+    """call A -> result A -> call B -> result B snapshots as two pairs, not grouped."""
+    flow = FlowState()
+    _emit_tool_call(Content.from_function_call(call_id="call_a", name="tool_a", arguments="{}"), flow)
+    _emit_tool_result(Content.from_function_result(call_id="call_a", result="a done"), flow)
+    _emit_tool_call(Content.from_function_call(call_id="call_b", name="tool_b", arguments="{}"), flow)
+    _emit_tool_result(Content.from_function_result(call_id="call_b", result="b done"), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls", "result", "tool_calls", "result"]
+    assert kinds[0][1]["tool_calls"][0]["id"] == "call_a"
+    assert kinds[1][1].get("toolCallId", kinds[1][1].get("tool_call_id")) == "call_a"
+    assert kinds[2][1]["tool_calls"][0]["id"] == "call_b"
+    assert kinds[3][1].get("toolCallId", kinds[3][1].get("tool_call_id")) == "call_b"
+
+
+def test_snapshot_leftover_call_keeps_its_result():
+    """A pending call untracked by segments still appears with its result."""
+    flow = FlowState()
+    tool_entry = {"id": "call_x", "type": "function", "function": {"name": "tool_x", "arguments": ""}}
+    flow.pending_tool_calls.append(tool_entry)
+    flow.tool_calls_by_id["call_x"] = tool_entry
+    flow.tool_results.append({"id": "r1", "role": "tool", "toolCallId": "call_x", "content": "done"})
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls", "result"]
+    assert kinds[1][1].get("toolCallId", kinds[1][1].get("tool_call_id")) == "call_x"
+
+
+def test_snapshot_stale_segment_id_falls_back_to_leftover():
+    """A segment id missing from tool_calls_by_id stays eligible for the fallback."""
+    flow = FlowState()
+    flow.snapshot_segments.append({"kind": "tool_calls", "call_ids": ["call_x"]})
+    tool_entry = {"id": "call_x", "type": "function", "function": {"name": "tool_x", "arguments": ""}}
+    flow.pending_tool_calls.append(tool_entry)
+    # tool_calls_by_id intentionally lacks call_x, so the segment emits nothing
+    flow.tool_results.append({"id": "r1", "role": "tool", "toolCallId": "call_x", "content": "done"})
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls", "result"]
+    assert kinds[0][1]["tool_calls"][0]["id"] == "call_x"
+
+
 def test_emit_text_skips_when_skip_text_flag():
     """Test _emit_text skips with skip_text flag."""
     flow = FlowState()

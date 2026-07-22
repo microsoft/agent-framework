@@ -534,11 +534,16 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
         logger.debug("Skipping duplicate full-text delta for message_id=%s", flow.message_id)
         return []
 
+    # The message may have been pre-opened by the tool-only path, which never
+    # goes through this function, so the first text arriving later has no
+    # segment yet; without one the snapshot would drop it.
+    segment = _text_segment_for(flow, flow.message_id)
+    if segment is None:
+        segment = _open_text_segment(flow, flow.message_id)
+
     events.append(TextMessageContentEvent(message_id=flow.message_id, delta=content.text))
     flow.accumulated_text += content.text
-    segment = _text_segment_for(flow, flow.message_id)
-    if segment is not None:
-        segment["text"] = flow.accumulated_text
+    segment["text"] = flow.accumulated_text
     return events
 
 
@@ -722,6 +727,10 @@ def _emit_tool_result_common(
             "content": result_content,
         }
     )
+    # A result closes the current tool-call segment: a later call opens a new
+    # one, so `call A -> result A -> call B` snapshots as two call/result pairs
+    # in stream order instead of grouping B with A (moonbox3's replay concern).
+    flow.snapshot_segments.append({"kind": "tool_results"})
 
     if predictive_handler:
         predictive_handler.apply_pending_updates()

@@ -1559,14 +1559,18 @@ def _append_segmented_snapshot_messages(flow: FlowState, all_messages: list[dict
             message_id = tool_open_id or generate_event_id()
             tool_open_id = None
             all_messages.append({"id": message_id, "role": "assistant", "tool_calls": [call.copy() for call in calls]})
-            segment_call_ids = set(segment["call_ids"])
-            emitted_call_ids.update(segment_call_ids)
-            all_messages.extend(result for result in flow.tool_results if result.get("toolCallId") in segment_call_ids)
+            # Only mark the calls we actually emitted; a stale segment id that
+            # never made it into tool_calls_by_id must stay eligible for the
+            # leftover path below rather than vanishing silently.
+            emitted_ids = {call["id"] for call in calls}
+            emitted_call_ids.update(emitted_ids)
+            all_messages.extend(result for result in flow.tool_results if result.get("toolCallId") in emitted_ids)
         elif kind == "reasoning":
             all_messages.extend(entry for entry in flow.reasoning_messages if entry.get("id") == segment["id"])
 
     leftover_calls = [tc for tc in flow.pending_tool_calls if tc.get("id") not in emitted_call_ids]
     if leftover_calls:
+        leftover_ids = {call.get("id") for call in leftover_calls if call.get("id") is not None}
         all_messages.append(
             {
                 "id": tool_open_id or generate_event_id(),
@@ -1574,7 +1578,10 @@ def _append_segmented_snapshot_messages(flow: FlowState, all_messages: list[dict
                 "tool_calls": [call.copy() for call in leftover_calls],
             }
         )
-        emitted_call_ids.update(call_id for call in leftover_calls if (call_id := call.get("id")) is not None)
+        # Their results ride along too; without this they would be marked
+        # emitted above and then excluded from the final append below.
+        all_messages.extend(result for result in flow.tool_results if result.get("toolCallId") in leftover_ids)
+        emitted_call_ids.update(leftover_ids)
     all_messages.extend(result for result in flow.tool_results if result.get("toolCallId") not in emitted_call_ids)
 
 
