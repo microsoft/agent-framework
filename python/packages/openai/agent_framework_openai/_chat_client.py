@@ -1741,8 +1741,10 @@ class RawOpenAIChatClient(
                 props = content.additional_properties
                 if status := props.get("status"):
                     item["status"] = status
-                if reasoning_text := props.get("reasoning_text"):
-                    reasoning_texts.append({"type": "reasoning_text", "text": reasoning_text})
+                if reasoning_text_marker := props.get("reasoning_text"):
+                    reasoning_text = content.text if reasoning_text_marker is True else reasoning_text_marker
+                    if isinstance(reasoning_text, str) and reasoning_text:
+                        reasoning_texts.append({"type": "reasoning_text", "text": reasoning_text})
                 elif content.text:
                     item["summary"].append({"type": "summary_text", "text": content.text})
             if reasoning_texts:
@@ -1778,14 +1780,17 @@ class RawOpenAIChatClient(
                 if content.id:
                     ret["id"] = content.id
                 props: dict[str, Any] | None = getattr(content, "additional_properties", None)
+                reasoning_text_marker: Any = None
                 if props:
                     if status := props.get("status"):
                         ret["status"] = status
-                    if reasoning_text := props.get("reasoning_text"):
-                        ret["content"] = [{"type": "reasoning_text", "text": reasoning_text}]
+                    if reasoning_text_marker := props.get("reasoning_text"):
+                        reasoning_text = content.text if reasoning_text_marker is True else reasoning_text_marker
+                        if isinstance(reasoning_text, str) and reasoning_text:
+                            ret["content"] = [{"type": "reasoning_text", "text": reasoning_text}]
                     if encrypted_content := props.get("encrypted_content"):
                         ret["encrypted_content"] = encrypted_content
-                if content.text:
+                if content.text and reasoning_text_marker is not True:
                     ret["summary"].append({"type": "summary_text", "text": content.text})
                 return ret
             case "data" | "uri":
@@ -2591,7 +2596,7 @@ class RawOpenAIChatClient(
                     encrypted_content = getattr(item, "encrypted_content", None)
                     if item_content := getattr(item, "content", None):
                         for index, reasoning_content in enumerate(item_content):
-                            additional_properties: dict[str, Any] = {"reasoning_text": reasoning_content.text}
+                            additional_properties: dict[str, Any] = {"reasoning_text": True}
                             if hasattr(item, "summary") and item.summary and index < len(item.summary):
                                 additional_properties["summary"] = item.summary[index]
                             contents.append(
@@ -2871,7 +2876,7 @@ class RawOpenAIChatClient(
                         id=event.item_id,
                         text=event.delta,
                         raw_representation=event,
-                        additional_properties={"reasoning_text": event.delta},
+                        additional_properties={"reasoning_text": True},
                     )
                 )
                 metadata.update(self._get_metadata_from_response(event))
@@ -2885,7 +2890,7 @@ class RawOpenAIChatClient(
                             id=event.item_id,
                             text=event.text,
                             raw_representation=event,
-                            additional_properties={"reasoning_text": event.text},
+                            additional_properties={"reasoning_text": True},
                         )
                     )
                 metadata.update(self._get_metadata_from_response(event))
@@ -3082,7 +3087,7 @@ class RawOpenAIChatClient(
                         added_reasoning = False
                         if hasattr(event_item, "content") and event_item.content:
                             for index, reasoning_content in enumerate(event_item.content):
-                                additional_properties: dict[str, Any] = {"reasoning_text": reasoning_content.text}
+                                additional_properties: dict[str, Any] = {"reasoning_text": True}
                                 if (
                                     hasattr(event_item, "summary")
                                     and event_item.summary

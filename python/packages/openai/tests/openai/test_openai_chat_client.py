@@ -1119,6 +1119,115 @@ def test_streamed_reasoning_text_replays_as_reasoning_content() -> None:
     ]
 
 
+def _streamed_reasoning_text_events(event_kind: str) -> tuple[list[object], str, str, str]:
+    cases = {
+        "delta": ("rs_streamed_reasoning", "Streamed private reasoning", "encrypted-streamed-reasoning"),
+        "fallback": ("rs_fallback_reasoning", "Fallback private reasoning", "encrypted-fallback-reasoning"),
+        "snapshot": ("rs_snapshot_reasoning", "Snapshot private reasoning", "encrypted-snapshot-reasoning"),
+    }
+    item_id, text, encrypted_content = cases[event_kind]
+
+    if event_kind == "snapshot":
+        reasoning_content = MagicMock()
+        reasoning_content.text = text
+        reasoning_item = MagicMock()
+        reasoning_item.type = "reasoning"
+        reasoning_item.id = item_id
+        reasoning_item.content = [reasoning_content]
+        reasoning_item.summary = []
+        reasoning_item.encrypted_content = encrypted_content
+        reasoning_added = MagicMock()
+        reasoning_added.type = "response.output_item.added"
+        reasoning_added.output_index = 0
+        reasoning_added.item = reasoning_item
+        return [reasoning_added], item_id, text, encrypted_content
+
+    if event_kind == "delta":
+        text_event: object = ResponseReasoningTextDeltaEvent(
+            type="response.reasoning_text.delta",
+            content_index=0,
+            item_id=item_id,
+            output_index=0,
+            sequence_number=1,
+            delta=text,
+        )
+    else:
+        text_event = ResponseReasoningTextDoneEvent(
+            type="response.reasoning_text.done",
+            content_index=0,
+            item_id=item_id,
+            output_index=0,
+            sequence_number=1,
+            text=text,
+        )
+    reasoning_done = MagicMock()
+    reasoning_done.type = "response.output_item.done"
+    reasoning_done.item = MagicMock()
+    reasoning_done.item.type = "reasoning"
+    reasoning_done.item.id = item_id
+    reasoning_done.item.encrypted_content = encrypted_content
+    return [text_event, reasoning_done], item_id, text, encrypted_content
+
+
+@pytest.mark.parametrize("event_kind", ["delta", "fallback", "snapshot"])
+async def test_streamed_reasoning_text_is_stored_once_and_replayed(event_kind: str) -> None:
+    """The public streaming client stores reasoning text once and replays it as reasoning content."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    events, item_id, text, encrypted_content = _streamed_reasoning_text_events(event_kind)
+    streamed_response = _FakeAsyncEventStream(events)
+
+    follow_up_response = MagicMock()
+    follow_up_response.output_parsed = None
+    follow_up_response.metadata = {}
+    follow_up_response.usage = None
+    follow_up_response.id = "resp-follow-up"
+    follow_up_response.model = "test-model"
+    follow_up_response.created_at = 1000000001
+    follow_up_response.status = "completed"
+    follow_up_response.finish_reason = "stop"
+    follow_up_response.incomplete = None
+    follow_up_response.conversation = None
+    follow_up_response.output = []
+
+    with patch.object(
+        client.client.responses,
+        "create",
+        new=AsyncMock(side_effect=[streamed_response, _as_raw(follow_up_response)]),
+    ) as mock_create:
+        stream = client.get_response(
+            [Message(role="user", contents=["Think about this"])],
+            options={"store": False},
+            stream=True,
+        )
+        response = await stream.get_final_response()
+
+        reasoning = response.messages[0].contents[0]
+        assert reasoning.text == text
+        assert reasoning.additional_properties == {"reasoning_text": True}
+
+        await client.get_response(
+            [
+                Message(role="user", contents=["Think about this"]),
+                *response.messages,
+                Message(role="user", contents=["Continue"]),
+            ],
+            options={"store": False},
+        )
+
+    replayed_reasoning = [
+        item for item in mock_create.call_args_list[1].kwargs["input"] if item.get("type") == "reasoning"
+    ]
+    assert replayed_reasoning == [
+        {
+            "type": "reasoning",
+            "id": item_id,
+            "summary": [],
+            "encrypted_content": encrypted_content,
+            "content": [{"type": "reasoning_text", "text": text}],
+        }
+    ]
+
+
 def test_streamed_encrypted_reasoning_without_visible_text_is_replayable() -> None:
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     reasoning_done = MagicMock()
@@ -1175,7 +1284,7 @@ def test_streamed_summary_and_reasoning_text_replay_as_one_provider_item() -> No
     reasoning_contents = response.messages[0].contents
     assert [(content.text, content.additional_properties) for content in reasoning_contents] == [
         ("Visible summary", {}),
-        ("Private reasoning", {"reasoning_text": "Private reasoning"}),
+        ("Private reasoning", {"reasoning_text": True}),
     ]
     assert reasoning_contents[1].protected_data == "encrypted-mixed"
 
@@ -1460,6 +1569,82 @@ async def test_non_streaming_reasoning_function_group_round_trips_for_stateless_
             "type": "function_call_output",
             "output": "Sunny",
         },
+    ]
+
+
+async def test_non_streaming_reasoning_text_is_stored_once_and_replayed() -> None:
+    """The public client stores reasoning text in Content.text and replays it as reasoning content."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    first_response = MagicMock()
+    first_response.output_parsed = None
+    first_response.metadata = {}
+    first_response.usage = None
+    first_response.id = "resp-reasoning"
+    first_response.model = "test-model"
+    first_response.created_at = 1000000000
+    first_response.status = "completed"
+    first_response.finish_reason = "stop"
+    first_response.incomplete = None
+    first_response.conversation = None
+
+    reasoning_content = MagicMock()
+    reasoning_content.text = "Private reasoning text"
+    reasoning_item = MagicMock()
+    reasoning_item.type = "reasoning"
+    reasoning_item.id = "rs_reasoning"
+    reasoning_item.content = [reasoning_content]
+    reasoning_item.summary = []
+    reasoning_item.encrypted_content = "encrypted-reasoning"
+    first_response.output = [reasoning_item]
+
+    second_response = MagicMock()
+    second_response.output_parsed = None
+    second_response.metadata = {}
+    second_response.usage = None
+    second_response.id = "resp-follow-up"
+    second_response.model = "test-model"
+    second_response.created_at = 1000000001
+    second_response.status = "completed"
+    second_response.finish_reason = "stop"
+    second_response.incomplete = None
+    second_response.conversation = None
+    second_response.output = []
+
+    with patch.object(
+        client.client.responses,
+        "create",
+        side_effect=[_as_raw(first_response), _as_raw(second_response)],
+    ) as mock_create:
+        response = await client.get_response(
+            [Message(role="user", contents=["Think about this"])],
+            options={"store": False},
+        )
+
+        reasoning = response.messages[0].contents[0]
+        assert reasoning.text == "Private reasoning text"
+        assert reasoning.additional_properties == {"reasoning_text": True}
+
+        await client.get_response(
+            [
+                Message(role="user", contents=["Think about this"]),
+                *response.messages,
+                Message(role="user", contents=["Continue"]),
+            ],
+            options={"store": False},
+        )
+
+    replayed_reasoning = [
+        item for item in mock_create.call_args_list[1].kwargs["input"] if item.get("type") == "reasoning"
+    ]
+    assert replayed_reasoning == [
+        {
+            "type": "reasoning",
+            "id": "rs_reasoning",
+            "summary": [],
+            "encrypted_content": "encrypted-reasoning",
+            "content": [{"type": "reasoning_text", "text": "Private reasoning text"}],
+        }
     ]
 
 
