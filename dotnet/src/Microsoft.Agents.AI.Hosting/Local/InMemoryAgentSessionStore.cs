@@ -26,8 +26,8 @@ namespace Microsoft.Agents.AI.Hosting;
 /// </para>
 /// <para>
 /// <strong>Multi-user warning.</strong> This store keys threads by
-/// <c>(agent.Id, conversationId)</c> only — it has no principal/owner dimension. When
-/// the conversation identifier originates from the wire (for example, an AG-UI
+/// <c>(agent.Id, sessionStoreId)</c> only — it has no principal/owner dimension. When
+/// the session store id originates from the wire (for example, an AG-UI
 /// <c>RunAgentInput.ThreadId</c> or an A2A <c>contextId</c>), any caller who knows
 /// or guesses another caller's identifier can resume that other caller's persisted
 /// thread. Multi-user hosts must wrap this store in
@@ -44,16 +44,16 @@ public sealed class InMemoryAgentSessionStore : AgentSessionStore
     private readonly ConcurrentDictionary<string, JsonElement> _threads = new();
 
     /// <inheritdoc/>
-    public override async ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, CancellationToken cancellationToken = default)
+    public override async ValueTask SaveSessionAsync(AIAgent agent, string sessionStoreId, AgentSession session, CancellationToken cancellationToken = default)
     {
-        var key = GetKey(conversationId, agent.Id);
+        var key = GetKey(sessionStoreId, agent.Id);
         this._threads[key] = await agent.SerializeSessionAsync(session, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
-    public override async ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
+    public override async ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string sessionStoreId, CancellationToken cancellationToken = default)
     {
-        var key = GetKey(conversationId, agent.Id);
+        var key = GetKey(sessionStoreId, agent.Id);
         JsonElement? sessionContent = this._threads.TryGetValue(key, out var existingSession) ? existingSession : null;
 
         return sessionContent switch
@@ -63,5 +63,12 @@ public sealed class InMemoryAgentSessionStore : AgentSessionStore
         };
     }
 
-    private static string GetKey(string conversationId, string agentId) => $"{agentId}:{conversationId}";
+    /// <inheritdoc/>
+    public override ValueTask DeleteSessionAsync(AIAgent agent, string sessionStoreId, CancellationToken cancellationToken = default)
+    {
+        this._threads.TryRemove(GetKey(sessionStoreId, agent.Id), out _);
+        return default;
+    }
+
+    private static string GetKey(string sessionStoreId, string agentId) => $"{agentId}:{sessionStoreId}";
 }
