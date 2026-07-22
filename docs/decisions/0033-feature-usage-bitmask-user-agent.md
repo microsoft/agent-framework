@@ -1,7 +1,7 @@
 ---
 status: proposed
 contact: eavanvalkenburg
-date: 2026-07-01
+date: 2026-07-22
 deciders: eavanvalkenburg
 consulted:
 informed:
@@ -18,7 +18,7 @@ at runtime, nor which are used *together* (e.g. workflows + MCP + Foundry). How
 can we collect a lightweight, privacy-respecting signal of feature usage for the
 traffic we can actually read, without standing up new event pipelines?
 
-The detailed mechanism is in [SPEC-002](../specs/002-feature-usage-telemetry.md);
+The detailed mechanism is in [SPEC-004](../specs/004-feature-usage-telemetry.md);
 the per-language bit tables are in
 [feature-usage-bit-registry.md](../specs/feature-usage-bit-registry.md).
 
@@ -26,9 +26,10 @@ the per-language bit tables are in
 
 - **Transparency** — openly documented, human-decodable, user-controllable. No
   hidden or obfuscated telemetry.
-- **First-party scope / no third-party leakage** — emit only to Azure/Foundry
-  endpoints (the telemetry we can ingest); never leak a feature fingerprint into
-  third-party logs we cannot read.
+- **First-party scope / no third-party leakage** — emit only through an explicit
+  allowlist of Azure/Foundry client pipelines whose User-Agent telemetry the team
+  can ingest; never infer safety from a hostname or leak a feature fingerprint
+  into logs we cannot read.
 - **Live signal** — reflect features exercised *so far*, re-evaluated per request,
   not frozen at client construction.
 - **Low cost / few moving parts** — reuse telemetry already in the request path;
@@ -52,13 +53,16 @@ the **granularity**, and the **registry sharing model**.
 
 #### A. User-Agent token, first-party only, per request (chosen)
 
-Stamp a `(feat=...)` comment onto the UA, but only on Azure/Foundry clients, and
-re-evaluate it per request.
+Stamp a `(feat=...)` comment onto the UA, but only on approved Azure/Foundry
+client pipelines, and re-evaluate it per request.
 
-- Good, reuses telemetry already sent to the one backend we can read.
+- Good, reuses telemetry already sent to approved backends we can read.
 - Good, per-request stamping reflects the live mask (not frozen at construction).
 - Good, first-party scoping means no fingerprint leaks to third-party providers.
 - Good, maps onto .NET's existing per-request UA pipeline policies unchanged.
+- Neutral, v1 stamps only pipelines the framework creates or can configure
+  through supported public hooks. It does not mutate caller-owned clients or
+  reach into private SDK pipelines.
 - Bad, no signal for traffic that never hits a first-party endpoint (accepted —
   we couldn't read it anyway).
 
@@ -193,10 +197,12 @@ Examples that do **not** get separate bits: `InMemoryHistoryProvider` vs
 `ShellEnvironmentProvider` vs `ShellPolicy`; `OpenAIChatClient` vs
 `OpenAIChatCompletionClient`.
 
-Rough estimate: Python ~40-55 bits; .NET ~30-45 bits.
+Rough estimate: Python ~55-65 bits; .NET ~40-50 bits. The current candidate
+registry is already at 59 Python / 46 .NET assigned bits.
 
 - Good, likely answers the first product adoption questions while staying compact.
-- Good, keeps v1 close to the preferred 64-bit simplicity target.
+- Neutral, still fits the preferred 64-bit simplicity target, but Python has
+  little growth room.
 - Neutral, some provider internals remain collapsed until a later additive bit is
   justified.
 
@@ -357,8 +363,9 @@ This is the smallest design that answers the question. A preferably 64-bit
 **process-global, monotonic** mask accumulates from universal
 `mark_feature_used()` calls (so it spans construction-time and session-scoped
 features that aren't bound to any request — the per-request set model (S2) can't);
-the token is **stamped per request** only on Azure/Foundry clients, so it reflects
-the live mask without freezing at construction (live, no third-party leak); each
+the token is **stamped per request** only on approved Azure/Foundry client
+pipelines, so it reflects the live mask without freezing at construction (live,
+no third-party leak); each
 SDK owns an independent bit list selected by the language already in the UA; the
 mask is rendered as hex (`feat=v1.8410005`). **Two opt-out env vars are
 provided:** a dedicated `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` that drops only
@@ -377,20 +384,24 @@ F0-F4. This is a point-in-time decision: adding new bits later is easier than
 removing or redefining them, because removals/redefinitions require a new
 registry version and historical decode tables. For v1, prefer the least detailed
 level that answers the known product/support questions so we do not force a v2
-shortly after launch.
+shortly after launch. The refreshed candidate registry uses **59 Python bits and
+46 .NET bits**, leaving only five unassigned Python positions; that is evidence
+against adding detail without a concrete query.
 
 ### Consequences
 
 - Good, adds usage signal at near-zero cost, no new data flow, few moving parts.
 - Good, transparent (public registry, human-decodable token) and disabled by
   **two** opt-out env vars: a dedicated `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED`
-  (mask only) and the existing `AGENT_FRAMEWORK_USER_AGENT_DISABLED` (whole UA).
+  (mask only) and `AGENT_FRAMEWORK_USER_AGENT_DISABLED` (whole UA; existing in
+  Python and added to .NET with this work).
 - Good, first-party-only + per-request emission gives a live mask and no
   third-party fingerprint leak.
-- Good, staying within 64-bit keeps .NET lock-free; per-language lists remove all
-  cross-language sync; hand-written enums avoid a codegen toolchain.
-- Neutral, the token's reach equals first-party traffic; broader per-call signal
-  (OTel) can be added later if needed.
+- Good, staying within 64-bit keeps .NET lock-free via `Interlocked`/CAS;
+  per-language lists remove all cross-language sync; hand-written enums avoid a
+  codegen toolchain.
+- Neutral, the token's reach equals eligible framework-configured first-party
+  traffic; broader per-call signal (OTel) can be added later if needed.
 - Neutral, v1 granularity is intentionally a separate choice; the registry should
   start with fewer bits unless a more detailed bit answers a concrete question.
 - Bad, each feature must add a `mark_feature_used()` call, and first-party clients
@@ -440,7 +451,9 @@ Takeaways that shaped (or validate) our choices:
   the per-language registry tables are the stable, decodable contract.
 - **First-party-only emission** is stricter than any of the above; the closest in
   spirit is Stainless headers, which only reach the owning API. We make the
-  hostname/endpoint allowlist explicit (Azure/Foundry only).
+  client/pipeline allowlist explicit (initially Foundry/Azure OpenAI) rather than
+  attempting to infer safety from arbitrary request URLs. Other Azure clients
+  join only after telemetry access is confirmed.
 - **Opt-out naming.** `AZURE_TELEMETRY_DISABLED` is the family precedent for our
   `AGENT_FRAMEWORK_*_DISABLED` names. Separately, the cross-tool `DO_NOT_TRACK`
   convention (honored by e.g. HuggingFace Hub) is worth considering — see Open
@@ -463,7 +476,7 @@ independent for Python and .NET.
 
 - **Additive growth stays on v1 — no bump.** Allocating a new feature to a
   reserved/unused bit is backward-compatible: an older decoder simply sees an
-  unknown high bit and ignores it. Normal package growth never needs a new
+  unknown bit and ignores it. Normal package growth never needs a new
   version.
 - **A bump (v2) is required only for breaking changes:** renumbering or
   re-partitioning existing bits, changing the *meaning* of an already-assigned
@@ -488,10 +501,14 @@ independent for Python and .NET.
 | Limitation | Caused by (choice) | Why we accepted it |
 | --- | --- | --- |
 | **No signal for self-hosted or third-party-only traffic.** If a process never calls Azure/Foundry, we see nothing. | First-party-only emission (A) | We can't read third-party logs anyway, and must not leak a fingerprint into them. Reach traded for privacy. |
+| **Not every first-party client is stampable.** Caller-supplied `AIProjectClient` / OpenAI clients and toolkit-owned clients may not expose a supported per-request policy hook. | Supported-hook-only emission (A) | V1 does not mutate caller-owned clients or private SDK pipelines. Those features may still appear on another eligible request from the same process-global mask. |
 | **No OTel / per-call signal in v1.** | OTel deferred (C) — primarily on **privacy** and availability grounds | A broadly-emitted span attribute would push the fingerprint into the user's general telemetry / third-party APM vendors, undoing the first-party-only scoping. It also requires customer/user OTel setup, and even Foundry users may not export data where we can query it. Left open only if there is a compelling reason to add. |
 | **Mask reflects "usage so far," not the whole session.** Early requests carry fewer bits than later ones. | Process-global accumulator + per-request stamping | Honest and still useful; the team aggregates across requests. The per-request design is what makes it *grow* rather than freeze. |
 | **No per-agent / per-call attribution.** The mask is one process-wide value — "this process used X", not "this agent/call used X". | Process-global monotonic scope (S1) | A deliberate choice, not a transport limit: botocore *does* per-call attribution in the UA via a per-request `contextvars` set (S2), but that assumes every feature lives inside a service request. Many of ours don't (agent/workflow/provider construction, session setup), so process-global is the only scope that captures them. Per-call detail for the request-scoped subset is left to the deferred OTel path. |
+| **Shared processes intentionally carry usage across agents and tenants.** A request can include bits first set by another workload in the same worker. | Process-global monotonic scope (S1) | The token must be interpreted only as process-level "used so far," never as request/user/tenant attribution. Privacy review must explicitly accept this. |
+| **Counts are request-weighted and sticky.** Once set, a bit appears on every later eligible request from that process, so long-lived/high-traffic processes dominate. | Monotonic mask emitted per request | The signal supports traffic prevalence and co-occurrence, not first-use counts, unique-process counts, or exact feature invocation frequency. |
 | **Granularity may be too coarse or too detailed.** The chosen level may miss useful distinctions or create more specificity than needed. | v1 granularity choice (F0-F4) | This is the main remaining decision. Adding bits later is easier than removing/redefining them, so v1 should lean toward fewer bits that answer known questions. |
+| **Python v1 has little 64-bit headroom.** The refreshed candidate registry assigns 59 bits, leaving five. | 64-bit target + current candidate granularity | This is still enough to ship, but it makes speculative bits expensive and may force a Python v2 sooner than .NET. |
 | **Fingerprinting risk is reduced, not eliminated.** A feature-combination mask is still a deployment signature, and it transits intermediaries (proxies/CDNs) even when first-party-scoped. | Emitting any feature-combination value | Scope + opt-out + coarse granularity mitigate it; v1 should avoid unnecessary detailed bits. |
 
 ## Open Questions (for decider discussion)
@@ -502,14 +519,18 @@ These are unresolved and should be decided before implementation:
    Adding bits later is easier than removing or redefining bits, so v1 should
    choose the least detailed level that answers known questions and avoids a quick
    v2.
-2. **When (if ever) to add the OTel path?** Held back mainly for **privacy** and
+2. **Privacy approval for the v1 User-Agent signal.** Before implementation,
+   confirm that a transparent, opt-out, first-party-only feature-combination
+   fingerprint is acceptable, including the exact client allowlist, retention,
+   access, and permitted product queries. This is a rollout precondition.
+3. **When (if ever) to add the OTel path?** Held back mainly for **privacy** and
    data availability: a span attribute broadcasts the fingerprint into the user's
    general telemetry and onward to third-party APM vendors, contradicting the
    first-party-only stance, and it requires user-side OTel setup that may not make
    the data available to us even for Foundry users. It also carries a
    metric-cardinality hazard. Revisit only if the User-Agent path cannot answer a
    concrete question.
-3. **Honor the cross-tool `DO_NOT_TRACK` convention?** Several ecosystems treat
+4. **Honor the cross-tool `DO_NOT_TRACK` convention?** Several ecosystems treat
    `DO_NOT_TRACK=1` as a universal telemetry opt-out (HuggingFace Hub honors it;
    see [Prior art](#prior-art)). Should our opt-out also respect `DO_NOT_TRACK`
    (in addition to the two `AGENT_FRAMEWORK_*` flags)? Cheap to add and
@@ -519,15 +540,20 @@ These are unresolved and should be decided before implementation:
 ### Decided
 
 - **Dedicated opt-out flag — included.** In addition to the existing
-  `AGENT_FRAMEWORK_USER_AGENT_DISABLED` (drops the whole UA), v1 ships
+  Python `AGENT_FRAMEWORK_USER_AGENT_DISABLED` (drops the whole UA), v1 ships
   `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED`, which drops **only** the feature mask
   while keeping the base SDK identity/version User-Agent. This lets a
   privacy-conscious user withhold the usage signal without losing the
-  support/compat value of the SDK-version header.
+  support/compat value of the SDK-version header. .NET adopts both environment
+  variable names when it adds the feature.
+- **Caller-owned clients are not modified.** V1 stamps only framework-created
+  clients or clients with a supported public policy/hook registration point. It
+  does not patch private pipelines; injected clients are an explicit coverage
+  limitation.
 
 ## More Information
 
-- Mechanism & API: [SPEC-002](../specs/002-feature-usage-telemetry.md)
+- Mechanism & API: [SPEC-004](../specs/004-feature-usage-telemetry.md)
 - Per-language bit tables, encoding, opt-out, governance: [feature-usage-bit-registry.md](../specs/feature-usage-bit-registry.md)
 - Existing accumulator pattern: `python/packages/core/agent_framework/_telemetry.py`
 - .NET emission policies: `dotnet/src/Microsoft.Agents.AI.Foundry/AgentFrameworkUserAgentPolicy.cs`,
