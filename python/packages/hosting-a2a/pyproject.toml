@@ -4,7 +4,7 @@ description = "A2A conversion helpers for app-owned Agent Framework hosting."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0a260710"
+version = "1.0.0a260721"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -25,7 +25,7 @@ classifiers = [
 dependencies = [
     "a2a-sdk>=1.0.0,<2",
     "agent-framework-core>=1.11.0,<2",
-    "agent-framework-hosting==1.0.0a260709",
+    "agent-framework-hosting==1.0.0a260721",
 ]
 
 [tool.uv]
