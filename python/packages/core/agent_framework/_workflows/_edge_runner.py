@@ -220,14 +220,14 @@ class FanOutEdgeRunner(EdgeRunner):
                             else:
                                 span.set_attributes({
                                     OtelAttr.EDGE_GROUP_DELIVERED: False,
-                                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE.value,  # noqa: E501
+                                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE.value,  # ruff:ignore[line-too-long]
                                 })
                                 # For targeted messages with condition failure, return True (message was processed)
                                 return True
                         else:
                             span.set_attributes({
                                 OtelAttr.EDGE_GROUP_DELIVERED: False,
-                                OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,  # noqa: E501
+                                OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,  # ruff:ignore[line-too-long]
                             })
                             # For targeted messages that can't be handled, return False
                             return False

@@ -5632,6 +5632,54 @@ async def test_integration_options(
                 assert "seattle" in response.value["location"].lower()
 
 
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_openai_integration_tests_disabled
+async def test_integration_response_format_nested_object_schema() -> None:
+    """A raw response_format dict with array-of-object items must round-trip in strict mode.
+
+    The schema literal mirrors what agent_framework_declarative's
+    PropertySchema.to_json_schema() emits for an array-of-objects output schema,
+    so this package needs no declarative dependency. OpenAI strict mode requires
+    additionalProperties: false on every object node, not just the root.
+    """
+    response_format: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "issues": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "severity": {"type": "string"},
+                    },
+                    "required": ["title", "severity"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["issues"],
+    }
+    client = OpenAIChatClient()
+    messages = [
+        Message(
+            role="user",
+            contents=["List two code issues: a null pointer in parser.py (high) and a typo in README.md (low)."],
+        )
+    ]
+    response = await client.get_response(messages=messages, options={"response_format": response_format})
+
+    assert response.value is not None
+    assert isinstance(response.value, dict)
+    issues = response.value["issues"]
+    assert isinstance(issues, list)
+    assert issues
+    for issue in issues:
+        assert "title" in issue
+        assert "severity" in issue
+
+
 @pytest.mark.timeout(300)
 @pytest.mark.flaky
 @pytest.mark.integration
@@ -6061,6 +6109,91 @@ def test_streaming_response_completed_sets_created_at() -> None:
 
     assert update.created_at is not None
     assert update.created_at == "2001-09-09T01:46:40.000000Z"
+
+
+@pytest.mark.parametrize(
+    ("status", "incomplete_reason", "output_type", "expected_finish_reason"),
+    [
+        ("completed", None, None, "stop"),
+        ("completed", None, "function_call", "tool_calls"),
+        ("incomplete", "max_output_tokens", None, "length"),
+        ("incomplete", "content_filter", None, "content_filter"),
+        ("failed", None, None, None),
+        ("incomplete", "other", None, None),
+    ],
+)
+def test_get_finish_reason_from_openai_response(
+    status: str,
+    incomplete_reason: str | None,
+    output_type: str | None,
+    expected_finish_reason: str | None,
+) -> None:
+    """Test mapping Responses API terminal states to framework finish reasons."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    mock_response = MagicMock()
+    mock_response.status = status
+    mock_response.incomplete_details = MagicMock(reason=incomplete_reason) if incomplete_reason is not None else None
+    mock_response.output = [MagicMock(type=output_type)] if output_type is not None else []
+
+    finish_reason = client._get_finish_reason_from_openai_response(mock_response)
+
+    assert finish_reason == expected_finish_reason
+
+
+def test_parse_response_from_openai_sets_finish_reason() -> None:
+    """Test that non-streaming Responses API completions include a finish reason."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.output = []
+    mock_response.id = "resp_done"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.usage = None
+    mock_response.status = "completed"
+    mock_response.incomplete_details = None
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore[arg-type]
+
+    assert response.finish_reason == "stop"
+
+
+@pytest.mark.parametrize(
+    ("event_type", "status", "incomplete_reason", "output_type", "expected_finish_reason"),
+    [
+        ("response.completed", "completed", None, None, "stop"),
+        ("response.completed", "completed", None, "function_call", "tool_calls"),
+        ("response.incomplete", "incomplete", "max_output_tokens", None, "length"),
+        ("response.incomplete", "incomplete", "content_filter", None, "content_filter"),
+        ("response.failed", "failed", None, None, None),
+    ],
+)
+def test_streaming_terminal_response_sets_finish_reason(
+    event_type: str,
+    status: str,
+    incomplete_reason: str | None,
+    output_type: str | None,
+    expected_finish_reason: str | None,
+) -> None:
+    """Test that terminal Responses API events include the mapped finish reason."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    mock_event = MagicMock()
+    mock_event.type = event_type
+    mock_event.response.id = "resp_done"
+    mock_event.response.conversation = None
+    mock_event.response.model = "test-model"
+    mock_event.response.created_at = 1000000000
+    mock_event.response.usage = None
+    mock_event.response.status = status
+    mock_event.response.incomplete_details = (
+        MagicMock(reason=incomplete_reason) if incomplete_reason is not None else None
+    )
+    mock_event.response.output = [MagicMock(type=output_type)] if output_type is not None else []
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    assert update.finish_reason == expected_finish_reason
 
 
 def test_map_chat_to_agent_update_preserves_continuation_token() -> None:

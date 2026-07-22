@@ -42,7 +42,9 @@ from opentelemetry import metrics, trace
 from typing_extensions import Sentinel
 
 from . import __version__ as version_info
-from ._serialization import SerializationProtocol
+from ._serialization import (
+    _is_serialization_protocol,  # pyright: ignore[reportPrivateUsage]
+)
 from ._settings import load_settings
 
 if sys.version_info >= (3, 13):
@@ -238,7 +240,7 @@ class OtelAttr(str, Enum):
     T_TYPE_OUTPUT = "output"
     DURATION_UNIT = "s"
     LLM_OPERATION_DURATION = "gen_ai.client.operation.duration"
-    LLM_TOKEN_USAGE = "gen_ai.client.token.usage"  # nosec B105 # noqa: S105 - OpenTelemetry metric name, not a secret.
+    LLM_TOKEN_USAGE = "gen_ai.client.token.usage"  # nosec B105 # ruff:ignore[hardcoded-password-string] - OpenTelemetry metric name, not a secret.
 
     # Agent attributes
     AGENT_NAME = "gen_ai.agent.name"
@@ -1614,11 +1616,15 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                         and response.messages
                         and span.is_recording()
                     ):
+                        finish_reason = cast(
+                            "FinishReason | None",
+                            response.finish_reason if response.finish_reason in FINISH_REASON_MAP else None,
+                        )
                         _capture_messages(
                             span=span,
                             provider_name=provider_name,
                             messages=response.messages,
-                            finish_reason=response.finish_reason,  # type: ignore[arg-type]
+                            finish_reason=finish_reason,
                             output=True,
                         )
                 except Exception as exception:
@@ -2423,7 +2429,6 @@ def _build_tool_otel_definition(tool_item: Any) -> dict[str, Any] | None:
     from pydantic import BaseModel
 
     from ._mcp import MCPTool
-    from ._serialization import SerializationMixin
     from ._tools import FunctionTool
 
     if isinstance(tool_item, FunctionTool):
@@ -2444,7 +2449,7 @@ def _build_tool_otel_definition(tool_item: Any) -> dict[str, Any] | None:
     raw: Mapping[str, Any] | None = None
     if isinstance(tool_item, BaseModel):
         raw = tool_item.model_dump(exclude_none=True)
-    elif isinstance(tool_item, (SerializationMixin, SerializationProtocol)):
+    elif _is_serialization_protocol(tool_item):
         raw = tool_item.to_dict()
     elif isinstance(tool_item, Mapping):
         mapping_item = cast("Mapping[str, Any]", tool_item)

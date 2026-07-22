@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import warnings
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -1271,3 +1272,161 @@ def test_create_harness_agent_next_message_and_max_iterations_ignored_without_sh
         loop_max_iterations=5,
     )
     assert _find_loop_middleware(agent) is None
+
+
+# --- Experimental graduation / gating Tests ---
+
+
+def _clear_harness_experimental_dedup() -> None:
+    """Drop the shared HARNESS dedup key so ExperimentalWarning can fire again in a test."""
+    from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalFeature, ExperimentalWarning
+
+    _WARNED_FEATURES.discard((ExperimentalWarning, ExperimentalFeature.HARNESS.value))
+
+
+def _clear_harness_shell_dedup() -> None:
+    """Drop the shell-tooling dedup key so ExperimentalWarning can fire again in a test."""
+    from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalWarning
+    from agent_framework._harness._agent import _SHELL_TOOLING_FEATURE_ID
+
+    _WARNED_FEATURES.discard((ExperimentalWarning, _SHELL_TOOLING_FEATURE_ID))
+
+
+def test_create_harness_agent_is_not_experimental() -> None:
+    """create_harness_agent is graduated and should no longer carry experimental metadata."""
+    assert getattr(create_harness_agent, "__feature_stage__", None) is None
+    assert getattr(create_harness_agent, "__feature_id__", None) is None
+
+
+def test_create_harness_agent_graduated_features_emit_no_experimental_warning() -> None:
+    """Using only graduated features must not emit an ExperimentalWarning."""
+    from agent_framework._feature_stage import ExperimentalWarning
+
+    _clear_harness_experimental_dedup()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ExperimentalWarning)
+        create_harness_agent(
+            client=_FakeChatClient(),
+            max_context_window_tokens=128_000,
+            max_output_tokens=16_384,
+            disable_web_search=True,
+            disable_file_memory=True,
+        )
+
+
+def test_create_harness_agent_background_agents_emits_experimental_warning() -> None:
+    """Opting into background agents (still experimental) should warn and still wire the provider."""
+    from agent_framework._feature_stage import ExperimentalWarning
+    from agent_framework._harness._background_agents import BackgroundAgentsProvider
+
+    _clear_harness_experimental_dedup()
+    bg_agent = _FakeBackgroundAgent("WebSearcher", "Searches the web")
+    with pytest.warns(ExperimentalWarning, match="background_agents"):
+        agent = create_harness_agent(
+            client=_FakeChatClient(),
+            max_context_window_tokens=128_000,
+            max_output_tokens=16_384,
+            disable_web_search=True,
+            disable_file_memory=True,
+            background_agents=[bg_agent],  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        )
+    assert any(isinstance(p, BackgroundAgentsProvider) for p in (agent.context_providers or []))
+
+
+def test_create_harness_agent_file_access_store_emits_experimental_warning() -> None:
+    """Opting into file access (still experimental) should warn and still wire the provider."""
+    from agent_framework._feature_stage import ExperimentalWarning
+
+    _clear_harness_experimental_dedup()
+    store = InMemoryAgentFileStore()
+    _clear_harness_experimental_dedup()
+    with pytest.warns(ExperimentalWarning, match="file_access_store"):
+        agent = create_harness_agent(
+            client=_FakeChatClient(),
+            max_context_window_tokens=128_000,
+            max_output_tokens=16_384,
+            disable_web_search=True,
+            disable_file_memory=True,
+            file_access_store=store,
+        )
+    assert any(isinstance(p, FileAccessProvider) for p in (agent.context_providers or []))
+
+
+def test_create_harness_agent_loop_should_continue_emits_experimental_warning() -> None:
+    """Opting into looping (still experimental) should warn and still wire the loop middleware."""
+    from agent_framework import AgentLoopMiddleware
+    from agent_framework._feature_stage import ExperimentalWarning
+
+    def _should_continue(**kwargs: Any) -> bool:
+        return False
+
+    _clear_harness_experimental_dedup()
+    with pytest.warns(ExperimentalWarning, match="loop_should_continue"):
+        agent = create_harness_agent(
+            client=_FakeChatClient(),  # type: ignore[arg-type]
+            max_context_window_tokens=128_000,
+            max_output_tokens=16_384,
+            disable_web_search=True,
+            disable_file_memory=True,
+            loop_should_continue=_should_continue,
+        )
+    assert agent.middleware is not None
+    assert isinstance(agent.middleware[0], AgentLoopMiddleware)
+
+
+@_requires_shell_tools
+def test_create_harness_agent_shell_executor_emits_experimental_warning() -> None:
+    """Opting into shell tooling (pre-release) should warn and still wire the shell tool."""
+    from agent_framework._feature_stage import ExperimentalWarning
+
+    _clear_harness_experimental_dedup()
+    _clear_harness_shell_dedup()
+    client = _FakeShellClient()
+    with pytest.warns(ExperimentalWarning, match="shell_executor"):
+        agent = create_harness_agent(
+            client=client,
+            max_context_window_tokens=128_000,
+            max_output_tokens=16_384,
+            disable_web_search=True,
+            disable_file_memory=True,
+            shell_executor=_FakeShellTool(),
+        )
+    assert "shell_tool_instance" in agent.default_options.get("tools", [])
+
+
+@_requires_shell_tools
+def test_create_harness_agent_shell_dedup_does_not_suppress_harness_warning() -> None:
+    """The shell tooling uses a dedup key separate from HARNESS.
+
+    Enabling shell tooling must only seed the SHELL_TOOLING dedup key, so a subsequent
+    opt-in to an experimental HARNESS feature (e.g. ``background_agents``) must still warn.
+    This guards the separate-dedup-key strategy against regressions.
+    """
+    from agent_framework._feature_stage import ExperimentalWarning
+
+    _clear_harness_experimental_dedup()
+    _clear_harness_shell_dedup()
+
+    # Enabling shell tooling seeds only the SHELL_TOOLING dedup key, not HARNESS.
+    with pytest.warns(ExperimentalWarning, match="shell_executor"):
+        create_harness_agent(
+            client=_FakeShellClient(),
+            max_context_window_tokens=128_000,
+            max_output_tokens=16_384,
+            disable_web_search=True,
+            disable_file_memory=True,
+            shell_executor=_FakeShellTool(),
+        )
+
+    # HARNESS was never seeded by the shell warning, so opting into an experimental
+    # HARNESS feature afterwards must still emit its own ExperimentalWarning.
+    bg_agent = _FakeBackgroundAgent("WebSearcher", "Searches the web")
+    with pytest.warns(ExperimentalWarning, match="background_agents"):
+        create_harness_agent(
+            client=_FakeChatClient(),
+            max_context_window_tokens=128_000,
+            max_output_tokens=16_384,
+            disable_web_search=True,
+            disable_file_memory=True,
+            background_agents=[bg_agent],  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        )

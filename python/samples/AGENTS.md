@@ -36,7 +36,8 @@ python/samples/
 │   └── visualization/       # Workflow visualization
 ├── 04-hosting/              # Deployment & hosting
 │   ├── a2a/                 # Agent-to-Agent protocol
-│   ├── azure-functions/     # Azure Functions samples
+│   ├── af-hosting/          # Native Responses and Telegram hosting
+│   ├── azure_functions/     # Azure Functions samples
 │   └── durabletask/         # Durable task framework
 ├── 05-end-to-end/           # Complete applications
 │   ├── chatkit-integration/
@@ -108,10 +109,16 @@ code here
 ## Package install
 
 ```bash
-pip install agent-framework
+pip install agent-framework-foundry
 ```
 
-`agent-framework` is released, so `--pre` is not required here. `openai` is a core dependency.
+Install only the specific Agent Framework distributions a sample uses; do not recommend the
+`agent-framework` meta-package. Include `--pre` when any required distribution is prerelease.
+For example, a Monty agent backed by Foundry uses:
+
+```bash
+pip install agent-framework-monty agent-framework-foundry --pre
+```
 
 ## File structure
 

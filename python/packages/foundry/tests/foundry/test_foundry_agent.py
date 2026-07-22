@@ -958,6 +958,7 @@ async def test_raw_foundry_agent_prepare_run_context_creates_service_session_fro
 
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = MagicMock()
+    mock_project.agents = SimpleNamespace()
     mock_project.beta = SimpleNamespace(
         agents=SimpleNamespace(
             create_session=AsyncMock(return_value=SimpleNamespace(agent_session_id="agent-session-123"))
@@ -995,6 +996,32 @@ async def test_raw_foundry_agent_prepare_run_context_creates_service_session_fro
     assert create_session_kwargs["isolation_key"] == "iso-key"
     assert "version_indicator" in create_session_kwargs
     mock_prepare_run_context.assert_awaited_once()
+
+
+async def test_raw_foundry_agent_create_service_session_uses_stable_agents_operations() -> None:
+    """Test that hosted sessions use the stable agents operations when available."""
+
+    create_session = AsyncMock(return_value=SimpleNamespace(agent_session_id="agent-session-123"))
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    mock_project.agents = SimpleNamespace(create_session=create_session)
+
+    agent = RawFoundryAgent(
+        project_client=mock_project,
+        agent_name="test-agent",
+        agent_version="1.0",
+        allow_preview=True,
+    )
+
+    result = await agent._create_service_session_id(isolation_key="iso-key")
+
+    assert result == "agent-session-123"
+    create_session.assert_awaited_once()
+    assert create_session.await_args is not None
+    create_session_kwargs = create_session.await_args.kwargs
+    assert create_session_kwargs["agent_name"] == "test-agent"
+    assert create_session_kwargs["isolation_key"] == "iso-key"
+    assert "version_indicator" in create_session_kwargs
 
 
 async def test_raw_foundry_agent_prepare_run_context_requires_preview_for_hosted_sessions() -> None:
