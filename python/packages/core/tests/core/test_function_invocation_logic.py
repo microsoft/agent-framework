@@ -3713,6 +3713,84 @@ async def test_streaming_approval_requests_in_assistant_message(chat_client_base
     assert exec_counter == 0
 
 
+async def test_streaming_approved_tool_result_is_streamed(chat_client_base: SupportsChatGetResponse):
+    """A tool executed while resolving an approval must stream its result (fix #7241).
+
+    Approval resolution runs through the prepped_messages branch of
+    _process_function_requests, which used to return update_role=None, so the executed
+    result was spliced into the message history but never yielded as an update. Streaming
+    consumers (e.g. the AG-UI transport) therefore never observed it. The result must be
+    streamed like any other tool result.
+    """
+    exec_counter = 0
+
+    @tool(name="test_func", approval_mode="always_require")
+    def func_with_approval(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Result {arg1}"
+
+    # Turn 1: stream the function call and collect the generated approval request.
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="1", name="test_func", arguments='{"arg1": "value1"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+
+    request_updates = []
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [func_with_approval]},
+        stream=True,  # type: ignore[arg-type]
+    ):
+        request_updates.append(update)
+
+    approval_req = next(
+        content
+        for update in request_updates
+        for content in update.contents
+        if content.type == "function_approval_request"
+    )
+    assert exec_counter == 0  # not executed until approved
+
+    # Turn 2: resume streaming with the approval response. The tool executes during resolution.
+    approval_response = Content.from_function_approval_response(
+        id=approval_req.id,  # type: ignore[arg-type]
+        function_call=approval_req.function_call,  # type: ignore[arg-type]
+        approved=True,
+    )
+    persisted_messages = [
+        Message(role="user", contents=["hello"]),
+        Message(role="assistant", contents=[approval_req]),
+        Message(role="user", contents=[approval_response]),
+    ]
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [ChatResponseUpdate(contents=[Content.from_text(text="done")], role="assistant")],
+    ]
+
+    resume_updates = []
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        persisted_messages,  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [func_with_approval]},
+        stream=True,  # type: ignore[arg-type]
+    ):
+        resume_updates.append(update)
+
+    assert exec_counter == 1  # executed exactly once after approval
+    # The executed approval result must be streamed (not merely spliced into the history).
+    streamed_results = [
+        content
+        for update in resume_updates
+        for content in update.contents
+        if content.type == "function_result" and content.call_id == "1"
+    ]
+    assert len(streamed_results) == 1, f"Expected one streamed function_result, got {len(streamed_results)}"
+    assert streamed_results[0].result == "Result value1"
+
+
 async def test_streaming_error_recovery_resets_counter(chat_client_base: SupportsChatGetResponse):
     """Test that error counter resets after a successful function call in streaming mode."""
 
