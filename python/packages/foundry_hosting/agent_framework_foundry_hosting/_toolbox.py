@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import _AsyncGeneratorContextManager  # pyright: ignore[reportPrivateUsage]
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -19,6 +19,7 @@ from agent_framework import (
     SkillsSourceContext,
 )
 from azure.ai.agentserver.core import get_request_context
+from typing_extensions import override
 
 if TYPE_CHECKING:
     from collections.abc import Generator
