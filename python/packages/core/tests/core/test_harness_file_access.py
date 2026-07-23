@@ -827,15 +827,20 @@ async def test_filesystem_store_symlink_probe_fails_closed_on_oserror(
 ) -> None:
     """If ``Path.lstat`` raises during the probe, the operation must be refused."""
     store = FileSystemAgentFileStore(tmp_path)
-    await store.write("ok.txt", "content")
+    await store.write("same/same/ok.txt", "content")
 
-    def boom(self: Path) -> bool:
-        raise PermissionError("access denied")
+    original_lstat = Path.lstat
+    failing_path = store.root_path / "same" / "same"
 
-    monkeypatch.setattr(Path, "lstat", boom)
+    def fail_for_target(self: Path) -> os.stat_result:
+        if self == failing_path:
+            raise PermissionError("access denied")
+        return original_lstat(self)
 
-    with pytest.raises(ValueError, match="symbolic link or reparse point"):
-        await store.read("ok.txt")
+    monkeypatch.setattr(Path, "lstat", fail_for_target)
+
+    with pytest.raises(ValueError, match=r"'same/same'"):
+        await store.read("same/same/ok.txt")
 
 
 def test_file_access_harness_classes_are_marked_experimental() -> None:

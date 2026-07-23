@@ -895,8 +895,9 @@ class FileSystemAgentFileStore(AgentFileStore):
                 # Fail closed: if we cannot verify whether a segment is a
                 # symlink/reparse point we refuse the operation rather than
                 # silently allow access that may escape the root.
+                probed_path = current.relative_to(self._root_path).as_posix()
                 raise ValueError(
-                    f"Invalid path: unable to verify whether '{segment}' is a symbolic link or reparse point."
+                    f"Invalid path: unable to verify whether {probed_path!r} is a symbolic link or reparse point."
                 ) from exc
             if is_link:
                 raise ValueError("Invalid path: the resolved path contains a symbolic link or reparse point.")
