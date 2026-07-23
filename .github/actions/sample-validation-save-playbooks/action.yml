@@ -1,0 +1,19 @@
+name: Save Sample Playbooks
+description: >
+  Save the cached sample-validation playbooks. Split out from
+  sample-validation-setup (which only restores) so the save runs even when the
+  validation step fails. Combining restore+save via actions/cache would skip the
+  save on a failing job (post-if: success()), so freshly authored playbooks for
+  samples that failed validation would never persist. Invoke this with
+  `if: ${{ !cancelled() }}` after the validation step in each job.
+
+runs:
+  using: "composite"
+  steps:
+    - name: Save sample playbooks cache
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        # Must match the restore path/key in sample-validation-setup/action.yml and the
+        # sample_validation --playbooks-dir default (samples/sample_validation/playbooks).
+        path: python/samples/sample_validation/playbooks/
+        key: sample-playbooks-${{ github.job }}-${{ github.run_id }}

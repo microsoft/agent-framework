@@ -42,10 +42,13 @@ runs:
         python-version: ${{ inputs.python-version }}
         os: ${{ inputs.os }}
 
-    - name: Cache sample playbooks
-      # Combined cache action: restores here and registers a post-job hook to save
-      # automatically. Keyed per job so each validate-* job keeps its own playbooks.
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    - name: Restore sample playbooks
+      # Restore-only. The matching save is a separate step in each job that runs with
+      # `if: ${{ !cancelled() }}` (see .github/actions/sample-validation-save-playbooks).
+      # A combined actions/cache would skip its post-job save on a failing job
+      # (post-if: success()), so playbooks authored for samples that failed validation
+      # would never persist. Keyed per job so each validate-* job keeps its own playbooks.
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         # Must match the sample_validation --playbooks-dir default, which resolves to
         # samples/sample_validation/playbooks (see python/scripts/sample_validation/__main__.py).
