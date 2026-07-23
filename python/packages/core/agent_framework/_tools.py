@@ -2362,13 +2362,17 @@ async def _process_function_requests(
                         )
             _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
             executed_count = sum(1 for r in approved_function_results if r.type == "function_result")
+            has_user_input_request = any(
+                r.type in {"function_approval_request", "function_call"} or r.user_input_request
+                for r in approved_function_results
+            )
             # Continue to call chat client with updated messages (containing function results)
             # so it can generate the final response
             return {
                 "action": "return" if should_terminate else "continue",
                 "errors_in_a_row": errors_in_a_row,
                 "result_message": None,
-                "update_role": "tool" if executed_count else None,
+                "update_role": "assistant" if has_user_input_request else ("tool" if executed_count else None),
                 "function_call_results": approved_function_results or None,
                 "function_call_count": executed_count,
             }

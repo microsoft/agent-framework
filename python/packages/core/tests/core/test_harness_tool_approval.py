@@ -602,8 +602,77 @@ async def test_tool_approval_resolution_streams_tool_results(
         for content in update.contents
         if content.type == "function_result"
     ]
-    assert tool_results, "approval-resolution execution must stream its function_result"
+    assert len(tool_results) == 1
+    assert tool_results[0].call_id == "call_guarded"
+    assert tool_results[0].result == "guarded result"
     assert calls == 1
+
+
+async def test_tool_approval_resolution_streams_user_input_request_as_assistant(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A user-input request raised while resolving an approval must stream as an assistant update."""
+    from agent_framework.exceptions import UserInputRequiredException
+
+    calls = 0
+
+    @tool(name="oauth_tool", approval_mode="always_require")
+    def oauth_tool() -> str:
+        nonlocal calls
+        calls += 1
+        raise UserInputRequiredException(
+            contents=[Content.from_oauth_consent_request(consent_link="https://example.com/consent")]
+        )
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[oauth_tool],
+        middleware=[ToolApprovalMiddleware()],
+    )
+    session = AgentSession(session_id="approval-user-input-stream")
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_oauth", name="oauth_tool", arguments="{}")],
+                role="assistant",
+            )
+        ]
+    ]
+
+    first_updates = [update async for update in agent.run("run oauth", stream=True, session=session)]
+    requests = [content for update in first_updates for content in update.user_input_requests]
+    assert len(requests) == 1
+    assert calls == 0
+
+    chat_client_base.streaming_responses = [
+        [ChatResponseUpdate(contents=[Content.from_text("done")], role="assistant")]
+    ]
+    second_updates = [
+        update
+        async for update in agent.run(
+            requests[0].to_function_approval_response(approved=True), stream=True, session=session
+        )
+    ]
+
+    assistant_requests = [
+        content
+        for update in second_updates
+        if update.role == "assistant"
+        for content in update.contents
+        if content.user_input_request
+    ]
+    assert len(assistant_requests) == 1
+    assert assistant_requests[0].type == "oauth_consent_request"
+    assert calls == 1
+
+    # it must not be mislabeled as a tool update
+    assert not [
+        content
+        for update in second_updates
+        if update.role == "tool"
+        for content in update.contents
+        if content.user_input_request
+    ]
 
 
 async def test_tool_approval_middleware_always_approve_tool_rule(
