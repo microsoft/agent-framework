@@ -12,6 +12,7 @@ from agent_framework import (
     GROUP_ANNOTATION_KEY,
     GROUP_HAS_REASONING_KEY,
     GROUP_ID_KEY,
+    GROUP_INDEX_KEY,
     GROUP_KIND_KEY,
     GROUP_TOKEN_COUNT_KEY,
     SUMMARIZED_BY_SUMMARY_ID_KEY,
@@ -113,6 +114,14 @@ def _group_kind(message: Message) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _group_index(message: Message) -> int | None:
+    annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+    if not isinstance(annotation, dict):
+        return None
+    value = annotation.get(GROUP_INDEX_KEY)
+    return value if isinstance(value, int) else None
+
+
 def _group_has_reasoning(message: Message) -> bool | None:
     annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
     if not isinstance(annotation, dict):
@@ -186,6 +195,107 @@ def test_group_annotations_handle_same_message_reasoning_and_function_calls() ->
     assert _group_has_reasoning(messages[1]) is True
 
 
+def test_group_annotations_pair_nonadjacent_function_result_by_call_id() -> None:
+    messages = [
+        _assistant_reasoning_and_function_calls("c1"),
+        Message(role="assistant", contents=["approval completed"]),
+        _tool_result("c1", "ok"),
+    ]
+
+    annotate_message_groups(messages)
+
+    call_group = _group_id(messages[0])
+    assert call_group is not None
+    assert _group_id(messages[2]) == call_group
+    assert _group_index(messages[2]) == _group_index(messages[0])
+    assert _group_has_reasoning(messages[2]) is True
+    assert _group_id(messages[1]) != call_group
+
+
+def test_group_annotations_pair_multiple_nonadjacent_results_with_declaration() -> None:
+    messages = [
+        _assistant_reasoning_and_function_calls("c1", "c2"),
+        Message(role="assistant", contents=["first approval"]),
+        _tool_result("c1", "ok1"),
+        Message(role="assistant", contents=["second approval"]),
+        _tool_result("c2", "ok2"),
+    ]
+
+    annotate_message_groups(messages)
+
+    call_group = _group_id(messages[0])
+    assert call_group is not None
+    assert _group_id(messages[2]) == call_group
+    assert _group_id(messages[4]) == call_group
+    assert _group_index(messages[2]) == _group_index(messages[0])
+    assert _group_index(messages[4]) == _group_index(messages[0])
+
+
+def test_group_annotations_merge_declaration_groups_for_combined_result_message() -> None:
+    messages = [
+        _assistant_function_call("c1"),
+        Message(role="assistant", contents=["between calls"]),
+        _assistant_function_call("c2"),
+        Message(role="assistant", contents=["approval completed"]),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(call_id="c1", result="ok1"),
+                Content.from_function_result(call_id="c2", result="ok2"),
+            ],
+        ),
+    ]
+
+    annotate_message_groups(messages)
+
+    call_group = _group_id(messages[0])
+    assert call_group is not None
+    assert _group_id(messages[2]) == call_group
+    assert _group_id(messages[4]) == call_group
+    assert _group_index(messages[2]) == _group_index(messages[0])
+    assert _group_index(messages[4]) == _group_index(messages[0])
+
+
+def test_group_annotations_leave_unmatched_result_separate_from_pending_call() -> None:
+    messages = [
+        _assistant_function_call("pending"),
+        Message(role="assistant", contents=["waiting"]),
+        _tool_result("unknown", "result"),
+    ]
+
+    annotate_message_groups(messages)
+
+    assert _group_id(messages[0]) != _group_id(messages[2])
+
+
+def test_group_annotations_do_not_pair_result_before_declaration() -> None:
+    messages = [
+        _tool_result("late", "result"),
+        Message(role="assistant", contents=["between"]),
+        _assistant_function_call("late"),
+    ]
+
+    annotate_message_groups(messages)
+
+    assert _group_id(messages[0]) != _group_id(messages[2])
+
+
+def test_group_annotations_do_not_pair_ambiguous_duplicate_call_ids() -> None:
+    messages = [
+        _assistant_function_call("duplicate"),
+        Message(role="assistant", contents=["between declarations"]),
+        _assistant_function_call("duplicate"),
+        Message(role="assistant", contents=["before result"]),
+        _tool_result("duplicate", "result"),
+    ]
+
+    annotate_message_groups(messages)
+
+    result_group = _group_id(messages[4])
+    assert result_group != _group_id(messages[0])
+    assert result_group != _group_id(messages[2])
+
+
 async def test_sliding_window_keeps_reasoning_and_mcp_call_atomic() -> None:
     messages = [
         Message(role="system", contents=["system"]),
@@ -256,6 +366,64 @@ def test_extend_compaction_messages_preserves_existing_annotations_and_tokens() 
     assert _group_id(messages[1]) == old_group_id
     assert _token_count(messages[0]) == old_token_count
     assert isinstance(_token_count(messages[1]), int)
+
+
+def test_extend_compaction_messages_pairs_nonadjacent_result_incrementally() -> None:
+    tokenizer = CharacterEstimatorTokenizer()
+    messages = [
+        _assistant_function_call("c4"),
+        Message(role="assistant", contents=["approval completed"]),
+    ]
+    annotate_message_groups(messages, tokenizer=tokenizer)
+    call_group = _group_id(messages[0])
+    intervening_group = _group_id(messages[1])
+
+    extend_compaction_messages(messages, [_tool_result("c4", "ok")], tokenizer=tokenizer)
+
+    assert _group_id(messages[0]) == call_group
+    assert _group_id(messages[1]) == intervening_group
+    assert _group_id(messages[2]) == call_group
+    assert _group_index(messages[2]) == _group_index(messages[0])
+    assert isinstance(_token_count(messages[2]), int)
+
+    append_compaction_message(
+        messages,
+        Message(role="assistant", contents=["final answer"]),
+        tokenizer=tokenizer,
+    )
+
+    assert _group_id(messages[3]) not in {call_group, intervening_group}
+    assert _group_index(messages[3]) == 2
+
+
+def test_extend_compaction_messages_reincludes_excluded_declaration_for_new_result() -> None:
+    messages = [
+        _assistant_function_call("c5"),
+        Message(role="assistant", contents=["approval pending"]),
+    ]
+    annotate_message_groups(messages)
+    messages[0].additional_properties[EXCLUDED_KEY] = True
+
+    extend_compaction_messages(messages, [_tool_result("c5", "ok")])
+
+    assert messages[0].additional_properties[EXCLUDED_KEY] is False
+    assert messages[2].additional_properties[EXCLUDED_KEY] is False
+    assert _group_id(messages[2]) == _group_id(messages[0])
+
+
+def test_extend_compaction_messages_preserves_adjacent_duplicate_call_pair() -> None:
+    messages = [
+        _assistant_function_call("duplicate"),
+        Message(role="assistant", contents=["between declarations"]),
+        _assistant_function_call("duplicate"),
+    ]
+    annotate_message_groups(messages)
+
+    extend_compaction_messages(messages, [_tool_result("duplicate", "result")])
+
+    result_group = _group_id(messages[3])
+    assert result_group != _group_id(messages[0])
+    assert result_group == _group_id(messages[2])
 
 
 def test_append_compaction_message_annotates_new_message() -> None:
@@ -381,6 +549,35 @@ async def test_truncation_strategy_keeps_latest_group_when_it_exceeds_target() -
 
     assert changed is False
     assert included_messages(messages) == messages
+
+
+async def test_truncation_strategy_keeps_nonadjacent_tool_pair_atomic() -> None:
+    tokenizer = CharacterEstimatorTokenizer()
+    messages = [
+        Message(role="user", contents=["original request " + "x" * 1600]),
+        _assistant_function_call("call-1"),
+        Message(role="assistant", contents=["intervening approval traffic " + "y" * 1600]),
+        _tool_result("call-1", "result"),
+        Message(role="user", contents=["follow up " + "z" * 400]),
+    ]
+    strategy = TruncationStrategy(
+        max_n=600,
+        compact_to=520,
+        tokenizer=tokenizer,
+    )
+    annotate_message_groups(messages, tokenizer=tokenizer)
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    projected = included_messages(messages)
+    declared = {
+        content.call_id for message in projected for content in message.contents if content.type == "function_call"
+    }
+    results = {
+        content.call_id for message in projected for content in message.contents if content.type == "function_result"
+    }
+    assert declared == results
 
 
 def test_truncation_strategy_validates_token_targets() -> None:

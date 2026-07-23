@@ -101,6 +101,18 @@ def _is_reasoning_only_assistant(message: Message) -> bool:
     return all(content.type == "text_reasoning" for content in message.contents)
 
 
+def _function_call_ids(message: Message) -> set[str]:
+    if message.role != "assistant":
+        return set()
+    return {content.call_id for content in message.contents if content.type == "function_call" and content.call_id}
+
+
+def _function_result_ids(message: Message) -> set[str]:
+    if message.role != "tool":
+        return set()
+    return {content.call_id for content in message.contents if content.type == "function_result" and content.call_id}
+
+
 def _ensure_message_ids(
     messages: list[Message], *, id_offset: int = 0, reserved_ids: Iterable[str] | None = None
 ) -> None:
@@ -126,6 +138,68 @@ def _group_id_for(message: Message, group_index: int) -> str:
     return f"group_index_{group_index}"
 
 
+def _link_function_call_result_spans(messages: Sequence[Message], spans: list[dict[str, Any]]) -> None:
+    """Link non-adjacent function results to their unique declaration group."""
+    if len(spans) < 2:
+        return
+
+    declaration_spans: dict[str, set[int]] = {}
+    result_ids_by_span: list[set[str]] = []
+    for span_index, span in enumerate(spans):
+        start_index = int(span["start_index"])
+        end_index = int(span["end_index"])
+        declared_ids: set[str] = set()
+        result_ids: set[str] = set()
+        for message in messages[start_index : end_index + 1]:
+            declared_ids.update(_function_call_ids(message))
+            result_ids.update(_function_result_ids(message))
+        for call_id in declared_ids:
+            declaration_spans.setdefault(call_id, set()).add(span_index)
+        result_ids_by_span.append(result_ids)
+    if not declaration_spans or not any(result_ids_by_span):
+        return
+
+    parents = list(range(len(spans)))
+
+    def find(span_index: int) -> int:
+        while parents[span_index] != span_index:
+            parents[span_index] = parents[parents[span_index]]
+            span_index = parents[span_index]
+        return span_index
+
+    def union(left: int, right: int) -> bool:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root == right_root:
+            return False
+        earlier_root = min(left_root, right_root)
+        later_root = max(left_root, right_root)
+        parents[later_root] = earlier_root
+        return True
+
+    linked = False
+    for result_span_index, result_ids in enumerate(result_ids_by_span):
+        for call_id in result_ids:
+            matches = declaration_spans.get(call_id)
+            if matches is None or len(matches) != 1:
+                continue
+            declaration_span_index = next(iter(matches))
+            if declaration_span_index < result_span_index and union(result_span_index, declaration_span_index):
+                linked = True
+    if not linked:
+        return
+
+    has_reasoning_by_root: dict[int, bool] = {}
+    for span_index, span in enumerate(spans):
+        root = find(span_index)
+        has_reasoning_by_root[root] = has_reasoning_by_root.get(root, False) or bool(span["has_reasoning"])
+
+    for span_index, span in enumerate(spans):
+        root = find(span_index)
+        span["group_id"] = spans[root]["group_id"]
+        span["has_reasoning"] = has_reasoning_by_root[root]
+
+
 def group_messages(
     messages: list[Message], *, id_offset: int = 0, reserved_ids: Iterable[str] | None = None
 ) -> list[dict[str, Any]]:
@@ -145,6 +219,7 @@ def group_messages(
     Returns:
         Ordered list of lightweight span dicts with keys:
         ``group_id``, ``kind``, ``start_index``, ``end_index``, ``has_reasoning``.
+        Non-contiguous function-call declaration and result spans share a group id.
     """
     _ensure_message_ids(messages, id_offset=id_offset, reserved_ids=reserved_ids)
     spans: list[dict[str, Any]] = []
@@ -249,6 +324,7 @@ def group_messages(
         i += 1
         group_index += 1
 
+    _link_function_call_result_spans(messages, spans)
     return spans
 
 
@@ -434,6 +510,38 @@ def _reannotation_start(messages: Sequence[Message], index: int) -> int:
     return previous_index
 
 
+def _function_pair_reannotation_start(messages: Sequence[Message], start_index: int) -> int:
+    result_ids: set[str] = set()
+    for message in messages[start_index:]:
+        result_ids.update(_function_result_ids(message))
+    if not result_ids:
+        return start_index
+
+    declaration_indices: dict[str, set[int]] = {}
+    for index, message in enumerate(messages):
+        for call_id in _function_call_ids(message):
+            declaration_indices.setdefault(call_id, set()).add(index)
+
+    matching_indices: list[int] = []
+    for call_id in result_ids:
+        indices = declaration_indices.get(call_id)
+        if indices is None or len(indices) != 1:
+            continue
+        declaration_index = next(iter(indices))
+        if declaration_index < start_index:
+            matching_indices.append(declaration_index)
+    if not matching_indices:
+        return start_index
+
+    earliest_index = min(matching_indices)
+    declaration_group_id = _group_id(messages[earliest_index])
+    if declaration_group_id is None:
+        return earliest_index
+    while earliest_index > 0 and _group_id(messages[earliest_index - 1]) == declaration_group_id:
+        earliest_index -= 1
+    return earliest_index
+
+
 def annotate_message_groups(
     messages: list[Message],
     *,
@@ -444,7 +552,8 @@ def annotate_message_groups(
     """Annotate message groups while reusing existing annotations when possible.
 
     By default, the function re-annotates only the suffix that contains new
-    messages and keeps previously annotated prefixes untouched. When a
+    messages and keeps previously annotated prefixes untouched. A newly added
+    function result expands that suffix back to its unique declaration. When a
     ``tokenizer`` is provided, token-count annotations are also populated
     incrementally.
     """
@@ -466,18 +575,29 @@ def annotate_message_groups(
         start_index = min(candidate_starts)
 
     start_index = _reannotation_start(messages, start_index)
+    start_index = _function_pair_reannotation_start(messages, start_index)
 
-    # Continue group indices from the preserved prefix when only re-annotating a suffix.
-    group_index_offset = 0
-    if start_index > 0:
-        previous_group_index = _group_index(messages[start_index - 1])
-        if previous_group_index is not None:
-            group_index_offset = previous_group_index + 1
+    # Linked groups can be non-contiguous, so the last prefix message does not
+    # necessarily carry the highest group index.
+    prefix_group_indices = [
+        group_index for message in messages[:start_index] if (group_index := _group_index(message)) is not None
+    ]
+    group_index_offset = max(prefix_group_indices, default=-1) + 1
 
     reserved_ids = {message.message_id for message in messages[:start_index] if message.message_id}
     spans = group_messages(messages[start_index:], id_offset=start_index, reserved_ids=reserved_ids)
-    for span_index, span in enumerate(spans):
+    span_counts_by_group_id: dict[str, int] = {}
+    for span in spans:
         group_id = str(span["group_id"])
+        span_counts_by_group_id[group_id] = span_counts_by_group_id.get(group_id, 0) + 1
+    linked_group_ids = {group_id for group_id, count in span_counts_by_group_id.items() if count > 1}
+
+    group_indices: dict[str, int] = {}
+    grouped_messages: dict[str, list[Message]] = {}
+    for span in spans:
+        group_id = str(span["group_id"])
+        if group_id not in group_indices:
+            group_indices[group_id] = group_index_offset + len(group_indices)
         kind = _coerce_group_kind(span["kind"])
         if kind is None:
             raise ValueError(f"Unexpected group kind in span: {span['kind']}")
@@ -490,12 +610,19 @@ def annotate_message_groups(
                 message,
                 group_id=group_id,
                 kind=kind,
-                index=group_index_offset + span_index,
+                index=group_indices[group_id],
                 has_reasoning=has_reasoning,
             )
             message.additional_properties.setdefault(EXCLUDED_KEY, False)
+            if group_id in linked_group_ids:
+                grouped_messages.setdefault(group_id, []).append(message)
             if tokenizer is not None and _token_count(message) is None:
                 _write_token_count(message, tokenizer.count_tokens(_serialize_message(message)))
+
+    for group in grouped_messages.values():
+        if any(not message.additional_properties.get(EXCLUDED_KEY, False) for message in group):
+            for message in group:
+                message.additional_properties[EXCLUDED_KEY] = False
     return _ordered_group_ids_from_annotations(messages)
 
 
