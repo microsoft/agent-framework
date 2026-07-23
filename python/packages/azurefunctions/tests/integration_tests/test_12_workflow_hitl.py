@@ -20,8 +20,11 @@ Usage:
 """
 
 import time
+import uuid
 
 import pytest
+
+from agent_framework_azurefunctions import WorkflowHitlContext
 
 # Module-level markers - applied to all tests in this file
 pytestmark = [
@@ -30,6 +33,9 @@ pytestmark = [
     pytest.mark.sample("12_workflow_hitl"),
     pytest.mark.usefixtures("function_app_for_test"),
 ]
+
+# Must match the workflow name in samples/04-hosting/azure_functions/12_workflow_hitl/function_app.py
+WORKFLOW_NAME = "content_moderation"
 
 
 @pytest.mark.orchestration
@@ -46,7 +52,7 @@ class TestWorkflowHITL:
         """Polls for a pending HITL request."""
         start_time = time.time()
         while time.time() - start_time < timeout:
-            status_response = self.helper.get(f"{self.base_url}/api/workflow/status/{instance_id}")
+            status_response = self.helper.get(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/status/{instance_id}")
             if status_response.status_code == 200:
                 status = status_response.json()
                 pending_requests = status.get("pendingHumanInputRequests", [])
@@ -69,7 +75,7 @@ class TestWorkflowHITL:
         }
 
         # Start orchestration
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", payload)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data
@@ -89,7 +95,7 @@ class TestWorkflowHITL:
 
         # Send approval
         approval_response = self.helper.post_json(
-            f"{self.base_url}/api/workflow/respond/{instance_id}/{request_id}",
+            f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/respond/{instance_id}/{request_id}",
             {"approved": True, "reviewer_notes": "Content is appropriate and well-written."},
         )
         assert approval_response.status_code == 200
@@ -112,7 +118,7 @@ class TestWorkflowHITL:
         }
 
         # Start orchestration
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", payload)
         assert response.status_code == 202
         data = response.json()
         instance_id = data["instanceId"]
@@ -127,7 +133,7 @@ class TestWorkflowHITL:
 
         # Send rejection
         rejection_response = self.helper.post_json(
-            f"{self.base_url}/api/workflow/respond/{instance_id}/{request_id}",
+            f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/respond/{instance_id}/{request_id}",
             {"approved": False, "reviewer_notes": "Content appears to be spam/scam material."},
         )
         assert rejection_response.status_code == 200
@@ -150,7 +156,7 @@ class TestWorkflowHITL:
         }
 
         # Start orchestration
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", payload)
         assert response.status_code == 202
         data = response.json()
         instance_id = data["instanceId"]
@@ -169,7 +175,7 @@ class TestWorkflowHITL:
         if pending_requests:
             request_id = pending_requests[0]["requestId"]
             self.helper.post_json(
-                f"{self.base_url}/api/workflow/respond/{instance_id}/{request_id}",
+                f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/respond/{instance_id}/{request_id}",
                 {"approved": True, "reviewer_notes": ""},
             )
 
@@ -189,7 +195,7 @@ class TestWorkflowHITL:
         }
 
         # Start orchestration
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", payload)
         assert response.status_code == 202
         data = response.json()
         instance_id = data["instanceId"]
@@ -203,13 +209,75 @@ class TestWorkflowHITL:
 
         # Approve
         self.helper.post_json(
-            f"{self.base_url}/api/workflow/respond/{instance_id}/{request_id}",
+            f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/respond/{instance_id}/{request_id}",
             {"approved": True, "reviewer_notes": "Approved after review."},
         )
 
         # Wait for completion
         final_status = self.helper.wait_for_orchestration(data["statusQueryGetUri"])
         assert final_status["runtimeStatus"] == "Completed"
+
+    def test_hitl_notify_respond_url_matches_helper(self) -> None:
+        """The respond URL WorkflowHitlContext builds equals the one the server accepts.
+
+        This is the core guarantee of the in-workflow notify pattern: the URL an
+        executor builds (via ``WorkflowHitlContext`` -- the same one ``NotifyExecutor``
+        would email a reviewer) is byte-for-byte the canonical respond URL the status
+        endpoint exposes, and POSTing to it actually resumes the run.
+        """
+        payload = {
+            "content_id": "article-test-005",
+            "title": "Sustainable Gardening Basics",
+            "body": (
+                "Composting kitchen scraps enriches soil naturally and reduces waste. "
+                "Rotating crops each season helps prevent nutrient depletion."
+            ),
+            "author": "Green Thumb",
+        }
+
+        # Start orchestration
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", payload)
+        assert response.status_code == 202
+        data = response.json()
+        instance_id = data["instanceId"]
+
+        # Wait for the workflow to reach the HITL pause point
+        status = self._wait_for_hitl_request(instance_id)
+        pending_requests = status.get("pendingHumanInputRequests", [])
+        assert len(pending_requests) > 0, "Expected pending HITL request"
+        pending = pending_requests[0]
+        request_id = pending["requestId"]
+
+        # request_info generates the request id internally as a uuid4 when the caller
+        # does not pass one, so the pending id round-trips as a valid UUID (not an
+        # opaque framework default).
+        uuid.UUID(request_id)  # raises ValueError if not a valid UUID
+
+        # The request originates in the executor that called request_info.
+        assert pending.get("sourceExecutor") == "human_review_executor"
+
+        # Build the respond URL the same way an in-workflow executor would, via the
+        # public helper, pointing it at this app's base URL. It must equal the
+        # server-exposed respondUrl exactly -- i.e. the link NotifyExecutor emails is
+        # the one the /respond endpoint honors.
+        hitl = WorkflowHitlContext(
+            instance_id=instance_id,
+            workflow_name=WORKFLOW_NAME,
+            base_url_override=self.base_url,
+        )
+        helper_url = hitl.build_respond_url(request_id)
+        assert helper_url == pending["respondUrl"]
+
+        # Responding via the helper-built URL resumes the workflow to completion.
+        approval_response = self.helper.post_json(
+            helper_url,
+            {"approved": True, "reviewer_notes": "Looks good."},
+        )
+        assert approval_response.status_code == 200
+
+        final_status = self.helper.wait_for_orchestration(data["statusQueryGetUri"])
+        assert final_status["runtimeStatus"] == "Completed"
+        assert "output" in final_status
 
 
 if __name__ == "__main__":

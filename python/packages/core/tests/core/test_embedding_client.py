@@ -24,9 +24,9 @@ class MockEmbeddingClient(BaseEmbeddingClient):
         *,
         options: EmbeddingGenerationOptions | None = None,
     ) -> GeneratedEmbeddings[list[float]]:
-        return GeneratedEmbeddings(  # ty: ignore[invalid-return-type]
+        return GeneratedEmbeddings(
             [Embedding(vector=[0.1, 0.2, 0.3], model="mock-model") for _ in values],
-            usage={"prompt_tokens": len(values), "total_tokens": len(values)},  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type, invalid-key]
+            usage={"prompt_tokens": len(values), "total_tokens": len(values)},  # type: ignore[arg-type]
         )
 
 
@@ -52,7 +52,7 @@ async def test_base_get_embeddings_usage() -> None:
     client = MockEmbeddingClient()
     result = await client.get_embeddings(["a", "b", "c"])
     assert result.usage is not None
-    assert result.usage["prompt_tokens"] == 3  # type: ignore[typeddict-item]  # ty: ignore[invalid-key]
+    assert result.usage["prompt_tokens"] == 3  # type: ignore[typeddict-item]
 
 
 def test_base_additional_properties_default() -> None:

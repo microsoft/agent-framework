@@ -17,7 +17,7 @@ This sample demonstrates how to discover **Agent Skills served over MCP** with a
 ### Prerequisites
 
 - Python 3.10+
-- An [Azure AI Foundry](https://ai.azure.com/) project with a deployed model
+- A [Microsoft Foundry](https://ai.azure.com/) project with a deployed model
 - Azure CLI authentication (`az login`)
 - A running MCP server that hosts SEP-2640 skill resources (see "Providing
   an MCP server" below)
@@ -49,3 +49,13 @@ resources (`skill://index.json` plus per-skill `SKILL.md`).
 - The Model Context Protocol working group maintains reference MCP-skills
   servers at
   [`modelcontextprotocol/experimental-ext-skills`](https://github.com/modelcontextprotocol/experimental-ext-skills).
+
+## Security Considerations
+
+Discovering skills over MCP means an *external* MCP server controls what skill content
+(including instructions and, for script-capable skills, the scripts the agent may run)
+reaches the agent. A compromised or untrustworthy server could return adversarial content
+designed to manipulate the agent (indirect prompt injection) or to exfiltrate data through
+skill instructions/scripts. This source is never enabled by default — connecting
+`MCPSkillsSource` to a server is an explicit opt-in. Only connect to MCP servers you have
+vetted and trust, and treat their responses as untrusted input.

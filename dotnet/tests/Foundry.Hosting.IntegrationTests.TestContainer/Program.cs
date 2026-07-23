@@ -26,11 +26,13 @@ var projectEndpoint = new Uri(Environment.GetEnvironmentVariable("FOUNDRY_PROJEC
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set."));
 var deployment = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
 
-var projectClient = new AIProjectClient(projectEndpoint, new DefaultAzureCredential());
+var credential = new DefaultAzureCredential();
+var projectClient = new AIProjectClient(projectEndpoint, credential);
 
 AIAgent agent = scenario switch
 {
     "happy-path" => CreateHappyPathAgent(projectClient, deployment),
+    "unsupported-protocol" => CreateHappyPathAgent(projectClient, deployment),
     "store-config" => CreateStoreConfigAgent(projectClient, deployment),
     "tool-calling" => CreateToolCallingAgent(projectClient, deployment),
     "tool-calling-approval" => CreateToolCallingApprovalAgent(projectClient, deployment),
@@ -61,7 +63,7 @@ builder.Services.AddFoundryResponses(agent);
 var consentToolboxName = Environment.GetEnvironmentVariable("IT_TOOLBOX_NAME");
 if (!string.IsNullOrEmpty(consentToolboxName))
 {
-    builder.Services.AddFoundryToolboxes(consentToolboxName);
+    builder.Services.AddFoundryToolboxes(credential, consentToolboxName);
 }
 
 var app = builder.Build();

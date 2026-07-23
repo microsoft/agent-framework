@@ -17,6 +17,7 @@ import pickle
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 
@@ -25,6 +26,7 @@ from agent_framework._workflows._checkpoint import FileCheckpointStorage
 from agent_framework._workflows._checkpoint_encoding import (
     _PICKLE_MARKER,
     _TYPE_MARKER,
+    _base64_to_unpickle,  # pyright: ignore[reportPrivateUsage]
     decode_checkpoint_value,
     encode_checkpoint_value,
 )
@@ -35,6 +37,16 @@ class MaliciousPayload:
 
     def __reduce__(self):
         return (os.getpid, ())
+
+
+class FrameworkHelperPayload:
+    """A payload that references a framework helper during unpickling."""
+
+    def __init__(self, nested_payload: str) -> None:
+        self.nested_payload = nested_payload
+
+    def __reduce__(self) -> tuple[Any, tuple[str]]:
+        return (_base64_to_unpickle, (self.nested_payload,))
 
 
 def test_restricted_decode_blocks_arbitrary_callable():
@@ -96,6 +108,54 @@ def test_restricted_decode_prevents_code_execution():
         assert not os.path.exists(marker_file), (
             "Restricted unpickler should have prevented code execution, but the marker file was created."
         )
+
+
+def test_restricted_decode_blocks_framework_deserialization_helpers() -> None:
+    """Restricted deserialization blocks framework helper callables."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        marker_file = os.path.join(tmpdir, "checkpoint_helper_marker")
+        nested_payload = pickle.dumps(
+            type(
+                "NestedExploit",
+                (),
+                {
+                    "__reduce__": lambda self: (
+                        eval,
+                        (f"open({marker_file!r}, 'w').write('pwned')",),
+                    )
+                },
+            )(),
+            protocol=pickle.HIGHEST_PROTOCOL,
+        )
+        payload = FrameworkHelperPayload(base64.b64encode(nested_payload).decode("ascii"))
+        encoded_b64 = base64.b64encode(pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)).decode("ascii")
+
+        checkpoint_value = {
+            _PICKLE_MARKER: encoded_b64,
+            _TYPE_MARKER: "builtins:int",
+        }
+        with pytest.raises(WorkflowCheckpointException, match="deserialization blocked"):
+            decode_checkpoint_value(checkpoint_value, allowed_types=frozenset())
+
+        assert not os.path.exists(marker_file)
+
+
+def test_restricted_decode_blocks_dotted_framework_global() -> None:
+    """Restricted deserialization blocks dotted globals in allowed framework modules."""
+    module = b"agent_framework._workflows._checkpoint_encoding"
+    name = b"pickle.loads"
+    dotted_global_payload = (
+        b"\x80\x04\x8c" + bytes([len(module)]) + module + b"\x8c" + bytes([len(name)]) + name + b"\x93C\x05NESTD\x85R."
+    )
+    encoded_b64 = base64.b64encode(dotted_global_payload).decode("ascii")
+
+    checkpoint_value = {
+        _PICKLE_MARKER: encoded_b64,
+        _TYPE_MARKER: "builtins:int",
+    }
+
+    with pytest.raises(WorkflowCheckpointException, match="deserialization blocked"):
+        decode_checkpoint_value(checkpoint_value, allowed_types=frozenset())
 
 
 def test_file_checkpoint_storage_accepts_allowed_types():
@@ -207,6 +267,28 @@ async def test_file_storage_allows_listed_user_type():
         assert loaded.state["data"].value == 99
 
 
+async def test_file_storage_round_trips_marker_shaped_dict_state() -> None:
+    """FileCheckpointStorage preserves marker-shaped dictionaries as user data."""
+    from agent_framework import WorkflowCheckpoint
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = FileCheckpointStorage(tmpdir)
+        state_data = {
+            _PICKLE_MARKER: "some_value",
+            _TYPE_MARKER: "some_type",
+        }
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="test",
+            graph_signature_hash="hash",
+            state={"data": state_data},
+        )
+        checkpoint_id = await storage.save(checkpoint)
+
+        loaded = await storage.load(checkpoint_id)
+
+        assert loaded.state["data"] == state_data
+
+
 def test_restricted_unpickler_raises_pickle_error():
     """_RestrictedUnpickler.find_class raises pickle.UnpicklingError, not a framework exception."""
     from agent_framework._workflows._checkpoint_encoding import _RestrictedUnpickler
@@ -254,7 +336,7 @@ def test_restricted_decode_allows_openai_response_types():
         input_tokens=10,
         output_tokens=20,
         total_tokens=30,
-        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        input_tokens_details=InputTokensDetails(cached_tokens=0, cache_write_tokens=0),
         output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
     )
     encoded = encode_checkpoint_value(usage)

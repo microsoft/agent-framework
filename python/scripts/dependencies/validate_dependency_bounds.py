@@ -50,7 +50,7 @@ class PackageTestPlan:
 
     project_path: Path
     package_name: str
-    include_dev_group: bool
+    dependency_groups: list[str]
     include_dev_extra: bool
     optional_extras: list[str]
     internal_editables: list[Path]
@@ -120,7 +120,7 @@ def _build_test_plans(workspace_root: Path, package_filter: str | None) -> list[
             PackageTestPlan(
                 project_path=project_path,
                 package_name=package_name,
-                include_dev_group="dev" in dependency_groups,
+                dependency_groups=sorted(dependency_groups),
                 include_dev_extra="dev" in optional_dependencies,
                 optional_extras=sorted(name for name in optional_dependencies if name not in {"all", "dev"}),
                 internal_editables=_resolve_internal_editables(package_name, package_map, internal_graph),
@@ -164,8 +164,8 @@ def _run_package_tasks(
             "--quiet",
         ]
         extend_command_with_runtime_tools(command, workspace_root)
-        if plan.include_dev_group:
-            command.extend(["--group", "dev"])
+        for group_name in plan.dependency_groups:
+            command.extend(["--group", group_name])
         if plan.include_dev_extra:
             command.extend(["--extra", "dev"])
         for extra_name in plan.optional_extras:
@@ -257,14 +257,12 @@ def _run_test_mode(
                 timeout_seconds=timeout_seconds,
                 dry_run=dry_run,
             )
-            scenario_result["packages"].append(
-                {
-                    "project_path": str(plan.project_path),
-                    "package_name": plan.package_name,
-                    "status": "passed" if success else "failed",
-                    "error": error,
-                }
-            )
+            scenario_result["packages"].append({
+                "project_path": str(plan.project_path),
+                "package_name": plan.package_name,
+                "status": "passed" if success else "failed",
+                "error": error,
+            })
             if success:
                 print(f"[green]{plan.project_path}: {scenario_name} passed[/green]")
                 continue

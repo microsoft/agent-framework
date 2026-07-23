@@ -3,11 +3,12 @@
 """Integration tests for ResponsesHostServer with a real Foundry endpoint.
 
 These tests exercise the full HTTP pipeline using httpx.AsyncClient with
-ASGITransport — no real server process is started. The agent talks to a real
-Foundry project endpoint so every test requires valid credentials.
+ASGITransport — no real server process is started. Most tests talk to a real
+Foundry project endpoint. Deterministic cross-package regressions replace only
+the external Responses HTTP boundary.
 
 Required environment variables:
-    FOUNDRY_PROJECT_ENDPOINT - The Azure AI Foundry project endpoint URL.
+    FOUNDRY_PROJECT_ENDPOINT - The Microsoft Foundry project endpoint URL.
     FOUNDRY_MODEL            - The model deployment name (e.g. gpt-4o).
 """
 
@@ -18,13 +19,15 @@ import json
 import os
 from pathlib import Path
 from typing import Annotated, Any
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
-from agent_framework import Agent, tool
+from agent_framework import Agent, SlidingWindowStrategy, tool
 from agent_framework.foundry import FoundryChatClient
 from azure.ai.agentserver.responses import InMemoryResponseProvider
 from azure.identity import AzureCliCredential
+from openai import AsyncOpenAI
 
 from agent_framework_foundry_hosting import ResponsesHostServer
 
@@ -37,7 +40,6 @@ skip_if_foundry_hosting_integration_tests_disabled = pytest.mark.skipif(
     or os.getenv("FOUNDRY_MODEL", "") == "",
     reason="No real FOUNDRY_PROJECT_ENDPOINT or FOUNDRY_MODEL provided; skipping integration tests.",
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -489,6 +491,175 @@ class TestMultiTurn:
 
         done_events = [e for e in events if e["event"] == "response.output_text.done"]
         assert "42" in done_events[0]["data"]["text"]
+
+
+class TestReasoningHostedMcpReplay:
+    """Regression coverage for stateless reasoning + hosted MCP replay."""
+
+    async def test_second_turn_replays_mcp_call_with_encrypted_reasoning(self) -> None:
+        """A hosted agent replays an encrypted reasoning and MCP pair when store is disabled."""
+        call_count = 0
+        reasoning_id = "rs_576d207b35d96b3200pkcXkMwXAij920Wcv7WhRXiMPiLdOA63"
+        provider_payloads: list[dict[str, Any]] = []
+
+        def _message(message_id: str) -> dict[str, Any]:
+            return {
+                "id": message_id,
+                "content": [{"annotations": [], "text": "Microsoft Agent Framework", "type": "output_text"}],
+                "role": "assistant",
+                "status": "completed",
+                "type": "message",
+            }
+
+        def _response(response_id: str, output: list[dict[str, Any]]) -> dict[str, Any]:
+            return {
+                "id": response_id,
+                "created_at": 0,
+                "model": "gpt-5.4",
+                "object": "response",
+                "output": output,
+                "parallel_tool_calls": True,
+                "tool_choice": "auto",
+                "tools": [],
+                "status": "completed",
+            }
+
+        async def foundry_responses_boundary(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            payload = json.loads(request.content)
+            provider_payloads.append(payload)
+            if call_count == 1:
+                return httpx.Response(
+                    200,
+                    json=_response(
+                        "resp_first",
+                        [
+                            {
+                                "encrypted_content": "encrypted-reasoning",
+                                "id": reasoning_id,
+                                "summary": [{"text": "The MCP server has the answer.", "type": "summary_text"}],
+                                "type": "reasoning",
+                            },
+                            {
+                                "id": "mcp_paired",
+                                "arguments": '{"query":"Agent Framework overview"}',
+                                "name": "microsoft_docs_search",
+                                "server_label": "Microsoft_Learn",
+                                "type": "mcp_call",
+                                "output": "Microsoft Agent Framework",
+                                "status": "completed",
+                            },
+                            _message("msg_first"),
+                        ],
+                    ),
+                )
+
+            input_items = payload["input"]
+            reasoning_items = [item for item in input_items if item.get("type") == "reasoning"]
+            mcp_calls = [item for item in input_items if item.get("type") == "mcp_call"]
+            if (
+                len(reasoning_items) != 1
+                or reasoning_items[0].get("encrypted_content") != "encrypted-reasoning"
+                or len(mcp_calls) != 1
+                or mcp_calls[0].get("output") != "Microsoft Agent Framework"
+            ):
+                return httpx.Response(
+                    400,
+                    json={
+                        "error": {
+                            "message": (
+                                "The stateless request did not replay the complete encrypted "
+                                "reasoning and hosted MCP call/result group."
+                            ),
+                            "type": "invalid_request_error",
+                            "code": "invalid_request_error",
+                        }
+                    },
+                )
+
+            return httpx.Response(
+                200,
+                json=_response(
+                    "resp_second",
+                    [_message("msg_second")],
+                ),
+            )
+
+        transport = httpx.MockTransport(foundry_responses_boundary)
+        responses_client = AsyncOpenAI(
+            api_key="test-key",
+            http_client=httpx.AsyncClient(transport=transport),
+            max_retries=0,
+        )
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = responses_client
+        client = FoundryChatClient(
+            project_client=project_client,
+            model="gpt-5.4",
+            compaction_strategy=SlidingWindowStrategy(keep_last_groups=4),
+        )
+        learn_mcp = client.get_mcp_tool(
+            name="Microsoft Learn",
+            url="https://learn.microsoft.com/api/mcp",
+            allowed_tools=["microsoft_docs_search"],
+            approval_mode="never_require",
+        )
+        agent = Agent(
+            client=client,  # ty: ignore[invalid-argument-type]
+            instructions=(
+                "Always use the Microsoft Learn MCP tool to answer documentation questions. "
+                "Keep the final answer to one short sentence."
+            ),
+            tools=[learn_mcp],
+            default_options={  # pyrefly: ignore[bad-argument-type]
+                "store": False,
+                "reasoning": {"effort": "low", "summary": "auto"},
+            },
+        )
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+
+        first = await _post_json(
+            server,
+            {
+                "input": "Use Microsoft Learn MCP to find the official Agent Framework overview and state its title.",
+                "stream": False,
+            },
+        )
+
+        assert first.status_code == 200
+        first_body = first.json()
+        assert first_body["status"] == "completed", first_body.get("error")
+        first_output_types = {item["type"] for item in first_body["output"]}
+        assert {"reasoning", "mcp_call"} <= first_output_types
+        first_reasoning = next(item for item in first_body["output"] if item["type"] == "reasoning")
+        assert first_reasoning["id"] == reasoning_id
+        assert first_reasoning["encrypted_content"] == "encrypted-reasoning"
+        assert "reasoning.encrypted_content" in provider_payloads[0]["include"]
+
+        second = await _post_json(
+            server,
+            {
+                "input": "Which Microsoft framework did you just look up? Reply with only its name.",
+                "stream": False,
+                "previous_response_id": first_body["id"],
+            },
+        )
+
+        assert second.status_code == 200
+        second_body = second.json()
+        assert second_body["status"] == "completed", second_body.get("error")
+        assert call_count == 2
+
+        second_input = provider_payloads[1]["input"]
+        reasoning_items = [item for item in second_input if item.get("type") == "reasoning"]
+        mcp_calls = [item for item in second_input if item.get("type") == "mcp_call"]
+        assert len(reasoning_items) == 1
+        assert reasoning_items[0]["id"] == reasoning_id
+        assert reasoning_items[0]["encrypted_content"] == "encrypted-reasoning"
+        assert len(mcp_calls) == 1
+        assert mcp_calls[0]["id"] == "mcp_paired"
+        assert mcp_calls[0]["output"] == "Microsoft Agent Framework"
 
 
 # ---------------------------------------------------------------------------

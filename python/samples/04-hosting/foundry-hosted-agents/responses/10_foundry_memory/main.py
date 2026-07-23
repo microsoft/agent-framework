@@ -3,7 +3,7 @@
 """Foundry Memory hosted agent sample.
 
 This agent uses :class:`FoundryMemoryProvider` to give an otherwise stateless
-hosted agent persistent, semantic memory backed by an Azure AI Foundry
+hosted agent persistent, semantic memory backed by a Microsoft Foundry
 Memory Store. The store itself is provisioned once via
 ``provision_memory_store.py`` and its name is passed in through the
 ``MEMORY_STORE_NAME`` environment variable.
@@ -18,8 +18,7 @@ import asyncio
 import os
 
 from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient, FoundryMemoryProvider
-from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient, FoundryMemoryProvider, ResponsesHostServer
 from azure.identity.aio import DefaultAzureCredential
 from dotenv import load_dotenv
 

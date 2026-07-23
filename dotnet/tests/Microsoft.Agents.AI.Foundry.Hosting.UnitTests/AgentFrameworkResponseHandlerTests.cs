@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -961,6 +962,190 @@ public class AgentFrameworkResponseHandlerTests
         Assert.Null(HostedCallContext.CallId);
     }
 
+    // ── Multi-agent / multi-user file-system isolation (handler-driven, no live service) ─────────────
+    // These drive the hosted-agent handler (the in-process "hosted instance") against a REAL
+    // FileSystemAgentSessionStore and the REAL PlatformHostedSessionIsolationKeyProvider (no fake), so the
+    // user id is genuinely captured from the request's x-agent-user-id (ResponseContext.PlatformContext).
+    // They assert the on-disk layout {root}/a-{agent}/u-{userId}/c-{conv}.json for combinations of agent
+    // name and user.
+
+    [Fact]
+    public async Task CreateAsync_MultipleUsersSameAgent_WritePerUserDirectoriesAsync()
+    {
+        var root = NewIsolationTempRoot();
+        try
+        {
+            // Arrange: one store shared by the container, one agent ("concierge"), two users.
+            var store = new FileSystemAgentSessionStore(root);
+            var handler = BuildMultiAgentHandler(store, ("concierge", new RecordingAgent("concierge")));
+
+            // Act: Alice and Bob each drive the same agent and the same conversation id.
+            var (aliceReq, aliceCtx) = BuildUserRequest("concierge", "trip", userId: "alice");
+            await DrainEventsAsync(handler.CreateAsync(aliceReq, aliceCtx.Object, CancellationToken.None));
+            var (bobReq, bobCtx) = BuildUserRequest("concierge", "trip", userId: "bob");
+            await DrainEventsAsync(handler.CreateAsync(bobReq, bobCtx.Object, CancellationToken.None));
+
+            // Assert: each user's session is persisted under its own u-{userId} directory beneath the
+            // shared a-{agent} directory; neither can reach the other's path.
+            Assert.True(File.Exists(Path.Combine(store.RootDirectory, "a-concierge", "u-alice", "c-trip.json")));
+            Assert.True(File.Exists(Path.Combine(store.RootDirectory, "a-concierge", "u-bob", "c-trip.json")));
+        }
+        finally
+        {
+            CleanupTempRoot(root);
+        }
+    }
+
+    [Fact]
+    public async Task CreateAsync_MultipleAgentsSameUser_WritePerAgentDirectoriesAsync()
+    {
+        var root = NewIsolationTempRoot();
+        try
+        {
+            // Arrange: one store shared by the container, two agents, one user.
+            var store = new FileSystemAgentSessionStore(root);
+            var handler = BuildMultiAgentHandler(store, ("concierge", new RecordingAgent("concierge")), ("scheduler", new RecordingAgent("scheduler")));
+
+            // Act: the same user drives two different agents on the same conversation id.
+            var (req1, ctx1) = BuildUserRequest("concierge", "trip", userId: "alice");
+            await DrainEventsAsync(handler.CreateAsync(req1, ctx1.Object, CancellationToken.None));
+            var (req2, ctx2) = BuildUserRequest("scheduler", "trip", userId: "alice");
+            await DrainEventsAsync(handler.CreateAsync(req2, ctx2.Object, CancellationToken.None));
+
+            // Assert: each agent buckets the user's session under its own a-{agent} directory, so two
+            // agents in the same container cannot collide on a shared conversation id.
+            Assert.True(File.Exists(Path.Combine(store.RootDirectory, "a-concierge", "u-alice", "c-trip.json")));
+            Assert.True(File.Exists(Path.Combine(store.RootDirectory, "a-scheduler", "u-alice", "c-trip.json")));
+        }
+        finally
+        {
+            CleanupTempRoot(root);
+        }
+    }
+
+    [Fact]
+    public async Task CreateAsync_SecondUserSameConversation_GetsFreshSessionNoLeakAsync()
+    {
+        var root = NewIsolationTempRoot();
+        try
+        {
+            // Arrange.
+            var store = new FileSystemAgentSessionStore(root);
+            var agent = new RecordingAgent("concierge");
+            var handler = BuildMultiAgentHandler(store, ("concierge", agent));
+
+            // Act: Alice drives twice (cold start then resume), then Bob forges the same agent+conversation.
+            var (a1Req, a1Ctx) = BuildUserRequest("concierge", "trip", userId: "alice");
+            await DrainEventsAsync(handler.CreateAsync(a1Req, a1Ctx.Object, CancellationToken.None));
+            var (a2Req, a2Ctx) = BuildUserRequest("concierge", "trip", userId: "alice");
+            await DrainEventsAsync(handler.CreateAsync(a2Req, a2Ctx.Object, CancellationToken.None));
+            var (bobReq, bobCtx) = BuildUserRequest("concierge", "trip", userId: "bob");
+            await DrainEventsAsync(handler.CreateAsync(bobReq, bobCtx.Object, CancellationToken.None));
+
+            // Assert: Alice's second turn restored her persisted session (a deserialize), while Bob's request
+            // produced a freshly created session — Bob never deserialized Alice's state. Two creates total
+            // (Alice turn 1, Bob turn 1) and one restore (Alice turn 2).
+            Assert.Equal(2, agent.CreateCount);
+            Assert.Equal(1, agent.DeserializeCount);
+            // And the files live in distinct per-user directories.
+            Assert.True(File.Exists(Path.Combine(store.RootDirectory, "a-concierge", "u-alice", "c-trip.json")));
+            Assert.True(File.Exists(Path.Combine(store.RootDirectory, "a-concierge", "u-bob", "c-trip.json")));
+        }
+        finally
+        {
+            CleanupTempRoot(root);
+        }
+    }
+
+    [Fact]
+    public async Task CreateAsync_NoUserIdCaptured_NotHosted_SucceedsUnscopedAsync()
+    {
+        var root = NewIsolationTempRoot();
+        try
+        {
+            // Arrange: a non-hosted (local) request whose x-agent-user-id was not captured (PlatformContext
+            // is null). Under unit tests FoundryEnvironment.IsHosted is false, so the container is treated as
+            // local: per-user isolation is simply not triggered and the request succeeds instead of 500ing.
+            // The session is persisted without a u-{userId} segment (unscoped). The hosted-but-missing-user
+            // branch (which still rejects) cannot be unit-tested because FoundryEnvironment.IsHosted is a
+            // process-cached static; it is exercised by the investigation repro app's "hosted" scenario.
+            var store = new FileSystemAgentSessionStore(root);
+            var handler = BuildMultiAgentHandler(store, ("concierge", new RecordingAgent("concierge")));
+            var (req, ctx) = BuildUserRequest("concierge", "trip", userId: null);
+
+            // Act: the request drains without throwing.
+            await DrainEventsAsync(handler.CreateAsync(req, ctx.Object, CancellationToken.None));
+
+            // Assert: the session is written under the agent bucket with NO per-user (u-*) segment.
+            Assert.True(File.Exists(Path.Combine(store.RootDirectory, "a-concierge", "c-trip.json")));
+            var agentDir = Path.Combine(store.RootDirectory, "a-concierge");
+            Assert.Empty(Directory.GetDirectories(agentDir, "u-*"));
+        }
+        finally
+        {
+            CleanupTempRoot(root);
+        }
+    }
+
+    private static string NewIsolationTempRoot()
+        => Path.Combine(Path.GetTempPath(), "handler-fs-isolation-" + Guid.NewGuid().ToString("N"));
+
+    private static void CleanupTempRoot(string root)
+    {
+        try
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+        catch
+        {
+            // best-effort cleanup
+        }
+    }
+
+    private static AgentFrameworkResponseHandler BuildMultiAgentHandler(AgentSessionStore store, params (string Name, AIAgent Agent)[] agents)
+    {
+        var services = new ServiceCollection();
+        // Shared default store for the container; agents resolved by name via keyed DI. No isolation-key
+        // provider is registered so the real PlatformHostedSessionIsolationKeyProvider reads x-agent-user-id.
+        services.AddSingleton(store);
+        foreach (var (name, agent) in agents)
+        {
+            services.AddKeyedSingleton(name, agent);
+        }
+
+        return new AgentFrameworkResponseHandler(services.BuildServiceProvider(), NullLogger<AgentFrameworkResponseHandler>.Instance);
+    }
+
+    private static (CreateResponse Request, Mock<ResponseContext> Context) BuildUserRequest(string agentName, string conversationId, string? userId)
+    {
+        // The agent is selected from the request's Model field (GetAgentName falls back to Model); the
+        // conversation id pins the c-{contextId} leaf.
+        var request = new CreateResponse { Model = agentName };
+        request.Conversation = BinaryData.FromString($"\"{conversationId}\"");
+        request.Input = BinaryData.FromObjectAsJson(new[]
+        {
+            new { type = "message", id = "msg_1", status = "completed", role = "user",
+                  content = new[] { new { type = "input_text", text = "Hello" } } }
+        });
+
+        var ctx = new Mock<ResponseContext>("caresp_" + new string('0', 50)) { CallBase = true };
+        // x-agent-user-id captured -> PlatformContext carries the user id; not captured -> null PlatformContext.
+        if (userId is null)
+        {
+            ctx.Setup(x => x.PlatformContext).Returns((PlatformContext)null!);
+        }
+        else
+        {
+            ctx.Setup(x => x.PlatformContext).Returns(new PlatformContext(userId, null));
+        }
+        ctx.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<OutputItem>());
+        ctx.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<Item>());
+        return (request, ctx);
+    }
+
     private static AgentFrameworkResponseHandler BuildHandlerWith(AIAgent agent, HostedSessionIsolationKeyProvider provider, AgentSessionStore store)
     {
         var services = new ServiceCollection();
@@ -1019,6 +1204,44 @@ public class AgentFrameworkResponseHandlerTests
 
         protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions, CancellationToken cancellationToken = default)
             => new(StatefulSession.Deserialize(serializedState));
+    }
+
+    /// <summary>Records how many sessions it created vs deserialized, to prove cross-user no-leak.</summary>
+    private sealed class RecordingAgent : AIAgent
+    {
+        private readonly string? _name;
+
+        public RecordingAgent(string? name = null)
+        {
+            this._name = name;
+        }
+
+        public override string? Name => this._name;
+
+        public int CreateCount { get; private set; }
+        public int DeserializeCount { get; private set; }
+
+        protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, CancellationToken cancellationToken = default)
+            => ToAsyncEnumerableAsync(new AgentResponseUpdate { MessageId = "resp_msg_1", Contents = [new MeaiTextContent("ok")] });
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+        {
+            this.CreateCount++;
+            return new(new StatefulSession());
+        }
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions, CancellationToken cancellationToken = default)
+            => new(((StatefulSession)session).Serialize());
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions, CancellationToken cancellationToken = default)
+        {
+            this.DeserializeCount++;
+            return new(StatefulSession.Deserialize(serializedState));
+        }
     }
 
     /// <summary>Reads <see cref="HostedCallContext.CallId"/> during its run, standing in for a downstream tool call.</summary>

@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 import pytest
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
+from typing_extensions import Self
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -3197,11 +3198,58 @@ def test_get_span_attributes_omits_tool_definitions_when_unparseable() -> None:
     assert OtelAttr.TOOL_DEFINITIONS not in attrs
 
 
-def test_tools_to_dict_supports_pydantic_tool_models() -> None:
+def test_get_span_attributes_skips_and_names_unserializable_tool(caplog: pytest.LogCaptureFixture) -> None:
+    """A tool whose definition isn't JSON-serializable is skipped by name; others survive."""
+    import json as _json
+
+    from agent_framework.observability import OtelAttr, _get_span_attributes
+
+    class _Unserializable:
+        pass
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        attrs = _get_span_attributes(
+            operation_name="chat",
+            provider_name="openai",
+            model="gpt-4",
+            tools=[
+                {"type": "web_search", "name": "good_tool"},
+                {"type": "code_interpreter", "name": "bad_tool", "parameters": _Unserializable()},
+            ],
+        )
+
+    # Serialization must not raise; the serializable tool is still captured and the bad one dropped.
+    definitions = _json.loads(attrs[OtelAttr.TOOL_DEFINITIONS])
+    assert definitions == [{"type": "web_search", "name": "good_tool"}]
+    # The warning names the offending tool so customers can identify it.
+    assert any("bad_tool" in record.getMessage() for record in caplog.records)
+
+
+def test_get_span_attributes_omits_tool_definitions_when_all_unserializable(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When every tool definition fails to serialize, the attribute is omitted (no raise)."""
+    from agent_framework.observability import OtelAttr, _get_span_attributes
+
+    class _Unserializable:
+        pass
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        attrs = _get_span_attributes(
+            operation_name="chat",
+            provider_name="openai",
+            tools=[{"type": "code_interpreter", "name": "bad_tool", "parameters": _Unserializable()}],
+        )
+
+    assert OtelAttr.TOOL_DEFINITIONS not in attrs
+    assert any("bad_tool" in record.getMessage() for record in caplog.records)
+
+
+def test_build_tool_otel_definition_supports_pydantic_tool_models() -> None:
     """Pydantic-based tool specs are reshaped into the OTel GenAI tool-definition shape."""
     from pydantic import BaseModel
 
-    from agent_framework.observability import _tools_to_dict
+    from agent_framework.observability import _build_tool_otel_definition
 
     class ProviderTool(BaseModel):
         type: str
@@ -3209,33 +3257,32 @@ def test_tools_to_dict_supports_pydantic_tool_models() -> None:
         enabled: bool = True
         note: str | None = None
 
-    result = _tools_to_dict([ProviderTool(type="web_search", name="web_search")])
+    result = _build_tool_otel_definition(ProviderTool(type="web_search", name="web_search"))
 
-    assert result == [{"type": "web_search", "name": "web_search", "enabled": True}]
-
-
-def test_tools_to_dict_returns_none_for_empty_input() -> None:
-    """``_tools_to_dict`` returns None when no tools are supplied."""
-    from agent_framework.observability import _tools_to_dict
-
-    assert _tools_to_dict(None) is None
-    assert _tools_to_dict([]) is None
+    # Only OTel-relevant fields are kept; extras such as ``enabled`` are dropped.
+    assert result == {"type": "web_search", "name": "web_search"}
 
 
-def test_tools_to_dict_function_tool_uses_otel_function_definition() -> None:
+def test_serialize_tool_definitions_returns_none_for_empty_input() -> None:
+    """``_serialize_tool_definitions`` returns None when no tools are supplied."""
+    from agent_framework.observability import _serialize_tool_definitions
+
+    assert _serialize_tool_definitions(None) is None
+    assert _serialize_tool_definitions([]) is None
+
+
+def test_build_tool_otel_definition_function_tool_uses_otel_function_definition() -> None:
     """``FunctionTool`` instances are emitted as flat OTel FunctionToolDefinition dicts."""
     from agent_framework import tool
-    from agent_framework.observability import _tools_to_dict
+    from agent_framework.observability import _build_tool_otel_definition
 
     @tool(name="add", description="Add two numbers")
     def add(x: int, y: int) -> int:
         return x + y
 
-    result = _tools_to_dict([add])
+    definition = _build_tool_otel_definition(add)
 
-    assert result is not None
-    assert len(result) == 1
-    definition = result[0]
+    assert definition is not None
     assert definition["type"] == "function"
     assert definition["name"] == "add"
     assert definition["description"] == "Add two numbers"
@@ -3245,9 +3292,9 @@ def test_tools_to_dict_function_tool_uses_otel_function_definition() -> None:
     assert "function" not in definition
 
 
-def test_tools_to_dict_flattens_openai_chat_completions_function_spec() -> None:
+def test_build_tool_otel_definition_flattens_openai_chat_completions_function_spec() -> None:
     """OpenAI Chat Completions nested ``function`` spec is flattened to the OTel shape."""
-    from agent_framework.observability import _tools_to_dict
+    from agent_framework.observability import _build_tool_otel_definition
 
     openai_spec = {
         "type": "function",
@@ -3263,91 +3310,215 @@ def test_tools_to_dict_flattens_openai_chat_completions_function_spec() -> None:
         },
     }
 
-    result = _tools_to_dict([openai_spec])
+    result = _build_tool_otel_definition(openai_spec)
 
-    assert result == [
-        {
-            "type": "function",
-            "name": "lookup_user",
-            "description": "Look up a user by id",
-            "parameters": {
-                "type": "object",
-                "properties": {"user_id": {"type": "string"}},
-                "required": ["user_id"],
-            },
-            "strict": True,
-        }
-    ]
+    # Only OTel-relevant fields are kept; extras such as ``strict`` are dropped.
+    assert result == {
+        "type": "function",
+        "name": "lookup_user",
+        "description": "Look up a user by id",
+        "parameters": {
+            "type": "object",
+            "properties": {"user_id": {"type": "string"}},
+            "required": ["user_id"],
+        },
+    }
 
 
-def test_tools_to_dict_passes_through_hosted_tool_dicts() -> None:
-    """Hosted-tool dicts pass through with the OTel required keys preserved."""
-    from agent_framework.observability import _tools_to_dict
+def test_build_tool_otel_definition_keeps_only_relevant_fields_for_hosted_tool_dicts() -> None:
+    """Hosted-tool dicts keep only OTel-relevant fields; extras are dropped."""
+    from agent_framework.observability import _build_tool_otel_definition
 
-    result = _tools_to_dict([{"type": "web_search", "name": "web_search", "max_results": 5}])
+    result = _build_tool_otel_definition({"type": "web_search", "name": "web_search", "max_results": 5})
 
-    assert result == [{"type": "web_search", "name": "web_search", "max_results": 5}]
+    assert result == {"type": "web_search", "name": "web_search"}
 
 
-def test_tools_to_dict_falls_back_to_type_when_name_missing() -> None:
+def test_build_tool_otel_definition_falls_back_to_type_when_name_missing() -> None:
     """Hosted-tool dicts without ``name`` fall back to the ``type`` value."""
-    from agent_framework.observability import _tools_to_dict
+    from agent_framework.observability import _build_tool_otel_definition
 
-    result = _tools_to_dict([{"type": "code_interpreter"}])
+    result = _build_tool_otel_definition({"type": "code_interpreter"})
 
-    assert result == [{"type": "code_interpreter", "name": "code_interpreter"}]
+    assert result == {"type": "code_interpreter", "name": "code_interpreter"}
 
 
-def test_tools_to_dict_warns_when_type_missing(caplog: pytest.LogCaptureFixture) -> None:
+def test_build_tool_otel_definition_omits_secrets_from_mcp_tool_spec() -> None:
+    """Generic MCP tool specs keep only relevant fields; secrets/extras are dropped."""
+    from agent_framework.observability import _build_tool_otel_definition
+
+    mcp_spec = {
+        "type": "mcp",
+        "name": "github_mcp",
+        "description": "GitHub MCP server",
+        "server_url": "https://mcp.example.com",
+        "authorization": "super-secret-oauth-token",
+        "headers": {"Authorization": "Bearer super-secret-oauth-token"},
+    }
+
+    result = _build_tool_otel_definition(mcp_spec)
+
+    # Only type/name/description are kept; server_url and secrets are dropped.
+    assert result == {"type": "mcp", "name": "github_mcp", "description": "GitHub MCP server"}
+
+
+def test_build_tool_otel_definition_omits_secrets_from_mcp_tool_mapping() -> None:
+    """MCP tool objects exposing a mapping (e.g. Azure SDK models) also drop secrets/extras."""
+    from collections.abc import Mapping
+
+    from agent_framework.observability import _build_tool_otel_definition
+
+    class _AzureLikeMcpTool(Mapping):  # type: ignore[type-arg]
+        """Minimal stand-in for an Azure SDK ``MCPTool`` model with an ``as_dict``."""
+
+        def __init__(self) -> None:
+            self._data = {
+                "type": "mcp",
+                "name": "azure_mcp",
+                "server_label": "azure_mcp",
+                "authorization": "super-secret-oauth-token",
+                "headers": {"Authorization": "Bearer super-secret-oauth-token"},
+            }
+
+        def as_dict(self) -> dict[str, Any]:
+            return dict(self._data)
+
+        def __getitem__(self, key: str) -> Any:
+            return self._data[key]
+
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            return iter(self._data)
+
+        def __len__(self) -> int:
+            return len(self._data)
+
+    result = _build_tool_otel_definition(_AzureLikeMcpTool())
+
+    # Only type/name are kept; server_label and secrets are dropped.
+    assert result == {"type": "mcp", "name": "azure_mcp"}
+
+
+def test_build_tool_otel_definition_warns_when_type_missing(caplog: pytest.LogCaptureFixture) -> None:
     """Tools without an extractable ``type`` are skipped with a warning."""
-    from agent_framework.observability import _tools_to_dict
+    from agent_framework.observability import _build_tool_otel_definition
 
     with caplog.at_level("WARNING", logger="agent_framework"):
-        result = _tools_to_dict([{"kind": "not_an_otel_tool"}])
+        result = _build_tool_otel_definition({"kind": "not_an_otel_tool"})
 
     assert result is None
     assert any("missing 'type'" in rec.message for rec in caplog.records)
 
 
-def test_tools_to_dict_warns_for_unknown_tool_object(caplog: pytest.LogCaptureFixture) -> None:
+def test_build_tool_otel_definition_warns_for_unknown_tool_object(caplog: pytest.LogCaptureFixture) -> None:
     """Tools that are neither callable, mapping, BaseModel, nor known type are skipped."""
-    from agent_framework.observability import _tools_to_dict
+    from agent_framework.observability import _build_tool_otel_definition
 
     class _Opaque:
         pass
 
     with caplog.at_level("WARNING", logger="agent_framework"):
-        result = _tools_to_dict([_Opaque()])
+        result = _build_tool_otel_definition(_Opaque())
 
     assert result is None
     assert any("OpenTelemetry tool definition" in rec.message for rec in caplog.records)
 
 
-def test_tool_to_otel_definition_caches_per_tool_object() -> None:
-    """Converting the same tool object twice reuses the cached OTel definition."""
+def test_tool_to_otel_json_caches_per_tool_object() -> None:
+    """Serializing the same tool object twice reuses the cached OTel JSON fragment."""
     from agent_framework import tool
-    from agent_framework.observability import _build_tool_otel_definition, _tool_to_otel_definition
+    from agent_framework.observability import _TOOL_OTEL_JSON_CACHE, _build_tool_otel_json, _tool_to_otel_json
 
     @tool(name="add", description="Add two numbers")
     def add(x: int, y: int) -> int:
         return x + y
 
-    first = _tool_to_otel_definition(add)
-    second = _tool_to_otel_definition(add)
+    first = _tool_to_otel_json(add)
+    second = _tool_to_otel_json(add)
 
-    # The cached result is returned as the same object on subsequent conversions.
-    assert first is second
-    # A fresh (uncached) build produces an equal but distinct object.
-    assert _build_tool_otel_definition(add) == first
+    # The encoded fragment is cached under the tool object and reused as-is.
+    assert first == second
+    assert add in _TOOL_OTEL_JSON_CACHE
+    assert _TOOL_OTEL_JSON_CACHE[add] == first
+    # A fresh (uncached) build produces an equal fragment.
+    assert _build_tool_otel_json(add) == first
 
 
-def test_tool_to_otel_definition_skips_cache_for_unhashable_specs() -> None:
-    """Plain-dict tool specs are converted without raising despite being uncacheable."""
-    from agent_framework.observability import _tool_to_otel_definition
+def test_tool_to_otel_json_skips_cache_for_unhashable_specs() -> None:
+    """Plain-dict tool specs are serialized without raising despite being uncacheable."""
+    import json
+
+    from agent_framework.observability import _tool_to_otel_json
 
     spec = {"type": "web_search", "name": "web_search"}
 
-    assert _tool_to_otel_definition(spec) == {"type": "web_search", "name": "web_search"}
+    fragment = _tool_to_otel_json(spec)
+    assert fragment is not None
+    assert json.loads(fragment) == {"type": "web_search", "name": "web_search"}
+
+
+def test_tool_to_otel_json_caches_none_for_unparseable_weakrefable_tool() -> None:
+    """A weak-referenceable tool that can't be represented caches ``None`` and reuses it.
+
+    Exercises the ``_CACHE_MISS`` sentinel: a cached ``None`` (an unparseable but
+    weak-referenceable tool) must be distinguished from a cache miss so the fragment is
+    not rebuilt on subsequent calls.
+    """
+    from unittest.mock import patch
+
+    from agent_framework import observability
+    from agent_framework.observability import _CACHE_MISS, _TOOL_OTEL_JSON_CACHE, _tool_to_otel_json
+
+    class _Opaque:
+        """Not callable, mapping, BaseModel, or a known tool type — cannot be represented."""
+
+    opaque = _Opaque()
+
+    with patch.object(observability, "_build_tool_otel_json", wraps=observability._build_tool_otel_json) as build_spy:
+        first = _tool_to_otel_json(opaque)
+        second = _tool_to_otel_json(opaque)
+
+    assert first is None
+    assert second is None
+    # The unparseable-but-weak-referenceable tool is cached as ``None`` ...
+    assert opaque in _TOOL_OTEL_JSON_CACHE
+    assert _TOOL_OTEL_JSON_CACHE[opaque] is None
+    # ... and the sentinel distinguishes that cached ``None`` from a cache miss, so the
+    # fragment is built only once (the second call is served from the cache).
+    assert _TOOL_OTEL_JSON_CACHE.get(opaque, _CACHE_MISS) is None
+    assert build_spy.call_count == 1
+
+
+def test_build_tool_otel_definition_supports_serialization_protocol_tool() -> None:
+    """Tools satisfying ``SerializationProtocol`` (duck-typed to_dict/from_dict) are reshaped via to_dict()."""
+    from collections.abc import MutableMapping
+
+    from agent_framework._serialization import SerializationMixin, SerializationProtocol
+    from agent_framework.observability import _build_tool_otel_definition
+
+    class _ProtocolTool:
+        """Satisfies SerializationProtocol without subclassing SerializationMixin or BaseModel."""
+
+        def to_dict(self, **kwargs: Any) -> dict[str, Any]:
+            return {
+                "type": "web_search",
+                "name": "protocol_search",
+                "description": "Search the web",
+                "secret": "should-be-dropped",
+            }
+
+        @classmethod
+        def from_dict(cls, value: MutableMapping[str, Any], /, **kwargs: Any) -> Self:
+            return cls()
+
+    tool_item = _ProtocolTool()
+    # The tool matches the protocol via duck typing but is not a SerializationMixin subclass.
+    assert isinstance(tool_item, SerializationProtocol)
+    assert not isinstance(tool_item, SerializationMixin)
+
+    result = _build_tool_otel_definition(tool_item)
+
+    # Only OTel-relevant fields are kept; extras such as ``secret`` are dropped.
+    assert result == {"type": "web_search", "name": "protocol_search", "description": "Search the web"}
 
 
 # region Test _capture_response
@@ -4900,6 +5071,97 @@ async def test_function_call_spans_nested_under_agent_span(span_exporter: InMemo
             f"Span {inner.name} parent={inner_parent.span_id} != agent={agent_context.span_id}"
         )
         assert inner_context.trace_id == agent_context.trace_id
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_parallel_function_call_spans_nested_under_agent_span(span_exporter: InMemorySpanExporter):
+    """Parallel execute_tool spans should preserve the active agent span context."""
+    from agent_framework._tools import FunctionInvocationLayer
+
+    @tool(name="first_tool", description="First parallel tool", approval_mode="never_require")
+    async def first_tool() -> str:
+        await asyncio.sleep(0)
+        return "first"
+
+    @tool(name="second_tool", description="Second parallel tool", approval_mode="never_require")
+    async def second_tool() -> str:
+        await asyncio.sleep(0)
+        return "second"
+
+    class ParallelToolChatClient(FunctionInvocationLayer, ChatTelemetryLayer, BaseChatClient[Any]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.call_count = 0
+
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(
+            self, *, messages: Sequence[Message], stream: bool, options: Mapping[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            del stream, messages, options, kwargs
+            self.call_count += 1
+            if self.call_count == 1:
+
+                async def _get_tool_calls() -> ChatResponse:
+                    return ChatResponse(
+                        messages=[
+                            Message(
+                                role="assistant",
+                                contents=[
+                                    Content.from_function_call(
+                                        call_id="call_first",
+                                        name="first_tool",
+                                        arguments="{}",
+                                    ),
+                                    Content.from_function_call(
+                                        call_id="call_second",
+                                        name="second_tool",
+                                        arguments="{}",
+                                    ),
+                                ],
+                            )
+                        ],
+                    )
+
+                return _get_tool_calls()
+
+            async def _get_final() -> ChatResponse:
+                return ChatResponse(
+                    messages=[Message(role="assistant", contents=["Both tools completed."])],
+                    finish_reason="stop",
+                )
+
+            return _get_final()
+
+    agent = Agent(
+        client=ParallelToolChatClient(),  # ty: ignore[invalid-argument-type]
+        id="parallel_tool_agent_id",
+        name="parallel_tool_agent",
+        default_options={"model": "ToolModel", "tools": [first_tool, second_tool], "tool_choice": "auto"},  # pyrefly: ignore[bad-argument-type]
+    )
+
+    span_exporter.clear()
+    await agent.run("Call both tools.")
+
+    spans = span_exporter.get_finished_spans()
+    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    tool_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.TOOL_EXECUTION_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+    assert len(invoke_spans) == 1
+    assert len(tool_spans) == 2
+    assert {s.attributes.get(OtelAttr.TOOL_NAME.value) for s in tool_spans} == {"first_tool", "second_tool"}  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+    agent_span = invoke_spans[0]
+    agent_context = agent_span.context
+    assert agent_context is not None
+    for tool_span in tool_spans:
+        tool_parent = tool_span.parent
+        tool_context = tool_span.context
+        assert tool_parent is not None, f"Span {tool_span.name} has no parent"
+        assert tool_context is not None
+        assert tool_parent.span_id == agent_context.span_id
+        assert tool_context.trace_id == agent_context.trace_id
 
 
 @pytest.mark.parametrize("stream", [False, True])

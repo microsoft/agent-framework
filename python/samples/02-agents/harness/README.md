@@ -59,8 +59,8 @@ uv run --with textual python samples/02-agents/harness/harness_data_processing.p
 ```
 
 The workspace environment already provides the editable `agent-framework`
-packages plus the samples' other dependencies (`rich`, `python-dotenv`,
-`azure-identity`); only `textual` needs to be supplied with `--with`.
+packages plus the samples' other dependencies (`rich`, `python-dotenv`);
+only `textual` needs to be supplied with `--with`.
 
 > Note: invoking `uv run python <script>` (with `python`) bypasses the PEP 723
 > metadata and uses the workspace env; `uv run <script>` (without `python`)
@@ -125,7 +125,7 @@ tool is only wired when the chat client supports shell tools; otherwise a warnin
 and the shell tool/provider are skipped. The caller owns the executor's lifecycle.
 
 ```python
-from agent_framework_tools.shell import LocalShellTool, ShellEnvironmentProviderOptions
+from agent_framework.tools import LocalShellTool, ShellEnvironmentProviderOptions
 
 async with LocalShellTool(acknowledge_unsafe=True) as shell:
     agent = create_harness_agent(
@@ -138,3 +138,34 @@ async with LocalShellTool(acknowledge_unsafe=True) as shell:
     )
 ```
 
+
+## Security Considerations
+
+Several harness capabilities extend the agent's trust boundary to external systems the developer
+configures. Each is opt-in and requires explicit configuration by the developer, who is responsible
+for vetting the external service, agent, skill source, or provider before enabling it:
+
+- **`background_agents`** (`BackgroundAgentsProvider`) — delegates work to developer-supplied agents,
+  which receive input from the parent and whose output is fed back into its context. A compromised
+  agent could exfiltrate data or inject adversarial content via indirect prompt injection. Vet all
+  supplied agents.
+- **External skill sources** (`skills_provider` with e.g. `MCPSkillsSource`) — load skill content,
+  and potentially scripts, from a remote source. A compromised source could return adversarial skills
+  (indirect prompt injection) or exfiltrate data. Only enable sources you trust.
+- **`AgentLoopMiddleware.with_judge`** — sends the request and the agent's latest response to a second,
+  external judge chat client on every iteration. A compromised judge could exfiltrate that data or
+  return manipulated feedback. Trust the judge as much as the primary model.
+- **`SummarizationStrategy`** (via `before_compaction_strategy` / `after_compaction_strategy`) — calls
+  out to an LLM whose output permanently becomes chat history. A compromised summarization service
+  could inject unsafe, persistent instructions. Only use a service you trust as much as the primary
+  model.
+- **Auto-approval rules** (`FileAccessProvider.read_only_tools_auto_approval_rule` /
+  `all_tools_auto_approval_rule`, and the equivalent `SkillsProvider` rules, passed to
+  `ToolApprovalMiddleware`) — the built-in rules approve local tools by tool name only (e.g.
+  `file_access_read`, `file_access_ls`, `file_access_grep`). Auto-approval rules may match by name,
+  so any other local tool registered under one of these names — for example the shell tool given a
+  caller-configurable name — may also be auto-approved, bypassing the human approval boundary. Ensure
+  no other tool collides with these reserved names.
+- **Telemetry** — when observability is enabled, telemetry destinations are developer-configured.
+  Default telemetry is metadata only; enabling sensitive data additionally emits raw message content,
+  tool arguments, and tool results. See the [observability samples](../observability/README.md).

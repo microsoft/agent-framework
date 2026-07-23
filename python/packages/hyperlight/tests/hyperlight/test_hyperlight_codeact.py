@@ -11,6 +11,8 @@ import importlib.metadata
 import importlib.util
 import inspect
 import json
+import os
+import subprocess
 import sys
 import threading
 import time
@@ -41,6 +43,7 @@ from pytest import fixture
 
 from agent_framework_hyperlight import AllowedDomain, FileMount, HyperlightCodeActProvider, HyperlightExecuteCodeTool
 from agent_framework_hyperlight import _execute_code_tool as execute_code_module
+from agent_framework_hyperlight import _instructions as instructions_module
 
 
 def _hyperlight_integration_static_skip_reason() -> str | None:
@@ -70,17 +73,22 @@ def _hyperlight_integration_runtime_skip_reason() -> str | None:
     if (reason := _hyperlight_integration_static_skip_reason()) is not None:
         return reason
 
+    sandbox: Any | None = None
     try:
         sandbox_cls = execute_code_module._load_sandbox_class()
-        sandbox = sandbox_cls(
+        sandbox_instance = sandbox_cls(
             backend=execute_code_module.DEFAULT_HYPERLIGHT_BACKEND,
             module=execute_code_module.DEFAULT_HYPERLIGHT_MODULE,
         )
-        sandbox.run("None")
+        sandbox = sandbox_instance
+        sandbox_instance.run("None")
     except RuntimeError as exc:
         message = str(exc)
         if "no hypervisor was found for sandbox" in message.lower():
             return "Hyperlight integration tests require a runner with a working Hyperlight hypervisor."
+    finally:
+        if sandbox is not None:
+            _close_sandbox(sandbox)
 
     return None
 
@@ -144,6 +152,23 @@ def span_exporter(monkeypatch) -> Generator[InMemorySpanExporter]:
         exporter.clear()
 
 
+def _close_sandbox(sandbox: Any) -> None:
+    close_hook = getattr(sandbox, "close", None) or getattr(sandbox, "shutdown", None)
+    if callable(close_hook):
+        with contextlib.suppress(Exception):
+            close_hook()
+
+
+def _close_execute_code_registry(execute_code: HyperlightExecuteCodeTool) -> None:
+    close_hook = getattr(execute_code._registry, "close", None)
+    if callable(close_hook):
+        close_hook()
+
+
+def _close_provider_registry(provider: HyperlightCodeActProvider) -> None:
+    _close_execute_code_registry(provider._execute_code_tool)
+
+
 @pytest.fixture(scope="module")
 def shared_sandbox():
     """Long-lived sandbox with snapshot/restore for read-mostly tests.
@@ -161,7 +186,10 @@ def shared_sandbox():
     )
     sandbox.run("None")
     snapshot = sandbox.snapshot()
-    yield sandbox, snapshot
+    try:
+        yield sandbox, snapshot
+    finally:
+        _close_sandbox(sandbox)
 
 
 @pytest.fixture
@@ -188,7 +216,10 @@ def fresh_sandbox():
         module=execute_code_module.DEFAULT_HYPERLIGHT_MODULE,
         temp_output=True,
     )
-    yield sandbox
+    try:
+        yield sandbox
+    finally:
+        _close_sandbox(sandbox)
 
 
 @tool(approval_mode="never_require")
@@ -552,7 +583,53 @@ def _symlinks_supported(tmp: Path) -> bool:
         test_target.unlink(missing_ok=True)
 
 
-def test_populate_input_dir_skips_symlink_to_file_outside_workspace(tmp_path: Path) -> None:
+def _create_junction_or_skip(*, link: Path, target: Path) -> None:
+    if sys.platform != "win32":
+        pytest.skip("Windows directory junctions are only available on Windows")
+
+    result = subprocess.run(
+        [os.environ.get("COMSPEC", "cmd"), "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"Could not create Windows directory junction: {result.stderr or result.stdout}")
+
+    if not execute_code_module._is_link_or_reparse_point(link):
+        link.rmdir()
+        pytest.skip("Created junction was not reported as a reparse point")
+
+
+def test_resolve_contained_path_reports_runtime_resolve_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    candidate = workspace / "candidate.txt"
+    candidate.write_text("content", encoding="utf-8")
+    original_resolve = type(candidate).resolve
+
+    def fail_candidate_resolve(self: Path, strict: bool = False) -> Path:
+        if self == candidate:
+            raise RuntimeError("symlink loop from candidate")
+        return original_resolve(self, strict=strict)
+
+    monkeypatch.setattr(type(candidate), "resolve", fail_candidate_resolve)
+
+    with pytest.raises(ValueError) as exc_info:
+        execute_code_module._resolve_contained_path(path=candidate, root=workspace)
+
+    message = str(exc_info.value)
+    assert "Could not resolve Hyperlight sandbox input path" in message
+    assert "validating it stays under the configured source root" in message
+    assert str(candidate) in message
+    assert str(workspace) in message
+    assert "symlink loop from candidate" in message
+
+
+def test_populate_input_dir_rejects_symlink_to_file_outside_workspace(tmp_path: Path) -> None:
     if not _symlinks_supported(tmp_path):
         pytest.skip("Symlinks not supported on this platform/environment")
     workspace = tmp_path / "workspace"
@@ -565,16 +642,14 @@ def test_populate_input_dir_skips_symlink_to_file_outside_workspace(tmp_path: Pa
     input_root = tmp_path / "input"
     input_root.mkdir()
 
-    execute_code_module._populate_input_dir(
-        config=_build_run_config(workspace_root=workspace),
-        input_root=input_root,
-    )
+    with pytest.raises(ValueError, match="Refusing to stage linked or reparse-point path"):
+        execute_code_module._populate_input_dir(
+            config=_build_run_config(workspace_root=workspace),
+            input_root=input_root,
+        )
 
-    # Real file copied; symlink and its target are absent.
-    assert (input_root / "real.txt").read_text(encoding="utf-8") == "real-content"
     assert not (input_root / "link.txt").exists()
     assert not (input_root / "link.txt").is_symlink()
-    # Sanity: no outside-content anywhere in the input tree.
     leaked = [
         path
         for path in input_root.rglob("*")
@@ -583,7 +658,7 @@ def test_populate_input_dir_skips_symlink_to_file_outside_workspace(tmp_path: Pa
     assert leaked == []
 
 
-def test_populate_input_dir_skips_symlinked_directory_outside_workspace(tmp_path: Path) -> None:
+def test_populate_input_dir_rejects_symlinked_directory_outside_workspace(tmp_path: Path) -> None:
     if not _symlinks_supported(tmp_path):
         pytest.skip("Symlinks not supported on this platform/environment")
     workspace = tmp_path / "workspace"
@@ -596,12 +671,12 @@ def test_populate_input_dir_skips_symlinked_directory_outside_workspace(tmp_path
     input_root = tmp_path / "input"
     input_root.mkdir()
 
-    execute_code_module._populate_input_dir(
-        config=_build_run_config(workspace_root=workspace),
-        input_root=input_root,
-    )
+    with pytest.raises(ValueError, match="Refusing to stage linked or reparse-point path"):
+        execute_code_module._populate_input_dir(
+            config=_build_run_config(workspace_root=workspace),
+            input_root=input_root,
+        )
 
-    # Neither the symlink itself nor anything under the symlinked target leaks.
     assert not (input_root / "linked_dir").exists()
     leaked = [
         path for path in input_root.rglob("*") if path.is_file() and path.read_text(encoding="utf-8") == "deep-content"
@@ -609,8 +684,8 @@ def test_populate_input_dir_skips_symlinked_directory_outside_workspace(tmp_path
     assert leaked == []
 
 
-def test_populate_input_dir_skips_nested_symlinks(tmp_path: Path) -> None:
-    """A symlink several levels deep inside a real subdir must also be skipped."""
+def test_populate_input_dir_rejects_nested_symlinks(tmp_path: Path) -> None:
+    """A symlink several levels deep inside a real subdir must also be rejected."""
     if not _symlinks_supported(tmp_path):
         pytest.skip("Symlinks not supported on this platform/environment")
     workspace = tmp_path / "workspace"
@@ -623,17 +698,95 @@ def test_populate_input_dir_skips_nested_symlinks(tmp_path: Path) -> None:
     input_root = tmp_path / "input"
     input_root.mkdir()
 
-    execute_code_module._populate_input_dir(
-        config=_build_run_config(workspace_root=workspace),
-        input_root=input_root,
-    )
+    with pytest.raises(ValueError, match="Refusing to stage linked or reparse-point path"):
+        execute_code_module._populate_input_dir(
+            config=_build_run_config(workspace_root=workspace),
+            input_root=input_root,
+        )
 
-    assert (input_root / "real_sub" / "ok.txt").read_text(encoding="utf-8") == "ok"
+    assert not any(
+        path.is_file() and path.read_text(encoding="utf-8") == "outside-content" for path in input_root.rglob("*")
+    )
     assert not (input_root / "real_sub" / "link.txt").exists()
 
 
-def test_path_tree_signature_does_not_follow_symlinks(tmp_path: Path) -> None:
-    """The cache-key signature must reflect only real files (mirrors the staged tree)."""
+def test_populate_input_dir_rejects_workspace_junction_outside_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "deep.txt").write_text("deep-content", encoding="utf-8")
+    _create_junction_or_skip(link=workspace / "linked_dir", target=outside_dir)
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+
+    with pytest.raises(ValueError, match="Refusing to stage linked or reparse-point path"):
+        execute_code_module._populate_input_dir(
+            config=_build_run_config(workspace_root=workspace),
+            input_root=input_root,
+        )
+
+    assert not (input_root / "linked_dir").exists()
+    assert not any(
+        path.is_file() and path.read_text(encoding="utf-8") == "deep-content" for path in input_root.rglob("*")
+    )
+
+
+def test_populate_input_dir_rejects_nested_workspace_junction(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    (workspace / "real_sub").mkdir(parents=True)
+    (workspace / "real_sub" / "ok.txt").write_text("ok", encoding="utf-8")
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "deep.txt").write_text("deep-content", encoding="utf-8")
+    _create_junction_or_skip(link=workspace / "real_sub" / "linked_dir", target=outside_dir)
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+
+    with pytest.raises(ValueError, match="Refusing to stage linked or reparse-point path"):
+        execute_code_module._populate_input_dir(
+            config=_build_run_config(workspace_root=workspace),
+            input_root=input_root,
+        )
+
+    assert not any(
+        path.is_file() and path.read_text(encoding="utf-8") == "deep-content" for path in input_root.rglob("*")
+    )
+    assert not (input_root / "real_sub" / "linked_dir").exists()
+
+
+def test_populate_input_dir_rejects_file_mount_junction(tmp_path: Path) -> None:
+    mount_root = tmp_path / "mount"
+    mount_root.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "deep.txt").write_text("deep-content", encoding="utf-8")
+    _create_junction_or_skip(link=mount_root / "linked_dir", target=outside_dir)
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    mount = execute_code_module._NormalizedFileMount(
+        host_path=mount_root,
+        mount_path="mounted",
+        path_signature=(),
+    )
+
+    with pytest.raises(ValueError, match="Refusing to stage linked or reparse-point path"):
+        execute_code_module._populate_input_dir(
+            config=_build_run_config(file_mounts=(mount,)),
+            input_root=input_root,
+        )
+
+    assert not (input_root / "mounted" / "linked_dir").exists()
+    assert not any(
+        path.is_file() and path.read_text(encoding="utf-8") == "deep-content" for path in input_root.rglob("*")
+    )
+
+
+def test_path_tree_signature_rejects_symlinks(tmp_path: Path) -> None:
+    """The cache-key signature must mirror staging and reject linked entries."""
     if not _symlinks_supported(tmp_path):
         pytest.skip("Symlinks not supported on this platform/environment")
     workspace = tmp_path / "workspace"
@@ -644,11 +797,8 @@ def test_path_tree_signature_does_not_follow_symlinks(tmp_path: Path) -> None:
     outside.write_text("outside-content", encoding="utf-8")
     (workspace / "link.txt").symlink_to(outside)
 
-    signature = execute_code_module._path_tree_signature(workspace)
-
-    names = [entry[0] for entry in signature]
-    assert "real.txt" in names
-    assert "link.txt" not in names
+    with pytest.raises(ValueError, match="Refusing to stage linked or reparse-point path"):
+        execute_code_module._path_tree_signature(workspace)
 
 
 def test_path_tree_signature_walks_through_symlinked_root(tmp_path: Path) -> None:
@@ -738,6 +888,20 @@ def test_collect_output_relative_paths_skips_symlinked_directory(tmp_path: Path)
     assert relative_paths == set()
 
 
+def test_collect_output_relative_paths_skips_junctioned_directory(tmp_path: Path) -> None:
+    """A junctioned directory in /output must not be descended into."""
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "deep.txt").write_text("deep-secret", encoding="utf-8")
+    _create_junction_or_skip(link=output_root / "linked_dir", target=outside_dir)
+
+    relative_paths = execute_code_module._collect_output_relative_paths(sandbox=object(), root=output_root)
+
+    assert relative_paths == set()
+
+
 def test_parse_output_files_skips_symlink_to_host_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """End-to-end: a /output symlink to a host file is never returned as Content."""
     if not _symlinks_supported(tmp_path):
@@ -786,6 +950,43 @@ def test_parse_output_files_rejects_intermediate_dir_symlink_from_listing(
     assert all(item.additional_properties.get("path") != "/output/sub/leak.txt" for item in contents)
 
 
+def test_parse_output_files_rejects_intermediate_dir_junction_from_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A backend-listed path traversing an intermediate dir junction must be rejected."""
+    monkeypatch.setattr(execute_code_module, "OUTPUT_FILE_RETRY_ATTEMPTS", 1)
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "leak.txt").write_text("HOST_SECRET", encoding="utf-8")
+    _create_junction_or_skip(link=output_root / "sub", target=outside_dir)
+
+    contents = execute_code_module._parse_output_files(
+        sandbox=_SandboxWithListing(["output/sub/leak.txt"]),
+        output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
+        expect_output_files=False,
+    )
+
+    assert all(b"HOST_SECRET" not in _decode_content_bytes(item) for item in contents if item.type == "data")
+    assert all(item.additional_properties.get("path") != "/output/sub/leak.txt" for item in contents)
+
+
+def test_clear_directory_removes_junction_without_deleting_target(tmp_path: Path) -> None:
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "keep.txt"
+    outside_file.write_text("do-not-delete", encoding="utf-8")
+    _create_junction_or_skip(link=output_root / "linked_dir", target=outside_dir)
+
+    execute_code_module._clear_directory(cast("TemporaryDirectory[str]", _OutputDirShim(output_root)))
+
+    assert outside_file.read_text(encoding="utf-8") == "do-not-delete"
+    assert not (output_root / "linked_dir").exists()
+
+
 def test_is_safe_output_file_rejects_parent_traversal(tmp_path: Path) -> None:
     """A lexical ``..`` component must be rejected even without any symlink."""
     output_root = tmp_path / "output"
@@ -797,6 +998,26 @@ def test_is_safe_output_file_rejects_parent_traversal(tmp_path: Path) -> None:
         execute_code_module._is_safe_output_file(root=output_root, host_path=output_root / ".." / "secret.txt") is False
     )
     assert execute_code_module._is_safe_output_file(root=output_root, host_path=secret) is False
+
+
+def test_is_safe_output_file_rejects_runtime_resolve_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    report = output_root / "report.txt"
+    report.write_text("artifact", encoding="utf-8")
+    original_resolve = type(report).resolve
+
+    def fail_report_resolve(self: Path, strict: bool = False) -> Path:
+        if self == report:
+            raise RuntimeError("symlink loop from output")
+        return original_resolve(self, strict=strict)
+
+    monkeypatch.setattr(type(report), "resolve", fail_report_resolve)
+
+    assert execute_code_module._is_safe_output_file(root=output_root, host_path=report) is False
 
 
 def test_parse_output_files_collects_real_output_file(tmp_path: Path) -> None:
@@ -830,6 +1051,61 @@ def test_execute_code_tool_allowed_domains_use_structured_entries_and_replace_by
         AllowedDomain("api.example.com", ("GET", "POST")),
         AllowedDomain("github.com", ("GET", "HEAD")),
     ]
+
+
+def test_execute_code_tool_normalizers_reject_invalid_inputs() -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        execute_code_module._normalize_domain(" ")
+    with pytest.raises(ValueError, match="Could not normalize allowed domain entry"):
+        execute_code_module._normalize_domain("https://")
+    with pytest.raises(ValueError, match="must not be empty"):
+        execute_code_module._normalize_http_method(" ")
+    assert execute_code_module._normalize_http_methods(None) is None
+    with pytest.raises(ValueError, match="must not be empty when provided"):
+        execute_code_module._normalize_http_methods([])
+    with pytest.raises(ValueError, match="must not be empty"):
+        execute_code_module._normalize_mount_path(" ")
+    with pytest.raises(ValueError, match="must stay within /input"):
+        execute_code_module._normalize_mount_path("/input/../escape")
+    with pytest.raises(ValueError, match="must point to a concrete path under /input"):
+        execute_code_module._normalize_mount_path("/input")
+
+
+def test_execute_code_tool_shape_guards_validate_pairs() -> None:
+    assert execute_code_module._is_file_mount_pair(("source.txt", "mount.txt")) is True
+    assert execute_code_module._is_file_mount_pair(("source.txt", "mount.txt", "extra")) is False
+    assert execute_code_module._is_file_mount_pair(("source.txt", 1)) is False
+
+    assert execute_code_module._is_allowed_domain_pair(("example.com", "get")) is True
+    assert execute_code_module._is_allowed_domain_pair(("example.com", ["get", "post"])) is True
+    assert execute_code_module._is_allowed_domain_pair((123, ["get"])) is False
+    assert execute_code_module._is_allowed_domain_pair(("example.com", 123)) is False
+
+
+def test_instruction_builders_cover_mounted_paths_and_workspace_free_filesystem_state() -> None:
+    description = instructions_module.build_execute_code_description(
+        tools=[compute],
+        filesystem_enabled=True,
+        workspace_enabled=False,
+        mounted_paths=["/input/data/report.txt"],
+        allowed_domains=[],
+    )
+    instructions = instructions_module.build_codeact_instructions(
+        tools=[compute],
+        tools_visible_to_model=True,
+        filesystem_enabled=True,
+    )
+    filesystem_text = instructions_module._format_filesystem_capabilities(
+        filesystem_enabled=True,
+        workspace_enabled=False,
+        mounted_paths=[],
+    )
+
+    assert "Additional mounted paths:" in description
+    assert "/input/data/report.txt" in description
+    assert "Some tools may also appear directly" in instructions
+    assert "For larger artifacts, write them to `/output/<filename>` instead" in instructions
+    assert "No workspace root or explicit file mounts are currently configured." in filesystem_text
 
 
 def test_execute_code_tool_description_contains_call_tool_guidance(tmp_path: Path) -> None:
@@ -1033,6 +1309,32 @@ async def test_provider_injects_run_scoped_execute_code_tool() -> None:
     assert [tool_obj.name for tool_obj in run_tool.get_tools()] == ["compute"]
 
 
+def test_provider_delegates_file_mounts_and_allowed_domains_to_internal_tool(tmp_path: Path) -> None:
+    provider = HyperlightCodeActProvider()
+
+    provider.add_file_mounts((tmp_path, "reports/output.txt"))
+    assert provider.get_file_mounts() == [FileMount(tmp_path.resolve(), "/input/reports/output.txt")]
+
+    provider.remove_file_mount("/input/reports/output.txt")
+    assert provider.get_file_mounts() == []
+
+    provider.add_file_mounts((tmp_path, "reports/output.txt"))
+    provider.clear_file_mounts()
+    assert provider.get_file_mounts() == []
+
+    provider.add_allowed_domains([("api.example.com", "get"), "github.com"])
+    assert provider.get_allowed_domains() == [
+        AllowedDomain("api.example.com", ("GET",)),
+        AllowedDomain("github.com", None),
+    ]
+
+    provider.remove_allowed_domain("github.com")
+    assert provider.get_allowed_domains() == [AllowedDomain("api.example.com", ("GET",))]
+
+    provider.clear_allowed_domains()
+    assert provider.get_allowed_domains() == []
+
+
 async def test_agent_runs_hyperlight_codeact_end_to_end_with_fake_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeSandbox.instances.clear()
     monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
@@ -1041,14 +1343,18 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_fake_sandbox(monkey
     provider = HyperlightCodeActProvider(tools=[compute])
     agent = Agent(client=client, context_providers=[provider])
 
-    response = await agent.run("Use the sandbox to add 20 and 22.")
+    try:
+        response = await agent.run("Use the sandbox to add 20 and 22.")
 
-    assert response.text == "The sandbox returned 42."
-    assert client.call_count == 2
+        assert response.text == "The sandbox returned 42."
+        assert client.call_count == 2
+    finally:
+        _close_provider_registry(provider)
     assert len(_FakeSandbox.instances) == 1
     assert "compute" in _FakeSandbox.instances[0].registered_tools
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> None:
     _skip_if_hyperlight_integration_runtime_disabled()
@@ -1057,12 +1363,16 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> N
     provider = HyperlightCodeActProvider(tools=[compute])
     agent = Agent(client=client, context_providers=[provider])
 
-    response = await agent.run("Use the sandbox to add 20 and 22.")
+    try:
+        response = await agent.run("Use the sandbox to add 20 and 22.")
 
-    assert response.text == "The sandbox returned 42."
-    assert client.call_count == 2
+        assert response.text == "The sandbox returned 42."
+        assert client.call_count == 2
+    finally:
+        _close_provider_registry(provider)
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_provider_run_tool_writes_files_with_real_sandbox(tmp_path: Path) -> None:
     _skip_if_hyperlight_integration_runtime_disabled()
@@ -1078,41 +1388,44 @@ async def test_provider_run_tool_writes_files_with_real_sandbox(tmp_path: Path) 
     run_tool = context.tools[0][1][0]
     assert isinstance(run_tool, HyperlightExecuteCodeTool)
 
-    result = await run_tool.invoke(
-        arguments={
-            "code": (
-                'payload = "hello from sandbox"\n'
-                "output_path = None\n"
-                'for candidate in ("/output/result.txt",):\n'
-                "    try:\n"
-                '        with open(candidate, "w", encoding="utf-8") as f:\n'
-                "            f.write(payload)\n"
-                "    except OSError:\n"
-                "        continue\n"
-                "    output_path = candidate\n"
-                "    break\n"
-                'assert output_path is not None, "output path unavailable"\n'
-                'print("validated")\n'
-            )
-        }
-    )
+    try:
+        result = await run_tool.invoke(
+            arguments={
+                "code": (
+                    'payload = "hello from sandbox"\n'
+                    "output_path = None\n"
+                    'for candidate in ("/output/result.txt",):\n'
+                    "    try:\n"
+                    '        with open(candidate, "w", encoding="utf-8") as f:\n'
+                    "            f.write(payload)\n"
+                    "    except OSError:\n"
+                    "        continue\n"
+                    "    output_path = candidate\n"
+                    "    break\n"
+                    'assert output_path is not None, "output path unavailable"\n'
+                    'print("validated")\n'
+                )
+            }
+        )
 
-    outputs = result
-    error_outputs = [
-        f"{item.message}: {item.error_details}"
-        for item in outputs
-        if item.type == "error" and item.error_details is not None
-    ]
-    assert not error_outputs, error_outputs
+        outputs = result
+        error_outputs = [
+            f"{item.message}: {item.error_details}"
+            for item in outputs
+            if item.type == "error" and item.error_details is not None
+        ]
+        assert not error_outputs, error_outputs
 
-    text_output = next((item for item in outputs if item.type == "text" and item.text is not None), None)
-    if text_output is not None:
-        assert text_output.text == "validated\n"
+        text_output = next((item for item in outputs if item.type == "text" and item.text is not None), None)
+        if text_output is not None:
+            assert text_output.text == "validated\n"
 
-    file_output = next((item for item in outputs if item.type == "data"), None)
-    if file_output is not None:
-        assert file_output.uri is not None and file_output.uri.startswith("data:")
-        assert file_output.additional_properties["path"] in {"/output/result.txt", "/output/output/result.txt"}
+        file_output = next((item for item in outputs if item.type == "data"), None)
+        if file_output is not None:
+            assert file_output.uri is not None and file_output.uri.startswith("data:")
+            assert file_output.additional_properties["path"] in {"/output/result.txt", "/output/output/result.txt"}
+    finally:
+        _close_execute_code_registry(run_tool)
 
 
 @pytest.mark.integration
@@ -1131,46 +1444,49 @@ async def test_provider_run_tool_pings_bing_with_real_sandbox() -> None:
     run_tool = context.tools[0][1][0]
     assert isinstance(run_tool, HyperlightExecuteCodeTool)
 
-    result = await run_tool.invoke(
-        arguments={
-            "code": (
-                "import _socket\n\n"
-                'addresses = _socket.getaddrinfo("bing.com", 80, _socket.AF_INET, _socket.SOCK_STREAM)\n'
-                'assert addresses, "bing.com did not resolve"\n'
-                "last_error = None\n"
-                "for family, socktype, proto, _, sockaddr in addresses:\n"
-                "    connection = None\n"
-                "    try:\n"
-                "        connection = _socket.socket(family, socktype, proto)\n"
-                "        connection.settimeout(10)\n"
-                "        connection.connect(sockaddr)\n"
-                '        print("pinged bing.com")\n'
-                "        break\n"
-                "    except OSError as exc:\n"
-                "        last_error = exc\n"
-                "    finally:\n"
-                "        if connection is not None:\n"
-                "            try:\n"
-                "                connection.close()\n"
-                "            except OSError:\n"
-                "                pass\n"
-                "else:\n"
-                '    raise last_error or RuntimeError("unable to reach bing.com")\n'
-            )
-        }
-    )
+    try:
+        result = await run_tool.invoke(
+            arguments={
+                "code": (
+                    "import _socket\n\n"
+                    'addresses = _socket.getaddrinfo("bing.com", 80, _socket.AF_INET, _socket.SOCK_STREAM)\n'
+                    'assert addresses, "bing.com did not resolve"\n'
+                    "last_error = None\n"
+                    "for family, socktype, proto, _, sockaddr in addresses:\n"
+                    "    connection = None\n"
+                    "    try:\n"
+                    "        connection = _socket.socket(family, socktype, proto)\n"
+                    "        connection.settimeout(10)\n"
+                    "        connection.connect(sockaddr)\n"
+                    '        print("pinged bing.com")\n'
+                    "        break\n"
+                    "    except OSError as exc:\n"
+                    "        last_error = exc\n"
+                    "    finally:\n"
+                    "        if connection is not None:\n"
+                    "            try:\n"
+                    "                connection.close()\n"
+                    "            except OSError:\n"
+                    "                pass\n"
+                    "else:\n"
+                    '    raise last_error or RuntimeError("unable to reach bing.com")\n'
+                )
+            }
+        )
 
-    outputs = result
-    error_outputs = [
-        f"{item.message}: {item.error_details}"
-        for item in outputs
-        if item.type == "error" and item.error_details is not None
-    ]
-    assert not error_outputs, error_outputs
+        outputs = result
+        error_outputs = [
+            f"{item.message}: {item.error_details}"
+            for item in outputs
+            if item.type == "error" and item.error_details is not None
+        ]
+        assert not error_outputs, error_outputs
 
-    text_output = next((item for item in outputs if item.type == "text" and item.text is not None), None)
-    if text_output is not None:
-        assert text_output.text == "pinged bing.com\n"
+        text_output = next((item for item in outputs if item.type == "text" and item.text is not None), None)
+        if text_output is not None:
+            assert text_output.text == "pinged bing.com\n"
+    finally:
+        _close_execute_code_registry(run_tool)
 
 
 # ---------------------------------------------------------------------------
@@ -1178,6 +1494,7 @@ async def test_provider_run_tool_pings_bing_with_real_sandbox() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_sandbox_runs_simple_code(restored_sandbox) -> None:
     result = restored_sandbox.run('print("hello")')
@@ -1185,6 +1502,7 @@ async def test_sandbox_runs_simple_code(restored_sandbox) -> None:
     assert "hello" in result.stdout
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_sandbox_stdout_and_stderr_captured(restored_sandbox) -> None:
     result = restored_sandbox.run('import sys\nprint("out")\nprint("err", file=sys.stderr)')
@@ -1193,6 +1511,7 @@ async def test_sandbox_stdout_and_stderr_captured(restored_sandbox) -> None:
     assert "err" in result.stderr
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_sandbox_code_failure_returns_nonzero_exit(restored_sandbox) -> None:
     result = restored_sandbox.run("raise ValueError('boom')")
@@ -1200,6 +1519,7 @@ async def test_sandbox_code_failure_returns_nonzero_exit(restored_sandbox) -> No
     assert "boom" in result.stderr
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 @pytest.mark.skipif(
     sys.platform == "win32" and sys.version_info < (3, 11),
@@ -1226,6 +1546,7 @@ async def test_sandbox_snapshot_restore_keeps_sandbox_functional(restored_sandbo
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_sandbox_with_tool_registration_and_execution(fresh_sandbox) -> None:
     """Verify that a sync host tool round-trips via call_tool in the real sandbox."""
@@ -1242,6 +1563,7 @@ async def test_sandbox_with_tool_registration_and_execution(fresh_sandbox) -> No
     assert "42" in result.stdout
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_sandbox_async_callback_round_trips_with_real_sandbox(fresh_sandbox) -> None:
     """Confirm that _make_sandbox_callback (sync wrapper) works with real FFI."""
@@ -1261,6 +1583,7 @@ async def test_sandbox_async_callback_round_trips_with_real_sandbox(fresh_sandbo
     assert "42" in result.stdout
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_output_dir_cleared_between_invocations() -> None:
     """Verify stale output files don't leak across invocations (comment 23)."""
@@ -1274,27 +1597,32 @@ async def test_output_dir_cleared_between_invocations() -> None:
     run_tool = context.tools[0][1][0]
     assert isinstance(run_tool, HyperlightExecuteCodeTool)
 
-    # First invocation: write a file
-    result1 = await run_tool.invoke(
-        arguments={"code": ('with open("/output/stale.txt", "w") as f:\n    f.write("first")\nprint("wrote")\n')}
-    )
-    assert result1[0].type == "text" or result1[0].type == "data"
-    outputs1 = result1
-    assert any(
-        item.type == "data" and "stale.txt" in (item.additional_properties or {}).get("path", "") for item in outputs1
-    ), "First invocation should produce stale.txt"
+    try:
+        # First invocation: write a file
+        result1 = await run_tool.invoke(
+            arguments={"code": ('with open("/output/stale.txt", "w") as f:\n    f.write("first")\nprint("wrote")\n')}
+        )
+        assert result1[0].type == "text" or result1[0].type == "data"
+        outputs1 = result1
+        assert any(
+            item.type == "data" and "stale.txt" in (item.additional_properties or {}).get("path", "")
+            for item in outputs1
+        ), "First invocation should produce stale.txt"
 
-    # Second invocation: no file writes
-    result2 = await run_tool.invoke(arguments={"code": 'print("clean")\n'})
-    outputs2 = result2
-    stale_files = [
-        item
-        for item in outputs2
-        if item.type == "data" and "stale.txt" in (item.additional_properties or {}).get("path", "")
-    ]
-    assert not stale_files, "Stale output file leaked into second invocation"
+        # Second invocation: no file writes
+        result2 = await run_tool.invoke(arguments={"code": 'print("clean")\n'})
+        outputs2 = result2
+        stale_files = [
+            item
+            for item in outputs2
+            if item.type == "data" and "stale.txt" in (item.additional_properties or {}).get("path", "")
+        ]
+        assert not stale_files, "Stale output file leaked into second invocation"
+    finally:
+        _close_execute_code_registry(run_tool)
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_run_code_does_not_block_event_loop() -> None:
     """Verify _run_code uses asyncio.to_thread so the event loop stays responsive (comment 26)."""
@@ -1330,12 +1658,16 @@ async def test_run_code_does_not_block_event_loop() -> None:
         concurrent_ran = True
         release.set()
 
-    code_task = asyncio.create_task(run_tool.invoke(arguments={"code": 'print("done")\n'}))
-    await _concurrent_task()
-    result = await code_task
+    try:
+        code_task = asyncio.create_task(run_tool.invoke(arguments={"code": 'print("done")\n'}))
+        await _concurrent_task()
+        result = await code_task
 
-    assert concurrent_ran, "Event loop was blocked during sandbox execution"
-    assert result[0].type == "text"
+        assert concurrent_ran, "Event loop was blocked during sandbox execution"
+        assert result[0].type == "text"
+    finally:
+        release.set()
+        _close_execute_code_registry(run_tool)
 
 
 class _ThreadAffinityFakeSandbox(_FakeSandbox):

@@ -116,16 +116,16 @@ internal sealed class WorkflowHostAgent : AIAgent
         await this.ValidateWorkflowAsync().ConfigureAwait(false);
 
         WorkflowSession workflowSession = await this.UpdateSessionAsync(messages, session, cancellationToken).ConfigureAwait(false);
-        MessageMerger merger = new();
+        ResponseMergeState mergeState = new();
 
         await foreach (AgentResponseUpdate update in workflowSession.InvokeStageAsync(cancellationToken)
                                                                      .ConfigureAwait(false)
                                                                      .WithCancellation(cancellationToken))
         {
-            merger.AddUpdate(update);
+            mergeState.AddUpdate(update, this.IsTerminalWorkflowOutputUpdate(update));
         }
 
-        AgentResponse response = merger.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
+        AgentResponse response = mergeState.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
         workflowSession.ChatHistoryProvider.AddMessages(workflowSession, response.Messages);
         workflowSession.ChatHistoryProvider.UpdateBookmark(workflowSession);
 
@@ -142,18 +142,55 @@ internal sealed class WorkflowHostAgent : AIAgent
         await this.ValidateWorkflowAsync().ConfigureAwait(false);
 
         WorkflowSession workflowSession = await this.UpdateSessionAsync(messages, session, cancellationToken).ConfigureAwait(false);
-        MessageMerger merger = new();
+        ResponseMergeState mergeState = new();
 
         await foreach (AgentResponseUpdate update in workflowSession.InvokeStageAsync(cancellationToken)
                                                                       .ConfigureAwait(false)
                                                                       .WithCancellation(cancellationToken))
         {
-            merger.AddUpdate(update);
+            mergeState.AddUpdate(update, this.IsTerminalWorkflowOutputUpdate(update));
             yield return update;
         }
 
-        AgentResponse response = merger.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
+        AgentResponse response = mergeState.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
         workflowSession.ChatHistoryProvider.AddMessages(workflowSession, response.Messages);
         workflowSession.ChatHistoryProvider.UpdateBookmark(workflowSession);
+    }
+
+    private sealed class ResponseMergeState
+    {
+        private readonly MessageMerger _allUpdates = new();
+        private readonly MessageMerger _terminalWorkflowOutputs = new();
+        private bool _hasTerminalWorkflowOutputs;
+
+        public void AddUpdate(AgentResponseUpdate update, bool isTerminalWorkflowOutput)
+        {
+            this._allUpdates.AddUpdate(update);
+            if (isTerminalWorkflowOutput)
+            {
+                this._terminalWorkflowOutputs.AddUpdate(update);
+                this._hasTerminalWorkflowOutputs = true;
+            }
+        }
+
+        public AgentResponse ComputeMerged(string responseId, string? agentId, string? agentName)
+        {
+            MessageMerger merger = this._hasTerminalWorkflowOutputs
+                ? this._terminalWorkflowOutputs
+                : this._allUpdates;
+            return merger.ComputeMerged(responseId, agentId, agentName);
+        }
+    }
+
+    private bool IsTerminalWorkflowOutputUpdate(AgentResponseUpdate update)
+    {
+        if (update.RawRepresentation is not WorkflowOutputEvent output
+            || output is AgentResponseUpdateEvent
+            || output is AgentResponseEvent)
+        {
+            return false;
+        }
+
+        return this._workflow.IsTerminalOutput(output.ExecutorId);
     }
 }

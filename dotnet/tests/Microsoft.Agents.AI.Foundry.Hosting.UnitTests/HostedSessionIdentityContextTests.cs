@@ -85,18 +85,24 @@ public class HostedSessionIdentityContextTests
     }
 
     [Fact]
-    public async Task Handler_NullKeysFromProvider_ThrowsInvalidOperationAsync()
+    public async Task Handler_NullKeysFromProvider_NotHosted_SucceedsWithoutContextAsync()
     {
-        // Arrange
+        // Arrange: a provider that returns null keys (as the default platform provider does locally when
+        // no x-agent-user-id header is present). Under unit tests FoundryEnvironment.IsHosted is false, so
+        // the container is treated as local: the request must proceed with per-user isolation not triggered
+        // rather than 500ing. No hosted context is stamped on the session.
         var capturingAgent = new HostedContextCapturingAgent();
         var fakeProvider = new FakeHostedSessionIsolationKeyProvider(userId: null);
         var handler = BuildHandler(capturingAgent, fakeProvider);
 
         var (request, mockContext) = BuildFreshRequest();
 
-        // Act & Assert
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => DrainAsync(handler.CreateAsync(request, mockContext.Object, CancellationToken.None)));
-        Assert.Contains(nameof(HostedSessionIsolationKeyProvider), ex.Message);
+        // Act
+        await DrainAsync(handler.CreateAsync(request, mockContext.Object, CancellationToken.None));
+
+        // Assert: no throw, a session was produced, and it carries no hosted identity context.
+        Assert.NotNull(capturingAgent.LastSession);
+        Assert.Null(capturingAgent.LastSession.GetHostedContext());
     }
 
     [Fact]
@@ -115,8 +121,9 @@ public class HostedSessionIdentityContextTests
 
         // Step 2: persist the session under a known conversation id (mimics what the handler does
         // when it has a conversation id; here we plant it directly so we can drive a resume request).
+        // The session is scoped to the same user ("alice") that will resume it.
         const string ConversationId = "resume-chat-id";
-        await sessionStore.SaveSessionAsync(capturingAgent, ConversationId, capturingAgent.LastSession, CancellationToken.None);
+        await sessionStore.SaveSessionAsync(capturingAgent, ConversationId, capturingAgent.LastSession, "alice", CancellationToken.None);
 
         // Step 3: drive a resume request with the same isolation keys.
         var (resumeRequest, resumeContext) = BuildResumeRequest(ConversationId);
@@ -144,7 +151,12 @@ public class HostedSessionIdentityContextTests
         var (freshRequest, freshContext) = BuildFreshRequest();
         await DrainAsync(aliceHandler.CreateAsync(freshRequest, freshContext.Object, CancellationToken.None));
         const string ConversationId = "resume-chat-id";
-        await sessionStore.SaveSessionAsync(capturingAgent, ConversationId, capturingAgent.LastSession!, CancellationToken.None);
+
+        // Plant Alice's stamped session UNDER BOB'S partition to simulate a session that reached Bob's
+        // key despite the per-user path partitioning (e.g. a non-partitioning custom store, or in-process
+        // tampering). The 403 identity check is the defense-in-depth layer that must still reject it even
+        // when the physical partition was bypassed.
+        await sessionStore.SaveSessionAsync(capturingAgent, ConversationId, capturingAgent.LastSession!, "bob", CancellationToken.None);
 
         // Bob attempts to resume Alice's conversation.
         var bobProvider = new FakeHostedSessionIsolationKeyProvider("bob");
@@ -169,7 +181,7 @@ public class HostedSessionIdentityContextTests
         var sessionStore = new InMemoryAgentSessionStore();
         const string ConversationId = "untagged-chat-id";
         var untagged = await capturingAgent.CreateSessionAsync(CancellationToken.None);
-        await sessionStore.SaveSessionAsync(capturingAgent, ConversationId, untagged, CancellationToken.None);
+        await sessionStore.SaveSessionAsync(capturingAgent, ConversationId, untagged, "alice", CancellationToken.None);
 
         var fakeProvider = new FakeHostedSessionIsolationKeyProvider("alice");
         var handler = BuildHandler(capturingAgent, fakeProvider, sessionStore);

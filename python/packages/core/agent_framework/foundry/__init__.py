@@ -6,6 +6,7 @@ This module lazily re-exports objects from:
 - ``agent-framework-anthropic``
 - ``agent-framework-azure-contentunderstanding``
 - ``agent-framework-foundry``
+- ``agent-framework-foundry-hosting``
 - ``agent-framework-foundry-local``
 """
 
@@ -31,6 +32,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "FoundryEmbeddingSettings": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryEvals": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryMemoryProvider": ("agent_framework_foundry", "agent-framework-foundry"),
+    "FoundryToolbox": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "FoundryLocalChatOptions": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
     "FoundryLocalClient": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
     "FoundryLocalSettings": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
@@ -40,6 +42,8 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "RawFoundryAgentChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "RawFoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "RawFoundryEmbeddingClient": ("agent_framework_foundry", "agent-framework-foundry"),
+    "InvocationsHostServer": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "ResponsesHostServer": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "evaluate_foundry_target": ("agent_framework_foundry", "agent-framework-foundry"),
     "evaluate_traces": ("agent_framework_foundry", "agent-framework-foundry"),
     "to_prompt_agent": ("agent_framework_foundry", "agent-framework-foundry"),

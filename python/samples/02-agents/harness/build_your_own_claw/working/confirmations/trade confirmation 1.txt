@@ -1,0 +1,6 @@
+TRADE CONFIRMATION
+Confirmation: TRADE-A1B2C3D4
+Date: 2024-02-14
+Symbol: MSFT
+Action: BUY
+Quantity: 40

@@ -50,7 +50,7 @@ An eco-friendly stainless steel water bottle that keeps drinks cold for 24 hours
 
 ## Configuration
 
-For production use, configure these agents in Azure AI Foundry:
+For production use, configure these agents in Microsoft Foundry:
 
 ### AnalystAgent
 ```

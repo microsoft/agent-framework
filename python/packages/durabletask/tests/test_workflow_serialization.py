@@ -31,6 +31,8 @@ from agent_framework import (
 from pydantic import BaseModel
 
 from agent_framework_durabletask._workflows.serialization import (
+    SUBWORKFLOW_ADDRESS_KEY,
+    SUBWORKFLOW_INPUT_KEY,
     deserialize_value,
     deserialize_workflow_event,
     deserialize_workflow_output,
@@ -39,6 +41,7 @@ from agent_framework_durabletask._workflows.serialization import (
     serialize_value,
     serialize_workflow_event,
     strip_pickle_markers,
+    strip_subworkflow_markers,
 )
 
 
@@ -421,3 +424,43 @@ class TestStripPickleMarkers:
         }
         result = strip_pickle_markers(data)
         assert result == {"user_input": "hello", "evil": None, "count": 42}
+
+
+class TestStripSubworkflowMarkers:
+    """Boundary defence: a forged sub-workflow envelope in untrusted input is removed.
+
+    Only an internal child dispatch (post trust boundary) may carry the reserved
+    key; if untrusted client input could, it would be treated as a trusted
+    sub-orchestration payload and reach pickle.loads without sanitization.
+    """
+
+    def test_strips_input_key(self) -> None:
+        data = {SUBWORKFLOW_INPUT_KEY: {"__pickled__": "evil"}, "real": 1}
+        assert strip_subworkflow_markers(data) == {"real": 1}
+
+    def test_strips_address_key(self) -> None:
+        # A forged address marker would otherwise let a top-level caller point respond
+        # URLs at another instance (confused-deputy); it must be stripped too.
+        data = {SUBWORKFLOW_ADDRESS_KEY: {"root_instance_id": "victim"}, "real": 1}
+        assert strip_subworkflow_markers(data) == {"real": 1}
+
+    def test_strips_both_markers_together(self) -> None:
+        data = {
+            SUBWORKFLOW_INPUT_KEY: "x",
+            SUBWORKFLOW_ADDRESS_KEY: {"root_instance_id": "victim"},
+            "real": 1,
+        }
+        assert strip_subworkflow_markers(data) == {"real": 1}
+
+    def test_strips_full_forged_envelope(self) -> None:
+        data = {SUBWORKFLOW_INPUT_KEY: "x"}
+        assert strip_subworkflow_markers(data) == {}
+
+    def test_preserves_ordinary_dict(self) -> None:
+        data = {"order_id": 42, "items": ["a", "b"]}
+        assert strip_subworkflow_markers(data) == data
+
+    def test_preserves_non_dict(self) -> None:
+        assert strip_subworkflow_markers("hello") == "hello"
+        assert strip_subworkflow_markers([1, 2]) == [1, 2]
+        assert strip_subworkflow_markers(None) is None
