@@ -3151,7 +3151,7 @@ async def test_endpoint_error_handling(build_chat_client):
     client = TestClient(app)
 
     # Send invalid JSON to trigger parsing error before streaming
-    response = client.post("/failing", data=b"invalid json", headers={"content-type": "application/json"})  # type: ignore
+    response = client.post("/failing", content=b"invalid json", headers={"content-type": "application/json"})
 
     # Pydantic validation now returns 422 for invalid request body
     assert response.status_code == 422

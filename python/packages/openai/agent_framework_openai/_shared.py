@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import copy
-from typing import TYPE_CHECKING, Any, Literal, Union
+from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
@@ -24,6 +24,7 @@ else:
     from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
+    from agent_framework import Content
     from azure.core.credentials import TokenCredential
     from azure.core.credentials_async import AsyncTokenCredential
 
@@ -47,6 +48,25 @@ RESPONSE_TYPE = Union[
 ]
 
 AzureTokenProvider = Callable[[], str | Awaitable[str]]
+
+
+PROMPT_CACHE_BREAKPOINT_KEY = "prompt_cache_breakpoint"
+
+
+def _attach_prompt_cache_breakpoint(  # pyright: ignore[reportUnusedFunction]
+    part: dict[str, Any], content: Content
+) -> dict[str, Any]:
+    """Copy a prompt cache breakpoint from content metadata onto an outgoing part.
+
+    GPT-5.6 and later models accept an explicit cache breakpoint on supported content
+    blocks; users opt in per part via
+    ``Content.additional_properties["prompt_cache_breakpoint"]``.
+    """
+    props = content.additional_properties
+    breakpoint_value = props.get(PROMPT_CACHE_BREAKPOINT_KEY) if props else None
+    if isinstance(breakpoint_value, Mapping):
+        part[PROMPT_CACHE_BREAKPOINT_KEY] = dict(cast("Mapping[str, Any]", breakpoint_value))
+    return part
 
 
 class OpenAISettings(TypedDict, total=False):

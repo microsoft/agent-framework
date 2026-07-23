@@ -122,6 +122,7 @@
     <PackageVersion Include="Hyperlight.HyperlightSandbox.Api" Version="0.4.0" />
     <PackageVersion Include="Hyperlight.HyperlightSandbox.Guest.Python" Version="0.4.0" />
     <!-- Inference SDKs -->
+    <PackageVersion Include="Dapr.AI.Microsoft.Extensions" Version="1.18.4" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
     <PackageVersion Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
     <PackageVersion Include="OllamaSharp" Version="5.4.8" />
