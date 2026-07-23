@@ -97,6 +97,33 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task InvokingCoreAsync_NonAdvertisedSkill_ExcludedFromInstructionsButLoadableAsync()
+    {
+        // Arrange
+        this.CreateSkill("visible-skill", "Visible skill description", "Visible body.");
+        string hiddenSkillDir = Path.Combine(this._testRoot, "unadvertised-skill");
+        Directory.CreateDirectory(hiddenSkillDir);
+        await File.WriteAllTextAsync(
+            Path.Combine(hiddenSkillDir, "SKILL.md"),
+            "---\nname: unadvertised-skill\ndescription: Unadvertised skill description\nadvertise: false\n---\nUnadvertised body.");
+        var provider = new AgentSkillsProvider(new AgentFileSkillsSource(this._testRoot, s_noOpExecutor));
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — the non-advertised skill is not listed in the instructions
+        Assert.NotNull(result.Instructions);
+        Assert.Contains("visible-skill", result.Instructions);
+        Assert.DoesNotContain("unadvertised-skill", result.Instructions);
+
+        // But it can still be loaded by name via the load_skill tool
+        var loadSkillTool = result.Tools!.First(t => t.Name == "load_skill") as AIFunction;
+        var content = await loadSkillTool!.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?> { ["skillName"] = "unadvertised-skill" }));
+        Assert.Contains("Unadvertised body.", content!.ToString());
+    }
+
+    [Fact]
     public async Task InvokingCoreAsync_CustomPromptTemplate_UsesCustomTemplateAsync()
     {
         // Arrange
