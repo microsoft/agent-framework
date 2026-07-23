@@ -573,6 +573,9 @@ These are unresolved and should be decided before implementation:
 - **Destination approval is explicit and redirect-aware.** An eligible pipeline
   still emits only to a reviewed HTTPS origin. Custom origins are default-deny,
   and the token is removed on an unapproved redirect hop.
+- **Telemetry does not replace transport defaults.** Framework-created OpenAI
+  clients use the SDK's default async HTTP client with the request hook added,
+  preserving redirect, timeout, connection-limit, and pooling behavior.
 - **Marking uses activation, not DI construction.** Operational surfaces mark on
   first real use; a constructor marks only when construction itself exercises or
   registers the capability.
