@@ -27,6 +27,10 @@ can be imported. Agentic **output mode** (`answer_synthesis`) and **extended rea
 (extractive + minimal) and raises an actionable `ValueError` (citing the installed version) if
 they are explicitly requested. Semantic mode is unaffected.
 
+Agentic query-time user identity is also preview-only. It is gated by
+`_query_source_authorization_available`; when enabled, `query_source_credential` supplies a
+per-request Azure AI Search token through the `x-ms-query-source-authorization` header.
+
 ## Usage
 
 ```python
