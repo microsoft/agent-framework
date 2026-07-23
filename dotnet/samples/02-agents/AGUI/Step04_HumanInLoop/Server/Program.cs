@@ -5,12 +5,9 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
-using Microsoft.AspNetCore.Http.Json;
 using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Options;
 using OpenAI.Chat;
-using ServerFunctionApproval;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
@@ -23,8 +20,6 @@ builder.Services.AddHttpLogging(logging =>
 });
 
 builder.Services.AddHttpClient().AddLogging();
-builder.Services.ConfigureHttpJsonOptions(options =>
-    options.SerializerOptions.TypeInfoResolverChain.Add(ApprovalJsonContext.Default));
 builder.Services.AddAGUIServer();
 
 // WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,
@@ -48,9 +43,6 @@ static string ApproveExpenseReport(string expenseReportId)
     return $"Expense report {expenseReportId} approved";
 }
 
-// Get JsonSerializerOptions
-var jsonOptions = app.Services.GetRequiredService<IOptions<JsonOptions>>().Value;
-
 // Create approval-required tool
 #pragma warning disable MEAI001 // Type is for evaluation purposes only
 AITool[] tools = [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(ApproveExpenseReport))];
@@ -70,8 +62,7 @@ ChatClientAgent baseAgent = openAIChatClient.AsAIAgent(
     instructions: "You are a helpful assistant in charge of approving expenses",
     tools: tools);
 
-// Wrap with ServerFunctionApprovalAgent
-var agent = new ServerFunctionApprovalAgent(baseAgent, jsonOptions.SerializerOptions);
-
-app.MapAGUIServer("/", agent);
+// No custom approval protocol is required: MapAGUIServer emits the approval interrupt natively when the
+// model calls the approval-required tool, and resumes the run when the client sends the decision back.
+app.MapAGUIServer("/", baseAgent);
 await app.RunAsync();

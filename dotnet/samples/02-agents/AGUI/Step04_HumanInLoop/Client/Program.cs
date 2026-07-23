@@ -15,16 +15,11 @@ using HttpClient httpClient = new()
 
 AGUIChatClient chatClient = new(new(httpClient, serverUrl));
 
-// Create agent
-ChatClientAgent baseAgent = chatClient.AsAIAgent(
+// Create agent. No custom approval agent is required: the loop below handles the approval interrupt
+// directly, and AGUIChatClient transports the decision back to the server via the AG-UI resume mechanism.
+AIAgent agent = chatClient.AsAIAgent(
     name: "AGUIAssistant",
     instructions: "You are a helpful assistant.");
-
-// Use default JSON serializer options
-JsonSerializerOptions jsonSerializerOptions = JsonSerializerOptions.Default;
-
-// Wrap the agent with ServerFunctionApprovalClientAgent
-ServerFunctionApprovalClientAgent agent = new(baseAgent, jsonSerializerOptions);
 
 List<ChatMessage> messages = [];
 AgentSession? session = null;
@@ -67,15 +62,6 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
                         bool approved = userInput?.ToUpperInvariant() is "YES" or "Y";
 
                         ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved);
-
-                        if (approvalRequest.AdditionalProperties != null)
-                        {
-                            approvalResponse.AdditionalProperties = [];
-                            foreach (var kvp in approvalRequest.AdditionalProperties)
-                            {
-                                approvalResponse.AdditionalProperties[kvp.Key] = kvp.Value;
-                            }
-                        }
 
                         approvalResponses.Add(approvalResponse);
                         break;
