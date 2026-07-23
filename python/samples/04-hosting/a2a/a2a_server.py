@@ -36,7 +36,7 @@ A2A Server Sample — Host an Agent Framework agent as an A2A endpoint
 
 This sample creates a Python-based A2A-compliant server that wraps an Agent
 Framework agent.  The server uses the a2a-sdk's Starlette application to handle
-JSON-RPC requests and serves the AgentCard at /.well-known/agent.json.
+JSON-RPC requests and serves the AgentCard at /.well-known/agent-card.json.
 
 Three agent types are available:
   - invoice   — Answers invoice queries using mock data and function tools.
@@ -194,7 +194,7 @@ def main() -> None:
     print(f"Starting A2A server: {agent_card.name}")
     print(f"  Agent type : {args.agent_type}")
     print(f"  Listening  : {url}")
-    print(f"  Agent card : {url}.well-known/agent.json")
+    print(f"  Agent card : {url}.well-known/agent-card.json")
     print()
 
     uvicorn.run(
