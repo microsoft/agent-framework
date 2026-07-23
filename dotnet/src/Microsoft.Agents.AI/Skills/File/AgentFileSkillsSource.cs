@@ -28,7 +28,7 @@ namespace Microsoft.Agents.AI;
 public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 {
     private const string SkillFileName = "SKILL.md";
-    private const int DefaultSearchDepth = 2;
+    private const int DefaultSearchDepth = 10;
     private const int MaxSkillDirectorySearchDepth = 2;
 
     private static readonly string[] s_defaultScriptExtensions = [".py", ".js", ".sh", ".ps1", ".cs", ".csx"];
