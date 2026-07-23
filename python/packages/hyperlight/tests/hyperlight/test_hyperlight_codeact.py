@@ -43,6 +43,7 @@ from pytest import fixture
 
 from agent_framework_hyperlight import AllowedDomain, FileMount, HyperlightCodeActProvider, HyperlightExecuteCodeTool
 from agent_framework_hyperlight import _execute_code_tool as execute_code_module
+from agent_framework_hyperlight import _instructions as instructions_module
 
 
 def _hyperlight_integration_static_skip_reason() -> str | None:
@@ -1052,6 +1053,61 @@ def test_execute_code_tool_allowed_domains_use_structured_entries_and_replace_by
     ]
 
 
+def test_execute_code_tool_normalizers_reject_invalid_inputs() -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        execute_code_module._normalize_domain(" ")
+    with pytest.raises(ValueError, match="Could not normalize allowed domain entry"):
+        execute_code_module._normalize_domain("https://")
+    with pytest.raises(ValueError, match="must not be empty"):
+        execute_code_module._normalize_http_method(" ")
+    assert execute_code_module._normalize_http_methods(None) is None
+    with pytest.raises(ValueError, match="must not be empty when provided"):
+        execute_code_module._normalize_http_methods([])
+    with pytest.raises(ValueError, match="must not be empty"):
+        execute_code_module._normalize_mount_path(" ")
+    with pytest.raises(ValueError, match="must stay within /input"):
+        execute_code_module._normalize_mount_path("/input/../escape")
+    with pytest.raises(ValueError, match="must point to a concrete path under /input"):
+        execute_code_module._normalize_mount_path("/input")
+
+
+def test_execute_code_tool_shape_guards_validate_pairs() -> None:
+    assert execute_code_module._is_file_mount_pair(("source.txt", "mount.txt")) is True
+    assert execute_code_module._is_file_mount_pair(("source.txt", "mount.txt", "extra")) is False
+    assert execute_code_module._is_file_mount_pair(("source.txt", 1)) is False
+
+    assert execute_code_module._is_allowed_domain_pair(("example.com", "get")) is True
+    assert execute_code_module._is_allowed_domain_pair(("example.com", ["get", "post"])) is True
+    assert execute_code_module._is_allowed_domain_pair((123, ["get"])) is False
+    assert execute_code_module._is_allowed_domain_pair(("example.com", 123)) is False
+
+
+def test_instruction_builders_cover_mounted_paths_and_workspace_free_filesystem_state() -> None:
+    description = instructions_module.build_execute_code_description(
+        tools=[compute],
+        filesystem_enabled=True,
+        workspace_enabled=False,
+        mounted_paths=["/input/data/report.txt"],
+        allowed_domains=[],
+    )
+    instructions = instructions_module.build_codeact_instructions(
+        tools=[compute],
+        tools_visible_to_model=True,
+        filesystem_enabled=True,
+    )
+    filesystem_text = instructions_module._format_filesystem_capabilities(
+        filesystem_enabled=True,
+        workspace_enabled=False,
+        mounted_paths=[],
+    )
+
+    assert "Additional mounted paths:" in description
+    assert "/input/data/report.txt" in description
+    assert "Some tools may also appear directly" in instructions
+    assert "For larger artifacts, write them to `/output/<filename>` instead" in instructions
+    assert "No workspace root or explicit file mounts are currently configured." in filesystem_text
+
+
 def test_execute_code_tool_description_contains_call_tool_guidance(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
@@ -1251,6 +1307,32 @@ async def test_provider_injects_run_scoped_execute_code_tool() -> None:
 
     provider.remove_tool("compute")
     assert [tool_obj.name for tool_obj in run_tool.get_tools()] == ["compute"]
+
+
+def test_provider_delegates_file_mounts_and_allowed_domains_to_internal_tool(tmp_path: Path) -> None:
+    provider = HyperlightCodeActProvider()
+
+    provider.add_file_mounts((tmp_path, "reports/output.txt"))
+    assert provider.get_file_mounts() == [FileMount(tmp_path.resolve(), "/input/reports/output.txt")]
+
+    provider.remove_file_mount("/input/reports/output.txt")
+    assert provider.get_file_mounts() == []
+
+    provider.add_file_mounts((tmp_path, "reports/output.txt"))
+    provider.clear_file_mounts()
+    assert provider.get_file_mounts() == []
+
+    provider.add_allowed_domains([("api.example.com", "get"), "github.com"])
+    assert provider.get_allowed_domains() == [
+        AllowedDomain("api.example.com", ("GET",)),
+        AllowedDomain("github.com", None),
+    ]
+
+    provider.remove_allowed_domain("github.com")
+    assert provider.get_allowed_domains() == [AllowedDomain("api.example.com", ("GET",))]
+
+    provider.clear_allowed_domains()
+    assert provider.get_allowed_domains() == []
 
 
 async def test_agent_runs_hyperlight_codeact_end_to_end_with_fake_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:

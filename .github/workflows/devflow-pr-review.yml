@@ -121,7 +121,6 @@ jobs:
     if: ${{ needs.team_check.outputs.is_team_member == 'true' }}
     permissions:
       contents: read
-      copilot-requests: write
       issues: write
       pull-requests: write
     timeout-minutes: 60
@@ -171,7 +170,7 @@ jobs:
         working-directory: ${{ env.DEVFLOW_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_COPILOT_TOKEN: ${{ github.token }}
+          GH_COPILOT_TOKEN: ${{ secrets.GH_COPILOT_TOKEN }}
           SK_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
           AGENT_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
           PR_URL: ${{ needs.team_check.outputs.pr_url }}

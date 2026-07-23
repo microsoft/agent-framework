@@ -6,6 +6,7 @@ on:
       - ".github/actions/**"
       - ".github/scripts/**"
       - ".github/tests/**"
+      - ".github/workflows/python-test-coverage.yml"
       - ".github/workflows/github-automation-tests.yml"
   push:
     branches:
@@ -14,6 +15,7 @@ on:
       - ".github/actions/**"
       - ".github/scripts/**"
       - ".github/tests/**"
+      - ".github/workflows/python-test-coverage.yml"
       - ".github/workflows/github-automation-tests.yml"
 
 permissions:
@@ -29,5 +31,12 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Run tests
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Run JavaScript tests
         run: node --test .github/tests/*.js
+
+      - name: Run Python tests
+        run: python .github/tests/test_python_check_coverage.py
