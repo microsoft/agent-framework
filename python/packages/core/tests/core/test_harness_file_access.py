@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -56,6 +60,29 @@ def _tool_by_name(tools: list[object], name: str) -> FunctionTool:
 def _text(content: Content) -> str:
     assert content.text is not None
     return content.text
+
+
+def _create_junction_or_skip(*, link: Path, target: Path) -> None:
+    if sys.platform != "win32":
+        pytest.skip("Windows directory junctions are only available on Windows")
+
+    result = subprocess.run(
+        [os.environ.get("COMSPEC", "cmd"), "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"Could not create Windows directory junction: {result.stderr or result.stdout}")
+
+    is_junction = getattr(link, "is_junction", None)
+    is_reparse_point = bool(
+        getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+        and getattr(link.lstat(), "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+    if not (callable(is_junction) and is_junction()) and not is_reparse_point:
+        link.rmdir()
+        pytest.skip("Created junction was not reported as a reparse point")
 
 
 def test_normalize_relative_path_collapses_and_validates() -> None:
@@ -420,6 +447,31 @@ async def test_filesystem_store_search_and_list_skip_symlinked_directories(tmp_p
     assert {result.file_name for result in results} == {"inside.md"}
 
 
+async def test_filesystem_store_search_and_list_skip_junctioned_directories(tmp_path: Path) -> None:
+    """Recursive search and listing must not follow Windows junctions outside the root."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("ERROR outside the root", encoding="utf-8")
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "inside.md").write_text("ERROR inside", encoding="utf-8")
+    junction = root / "linked"
+    _create_junction_or_skip(link=junction, target=outside)
+
+    try:
+        store = FileSystemAgentFileStore(root)
+
+        with pytest.raises(ValueError):
+            await store.read("linked/secret.md")
+        assert await _list_dirs(store) == []
+
+        results = await store.search("", "error", recursive=True)
+        assert {result.file_name for result in results} == {"inside.md"}
+    finally:
+        junction.rmdir()
+
+
 async def test_filesystem_store_search_skips_non_utf8_files(tmp_path: Path) -> None:
     """The filesystem store should silently skip non-UTF-8 files instead of aborting the search."""
     store = FileSystemAgentFileStore(tmp_path)
@@ -773,17 +825,22 @@ async def test_run_search_with_timeout_raises_value_error(monkeypatch: pytest.Mo
 async def test_filesystem_store_symlink_probe_fails_closed_on_oserror(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """If ``Path.is_symlink`` raises during the probe, the operation must be refused."""
+    """If ``Path.lstat`` raises during the probe, the operation must be refused."""
     store = FileSystemAgentFileStore(tmp_path)
-    await store.write("ok.txt", "content")
+    await store.write("same/same/ok.txt", "content")
 
-    def boom(self: Path) -> bool:
-        raise PermissionError("access denied")
+    original_lstat = Path.lstat
+    failing_path = store.root_path / "same" / "same"
 
-    monkeypatch.setattr(Path, "is_symlink", boom)
+    def fail_for_target(self: Path) -> os.stat_result:
+        if self == failing_path:
+            raise PermissionError("access denied")
+        return original_lstat(self)
 
-    with pytest.raises(ValueError, match="symbolic link or reparse point"):
-        await store.read("ok.txt")
+    monkeypatch.setattr(Path, "lstat", fail_for_target)
+
+    with pytest.raises(ValueError, match=r"'same/same'"):
+        await store.read("same/same/ok.txt")
 
 
 def test_file_access_harness_classes_are_marked_experimental() -> None:
