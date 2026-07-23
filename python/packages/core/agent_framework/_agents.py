@@ -74,10 +74,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_framework")
 
-# Set by AgentLoopMiddleware while a loop iteration is running so that
-# providers scoped to the whole user turn (``after_run_once_per_turn``) skip
-# their per-iteration ``after_run`` and only fire once at the loop boundary.
-_LOOP_ITERATION_ACTIVE: ContextVar[bool] = ContextVar("agent_loop_iteration_active", default=False)
+# Set by AgentLoopMiddleware to the looping agent while a loop iteration is
+# running, so providers scoped to the whole user turn
+# (``after_run_once_per_turn``) skip their per-iteration ``after_run`` and only
+# fire once at the loop boundary. Keyed to the agent instance: a nested
+# ``agent.run()`` inside the iteration is a separate run, not a loop iteration.
+_LOOP_ITERATION_ACTIVE: ContextVar[Any] = ContextVar("agent_loop_iteration_active", default=None)
 
 if TYPE_CHECKING:
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -556,7 +558,7 @@ class BaseAgent(SerializationMixin):
         per_service_call_history_required = self.require_per_service_call_history_persistence and any(
             isinstance(provider, HistoryProvider) for provider in self.context_providers
         )
-        in_loop_iteration = _LOOP_ITERATION_ACTIVE.get()
+        in_loop_iteration = _LOOP_ITERATION_ACTIVE.get() is self
         for provider in reversed(self.context_providers):
             if per_service_call_history_required and isinstance(provider, HistoryProvider):
                 continue

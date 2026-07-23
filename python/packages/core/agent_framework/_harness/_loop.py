@@ -498,6 +498,7 @@ class AgentLoopMiddleware(AgentMiddleware):
             session_id=context.session.session_id if context.session else None,
             service_session_id=context.session.service_session_id if context.session else None,
             input_messages=list(input_messages),
+            options=dict(context.options or {}),
         )
         session_context._response = response
         await run_after(session=context.session, context=session_context, only_per_turn=True)
@@ -518,7 +519,7 @@ class AgentLoopMiddleware(AgentMiddleware):
         aggregated_usage: UsageDetails | None = None
         final_result: AgentResponse | None = None
         while True:
-            loop_token = _LOOP_ITERATION_ACTIVE.set(True)
+            loop_token = _LOOP_ITERATION_ACTIVE.set(context.agent)
             try:
                 await call_next()
             finally:
@@ -612,7 +613,7 @@ class AgentLoopMiddleware(AgentMiddleware):
             progress: list[str] = []
             try:
                 while True:
-                    loop_token = _LOOP_ITERATION_ACTIVE.set(True)
+                    loop_token = _LOOP_ITERATION_ACTIVE.set(context.agent)
                     try:
                         await call_next()
                         inner = context.result

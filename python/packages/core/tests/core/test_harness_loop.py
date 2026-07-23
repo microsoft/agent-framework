@@ -32,6 +32,7 @@ from agent_framework import (
     background_tasks_running,
     background_tasks_running_message,
     set_agent_mode,
+    tool,
     todos_remaining,
     todos_remaining_message,
 )
@@ -41,6 +42,8 @@ from agent_framework._harness._loop import (
     DEFAULT_NEXT_MESSAGE,
     AgentLoopMiddleware,
 )
+
+from .conftest import MockBaseChatClient
 
 
 class RecordingChatClient(BaseChatClient[ChatOptions[None]]):
@@ -1471,3 +1474,59 @@ def test_compaction_provider_defers_to_turn_boundary() -> None:
     from agent_framework._compaction import CompactionProvider
 
     assert CompactionProvider(after_strategy=None).after_run_once_per_turn is True
+
+
+class _OptionsRecordingProvider(ContextProvider):
+    after_run_once_per_turn = True
+
+    def __init__(self) -> None:
+        super().__init__("options-recorder")
+        self.seen_options: list[dict[str, Any]] = []
+
+    async def after_run(self, *, agent: Any, session: Any, context: Any, state: dict[str, Any]) -> None:
+        self.seen_options.append(dict(context.options))
+
+
+async def test_turn_scoped_after_run_sees_run_options() -> None:
+    client = RecordingChatClient()
+    provider = _OptionsRecordingProvider()
+    agent = Agent(
+        client=client,
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=2)],
+        context_providers=[provider],
+    )
+
+    await agent.run("start", options={"custom_flag": "yes"})
+
+    assert provider.seen_options == [{"custom_flag": "yes"}]
+
+
+async def test_nested_agent_run_inside_loop_iteration_is_not_suppressed() -> None:
+    inner_provider = _TurnScopedRecordingProvider()
+    inner_agent = Agent(client=RecordingChatClient(), context_providers=[inner_provider])
+
+    @tool(name="run_inner", approval_mode="never_require")
+    async def run_inner() -> str:
+        await inner_agent.run("nested task")
+        return "done"
+
+    outer_client = MockBaseChatClient()
+    outer_client.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="c1", name="run_inner", arguments="{}")],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["finished"])),
+    ]
+    outer = Agent(
+        client=outer_client,
+        tools=[run_inner],
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=1)],
+        context_providers=[_TurnScopedRecordingProvider()],
+    )
+
+    await outer.run("start")
+
+    assert inner_provider.after_calls == 1
