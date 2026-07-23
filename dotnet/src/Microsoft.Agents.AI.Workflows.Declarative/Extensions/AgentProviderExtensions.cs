@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -22,19 +24,56 @@ internal static class AgentProviderExtensions
     {
         IAsyncEnumerable<AgentResponseUpdate> agentUpdates = agentProvider.InvokeAgentAsync(agentName, null, conversationId, inputMessages, inputArguments, cancellationToken);
 
-        // Determine whether the target conversation is the workflow conversation
-        // (used below to decide whether to mirror messages into the workflow conversation
-        // when an agent runs against a different conversation). The caller's autoSend
-        // value is honored as-is — when the workflow.yaml specifies autoSend: false the
-        // raw agent output must not be streamed to the caller, even when the agent is
-        // running on the workflow conversation.
+        // Foundry managed workflows treat responses produced on the workflow conversation
+        // as workflow output even when autoSend is explicitly false. Preserve that direct-run
+        // contract here. Workflow.AsAIAgent separately removes matching streamed/completed
+        // message duplicates at its hosting boundary.
         bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? workflowConversationId);
+        autoSend |= isWorkflowConversation;
 
-        // Process the agent response updates.
+        // Assign stable IDs to content-bearing chat updates before emitting and aggregating them.
+        // Contentless updates may carry only metadata and must not become empty messages.
         List<AgentResponseUpdate> updates = [];
+        string? generatedMessageId = null;
+        string? generatedMessageResponseId = null;
+        ChatRole? generatedMessageRole = null;
         await foreach (AgentResponseUpdate update in agentUpdates.ConfigureAwait(false))
         {
-            await AssignConversationIdAsync(((ChatResponseUpdate?)update.RawRepresentation)?.ConversationId).ConfigureAwait(false);
+            await AssignConversationIdAsync((update.RawRepresentation as ChatResponseUpdate)?.ConversationId).ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(update.MessageId))
+            {
+                bool hasContent =
+                    update.Contents.Any(
+                        content => content is not TextContent textContent || !string.IsNullOrEmpty(textContent.Text));
+                if (hasContent)
+                {
+                    if (generatedMessageId is null
+                        || (generatedMessageResponseId is not null
+                            && update.ResponseId is not null
+                            && !string.Equals(generatedMessageResponseId, update.ResponseId, StringComparison.Ordinal))
+                        || (generatedMessageRole is not null
+                            && update.Role is not null
+                            && generatedMessageRole != update.Role))
+                    {
+                        generatedMessageId = Guid.NewGuid().ToString("N");
+                    }
+
+                    generatedMessageResponseId = update.ResponseId ?? generatedMessageResponseId;
+                    generatedMessageRole = update.Role ?? generatedMessageRole;
+                    update.MessageId = generatedMessageId;
+                    if (update.RawRepresentation is ChatResponseUpdate rawUpdate)
+                    {
+                        rawUpdate.MessageId = generatedMessageId;
+                    }
+                }
+            }
+            else
+            {
+                generatedMessageId = null;
+                generatedMessageResponseId = null;
+                generatedMessageRole = null;
+            }
 
             updates.Add(update);
 
