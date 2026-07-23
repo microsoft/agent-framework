@@ -58,6 +58,14 @@ _DEFAULT_MAX_DURATION_SECONDS = 60 * 15
 _RESUME_POLL_TIMEOUT_SECONDS = 120.0
 _RESUME_POLL_INTERVAL_SECONDS = 0.5
 
+# Pause-snapshot retention applied to run-scoped tools minted by
+# ``create_run_tool`` when the caller does not set ``pause_retention_seconds``.
+# A run-scoped sandbox that outlives its run only exists because run cleanup
+# failed (crash, cancellation, abandoned stream), and nothing will ever resume
+# it — a short retention lets Tenki's GC delete its pause snapshot (which bills
+# storage while retained) after an hour instead of the server default (7 days).
+_DEFAULT_RUN_SCOPED_PAUSE_RETENTION_SECONDS = 60 * 60
+
 # State groupings (SDK returns strings). ``PAUSED`` and ``USER_SHUTDOWN`` are
 # both stopped-but-resumable server-side: filesystem state is retained and
 # ``resume()`` is a legal transition. Only ``TERMINATED`` is truly terminal;
@@ -70,6 +78,15 @@ _TERMINAL_STATES = frozenset({"TERMINATING", "TERMINATED"})
 def _generate_sandbox_name(prefix: str) -> str:
     """Return ``<prefix>-<8-hex>``. Used by both standalone and run-scoped tools."""
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+class _SandboxPreparationError(RuntimeError):
+    """The sandbox could not be provisioned, resumed, or reconciled before exec.
+
+    Distinguishes preparation failures from ``sandbox.exec`` failures now that
+    both run inside the same worker-thread call (`_execute_sync`), so
+    `_run_code` can keep reporting them under separate error headlines.
+    """
 
 
 class TenkiExecuteCodeTool(FunctionTool):
@@ -127,6 +144,14 @@ class TenkiExecuteCodeTool(FunctionTool):
             retained) and terminates unscoped ones. Pass an explicit value for
             longer evals; pass ``None`` to explicitly opt out (not recommended in
             production).
+        pause_retention_seconds (int | None): How long Tenki retains the pause
+            snapshot of a stopped sandbox (``PAUSED`` / ``USER_SHUTDOWN``) before
+            the server's retention GC deletes it — snapshot storage bills until
+            then. ``None`` (the default) uses the Tenki server default (7 days).
+            Run-scoped tools minted by `create_run_tool` default to 1 hour
+            instead, so a sandbox orphaned by a crashed run does not bill
+            storage for a week; note that once the snapshot is GC'd the sandbox
+            can no longer be resumed.
         exec_timeout_seconds (int): Per-``execute_code`` timeout in seconds. Defaults to 60.
         extra_create_kwargs (dict[str, Any] | None): Optional keyword arguments passed
             straight to `tenki_sandbox.Sandbox.create` — for advanced knobs not
@@ -139,12 +164,14 @@ class TenkiExecuteCodeTool(FunctionTool):
           Tenki SDK does not expose a callback bridge).
         * File mounts and outbound network allow-lists are not surfaced as first-class
           kwargs; pass them through ``extra_create_kwargs``.
-        * Cancellation latency: ``execute_code`` runs ``sandbox.exec`` inside
-          ``asyncio.to_thread``. Python cannot cancel an in-flight thread, so a
-          cancel raised during exec propagates to the awaiter immediately but the
-          underlying sandbox call keeps running server-side until it completes
-          or hits ``exec_timeout_seconds``. Worst-case wall time from cancel to
-          full quiescence is therefore ``exec_timeout_seconds``.
+        * Cancellation latency: ``execute_code`` runs the reconcile and
+          ``sandbox.exec`` inside ``asyncio.to_thread`` under the sandbox lock.
+          Python cannot cancel an in-flight thread, so a cancel raised during
+          exec propagates to the awaiter immediately but the underlying sandbox
+          call keeps running server-side until it completes or hits
+          ``exec_timeout_seconds`` — and a subsequent `close` blocks on the same
+          lock until then. Worst-case wall time from cancel to full quiescence
+          is therefore ``exec_timeout_seconds``.
     """
 
     SUPPORTED_LANGUAGES: ClassVar[list[str]] = ["python"]
@@ -162,6 +189,7 @@ class TenkiExecuteCodeTool(FunctionTool):
         memory_mb: int | None = None,
         disk_size_gb: int | None = None,
         max_duration_seconds: int | None = _DEFAULT_MAX_DURATION_SECONDS,
+        pause_retention_seconds: int | None = None,
         exec_timeout_seconds: int = 60,
         extra_create_kwargs: dict[str, Any] | None = None,
         _sandbox_name_prefix: str | None = None,
@@ -198,6 +226,7 @@ class TenkiExecuteCodeTool(FunctionTool):
         self._memory_mb = memory_mb
         self._disk_size_gb = disk_size_gb
         self._max_duration_seconds = max_duration_seconds
+        self._pause_retention_seconds = pause_retention_seconds
         self._exec_timeout_seconds = exec_timeout_seconds
         self._extra_create_kwargs: dict[str, Any] = dict(extra_create_kwargs) if extra_create_kwargs else {}
 
@@ -222,9 +251,15 @@ class TenkiExecuteCodeTool(FunctionTool):
         Called by `TenkiCodeActProvider.before_run` to create a per-agent-run
         tool. The returned tool has a unique ``<prefix>-<8-hex>`` sandbox name derived
         from the user's explicit ``sandbox_name`` (used as prefix) or the default
-        ``agent-framework`` prefix. All other kwargs are copied verbatim.
+        ``agent-framework`` prefix. ``pause_retention_seconds`` defaults to 1 hour
+        when not set explicitly (run-scoped sandboxes that outlive their run are
+        orphans of a failed cleanup; see `_DEFAULT_RUN_SCOPED_PAUSE_RETENTION_SECONDS`).
+        All other kwargs are copied verbatim.
         """
         prefix = self._explicit_sandbox_name if self._explicit_sandbox_name is not None else self._sandbox_name_prefix
+        pause_retention_seconds = self._pause_retention_seconds
+        if pause_retention_seconds is None:
+            pause_retention_seconds = _DEFAULT_RUN_SCOPED_PAUSE_RETENTION_SECONDS
         # ``FunctionTool.__init__`` stores ``approval_mode`` after applying its own
         # ``or "never_require"`` fallback, so the runtime value is always a valid
         # ``ApprovalMode``. Cast so the constructor's stricter ``ApprovalMode | None``
@@ -239,6 +274,7 @@ class TenkiExecuteCodeTool(FunctionTool):
             memory_mb=self._memory_mb,
             disk_size_gb=self._disk_size_gb,
             max_duration_seconds=self._max_duration_seconds,
+            pause_retention_seconds=pause_retention_seconds,
             exec_timeout_seconds=self._exec_timeout_seconds,
             extra_create_kwargs=dict(self._extra_create_kwargs),
             _sandbox_name_prefix=prefix,
@@ -276,14 +312,31 @@ class TenkiExecuteCodeTool(FunctionTool):
             kwargs["disk_size_gb"] = self._disk_size_gb
         if self._max_duration_seconds is not None:
             kwargs["max_duration"] = self._max_duration_seconds
+        if self._pause_retention_seconds is not None:
+            kwargs["pause_retention"] = self._pause_retention_seconds
         # Caller-supplied extras win last so they can override anything above.
         kwargs.update(self._extra_create_kwargs)
         return kwargs
 
-    def _ensure_sandbox_sync(self) -> Sandbox:
+    def _execute_sync(self, code: str) -> CommandResult:
+        """Reconcile sandbox state and execute the code under a single lock hold.
+
+        Called inside ``asyncio.to_thread``. Holding ``_sandbox_lock`` across
+        both the reconcile and ``sandbox.exec`` means `close` (which takes the
+        same lock) cannot terminate the sandbox or close its gRPC client while
+        an exec is still in flight — it blocks until the exec finishes, bounded
+        by ``exec_timeout_seconds``. Concurrent ``execute_code`` calls serialize
+        on the lock; the sandbox is a single microVM either way.
+        """
+        with self._sandbox_lock:
+            sandbox = self._ensure_sandbox_locked()
+            return sandbox.exec("python3", "-c", code, timeout=self._exec_timeout_seconds)
+
+    def _ensure_sandbox_locked(self) -> Sandbox:
         """Return a runnable sandbox — provision on first use, resume if stopped, re-provision if gone.
 
-        Called inside ``asyncio.to_thread``. Reconciles remote state on every call:
+        ``_sandbox_lock`` must be held by the caller. Reconciles remote state on
+        every call:
 
         - ``TERMINATING`` / ``TERMINATED`` → drop the handle, provision a fresh
           sandbox (auto-generated names refresh their suffix; explicit names are
@@ -292,31 +345,31 @@ class TenkiExecuteCodeTool(FunctionTool):
           resumes stopped-but-resumable sandboxes (``PAUSED`` / ``USER_SHUTDOWN``)
           and polls transitional states (``PAUSING`` / ``RESUMING`` / ``CREATING``)
           until ``RUNNING``.
-        - ``refresh()`` raising → surface as ``RuntimeError`` without dropping the
-          handle. Next call retries the same sandbox rather than leaking it.
+        - ``refresh()`` raising → surface as `_SandboxPreparationError` without
+          dropping the handle. Next call retries the same sandbox rather than
+          leaking it.
         """
-        with self._sandbox_lock:
-            sandbox = self._sandbox
-            if sandbox is None:
-                return self._create_sandbox_locked()
+        sandbox = self._sandbox
+        if sandbox is None:
+            return self._create_sandbox_locked()
 
-            try:
-                sandbox.refresh()
-            except Exception as exc:
-                # Do not drop the handle — the sandbox may still be alive.
-                # Surface the error so the next call retries the same session
-                # rather than provisioning a duplicate.
-                raise RuntimeError(f"Failed to refresh Tenki sandbox state: {exc}") from exc
+        try:
+            sandbox.refresh()
+        except Exception as exc:
+            # Do not drop the handle — the sandbox may still be alive.
+            # Surface the error so the next call retries the same session
+            # rather than provisioning a duplicate.
+            raise _SandboxPreparationError(f"Failed to refresh Tenki sandbox state: {exc}") from exc
 
-            if sandbox.state in _TERMINAL_STATES:
-                logger.debug("Tenki sandbox reached remote state=%s; re-provisioning", sandbox.state)
-                # The session can no longer be resumed or terminated again, but the
-                # SDK-owned control-plane channel is still open on our side.
-                self._close_owning_client_sync(sandbox)
-                self._sandbox = None
-                self._refresh_autogenerated_name_locked()
-                return self._create_sandbox_locked()
-            return self._wait_for_running_locked(sandbox)
+        if sandbox.state in _TERMINAL_STATES:
+            logger.debug("Tenki sandbox reached remote state=%s; re-provisioning", sandbox.state)
+            # The session can no longer be resumed or terminated again, but the
+            # SDK-owned control-plane channel is still open on our side.
+            self._close_owning_client_sync(sandbox)
+            self._sandbox = None
+            self._refresh_autogenerated_name_locked()
+            return self._create_sandbox_locked()
+        return self._wait_for_running_locked(sandbox)
 
     def _wait_for_running_locked(self, sandbox: Sandbox) -> Sandbox:
         """Poll until the sandbox reaches ``RUNNING``, resuming it if stopped. Lock must be held.
@@ -331,8 +384,8 @@ class TenkiExecuteCodeTool(FunctionTool):
         ``USER_SHUTDOWN``/``PAUSED``), which the loop sees as the sandbox
         settling back and simply retries. Unknown states are treated as
         transitional so an SDK upgrade that adds new states doesn't fail
-        closed. Raises ``RuntimeError`` on timeout so the caller sees a clear
-        error rather than a "sandbox is not RUNNING" exec failure.
+        closed. Raises `_SandboxPreparationError` on timeout so the caller sees
+        a clear error rather than a "sandbox is not RUNNING" exec failure.
 
         Concurrency: the sandbox lock is held for the full poll window (up to
         `_RESUME_POLL_TIMEOUT_SECONDS`); concurrent ``execute_code`` calls block
@@ -344,13 +397,15 @@ class TenkiExecuteCodeTool(FunctionTool):
             if state == _RUNNABLE_STATE:
                 return sandbox
             if state in _TERMINAL_STATES:
-                raise RuntimeError(f"Tenki sandbox reached state={state} while waiting for RUNNING.")
+                raise _SandboxPreparationError(f"Tenki sandbox reached state={state} while waiting for RUNNING.")
             if state in _RESUMABLE_STATES:
                 try:
                     sandbox.resume()
                 except Exception as exc:
                     if time.monotonic() >= deadline:
-                        raise RuntimeError(f"Failed to resume Tenki sandbox from state={state}: {exc}") from exc
+                        raise _SandboxPreparationError(
+                            f"Failed to resume Tenki sandbox from state={state}: {exc}"
+                        ) from exc
                     logger.debug("Tenki sandbox resume from state=%s failed; retrying: %s", state, exc)
                 else:
                     # Local state is now RESUMING; fall through to poll. If the
@@ -358,14 +413,14 @@ class TenkiExecuteCodeTool(FunctionTool):
                     # resumable state again and the loop retries.
                     continue
             if time.monotonic() >= deadline:
-                raise RuntimeError(
+                raise _SandboxPreparationError(
                     f"Tenki sandbox did not reach RUNNING within {_RESUME_POLL_TIMEOUT_SECONDS}s (last state={state})."
                 )
             time.sleep(_RESUME_POLL_INTERVAL_SECONDS)
             try:
                 sandbox.refresh()
             except Exception as exc:
-                raise RuntimeError(f"Failed to refresh Tenki sandbox state while polling: {exc}") from exc
+                raise _SandboxPreparationError(f"Failed to refresh Tenki sandbox state while polling: {exc}") from exc
 
     def _refresh_autogenerated_name_locked(self) -> None:
         """Mint a fresh suffix on re-provision for auto-generated names.
@@ -383,22 +438,19 @@ class TenkiExecuteCodeTool(FunctionTool):
         try:
             sandbox = Sandbox.create(**create_kwargs)  # pyright: ignore[reportUnknownMemberType]
         except Exception as exc:
-            raise RuntimeError(f"Failed to create Tenki sandbox: {exc}") from exc
+            raise _SandboxPreparationError(f"Failed to create Tenki sandbox: {exc}") from exc
         self._sandbox = sandbox
         return sandbox
 
     async def _run_code(self, *, code: str) -> list[Content]:
         """Execute a single block of Python code inside the sandbox."""
         try:
-            sandbox = await asyncio.to_thread(self._ensure_sandbox_sync)
-        except RuntimeError as exc:
-            return [Content.from_error(message="Failed to prepare Tenki sandbox", error_details=str(exc))]
-
-        try:
-            result = await asyncio.to_thread(sandbox.exec, "python3", "-c", code, timeout=self._exec_timeout_seconds)
+            result = await asyncio.to_thread(self._execute_sync, code)
         except asyncio.CancelledError:
             # Cancellation must propagate so higher-level workflows can stop promptly.
             raise
+        except _SandboxPreparationError as exc:
+            return [Content.from_error(message="Failed to prepare Tenki sandbox", error_details=str(exc))]
         except Exception as exc:
             return [Content.from_error(message="Sandbox execution failed", error_details=str(exc))]
 
@@ -476,9 +528,11 @@ class TenkiExecuteCodeTool(FunctionTool):
         """Sync body of `close`, run inside ``asyncio.to_thread``.
 
         Holds ``_sandbox_lock`` for the whole terminate so it never races
-        `_ensure_sandbox_sync`, and — like all lock acquisitions in this class —
-        only ever blocks a worker thread, never the event loop (a reconcile can
-        hold the lock for up to the resume-poll budget).
+        `_execute_sync` — an in-flight reconcile or exec finishes before the
+        terminate starts — and, like all lock acquisitions in this class, only
+        ever blocks a worker thread, never the event loop (a reconcile can hold
+        the lock for up to the resume-poll budget; an exec for up to
+        ``exec_timeout_seconds``).
         """
         with self._sandbox_lock:
             sandbox = self._sandbox
@@ -498,7 +552,7 @@ class TenkiExecuteCodeTool(FunctionTool):
         """Close the SDK-owned control-plane `tenki_sandbox.Client`.
 
         Called both after a successful ``close_if_open`` and from the
-        terminal-state re-provision branch in `_ensure_sandbox_sync`. The
+        terminal-state re-provision branch in `_ensure_sandbox_locked`. The
         SDK's own ``Sandbox.close()`` only closes the data-plane RPC, so
         without this the gRPC control channel would stay open until the
         process exits — a real leak under long-lived standalone tools that

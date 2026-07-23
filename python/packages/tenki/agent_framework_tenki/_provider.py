@@ -58,7 +58,10 @@ class TenkiCodeActProvider(ContextProvider):
 
     ``max_duration_seconds=None`` (the default) means "use the tool's own default"
     (see ``TenkiExecuteCodeTool``); there is no way to opt out of a max duration
-    through the provider.
+    through the provider. Likewise ``pause_retention_seconds=None`` (the default)
+    means "use the run-scoped default" (1 hour): a run-scoped sandbox that
+    outlives its run is an orphan of a failed cleanup, so its pause snapshot is
+    GC'd by Tenki after an hour instead of the server default of 7 days.
     """
 
     DEFAULT_SOURCE_ID = "tenki_codeact"
@@ -77,6 +80,7 @@ class TenkiCodeActProvider(ContextProvider):
         memory_mb: int | None = None,
         disk_size_gb: int | None = None,
         max_duration_seconds: int | None = None,
+        pause_retention_seconds: int | None = None,
         exec_timeout_seconds: int = 60,
         extra_create_kwargs: dict[str, Any] | None = None,
     ) -> None:
@@ -93,6 +97,7 @@ class TenkiCodeActProvider(ContextProvider):
             "cpu_cores": cpu_cores,
             "memory_mb": memory_mb,
             "disk_size_gb": disk_size_gb,
+            "pause_retention_seconds": pause_retention_seconds,
             "exec_timeout_seconds": exec_timeout_seconds,
             "extra_create_kwargs": extra_create_kwargs,
         }
@@ -121,6 +126,11 @@ class TenkiCodeActProvider(ContextProvider):
         explicit ``close()``). Sandboxes for completed runs are already terminated
         by ``after_run``; this cleans up any that leaked past that hook due to
         an in-run exception.
+
+        Raises:
+            RuntimeError: If terminating one or more run-scoped sandboxes failed
+                — raised only after every close was attempted. Failed entries
+                stay tracked, so a second ``close()`` retries exactly those.
         """
         leaked = list(self._live_run_tools.items())
         # Terminate orphans in parallel — each ``close()`` is one terminate RPC
@@ -130,6 +140,7 @@ class TenkiCodeActProvider(ContextProvider):
         # second ``close()`` — mirroring the handle-preserving contract of
         # ``TenkiExecuteCodeTool.close`` and ``after_run``.
         results = await asyncio.gather(*(tool.close() for _, tool in leaked), return_exceptions=True)
+        failures: list[tuple[str, BaseException]] = []
         for (sandbox_name, _), result in zip(leaked, results, strict=True):
             if isinstance(result, BaseException):
                 logger.warning(
@@ -137,11 +148,20 @@ class TenkiCodeActProvider(ContextProvider):
                     sandbox_name,
                     result,
                 )
+                failures.append((sandbox_name, result))
             else:
                 self._live_run_tools.pop(sandbox_name, None)
         # Base template tool never provisions, so this is a no-op in practice —
         # kept for symmetry with the standalone-tool ``async with`` pattern.
         await self._execute_code_tool.close()
+        if failures:
+            # Surface the failure so ``async with`` callers learn a sandbox may
+            # still be live; every close was already attempted above.
+            names = ", ".join(sorted(name for name, _ in failures))
+            raise RuntimeError(
+                f"Failed to terminate {len(failures)} run-scoped Tenki sandbox(es): {names}. "
+                "The handles are retained; call close() again to retry."
+            ) from failures[0][1]
 
     async def __aenter__(self) -> TenkiCodeActProvider:
         return self

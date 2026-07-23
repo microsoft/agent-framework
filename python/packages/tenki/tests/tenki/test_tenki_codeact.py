@@ -7,6 +7,7 @@ import importlib.util
 import os
 import sys
 import threading
+import time
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -283,6 +284,42 @@ async def test_max_duration_opt_out(fake_sdk: _FakeSandboxFactory) -> None:
     tool = TenkiExecuteCodeTool(sandbox_name="no-cap", max_duration_seconds=None)
     await _invoke(tool, "pass")
     assert "max_duration" not in fake_sdk.create_calls[0]
+
+
+async def test_pause_retention_omitted_by_default_standalone(fake_sdk: _FakeSandboxFactory) -> None:
+    """A standalone tool leaves pause retention to the Tenki server default (7 days).
+
+    A user who deliberately pauses a long-lived standalone sandbox must not have
+    its snapshot GC'd early by a default they never asked for.
+    """
+    tool = TenkiExecuteCodeTool(sandbox_name="retention-default")
+    await _invoke(tool, "pass")
+    assert "pause_retention" not in fake_sdk.create_calls[0]
+
+
+async def test_pause_retention_forwarded_when_set(fake_sdk: _FakeSandboxFactory) -> None:
+    tool = TenkiExecuteCodeTool(sandbox_name="retention-explicit", pause_retention_seconds=120)
+    await _invoke(tool, "pass")
+    assert fake_sdk.create_calls[0]["pause_retention"] == 120
+
+
+async def test_run_tool_defaults_to_short_pause_retention(fake_sdk: _FakeSandboxFactory) -> None:
+    """Run-scoped sandboxes get a short pause retention by default.
+
+    A run-scoped sandbox that outlives its run is an orphan of a failed cleanup
+    (crash / cancellation / abandoned stream) — nothing will resume it, so its
+    pause snapshot should be GC'd after an hour, not the server's 7-day default.
+    """
+    run_tool = TenkiExecuteCodeTool(sandbox_name="prefix").create_run_tool()
+    await _invoke(run_tool, "pass")
+    expected = _tenki_module._DEFAULT_RUN_SCOPED_PAUSE_RETENTION_SECONDS
+    assert fake_sdk.create_calls[0]["pause_retention"] == expected
+
+
+async def test_run_tool_preserves_explicit_pause_retention(fake_sdk: _FakeSandboxFactory) -> None:
+    run_tool = TenkiExecuteCodeTool(sandbox_name="prefix", pause_retention_seconds=7200).create_run_tool()
+    await _invoke(run_tool, "pass")
+    assert fake_sdk.create_calls[0]["pause_retention"] == 7200
 
 
 async def test_env_api_key_is_forwarded_as_auth_token(
@@ -916,6 +953,48 @@ async def test_close_serializes_with_concurrent_run(
     assert second.closed is False
 
 
+async def test_close_waits_for_in_flight_exec(fake_sdk: _FakeSandboxFactory) -> None:
+    """``close()`` must block until an in-flight exec finishes, not terminate under it.
+
+    Reconcile + exec run under the sandbox lock in a worker thread; ``close()``
+    takes the same lock, so it cannot terminate the sandbox (or close its gRPC
+    client) while ``sandbox.exec`` is still running.
+    """
+    tool = TenkiExecuteCodeTool(sandbox_name="exec-close")
+    await _invoke(tool, "print('warm-up')")
+    sandbox = fake_sdk.last_sandbox
+    assert sandbox is not None
+
+    exec_entered = threading.Event()
+    release_exec = threading.Event()
+
+    def blocking_exec(args: Any, kwargs: Any) -> _FakeExecResult:
+        exec_entered.set()
+        assert release_exec.wait(timeout=5), "exec was never released"
+        return _FakeExecResult(stdout_text="slow done\n")
+
+    sandbox.script_handler = blocking_exec
+
+    invoke_task = asyncio.create_task(_invoke(tool, "print('slow')"))
+    assert await asyncio.to_thread(exec_entered.wait, 5)
+
+    close_task = asyncio.create_task(tool.close())
+    await asyncio.sleep(0.05)
+    # The exec is mid-flight — close() must be parked on the lock, sandbox untouched.
+    assert not close_task.done()
+    assert sandbox.closed is False
+    assert sandbox._client.closed is False
+
+    release_exec.set()
+    contents = await invoke_task
+    await close_task
+
+    # The exec completed normally *before* the terminate ran.
+    assert any("slow done" in (c.text or "") for c in contents if c.type == "text")
+    assert sandbox.closed is True
+    assert sandbox._client.closed is True
+
+
 async def test_close_is_idempotent(fake_sdk: _FakeSandboxFactory) -> None:
     tool = TenkiExecuteCodeTool(sandbox_name="idempotent")
     await tool.close()  # no sandbox yet — no-op
@@ -1021,6 +1100,32 @@ async def test_provider_run_tool_uses_default_prefix_when_unset(
     assert run_tool.sandbox_name.startswith("agent-framework-")
 
 
+async def test_provider_run_tool_gets_short_pause_retention(
+    fake_sdk: _FakeSandboxFactory,
+) -> None:
+    """Provider-minted run tools inherit the short run-scoped pause retention."""
+    provider = TenkiCodeActProvider(sandbox_name="retention-prov")
+    state: dict[str, Any] = {}
+    context = _StubContext()
+    await provider.before_run(agent=None, session=None, context=cast(Any, context), state=state)
+    run_tool = _run_tool_from(context)
+    await _invoke(run_tool, "pass")
+    expected = _tenki_module._DEFAULT_RUN_SCOPED_PAUSE_RETENTION_SECONDS
+    assert fake_sdk.create_calls[0]["pause_retention"] == expected
+
+
+async def test_provider_explicit_pause_retention_reaches_run_tool(
+    fake_sdk: _FakeSandboxFactory,
+) -> None:
+    provider = TenkiCodeActProvider(sandbox_name="retention-prov", pause_retention_seconds=1800)
+    state: dict[str, Any] = {}
+    context = _StubContext()
+    await provider.before_run(agent=None, session=None, context=cast(Any, context), state=state)
+    run_tool = _run_tool_from(context)
+    await _invoke(run_tool, "pass")
+    assert fake_sdk.create_calls[0]["pause_retention"] == 1800
+
+
 async def test_provider_after_run_terminates_run_scoped_sandbox(
     fake_sdk: _FakeSandboxFactory,
 ) -> None:
@@ -1122,11 +1227,12 @@ async def test_provider_close_cleans_up_orphaned_run_tools(
 async def test_provider_close_retains_tool_on_failure_and_retries(
     fake_sdk: _FakeSandboxFactory,
 ) -> None:
-    """A terminate that fails during ``close()`` must stay in the live-set.
+    """A terminate that fails during ``close()`` must stay in the live-set and raise.
 
-    ``close()`` removes entries only on success — dropping the reference on
-    failure would make a second ``close()`` a no-op and leak the microVM
-    until ``max_duration`` reaps it.
+    ``close()`` removes entries only on success and surfaces the failure to the
+    caller — a silently-swallowed error would tell ``async with`` users the
+    cleanup succeeded while the microVM is still live, and dropping the
+    reference would make a second ``close()`` a no-op.
     """
     provider = TenkiCodeActProvider(sandbox_name="close-retry")
     state: dict[str, Any] = {}
@@ -1138,7 +1244,8 @@ async def test_provider_close_retains_tool_on_failure_and_retries(
     assert sandbox is not None
 
     sandbox.close_raises = RuntimeError("terminate rpc unavailable")
-    await provider.close()
+    with pytest.raises(RuntimeError, match="run-scoped Tenki sandbox"):
+        await provider.close()
     assert sandbox.closed is False
     assert provider._live_run_tools.get(run_tool.sandbox_name) is run_tool
 
@@ -1146,6 +1253,32 @@ async def test_provider_close_retains_tool_on_failure_and_retries(
     await provider.close()
     assert sandbox.closed is True
     assert provider._live_run_tools == {}
+
+
+async def test_provider_close_attempts_every_tool_before_raising(
+    fake_sdk: _FakeSandboxFactory,
+) -> None:
+    """One failing terminate must not stop ``close()`` from closing the others."""
+    provider = TenkiCodeActProvider(sandbox_name="close-all")
+
+    tools: list[TenkiExecuteCodeTool] = []
+    for _ in range(2):
+        state: dict[str, Any] = {}
+        context = _StubContext()
+        await provider.before_run(agent=None, session=None, context=cast(Any, context), state=state)
+        run_tool = _run_tool_from(context)
+        await _invoke(run_tool, "print('hi')")
+        tools.append(run_tool)
+    failing_sandbox, ok_sandbox = fake_sdk.sandboxes[0], fake_sdk.sandboxes[1]
+
+    failing_sandbox.close_raises = RuntimeError("terminate rpc unavailable")
+    with pytest.raises(RuntimeError, match="1 run-scoped Tenki sandbox"):
+        await provider.close()
+
+    # The healthy sandbox was still closed; only the failed one stays tracked.
+    assert ok_sandbox.closed is True
+    assert failing_sandbox.closed is False
+    assert set(provider._live_run_tools) == {tools[0].sandbox_name}
 
 
 async def test_provider_async_context_manager_closes_sandbox(fake_sdk: _FakeSandboxFactory) -> None:
@@ -1269,11 +1402,17 @@ async def test_integration_failure_diagnostics_carry_signal_and_exit_code() -> N
 @pytest.mark.flaky(reruns=2, reruns_delay=5)
 @skip_if_tenki_integration_disabled
 async def test_integration_close_removes_sandbox_from_workspace() -> None:
-    """After ``close()``, the sandbox is gone from Tenki's workspace list."""
+    """After ``close()``, the sandbox reaches ``TERMINATED`` server-side.
+
+    Guards against two vacuous passes: provisioning/exec failure (the old
+    version never asserted the invoke succeeded, so a create error also
+    "removed" the sandbox from the list) and incomplete cleanup (a sandbox
+    left ``PAUSED`` or stuck ``TERMINATING`` is not RUNNING either). Verifies
+    by sandbox id, not by name absence from a filtered list.
+    """
     from tenki_sandbox import Client
 
     project_id = os.environ.get("TENKI_PROJECT_ID")
-    workspace_id = os.environ.get("TENKI_WORKSPACE_ID")
     unique_name = f"agent-framework-ci-teardown-{os.getpid()}"
 
     async with TenkiExecuteCodeTool(
@@ -1281,13 +1420,24 @@ async def test_integration_close_removes_sandbox_from_workspace() -> None:
         project_id=project_id,
         max_duration_seconds=300,
     ) as tool:
-        await _invoke(tool, "print('provisioned')")
+        contents = await _invoke(tool, "print('provisioned')")
+        errors = [c for c in contents if c.type == "error"]
+        assert not errors, f"provisioning/exec failed: {[e.message for e in errors]}"
+        assert any("provisioned" in (c.text or "") for c in contents if c.type == "text")
+        sandbox = tool._sandbox
+        assert sandbox is not None, "expected a live sandbox handle after a successful exec"
+        sandbox_id = sandbox.id
 
-    # After the async-with block, the sandbox should be terminated. Verify via list.
     client = Client()
     try:
-        sandboxes = client.list_workspace(workspace_id) if workspace_id else client.list()
-        live_names = {sb.info.name for sb in sandboxes if sb.info.state == "RUNNING"}
-        assert unique_name not in live_names, f"expected {unique_name} to be terminated"
+        deadline = time.monotonic() + 30
+        while True:
+            state = client.get(sandbox_id).state
+            if state == "TERMINATED":
+                break
+            assert time.monotonic() < deadline, (
+                f"sandbox {unique_name} ({sandbox_id}) still in state={state} 30s after close()"
+            )
+            await asyncio.sleep(1)
     finally:
         client.close()

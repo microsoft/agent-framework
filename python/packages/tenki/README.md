@@ -69,7 +69,8 @@ policies stop it.
 | `image` | Tenki default | Custom base image identifier. |
 | `project_id` / `workspace_id` | `os.environ.get("TENKI_PROJECT_ID")` / `os.environ.get("TENKI_WORKSPACE_ID")` | Required when your API key has access to multiple projects. Constructor args override the env vars. |
 | `cpu_cores` / `memory_mb` / `disk_size_gb` | Tenki defaults | Optional resource overrides. |
-| `max_duration_seconds` | `900` (15 min) | Server-side duration cap. On expiry, project/workspace-scoped sandboxes are **paused** and unscoped ones are **terminated**; in both cases compute billing stops, including when the parent process crashed before calling `close()`. Pass a larger value for longer evals, or `None` to opt out (not recommended). |
+| `max_duration_seconds` | `900` (15 min) | Server-side duration cap. On expiry, project/workspace-scoped sandboxes are **paused** and unscoped ones are **terminated**; in both cases compute billing stops, including when the parent process crashed before calling `close()`. Pass a larger value for longer evals, or `None` to opt out (not recommended). `None` only opts out on the standalone tool — through `TenkiCodeActProvider` it means "use the 900s default"; the provider offers no opt-out. |
+| `pause_retention_seconds` | Tenki default (7 days) standalone; `3600` (1 h) for provider run-scoped sandboxes | How long Tenki retains a stopped sandbox's pause snapshot (`PAUSED`/`USER_SHUTDOWN`) before the server GC deletes it — snapshot storage bills until then, and the sandbox cannot be resumed afterwards. The short run-scoped default caps what an orphaned sandbox (crashed run) can cost. |
 | `exec_timeout_seconds` | `60` | Per-`execute_code` invocation timeout in seconds. |
 | `extra_create_kwargs` | `{}` | Passed straight to `tenki_sandbox.Sandbox.create` for Tenki-specific options — see the section below. |
 
@@ -135,7 +136,9 @@ re-provisioning as described below. Each call runs `python3 -c
   (the guest OS was shut down from inside the VM) — note that this resume can
   take a minute or more, since Tenki captures the shutdown sandbox's disk
   asynchronously and the resume waits for that capture to complete. Filesystem
-  and installed packages carry across the pause unchanged.
+  and installed packages carry across the pause unchanged. Resuming is only
+  possible while the pause snapshot is retained (see `pause_retention_seconds`
+  above); after retention expires the sandbox is gone for good.
 - **Terminated sandboxes are replaced** — if the sandbox transitions to
   `TERMINATING`/`TERMINATED` (workspace timeout, `max_duration_seconds`
   expiring on an unscoped sandbox, or an external `tenki sandbox terminate`),
