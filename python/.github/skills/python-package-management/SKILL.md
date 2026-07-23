@@ -73,7 +73,8 @@ uv run poe add-dependency-and-validate-bounds --package core --dependency "<depe
 - For release-only version, lifecycle, pin, and internal-floor edits, use `validate-python-release`. It refreshes
   `uv.lock`, finds changed package metadata relative to the selected main ref, and runs the changed packages'
   published runtime dependencies and non-development extras through lock-independent `lowest-direct` and `highest`
-  import probes on Python 3.10. The probes run concurrently under one 300-second deadline.
+  import probes on the minimum Python minor supported by each package's internal editable closure. The probes run
+  concurrently under one 300-second deadline; pass `--python` only when an explicit interpreter override is needed.
 - For deliberate external dependency-range changes, use
   `validate-dependency-bounds-project --mode both` for the target package/dependency to find and validate the actual
   minimum and maximum constraints. Scope the exhaustive `validate-dependency-bounds-test` matrix to affected

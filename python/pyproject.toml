@@ -400,19 +400,24 @@ shell = "python -m scripts.dependencies.validate_dependency_bounds --mode test -
 args = [{ name = "project", default = "*", options = ["-P", "--package"] }]
 
 [tool.poe.tasks.validate-python-release]
-help = "Refresh uv.lock, then run lock-independent lower/upper import probes for package metadata changed from -B/--base-ref."
+help = "Refresh uv.lock, then run lower/upper import probes for changed package metadata on each package closure's minimum Python."
 executor = "simple"
 shell = """
-python -m scripts.dependencies.validate_dependency_bounds \
-  --mode release \
-  --base-ref "${base_ref}" \
-  --python "${python}" \
+command=(
+  python -m scripts.dependencies.validate_dependency_bounds
+  --mode release
+  --base-ref "${base_ref}"
   --release-timeout-seconds "${timeout}"
+)
+if [ -n "${python}" ]; then
+  command+=(--python "${python}")
+fi
+"${command[@]}"
 """
 interpreter = "bash"
 args = [
     { name = "base_ref", options = ["-B", "--base-ref"] },
-    { name = "python", default = "3.10", options = ["--python"] },
+    { name = "python", default = "", options = ["--python"] },
     { name = "timeout", default = "300", options = ["--timeout-seconds"] },
 ]
 

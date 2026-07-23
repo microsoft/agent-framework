@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
-# ruff: noqa: S404, S603
+# ruff:file-ignore[suspicious-subprocess-import, subprocess-without-shell-equals-true]
 
 """Unified dependency-bound validation entrypoint.
 
@@ -432,8 +432,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--python",
-        default="3.10",
-        help="Python version used by lock-independent release probes.",
+        default=None,
+        help="Optional Python override for release probes (defaults to each package closure's requires-python floor).",
     )
     parser.add_argument(
         "--release-timeout-seconds",
@@ -452,14 +452,16 @@ def main() -> None:
     normalized_package = None if args.package in {None, "", "*"} else args.package
 
     if args.mode == "release":
-        if args.base_ref is None and normalized_package is None:
+        base_ref = args.base_ref.strip() if args.base_ref else ""
+        python_override = args.python.strip() if args.python else None
+        if not base_ref and normalized_package is None:
             parser.error("release mode requires --base-ref unless --package selects one package explicitly")
         exit_code = run_release_mode(
             workspace_root=workspace_root,
-            base_ref=args.base_ref or "HEAD",
+            base_ref=base_ref or "HEAD",
             package_filter=normalized_package,
             parallelism=args.parallelism,
-            python_version=args.python,
+            python_override=python_override,
             deadline_seconds=args.release_timeout_seconds,
             dry_run=args.dry_run,
             output_json=(workspace_root / args.release_output_json).resolve(),

@@ -17,7 +17,9 @@ from typing import Any, cast
 
 import tomli
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
+from packaging.version import Version
 from rich import print
 
 from scripts.task_runner import discover_projects, project_filter_matches
@@ -32,6 +34,7 @@ class ReleaseProject:
 
     project_path: Path
     package_name: str
+    requires_python: str
     dependencies: tuple[str, ...]
     optional_dependencies: dict[str, tuple[str, ...]]
     import_modules: tuple[str, ...]
@@ -46,6 +49,7 @@ class ReleaseProbePlan:
     editable_specs: tuple[str, ...]
     import_modules: tuple[str, ...]
     reported_distributions: tuple[str, ...]
+    python_version: str
 
 
 def _utc_now() -> str:
@@ -117,6 +121,9 @@ def _load_release_project(workspace_root: Path, project_path: Path) -> ReleasePr
     package_name = str(project.get("name", "")).strip()
     if not package_name:
         raise RuntimeError(f"Missing project.name in {pyproject_file}")
+    requires_python = str(project.get("requires-python", "")).strip()
+    if not requires_python:
+        raise RuntimeError(f"Missing project.requires-python in {pyproject_file}")
 
     optional_dependencies: dict[str, tuple[str, ...]] = {}
     optional_config = cast(dict[str, object], project.get("optional-dependencies", {}) or {})
@@ -126,6 +133,7 @@ def _load_release_project(workspace_root: Path, project_path: Path) -> ReleasePr
     return ReleaseProject(
         project_path=project_path,
         package_name=package_name,
+        requires_python=requires_python,
         dependencies=_string_requirements(project.get("dependencies", [])),
         optional_dependencies=optional_dependencies,
         import_modules=_discover_import_modules(pyproject_file.parent, config),
@@ -198,6 +206,32 @@ def _requirements_for_extras(project: ReleaseProject, extras: set[str]) -> tuple
     return tuple(requirements)
 
 
+def _minimum_python_version(projects: list[ReleaseProject]) -> str:
+    """Return the lowest Python minor supported by every project in a probe closure."""
+    constraints = [project.requires_python for project in projects]
+    combined = SpecifierSet(",".join(constraints))
+    lower_bounds = [
+        Version(specifier.version.rstrip(".*"))
+        for specifier in combined
+        if specifier.operator in {">", ">=", "~=", "=="} and specifier.version.rstrip(".*")
+    ]
+    if not lower_bounds:
+        package_names = ", ".join(sorted(project.package_name for project in projects))
+        raise RuntimeError(f"Unable to derive a Python floor from requires-python for: {package_names}")
+
+    floor = max(lower_bounds)
+    python_version = f"{floor.major}.{floor.minor}"
+    first_patch = Version(python_version)
+    later_patch = Version(f"{python_version}.999999")
+    if first_patch not in combined and later_patch not in combined:
+        package_names = ", ".join(sorted(project.package_name for project in projects))
+        raise RuntimeError(
+            f"No Python {python_version} interpreter satisfies the combined requires-python constraints for: "
+            f"{package_names}"
+        )
+    return python_version
+
+
 def _build_release_probe_plan(
     workspace_root: Path,
     target: ReleaseProject,
@@ -260,6 +294,7 @@ def _build_release_probe_plan(
         editable_specs=tuple(editable_specs),
         import_modules=target.import_modules,
         reported_distributions=tuple(sorted(reported_distributions)),
+        python_version=_minimum_python_version([projects[package_name] for package_name in requested_extras]),
     )
 
 
@@ -267,7 +302,7 @@ def _build_release_probe_command(
     plan: ReleaseProbePlan,
     *,
     resolution: str,
-    python_version: str,
+    python_override: str | None = None,
 ) -> list[str]:
     probe_script = f"""
 import importlib
@@ -293,7 +328,7 @@ print({_PROBE_RESULT_PREFIX!r} + json.dumps({{"imports": modules, "versions": ve
         "--isolated",
         "--no-project",
         "--python",
-        python_version,
+        python_override or plan.python_version,
         "--resolution",
         resolution,
         "--prerelease",
@@ -309,7 +344,11 @@ print({_PROBE_RESULT_PREFIX!r} + json.dumps({{"imports": modules, "versions": ve
 def _parse_probe_payload(stdout: str) -> dict[str, Any] | None:
     for line in reversed(stdout.splitlines()):
         if line.startswith(_PROBE_RESULT_PREFIX):
-            return cast(dict[str, Any], json.loads(line.removeprefix(_PROBE_RESULT_PREFIX)))
+            try:
+                payload = json.loads(line.removeprefix(_PROBE_RESULT_PREFIX))
+            except json.JSONDecodeError:
+                return None
+            return cast(dict[str, Any], payload) if isinstance(payload, dict) else None
     return None
 
 
@@ -318,11 +357,12 @@ def _run_release_probe(
     *,
     scenario_name: str,
     resolution: str,
-    python_version: str,
+    python_override: str | None,
     deadline: float,
     dry_run: bool,
 ) -> dict[str, Any]:
-    command = _build_release_probe_command(plan, resolution=resolution, python_version=python_version)
+    python_version = python_override or plan.python_version
+    command = _build_release_probe_command(plan, resolution=resolution, python_override=python_override)
     started = time.monotonic()
     if dry_run:
         print(f"[cyan]DRY RUN[/cyan] {' '.join(command)}")
@@ -331,6 +371,7 @@ def _run_release_probe(
             "package_name": plan.package_name,
             "scenario": scenario_name,
             "resolution": resolution,
+            "python": python_version,
             "status": "dry-run",
             "duration_seconds": 0.0,
             "payload": None,
@@ -344,10 +385,11 @@ def _run_release_probe(
             "package_name": plan.package_name,
             "scenario": scenario_name,
             "resolution": resolution,
+            "python": python_version,
             "status": "failed",
             "duration_seconds": 0.0,
             "payload": None,
-            "error": "The five-minute release-validation deadline elapsed before this probe started.",
+            "error": "The shared release-validation deadline elapsed before this probe started.",
         }
 
     env = dict(os.environ)
@@ -369,6 +411,7 @@ def _run_release_probe(
             "package_name": plan.package_name,
             "scenario": scenario_name,
             "resolution": resolution,
+            "python": python_version,
             "status": "failed",
             "duration_seconds": round(time.monotonic() - started, 3),
             "payload": None,
@@ -387,6 +430,7 @@ def _run_release_probe(
         "package_name": plan.package_name,
         "scenario": scenario_name,
         "resolution": resolution,
+        "python": python_version,
         "status": "passed" if error is None else "failed",
         "duration_seconds": round(time.monotonic() - started, 3),
         "payload": payload,
@@ -411,7 +455,7 @@ def _refresh_lockfile(
         return {
             "status": "failed",
             "duration_seconds": 0.0,
-            "error": "The five-minute release-validation deadline elapsed before uv.lock refresh started.",
+            "error": "The shared release-validation deadline elapsed before uv.lock refresh started.",
         }
     try:
         result = subprocess.run(
@@ -445,7 +489,7 @@ def run_release_mode(
     base_ref: str,
     package_filter: str | None,
     parallelism: int,
-    python_version: str,
+    python_override: str | None,
     deadline_seconds: int,
     dry_run: bool,
     output_json: Path,
@@ -478,7 +522,7 @@ def run_release_mode(
         "mode": "release",
         "workspace_root": str(workspace_root),
         "base_ref": base_ref,
-        "python": python_version,
+        "python_override": python_override,
         "deadline_seconds": deadline_seconds,
         "dry_run": dry_run,
         "lockfile": lock_result,
@@ -501,7 +545,7 @@ def run_release_mode(
                 plan,
                 scenario_name=scenario_name,
                 resolution=resolution,
-                python_version=python_version,
+                python_override=python_override,
                 deadline=deadline,
                 dry_run=dry_run,
             )
@@ -513,7 +557,7 @@ def run_release_mode(
             if result["status"] in {"passed", "dry-run"}:
                 report["summary"]["probes_passed"] += 1
                 print(
-                    f"[green]{result['project_path']}: {result['scenario']} passed "
+                    f"[green]{result['project_path']}: {result['scenario']} passed on Python {result['python']} "
                     f"({result['duration_seconds']:.1f}s)[/green]"
                 )
             else:

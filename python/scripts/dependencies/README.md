@@ -21,6 +21,7 @@ Run the commands below from the `python/` directory.
   - Discovers package metadata changed from the selected release base.
   - Resolves published runtime dependencies and non-development extras independently of `uv.lock` with both
     `lowest-direct` and `highest` strategies.
+  - Derives the minimum supported Python minor from each changed package's internal editable dependency closure.
   - Imports each changed package and records resolved dependency versions in a JSON report.
   - Runs probes concurrently under one five-minute deadline.
 

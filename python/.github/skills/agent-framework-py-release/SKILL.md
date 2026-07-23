@@ -309,7 +309,8 @@ Use the same freshly fetched main ref that the release branch was based on (`ups
 when that is the authoritative release base). Must exit 0. This task first regenerates `uv.lock`, then discovers the
 package `pyproject.toml` files changed from that base and runs their published runtime dependencies and
 non-development extras through lock-independent `lowest-direct` and `highest` import probes. The probes run in
-parallel on Python 3.10 and share a hard 300-second deadline.
+parallel, derive the minimum supported Python minor from each package's internal editable closure, and share a hard
+300-second deadline. Use `--python` only when the release requires an explicit interpreter override.
 
 This is the release safety net for selective bumping: the lower probe catches unresolvable or unimportable external
 floors, internal constraints that reject co-released package versions, and the upper probe catches caps that exclude
