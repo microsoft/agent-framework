@@ -152,6 +152,37 @@ PowerShell: use `Invoke-WebRequest -Uri http://localhost:8088/responses -Method 
 **Pass:** HTTP 200, non-empty `output[].content[].text`, and the second turn
 recalls the name. Stop the server afterward.
 
+### Recording the playbook (cached replay)
+
+The sample-validation harness caches a **playbook** so future runs replay your
+result without an agent. For a hosted-agent sample the playbook is an
+agent-authored **Python script** that reproduces **only this Phase 1
+native-local smoke test** — never the `azd`/deploy phases (those are
+credential- and deployment-bound, non-deterministic, and must not enter the
+replay cache).
+
+Emit a self-contained script that the harness runs with the active interpreter
+from the `python/` directory (exit code 0 = success). It may import only the
+sample's own installed deps, the Python stdlib, and `httpx`. It must:
+
+1. Start the sample server in the **background** with
+   `subprocess.Popen([sys.executable, "<sample>/main.py"])` (path relative to
+   `python/`; the shared `python/.env` and the process env supply credentials).
+2. **Poll** `http://localhost:8088` until the port accepts a connection (bounded
+   readiness loop with a timeout), failing if it never comes up.
+3. POST turn 1 to the protocol's route (`/responses` for `responses` samples;
+   the invocations route for `invocations` samples), capture the `response_id`,
+   then POST turn 2 with `previous_response_id` to confirm recall.
+4. **Assert** HTTP 200, non-empty `output[].content[].text`, and that turn 2
+   recalls the fact from turn 1.
+5. **Always** terminate the server in a `finally` block so port 8088 is freed
+   (the harness force-kills the process group as a backstop, but the script must
+   still clean up). On any failure, print the captured server output before
+   exiting non-zero.
+
+Keep the deep three-phase validation (below) for a full manual/`azd` pass; it is
+out of scope for the cached playbook.
+
 ---
 
 ## Phase 2 — Local validation via `azd ai agent run`

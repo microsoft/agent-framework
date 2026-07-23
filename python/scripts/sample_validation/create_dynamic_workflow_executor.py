@@ -30,12 +30,9 @@ from sample_validation.models import (
     WorkflowCreationResult,
 )
 from sample_validation.playbook import (
-    FileEdit,
     Playbook,
     PlaybookStore,
-    RunSpec,
     compute_sample_hash,
-    normalize_newlines,
     sample_files,
 )
 from typing_extensions import Never
@@ -46,28 +43,24 @@ logger = logging.getLogger(__name__)
 SKILLS_DIR = Path(__file__).parent / "skills"
 
 
-class PlaybookEdit(BaseModel):
-    file: str
-    find: str
-    replace: str
+class PlaybookScript(BaseModel):
+    """Reproducible Python validation script the agent returns so future runs can skip the agent.
 
+    ``script`` is a complete, self-contained Python program that reproduces a successful
+    validation without any AI assistance. The harness runs it with the active interpreter from
+    the Python root and treats a zero exit code as success.
+    """
 
-class PlaybookSpec(BaseModel):
-    """Reproducible recipe the agent returns so future runs can skip the agent."""
-
-    command: list[str]
-    cwd: str | None = None
-    stdin: list[str] = []
+    script: str
     timeout: int = 120
     env: dict[str, str] = {}
-    edits: list[PlaybookEdit] = []
 
 
 class AgentResponseFormat(BaseModel):
     status: str
     output: str
     error: str
-    playbook: PlaybookSpec | None = None
+    playbook: PlaybookScript | None = None
 
 
 @dataclass
@@ -96,32 +89,40 @@ AgentInstruction = (
     "The sample can be interactive. If it is interactive, respond to the sample when prompted "
     "based on your analysis of the code. You do not need to consult human on what to respond.\n"
     "Fail fast and do not attempt to fix the sample unless instructed by a skill.\n"
-    "When (and only when) the status is `success`, also return a `playbook`: an exact, "
-    "non-interactive recipe that reproduces this successful run WITHOUT any AI assistance, so "
-    "future runs can replay it directly. The playbook must contain:\n"
-    "  - `command`: the argv list to run, e.g. [\"python\", \"samples/01-get-started/foo.py\"]. "
-    "Paths must be RELATIVE TO THE python/ DIRECTORY (the Python repo root). Prefer `python` as the "
-    "first element (it is mapped to the active interpreter at replay time).\n"
-    "  - `cwd`: the working directory to run from, relative to the python/ directory. Use \".\" for "
-    "the python/ directory itself (this is where the .env file lives).\n"
-    "  - `stdin`: the exact list of input lines to feed for an interactive sample, in order "
-    "(empty list if non-interactive).\n"
-    "  - `timeout`: a reasonable per-run timeout in seconds.\n"
-    "  - `edits`: any in-place text replacements you had to apply to make the sample run (for "
-    "example replacing a hardcoded placeholder with an environment lookup). Each edit has `file` "
-    "(relative to the python/ directory), `find` (exact text), and `replace` (exact text). Use an "
-    "empty list if you changed nothing.\n"
-    "IMPORTANT: If you edited any sample file to make it run, do NOT revert or undo those edits. "
-    "Leave the file in its modified, working state after the successful run so the exact changes "
-    "can be recorded; the harness restores the file afterwards.\n"
-    "The playbook must be self-contained and deterministic: replaying `command` from `cwd` with the "
-    "given `stdin` after applying `edits` must reproduce the successful run.\n"
+    "When (and only when) the status is `success`, also return a `playbook`: a self-contained "
+    "Python script that reproduces this successful validation WITHOUT any AI assistance, so future "
+    "runs can replay it deterministically. `playbook.script` is a COMPLETE Python program with "
+    "these rules:\n"
+    "  - It is run with the SAME Python interpreter, and its WORKING DIRECTORY is the python/ "
+    "directory (the repo's Python root, where the shared .env lives). Reference the sample with a "
+    'path relative to python/, e.g. "samples/04-hosting/foundry-hosted-agents/responses/01_basic".\n'
+    "  - It MUST exit 0 when validation passes and exit non-zero (raise or sys.exit(1)) when it "
+    "fails. The harness maps exit code 0 to success and anything else to failure.\n"
+    "  - It may import ONLY: the sample's own already-installed dependencies, the Python standard "
+    "library, and `httpx`. Do not require any other third-party package.\n"
+    "  - It must be non-interactive and deterministic (no prompts, no reliance on you).\n"
+    "  - For a normal run-to-completion sample: launch it (e.g. subprocess.run([sys.executable, "
+    '"<path>/main.py"], ...) feeding any needed stdin via input=), then assert on the exit code '
+    "and/or expected output.\n"
+    "  - For a LONG-LIVED SERVER sample (an HTTP server that never returns on its own, e.g. a "
+    "hosted agent listening on a port): start it in the BACKGROUND (subprocess.Popen), POLL until "
+    "the port accepts connections (bounded readiness loop), send the real HTTP request(s) with "
+    "httpx, and assert HTTP 200 plus a non-empty/expected response. When the sample keeps "
+    "conversational state, exercise MULTIPLE TURNS (e.g. turn 1 provides a fact like a name, turn 2 "
+    "asks it to be recalled) and assert the recall. ALWAYS terminate the server in a finally block "
+    "so no process or port is leaked (the harness also force-kills the process group as a backstop).\n"
+    "  - If you had to edit any sample file to make it run, BAKE that edit into the script (apply it "
+    "in code before running); the harness restores sample files after replay.\n"
+    "  - On failure, print the captured server/sample output before exiting non-zero to aid debugging.\n"
+    "Also set `playbook.timeout` (whole-run seconds; the harness caps it) and optional "
+    "`playbook.env` (extra environment overrides; the CI environment already provides the real "
+    "credentials, so usually leave this empty).\n"
     "Return ONLY valid JSON with this schema:\n"
     "{\n"
     '  "status": "success|failure|missing_setup",\n'
     '  "output": "short summary of the result and what you did if the sample was interactive",\n'
     '  "error": "error details or empty string",\n'
-    '  "playbook": {"command": ["..."], "cwd": ".", "stdin": [], "timeout": 120, "edits": []}\n'
+    '  "playbook": {"script": "<complete python program>", "timeout": 120, "env": {}}\n'
     "}\n\n"
 )
 
@@ -186,8 +187,8 @@ class CustomAgentExecutor(Executor):
         self, sample: SampleInfo, ctx: WorkflowContext[WorkerFreed | RunResult]
     ) -> None:
         """Execute one sample task and notify collector + coordinator."""
-        # Snapshot the sample's pristine content so we can (a) capture whatever edits the
-        # agent applies to make it run and (b) restore the working tree afterwards.
+        # Snapshot the sample's pristine content so we can restore the working tree afterwards
+        # (the agent, or a baked-in playbook edit, may modify sample files while validating).
         snapshot = self._snapshot_sample(sample)
         current_retry = 0
         while True:
@@ -209,11 +210,10 @@ class CustomAgentExecutor(Executor):
                     error=result_payload.error,
                 )
                 if result.status == RunStatus.SUCCESS:
-                    # Capture the agent's edits from disk (deterministic) before restoring,
-                    # then compute the hash against the restored (committed) content.
-                    captured_edits = self._capture_edits(snapshot)
+                    # Restore the sample to its committed content before hashing so the playbook's
+                    # sample_hash matches what a fresh checkout (and future staleness check) sees.
                     self._restore_snapshot(snapshot)
-                    self._save_playbook(sample, result_payload, captured_edits)
+                    self._save_playbook(sample, result_payload)
                 break
             except Exception as ex:
                 if current_retry < self.RETRY_COUNT:
@@ -266,30 +266,6 @@ class CustomAgentExecutor(Executor):
                 logger.warning(f"Could not snapshot {file}: {ex}")
         return snapshot
 
-    def _capture_edits(self, snapshot: dict[Path, bytes]) -> list[FileEdit]:
-        """Return whole-file edits for any snapshotted file the agent modified on disk.
-
-        Edit text is newline-normalized (LF) so the stored ``find``/``replace`` match
-        the checked-out sample regardless of the platform that replays it.
-        """
-        if self._python_root is None:
-            return []
-        edits: list[FileEdit] = []
-        for file, original in snapshot.items():
-            try:
-                current = file.read_bytes()
-            except OSError:  # pragma: no cover - defensive
-                continue
-            if current == original:
-                continue
-            find = normalize_newlines(original.decode("utf-8", errors="replace"))
-            replace = normalize_newlines(current.decode("utf-8", errors="replace"))
-            if find == replace:
-                continue
-            rel = file.relative_to(self._python_root).as_posix()
-            edits.append(FileEdit(file=rel, find=find, replace=replace))
-        return edits
-
     def _restore_snapshot(self, snapshot: dict[Path, bytes]) -> None:
         """Restore snapshotted files to their pristine bytes if the agent changed them."""
         for file, original in snapshot.items():
@@ -299,33 +275,21 @@ class CustomAgentExecutor(Executor):
             except OSError as ex:  # pragma: no cover - defensive
                 logger.warning(f"Could not restore {file}: {ex}")
 
-    def _save_playbook(
-        self, sample: SampleInfo, payload: AgentResponseFormat, captured_edits: list[FileEdit]
-    ) -> None:
+    def _save_playbook(self, sample: SampleInfo, payload: AgentResponseFormat) -> None:
         """Persist a cached playbook for a sample the agent validated successfully."""
         if self._store is None or payload.playbook is None:
             return
         spec = payload.playbook
-        if not spec.command:
-            logger.warning(f"Agent returned no replay command for {sample.relative_path}; skipping playbook.")
+        if not spec.script.strip():
+            logger.warning(f"Agent returned no replay script for {sample.relative_path}; skipping playbook.")
             return
-        # Prefer edits captured deterministically from disk; fall back to the agent's
-        # self-reported edits only if we observed no on-disk change.
-        edits = captured_edits or [
-            FileEdit(file=e.file, find=e.find, replace=e.replace) for e in spec.edits
-        ]
         try:
             playbook = Playbook(
                 sample=sample.relative_path,
                 sample_hash=compute_sample_hash(sample),
-                run=RunSpec(
-                    command=list(spec.command),
-                    cwd=spec.cwd,
-                    stdin=list(spec.stdin),
-                    timeout=int(spec.timeout),
-                    env=dict(spec.env),
-                ),
-                edits=edits,
+                script=spec.script,
+                timeout=int(spec.timeout),
+                env=dict(spec.env),
             )
             path = self._store.save(playbook)
             logger.info(f"Saved playbook for {sample.relative_path} -> {path}")
