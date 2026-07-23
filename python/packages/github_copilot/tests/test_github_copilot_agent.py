@@ -38,7 +38,7 @@ from copilot.session_events import (
 )
 from copilot.tools import ToolInvocation, ToolResult
 
-from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
+from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions, RawGitHubCopilotAgent
 
 
 def copilot_options(options: GitHubCopilotOptions) -> GitHubCopilotOptions:
@@ -3445,7 +3445,13 @@ class TestGitHubCopilotAttachments:
         mock_session: MagicMock,
         assistant_message_event: SessionEvent,
     ) -> None:
-        """A non-base64 ``data:`` URI is skipped instead of failing the whole request."""
+        """A non-base64 ``data:`` URI is skipped by the send path instead of failing the request.
+
+        Uses ``RawGitHubCopilotAgent`` (no telemetry layer) to isolate the provider's own
+        attachment handling. The telemetry layer in ``GitHubCopilotAgent`` independently
+        serializes message content and would trip a separate core limitation on this
+        contrived input, which is unrelated to attachment forwarding.
+        """
         mock_session.send_and_wait.return_value = assistant_message_event
         # ``Content.from_uri`` classifies this as type="data" but it is not base64-encoded,
         # so extracting its bytes raises ContentError internally.
@@ -3453,7 +3459,7 @@ class TestGitHubCopilotAttachments:
         assert non_base64.type == "data"
         message = Message(role="user", contents=[Content.from_text("hi"), non_base64])
 
-        agent = GitHubCopilotAgent(client=mock_client)
+        agent = RawGitHubCopilotAgent(client=mock_client)
         # Should complete without raising.
         await agent.run(message)
 
