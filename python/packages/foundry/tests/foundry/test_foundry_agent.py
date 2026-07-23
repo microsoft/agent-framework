@@ -217,6 +217,22 @@ def test_raw_foundry_agent_chat_client_init_passes_agent_name_when_preview_enabl
     )
 
 
+async def test_raw_foundry_agent_chat_client_get_agent_version_skips_sdk_lookup() -> None:
+    """Test hosted agents can create sessions when the SDK has no agent-name lookup method."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    mock_project.beta = SimpleNamespace(agents=SimpleNamespace())
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="hosted-agent",
+        allow_preview=True,
+    )
+
+    assert await client.get_agent_version() is None
+
+
 def test_raw_foundry_agent_chat_client_init_uses_explicit_parameters() -> None:
     signature = inspect.signature(RawFoundryAgentChatClient.__init__)
 
@@ -1066,7 +1082,7 @@ async def test_raw_foundry_agent_prepare_run_context_creates_service_session_fro
     mock_project.beta.agents.create_session.assert_awaited_once()
     create_session_kwargs = mock_project.beta.agents.create_session.await_args.kwargs
     assert create_session_kwargs["agent_name"] == "test-agent"
-    assert create_session_kwargs["isolation_key"] == "iso-key"
+    assert create_session_kwargs["user_isolation_key"] == "iso-key"
     assert "version_indicator" in create_session_kwargs
     mock_prepare_run_context.assert_awaited_once()
 

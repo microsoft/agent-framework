@@ -502,19 +502,7 @@ class RawFoundryAgentChatClient(
         """Return the agent version if available, else None."""
         if self.agent_version is not None:
             return self.agent_version
-        if not self.allow_preview:
-            return None
-        agent_details = await cast(Any, self.project_client.beta.agents).get(agent_name=self.agent_name)
-        versions_object = getattr(agent_details, "versions", None)
-        if not isinstance(versions_object, Mapping):
-            raise TypeError("Foundry agent details did not include a versions mapping.")
-        versions = cast(Mapping[str, Any], versions_object)
-        latest_version = versions.get("latest")
-        agent_version = getattr(cast(Any, latest_version), "version", None)
-        if not isinstance(agent_version, str):
-            raise TypeError("Foundry agent details did not include a latest version string.")
-        self.agent_version = agent_version
-        return agent_version
+        return None
 
     async def close(self) -> None:
         """Close the project client if we created it."""
@@ -763,7 +751,7 @@ class RawFoundryAgent(
 
         create_session_kwargs: dict[str, Any] = {
             "agent_name": self.client.agent_name,
-            "isolation_key": self._resolve_service_session_isolation_key(isolation_key),
+            "user_isolation_key": self._resolve_service_session_isolation_key(isolation_key),
         }
         if version := await self.client.get_agent_version():
             from azure.ai.projects.models import VersionRefIndicator
