@@ -30,7 +30,11 @@ from agent_framework import (
 )
 from agent_framework._settings import load_settings
 from agent_framework._tools import FunctionTool, ToolTypes
-from agent_framework._types import AgentRunInputs, normalize_tools
+from agent_framework._types import (
+    AgentRunInputs,
+    _get_data_bytes_as_str,  # pyright: ignore[reportPrivateUsage]
+    normalize_tools,
+)
 from agent_framework.exceptions import AgentException
 from agent_framework.observability import AgentTelemetryLayer
 
@@ -47,6 +51,8 @@ try:
     from copilot import CopilotClient, CopilotSession, RuntimeConnection
     from copilot.generated.rpc import PermissionDecisionUserNotAvailable
     from copilot.session import (
+        Attachment,
+        BlobAttachment,
         MCPServerConfig,
         PermissionRequestResult,
         PreToolUseHandler,
@@ -656,10 +662,11 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         prompt = "\n".join([message.text for message in context_messages])
         if session_context.instructions:
             prompt = "\n".join(session_context.instructions) + "\n" + prompt
+        attachments = self._prepare_attachments_for_copilot(context_messages)
 
         unsubscribe = copilot_session.on(usage_event_handler)
         try:
-            response_event = await copilot_session.send_and_wait(prompt, timeout=timeout)
+            response_event = await copilot_session.send_and_wait(prompt, attachments=attachments, timeout=timeout)
         except Exception as ex:
             raise AgentException(f"GitHub Copilot request failed: {ex}") from ex
         finally:
@@ -762,6 +769,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         prompt = "\n".join([message.text for message in context_messages])
         if session_context.instructions:
             prompt = "\n".join(session_context.instructions) + "\n" + prompt
+        attachments = self._prepare_attachments_for_copilot(context_messages)
 
         queue: asyncio.Queue[AgentResponseUpdate | Exception | None] = asyncio.Queue()
 
@@ -844,7 +852,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         unsubscribe = copilot_session.on(event_handler)
 
         try:
-            await copilot_session.send(prompt)
+            await copilot_session.send(prompt, attachments=attachments)
 
             while (item := await queue.get()) is not None:
                 if isinstance(item, Exception):
@@ -915,6 +923,46 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             opts["system_message"] = {"mode": mode, "content": instructions}
         elif opts_system_message is not None:
             opts["system_message"] = opts_system_message
+
+    @staticmethod
+    def _prepare_attachments_for_copilot(messages: Sequence[Message]) -> list[Attachment] | None:
+        """Convert inline binary message content into Copilot SDK attachments.
+
+        Scans the outgoing messages for ``data`` content (binary payloads such as
+        images or documents carried as base64 data URIs) and maps each one to an
+        inline ``blob`` attachment understood by the Copilot SDK. This mirrors the
+        .NET provider, which forwards ``DataContent`` as attachments. Remote URI
+        content (for example ``https://`` links) is left in the prompt text and not
+        attached, matching the SDK's supported attachment shapes.
+
+        Args:
+            messages: The messages being sent to the Copilot session.
+
+        Returns:
+            A list of Copilot ``Attachment`` objects, or ``None`` when the messages
+            contain no attachable binary content.
+        """
+        attachments: list[Attachment] = []
+        for message in messages:
+            for content in message.contents:
+                if content.type != "data":
+                    continue
+                data_str = _get_data_bytes_as_str(content)
+                if not data_str:
+                    continue
+                if not content.media_type:
+                    logger.warning(
+                        "Dropping GitHub Copilot attachment with no media type; the Copilot SDK "
+                        "requires a MIME type for inline binary content."
+                    )
+                    continue
+                blob: BlobAttachment = {
+                    "type": "blob",
+                    "data": data_str,
+                    "mimeType": content.media_type,
+                }
+                attachments.append(blob)
+        return attachments or None
 
     def _prepare_tools(
         self,

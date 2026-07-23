@@ -2,6 +2,7 @@
 
 # ruff: noqa: E402
 
+import base64
 import inspect
 import os
 import unittest.mock
@@ -3351,10 +3352,97 @@ class TestGitHubCopilotAgentContextProviders:
         assert "load_skill" in tool_names
 
 
+class TestGitHubCopilotAttachments:
+    """Tests for forwarding inline binary message content as Copilot attachments."""
+
+    async def test_data_content_forwarded_as_blob_attachment(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Non-streaming: DataContent is sent to the SDK as an inline blob attachment."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+        image_bytes = b"\x89PNG\r\n\x1a\n-fake-image"
+        message = Message(
+            role="user",
+            contents=[
+                Content.from_text("Describe this image"),
+                Content.from_data(data=image_bytes, media_type="image/png"),
+            ],
+        )
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.run(message)
+
+        attachments = mock_session.send_and_wait.call_args.kwargs["attachments"]
+        assert attachments is not None
+        assert len(attachments) == 1
+        assert attachments[0]["type"] == "blob"
+        assert attachments[0]["mimeType"] == "image/png"
+        assert base64.b64decode(attachments[0]["data"]) == image_bytes
+
+    async def test_data_content_forwarded_as_blob_attachment_streaming(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Streaming: DataContent is sent to the SDK as an inline blob attachment."""
+
+        def mock_on(handler: Any) -> Any:
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+        image_bytes = b"\x89PNG\r\n\x1a\n-fake-image"
+        message = Message(
+            role="user",
+            contents=[
+                Content.from_text("Describe this image"),
+                Content.from_data(data=image_bytes, media_type="image/png"),
+            ],
+        )
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        async for _ in agent.run(message, stream=True):
+            pass
+
+        attachments = mock_session.send.call_args.kwargs["attachments"]
+        assert attachments is not None
+        assert len(attachments) == 1
+        assert attachments[0]["type"] == "blob"
+        assert attachments[0]["mimeType"] == "image/png"
+        assert base64.b64decode(attachments[0]["data"]) == image_bytes
+
+    async def test_text_only_message_sends_no_attachments(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """A text-only message results in no attachments being forwarded."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.run("Just text, no attachments")
+
+        assert mock_session.send_and_wait.call_args.kwargs["attachments"] is None
+
+    def test_prepare_attachments_skips_data_without_media_type(self) -> None:
+        """Data content lacking a media type is dropped rather than sent without a MIME type."""
+        content = Content.from_data(data=b"payload", media_type="application/octet-stream")
+        content.media_type = None
+        message = Message(role="user", contents=[content])
+
+        attachments = GitHubCopilotAgent._prepare_attachments_for_copilot([message])
+
+        assert attachments is None
+
+
 # ---------------------------------------------------------------------------
 # Integration tests — require COPILOT_GITHUB_TOKEN env var
 # ---------------------------------------------------------------------------
-
 skip_if_copilot_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("COPILOT_GITHUB_TOKEN", "") == "",
     reason="No COPILOT_GITHUB_TOKEN provided; skipping integration tests.",
