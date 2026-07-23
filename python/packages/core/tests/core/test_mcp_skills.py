@@ -5,7 +5,10 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
+import tarfile
+import zipfile
 from unittest.mock import AsyncMock
 
 import pytest
@@ -451,7 +454,10 @@ class TestMCPSkillsSource:
         skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    async def test_unsupported_type_is_skipped(self) -> None:
+    @pytest.mark.asyncio
+    async def test_archive_missing_resource_is_skipped(self) -> None:
+        # An archive entry whose archive resource is not available on the server
+        # is skipped (the index is read, but the archive download fails).
         index_json = json.dumps({
             "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
             "skills": [
@@ -692,3 +698,413 @@ class TestMCPSkillsSourceErrorCodeBranching:
         source = MCPSkillsSource(client=client)
         with pytest.raises(TimeoutError):
             await source.get_skills(_SOURCE_CTX)
+
+
+# ---------------------------------------------------------------------------
+# Archive skill helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_zip(files: dict[str, bytes]) -> bytes:
+    """Build an in-memory ZIP archive from a ``{path: content}`` mapping."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, data in files.items():
+            archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+def _make_tar(files: dict[str, bytes], *, gzipped: bool) -> bytes:
+    """Build an in-memory TAR (optionally gzip-compressed) archive."""
+    buffer = io.BytesIO()
+
+    def _write(archive: tarfile.TarFile) -> None:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name=name)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+
+    if gzipped:
+        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+            _write(archive)
+    else:
+        with tarfile.open(fileobj=buffer, mode="w:") as archive:
+            _write(archive)
+    return buffer.getvalue()
+
+
+ARCHIVE_SKILL_MD = """\
+---
+name: packaged-skill
+description: A skill delivered as an archive.
+---
+# Packaged Skill
+
+Instructions from an archive.
+"""
+
+
+def _make_archive_index(name: str, url: str, entry_type: str = "archive") -> str:
+    """Build a skill index JSON document with a single archive entry."""
+    return json.dumps({
+        "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+        "skills": [
+            {
+                "name": name,
+                "type": entry_type,
+                "description": "A skill delivered as an archive.",
+                "url": url,
+            }
+        ],
+    })
+
+
+def _archive_client(index_json: str, archive_url: str, archive_bytes: bytes, mime_type: str) -> AsyncMock:
+    """Build a mock client that serves the index and a single archive blob resource."""
+    return _make_client(**{
+        "skill://index.json": _make_text_result(index_json, uri="skill://index.json"),
+        str(AnyUrl(archive_url)): _make_blob_result(archive_bytes, uri=archive_url, mime_type=mime_type),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Archive skill discovery tests (through MCPSkillsSource)
+# ---------------------------------------------------------------------------
+
+
+class TestMCPSkillsSourceArchive:
+    """Tests for archive-type skill discovery via MCPSkillsSource (in-memory)."""
+
+    @pytest.mark.asyncio
+    async def test_zip_archive_discovered_as_file_skill(self) -> None:
+        from agent_framework import FileSkill
+
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        source = MCPSkillsSource(client=client)
+        skills = await source.get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        skill = skills[0]
+        assert isinstance(skill, FileSkill)
+        assert skill.frontmatter.name == "packaged-skill"
+        content = await skill.get_content()
+        assert "Instructions from an archive." in content
+
+    @pytest.mark.asyncio
+    async def test_targz_archive_discovered(self) -> None:
+        url = "skill://archives/packaged-skill.tar.gz"
+        index = _make_archive_index("packaged-skill", url)
+        archive = _make_tar({"SKILL.md": ARCHIVE_SKILL_MD.encode()}, gzipped=True)
+        client = _archive_client(index, url, archive, "application/gzip")
+
+        source = MCPSkillsSource(client=client)
+        skills = await source.get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.name == "packaged-skill"
+
+    @pytest.mark.asyncio
+    async def test_tar_archive_discovered(self) -> None:
+        url = "skill://archives/packaged-skill.tar"
+        index = _make_archive_index("packaged-skill", url)
+        archive = _make_tar({"SKILL.md": ARCHIVE_SKILL_MD.encode()}, gzipped=False)
+        client = _archive_client(index, url, archive, "application/x-tar")
+
+        source = MCPSkillsSource(client=client)
+        skills = await source.get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.name == "packaged-skill"
+
+    @pytest.mark.asyncio
+    async def test_archive_reference_resource_is_readable(self) -> None:
+        # A bundled reference file is served as an in-memory resource, read on demand.
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        archive = _make_zip({
+            "SKILL.md": ARCHIVE_SKILL_MD.encode(),
+            "references/refund-matrix.md": b"# Refund Matrix\nREF-CANARY-9001\n",
+        })
+        client = _archive_client(index, url, archive, "application/zip")
+
+        source = MCPSkillsSource(client=client)
+        skill = (await source.get_skills(_SOURCE_CTX))[0]
+
+        resource = await skill.get_resource("references/refund-matrix.md")
+        assert resource is not None
+        assert "REF-CANARY-9001" in await resource.read()
+
+    @pytest.mark.asyncio
+    async def test_wrapped_archive_root_is_discovered(self) -> None:
+        # An archive whose SKILL.md sits under a top-level folder is still discovered,
+        # and resources are resolved relative to the SKILL.md's directory.
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        archive = _make_zip({
+            "packaged-skill/SKILL.md": ARCHIVE_SKILL_MD.encode(),
+            "packaged-skill/references/doc.md": b"REF-CANARY-42\n",
+        })
+        client = _archive_client(index, url, archive, "application/zip")
+
+        source = MCPSkillsSource(client=client)
+        skill = (await source.get_skills(_SOURCE_CTX))[0]
+
+        assert skill.frontmatter.name == "packaged-skill"
+        resource = await skill.get_resource("references/doc.md")
+        assert resource is not None
+        assert "REF-CANARY-42" in await resource.read()
+
+    @pytest.mark.asyncio
+    async def test_bundled_script_is_never_runnable(self) -> None:
+        # An archive that bundles a .py script must not expose it as a runnable script,
+        # nor (with default resource extensions) as a resource.
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        archive = _make_zip({
+            "SKILL.md": ARCHIVE_SKILL_MD.encode(),
+            "run.py": b"print('malicious')\n",
+        })
+        client = _archive_client(index, url, archive, "application/zip")
+
+        source = MCPSkillsSource(client=client)
+        skill = (await source.get_skills(_SOURCE_CTX))[0]
+
+        assert await skill.get_script("run.py") is None
+        assert await skill.get_resource("run.py") is None
+        content = await skill.get_content()
+        assert "<available_scripts />" in content
+
+    @pytest.mark.asyncio
+    async def test_oversized_archive_download_is_skipped(self) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        source = MCPSkillsSource(client=client, archive_max_size_bytes=8)
+        skills = await source.get_skills(_SOURCE_CTX)
+        assert skills == []
+
+    @pytest.mark.asyncio
+    async def test_archive_exceeding_file_count_is_skipped(self) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        archive = _make_zip({
+            "SKILL.md": ARCHIVE_SKILL_MD.encode(),
+            "a.md": b"a",
+            "b.md": b"b",
+        })
+        client = _archive_client(index, url, archive, "application/zip")
+
+        source = MCPSkillsSource(client=client, archive_max_file_count=1)
+        skills = await source.get_skills(_SOURCE_CTX)
+        assert skills == []
+
+    @pytest.mark.asyncio
+    async def test_frontmatter_name_mismatch_is_skipped(self) -> None:
+        # The SKILL.md frontmatter name must match the advertised entry name.
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        mismatched = ARCHIVE_SKILL_MD.replace("name: packaged-skill", "name: different-name")
+        archive = _make_zip({"SKILL.md": mismatched.encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        source = MCPSkillsSource(client=client)
+        skills = await source.get_skills(_SOURCE_CTX)
+        assert skills == []
+
+    @pytest.mark.asyncio
+    async def test_archive_without_skill_md_is_skipped(self) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        archive = _make_zip({"readme.md": b"# not a skill\n"})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        source = MCPSkillsSource(client=client)
+        skills = await source.get_skills(_SOURCE_CTX)
+        assert skills == []
+
+    @pytest.mark.asyncio
+    async def test_unsupported_archive_format_is_skipped(self) -> None:
+        url = "skill://archives/packaged-skill.bin"
+        index = _make_archive_index("packaged-skill", url)
+        client = _archive_client(index, url, b"not-an-archive", "application/octet-stream")
+
+        source = MCPSkillsSource(client=client)
+        skills = await source.get_skills(_SOURCE_CTX)
+        assert skills == []
+
+    @pytest.mark.asyncio
+    async def test_archive_download_internal_error_propagates(self) -> None:
+        # A non-"not found" MCP error while downloading an archive must propagate,
+        # not silently drop the skill (which would corrupt a CachingSkillsSource refresh).
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+
+        async def _read_resource(uri: AnyUrl) -> ReadResourceResult:
+            uri_str = str(uri)
+            if uri_str == "skill://index.json":
+                return _make_text_result(index, uri="skill://index.json")
+            raise McpError(error=ErrorData(code=-32603, message="Internal error"))
+
+        client = AsyncMock()
+        client.read_resource = AsyncMock(side_effect=_read_resource)
+
+        source = MCPSkillsSource(client=client)
+        with pytest.raises(McpError):
+            await source.get_skills(_SOURCE_CTX)
+
+    @pytest.mark.asyncio
+    async def test_archive_download_connection_error_propagates(self) -> None:
+        # A plain ConnectionError while downloading an archive must propagate.
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+
+        async def _read_resource(uri: AnyUrl) -> ReadResourceResult:
+            uri_str = str(uri)
+            if uri_str == "skill://index.json":
+                return _make_text_result(index, uri="skill://index.json")
+            raise ConnectionError("connection lost")
+
+        client = AsyncMock()
+        client.read_resource = AsyncMock(side_effect=_read_resource)
+
+        source = MCPSkillsSource(client=client)
+        with pytest.raises(ConnectionError):
+            await source.get_skills(_SOURCE_CTX)
+
+    @pytest.mark.asyncio
+    async def test_mixed_skill_md_and_archive_entries(self) -> None:
+        archive_url = "skill://archives/packaged-skill.zip"
+        index = json.dumps({
+            "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+            "skills": [
+                {
+                    "name": "unit-converter",
+                    "type": "skill-md",
+                    "description": "Convert between common units.",
+                    "url": "skill://unit-converter/SKILL.md",
+                },
+                {
+                    "name": "packaged-skill",
+                    "type": "archive",
+                    "description": "A skill delivered as an archive.",
+                    "url": archive_url,
+                },
+            ],
+        })
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(index, uri="skill://index.json"),
+            "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
+            str(AnyUrl(archive_url)): _make_blob_result(archive, uri=archive_url, mime_type="application/zip"),
+        })
+
+        source = MCPSkillsSource(client=client)
+        skills = await source.get_skills(_SOURCE_CTX)
+
+        names = sorted(s.frontmatter.name for s in skills)
+        assert names == ["packaged-skill", "unit-converter"]
+
+
+# ---------------------------------------------------------------------------
+# Archive extractor unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestArchiveExtractor:
+    """Tests for the archive format detection and hardened in-memory extraction helpers."""
+
+    def test_detect_format_from_magic_bytes(self) -> None:
+        from agent_framework._skills import _ArchiveFormat, _detect_archive_format
+
+        assert _detect_archive_format(b"\x1f\x8b\x08\x00", None, None) is _ArchiveFormat.TAR_GZ
+        assert _detect_archive_format(b"PK\x03\x04rest", None, None) is _ArchiveFormat.ZIP
+
+    def test_detect_format_from_media_type(self) -> None:
+        from agent_framework._skills import _ArchiveFormat, _detect_archive_format
+
+        assert _detect_archive_format(b"xx", "application/zip", None) is _ArchiveFormat.ZIP
+        assert _detect_archive_format(b"xx", "application/x-tar", None) is _ArchiveFormat.TAR
+        assert _detect_archive_format(b"xx", "application/gzip", None) is _ArchiveFormat.TAR_GZ
+
+    def test_detect_format_from_url_suffix(self) -> None:
+        from agent_framework._skills import _ArchiveFormat, _detect_archive_format
+
+        assert _detect_archive_format(b"xx", None, "skill://a.zip") is _ArchiveFormat.ZIP
+        assert _detect_archive_format(b"xx", None, "skill://a.tgz") is _ArchiveFormat.TAR_GZ
+        assert _detect_archive_format(b"xx", None, "skill://a.tar") is _ArchiveFormat.TAR
+
+    def test_detect_format_unknown(self) -> None:
+        from agent_framework._skills import _ArchiveFormat, _detect_archive_format
+
+        assert _detect_archive_format(b"xx", "text/plain", "skill://a.bin") is _ArchiveFormat.UNKNOWN
+
+    def test_normalize_member_name_rejects_traversal(self) -> None:
+        from agent_framework._skills import _normalize_archive_member_name
+
+        # Parent-traversal escapes are rejected.
+        assert _normalize_archive_member_name("../evil.md") is None
+        assert _normalize_archive_member_name("..\\evil.md") is None
+        assert _normalize_archive_member_name("a/../../evil.md") is None
+        assert _normalize_archive_member_name("") is None
+        # A leading-slash path is neutralized to a relative path.
+        assert _normalize_archive_member_name("/etc/passwd") == "etc/passwd"
+        # Backslashes are normalized and redundant segments collapsed.
+        assert _normalize_archive_member_name("refs\\./doc.md") == "refs/doc.md"
+        assert _normalize_archive_member_name("ok/file.md") == "ok/file.md"
+
+    def test_zip_slip_member_is_skipped(self) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        archive = _make_zip({"../evil.md": b"pwned", "safe.md": b"ok"})
+        files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
+
+        assert "safe.md" in files
+        assert "../evil.md" not in files
+        assert "evil.md" not in files
+
+    def test_leading_slash_member_is_neutralized(self) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        archive = _make_zip({"/abs/file.md": b"data"})
+        files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
+
+        assert files == {"abs/file.md": b"data"}
+
+    def test_file_count_limit_is_enforced(self) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        archive = _make_zip({"a.md": b"a", "b.md": b"b", "c.md": b"c"})
+        with pytest.raises(ValueError, match="file count"):
+            _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 2, 1024 * 1024)
+
+    def test_uncompressed_size_limit_is_enforced(self) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        archive = _make_zip({"big.md": b"x" * 100})
+        with pytest.raises(ValueError, match="uncompressed size"):
+            _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 10)
+
+    def test_tar_symlink_member_is_skipped(self) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:") as archive:
+            link = tarfile.TarInfo(name="link")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "/etc/passwd"
+            archive.addfile(link)
+            data = b"regular"
+            reg = tarfile.TarInfo(name="regular.md")
+            reg.size = len(data)
+            archive.addfile(reg, io.BytesIO(data))
+
+        files = _extract_archive_to_memory(buffer.getvalue(), _ArchiveFormat.TAR, 20, 1024 * 1024)
+
+        assert "link" not in files
+        assert files == {"regular.md": b"regular"}

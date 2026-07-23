@@ -46,19 +46,24 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import gzip
 import inspect
+import io
 import json
 import logging
 import os
 import re
+import tarfile
 import time
+import zipfile
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
+from enum import Enum
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
+from typing import IO, TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import ContextProvider
@@ -2164,8 +2169,8 @@ class SkillsProvider(ContextProvider):
         skill_paths: str | Path | Sequence[str | Path],
         *,
         script_runner: SkillScriptRunner | None = None,
-        resource_extensions: tuple[str, ...] | None = None,
-        script_extensions: tuple[str, ...] | None = None,
+        resource_extensions: tuple[str, ...] | None = DEFAULT_RESOURCE_EXTENSIONS,
+        script_extensions: tuple[str, ...] | None = DEFAULT_SCRIPT_EXTENSIONS,
         search_depth: int = DEFAULT_SEARCH_DEPTH,
         script_filter: Callable[[str, str], bool] | None = None,
         resource_filter: Callable[[str, str], bool] | None = None,
@@ -2192,8 +2197,12 @@ class SkillsProvider(ContextProvider):
             resource_extensions: File extensions recognized as discoverable
                 resources.  Defaults to
                 ``(".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt")``.
+                ``None`` is treated the same as the default; pass an empty
+                tuple to discover no resources.
             script_extensions: File extensions recognized as discoverable
-                scripts.  Defaults to ``(".py",)``.
+                scripts.  Defaults to ``(".py",)``.  ``None`` is treated the
+                same as the default; pass an empty tuple to disable script
+                discovery entirely.
             search_depth: Maximum depth to search for script and resource
                 files within each skill directory.  A value of ``1`` searches
                 only the skill root; ``2`` (the default) searches the root
@@ -2816,8 +2825,8 @@ class FileSkillsSource(SkillsSource):
         skill_paths: str | Path | Sequence[str | Path],
         *,
         script_runner: SkillScriptRunner | None = None,
-        resource_extensions: tuple[str, ...] | None = None,
-        script_extensions: tuple[str, ...] | None = None,
+        resource_extensions: tuple[str, ...] | None = DEFAULT_RESOURCE_EXTENSIONS,
+        script_extensions: tuple[str, ...] | None = DEFAULT_SCRIPT_EXTENSIONS,
         search_depth: int = DEFAULT_SEARCH_DEPTH,
         script_filter: Callable[[str, str], bool] | None = None,
         resource_filter: Callable[[str, str], bool] | None = None,
@@ -2838,8 +2847,15 @@ class FileSkillsSource(SkillsSource):
             resource_extensions: File extensions recognized as discoverable
                 resources.  Defaults to
                 ``(".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt")``.
+                ``None`` is treated the same as the default; pass an empty
+                tuple to discover no resources.
             script_extensions: File extensions recognized as discoverable
-                scripts.  Defaults to ``(".py",)``.
+                scripts.  Defaults to ``(".py",)``.  ``None`` is treated the
+                same as the default; pass an empty tuple to disable script
+                discovery entirely (files that would otherwise be scripts are
+                then only discoverable as resources); this is used to serve
+                untrusted skills whose bundled scripts must never be exposed as
+                runnable.
             search_depth: Maximum depth to search for script and resource
                 files within each skill directory.  A value of ``1`` searches
                 only the skill root; ``2`` (the default) searches the root
@@ -2862,8 +2878,10 @@ class FileSkillsSource(SkillsSource):
             self._skill_paths = [str(p) for p in skill_paths]
 
         self._script_runner = script_runner
-        self._resource_extensions = resource_extensions or DEFAULT_RESOURCE_EXTENSIONS
-        self._script_extensions = script_extensions or DEFAULT_SCRIPT_EXTENSIONS
+        self._resource_extensions = (
+            resource_extensions if resource_extensions is not None else DEFAULT_RESOURCE_EXTENSIONS
+        )
+        self._script_extensions = script_extensions if script_extensions is not None else DEFAULT_SCRIPT_EXTENSIONS
 
         if search_depth < 1:
             raise ValueError(f"search_depth must be >= 1, got {search_depth}")
@@ -3975,6 +3993,35 @@ def _mcp_join_text(result: ReadResourceResult) -> str:
     return "\n".join(c.text for c in result.contents if isinstance(c, _TextResourceContents))
 
 
+def _mcp_first_blob(result: ReadResourceResult) -> tuple[bytes, str | None] | None:
+    """Extract the first binary (blob) resource content from a read result.
+
+    Args:
+        result: The result returned by the MCP server's ``resources/read`` request.
+
+    Returns:
+        A ``(data, mime_type)`` tuple for the first :class:`~mcp.types.BlobResourceContents`
+        in *result*, or ``None`` when the result carries no binary content or the blob
+        cannot be base64-decoded.
+    """
+    from mcp.types import BlobResourceContents
+
+    for content in result.contents:
+        if isinstance(content, BlobResourceContents):
+            blob = content.blob
+            # Strip a data-URI prefix if present (some servers send full data URIs).
+            if blob.startswith("data:"):
+                blob = blob.split(",", 1)[-1]
+            try:
+                data = base64.b64decode(blob)
+            except ValueError:
+                # binascii.Error (invalid base64) subclasses ValueError.
+                logger.warning("Failed to base64-decode blob resource content from the MCP server.", exc_info=True)
+                return None
+            return data, content.mimeType
+    return None
+
+
 class _McpSkillIndexEntry:  # ruff:ignore[class-as-data-structure]
     """A single entry in the ``skill://index.json`` discovery document.
 
@@ -4282,24 +4329,507 @@ class MCPSkill(Skill):
         return skill_md_uri + "/"
 
 
+_DEFAULT_ARCHIVE_MAX_FILE_COUNT: Final[int] = 20
+"""Default maximum number of files that may be extracted from a single archive skill."""
+
+_DEFAULT_ARCHIVE_MAX_SIZE_BYTES: Final[int] = 1 * 1024 * 1024
+"""Default maximum size, in bytes, of a downloaded archive skill resource."""
+
+_DEFAULT_ARCHIVE_MAX_UNCOMPRESSED_SIZE_BYTES: Final[int] = 1 * 1024 * 1024
+"""Default maximum total uncompressed size, in bytes, of all files extracted from an archive skill."""
+
+_ARCHIVE_READ_BUFFER_SIZE: Final[int] = 81920
+
+
+class _ArchiveFormat(Enum):
+    """The archive container formats supported by :func:`_extract_archive`."""
+
+    UNKNOWN = "unknown"
+    ZIP = "zip"
+    TAR = "tar"
+    TAR_GZ = "tar_gz"
+
+
+def _detect_archive_format(data: bytes, media_type: str | None, url: str | None) -> _ArchiveFormat:
+    """Determine the archive format from magic bytes, media type, and URL suffix.
+
+    Magic-number sniffing takes precedence as it is the most reliable signal; the
+    advertised media type and finally the URL suffix are used as fallbacks.
+
+    Args:
+        data: The raw archive bytes.
+        media_type: The advertised MIME type, if any.
+        url: The resource URL the archive was read from, if any.
+
+    Returns:
+        The detected :class:`_ArchiveFormat`, or :attr:`_ArchiveFormat.UNKNOWN`.
+    """
+    if len(data) >= 2 and data[0] == 0x1F and data[1] == 0x8B:
+        return _ArchiveFormat.TAR_GZ
+
+    if len(data) >= 4 and data[0] == 0x50 and data[1] == 0x4B and data[2] in (0x03, 0x05, 0x07):
+        return _ArchiveFormat.ZIP
+
+    media = (media_type or "").strip().lower()
+    if media in ("application/zip", "application/x-zip-compressed"):
+        return _ArchiveFormat.ZIP
+    if media in ("application/gzip", "application/x-gzip", "application/x-compressed-tar"):
+        return _ArchiveFormat.TAR_GZ
+    if media in ("application/x-tar", "application/tar"):
+        return _ArchiveFormat.TAR
+
+    lowered = (url or "").lower()
+    if lowered.endswith(".zip"):
+        return _ArchiveFormat.ZIP
+    if lowered.endswith(".tar.gz") or lowered.endswith(".tgz"):
+        return _ArchiveFormat.TAR_GZ
+    if lowered.endswith(".tar"):
+        return _ArchiveFormat.TAR
+
+    return _ArchiveFormat.UNKNOWN
+
+
+def _normalize_archive_member_name(entry_path: str) -> str | None:
+    """Normalize an archive member path to a safe relative POSIX path, or ``None``.
+
+    Guards against path-traversal ("zip-slip") shapes: empty, absolute/rooted, or
+    parent-traversing (``..``) member paths are rejected. No filesystem is touched;
+    the returned name is used only as an in-memory resource key, so this is purely a
+    naming-safety check.
+
+    Args:
+        entry_path: The archive-relative path of the member.
+
+    Returns:
+        A cleaned forward-slash-separated relative path, or ``None`` when the member
+        path is empty or would escape the skill namespace.
+    """
+    if not entry_path or not entry_path.strip():
+        return None
+
+    normalized = entry_path.replace("\\", "/").lstrip("/")
+    if not normalized or any(segment == ".." for segment in normalized.split("/")):
+        return None
+
+    parts = [segment for segment in normalized.split("/") if segment not in ("", ".")]
+    if not parts:
+        return None
+
+    return "/".join(parts)
+
+
+def _read_member_with_limit(source: IO[bytes], remaining_bytes: int) -> tuple[bytes, int]:
+    """Read one archive member fully into memory within a shared uncompressed-byte budget.
+
+    Counts bytes actually produced by the decompressor rather than trusting archive
+    metadata, the authoritative defense against decompression bombs. The member is read
+    in chunks so the running budget is enforced before the whole member is materialized.
+
+    Args:
+        source: The (possibly decompressing) input stream for a single member.
+        remaining_bytes: The remaining uncompressed-byte budget shared across the archive.
+
+    Returns:
+        A ``(data, remaining_bytes)`` tuple: the member's bytes and the budget left after
+        reading it.
+
+    Raises:
+        ValueError: If the remaining budget is exhausted.
+    """
+    chunks: list[bytes] = []
+    while True:
+        chunk = source.read(_ARCHIVE_READ_BUFFER_SIZE)
+        if not chunk:
+            break
+        remaining_bytes -= len(chunk)
+        if remaining_bytes < 0:
+            raise ValueError("Skill archive exceeds the maximum allowed uncompressed size.")
+        chunks.append(chunk)
+    return b"".join(chunks), remaining_bytes
+
+
+def _extract_archive_to_memory(
+    data: bytes,
+    archive_format: _ArchiveFormat,
+    max_file_count: int,
+    max_uncompressed_size_bytes: int,
+) -> dict[str, bytes]:
+    """Extract an archive's regular files into an in-memory ``{relative-path: bytes}`` mapping.
+
+    Supports ZIP, TAR, and gzip-compressed TAR payloads. Non-regular TAR entries
+    (symbolic links, hard links, device nodes, etc.) and unsafe member names (absolute
+    or parent-traversing) are skipped, so an archive cannot smuggle in a link or escape
+    the skill namespace. Extraction is bounded by a maximum file count and total
+    uncompressed size to mitigate decompression-bomb attacks. No filesystem is touched.
+
+    Args:
+        data: The raw archive bytes.
+        archive_format: The detected container format.
+        max_file_count: The maximum number of files that may be extracted.
+        max_uncompressed_size_bytes: The maximum total uncompressed size, in bytes.
+
+    Returns:
+        A mapping of forward-slash-separated relative paths to file bytes.
+
+    Raises:
+        ValueError: If the format is unknown or a limit is exceeded.
+        OSError: If the payload cannot be read.
+        tarfile.TarError: If a TAR payload is malformed.
+        zipfile.BadZipFile: If a ZIP payload is malformed.
+        gzip.BadGzipFile: If a gzip payload is malformed.
+    """
+    if archive_format is _ArchiveFormat.ZIP:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            return _extract_zip_to_memory(archive, max_file_count, max_uncompressed_size_bytes)
+    if archive_format is _ArchiveFormat.TAR:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
+            return _extract_tar_to_memory(archive, max_file_count, max_uncompressed_size_bytes)
+    if archive_format is _ArchiveFormat.TAR_GZ:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+            return _extract_tar_to_memory(archive, max_file_count, max_uncompressed_size_bytes)
+    raise ValueError(f"Unsupported skill archive format '{archive_format}'.")
+
+
+def _extract_zip_to_memory(
+    archive: zipfile.ZipFile,
+    max_file_count: int,
+    max_uncompressed_size_bytes: int,
+) -> dict[str, bytes]:
+    """Read regular files from a ZIP archive into memory. See :func:`_extract_archive_to_memory`."""
+    remaining_bytes = max_uncompressed_size_bytes
+    files: dict[str, bytes] = {}
+    file_count = 0
+
+    for info in archive.infolist():
+        if info.is_dir():
+            continue
+
+        file_count += 1
+        if file_count > max_file_count:
+            raise ValueError(f"Skill archive exceeds the maximum allowed file count ({max_file_count}).")
+
+        name = _normalize_archive_member_name(info.filename)
+        if name is None:
+            continue
+
+        with archive.open(info) as source:
+            content, remaining_bytes = _read_member_with_limit(source, remaining_bytes)
+        files[name] = content
+
+    return files
+
+
+def _extract_tar_to_memory(
+    archive: tarfile.TarFile,
+    max_file_count: int,
+    max_uncompressed_size_bytes: int,
+) -> dict[str, bytes]:
+    """Read regular files from a TAR archive into memory. See :func:`_extract_archive_to_memory`."""
+    remaining_bytes = max_uncompressed_size_bytes
+    files: dict[str, bytes] = {}
+    file_count = 0
+
+    for member in archive:
+        # Only regular files are materialized. Skipping links/devices avoids both
+        # unsupported entry types and link-based escapes outside the skill namespace.
+        if not member.isreg():
+            continue
+
+        file_count += 1
+        if file_count > max_file_count:
+            raise ValueError(f"Skill archive exceeds the maximum allowed file count ({max_file_count}).")
+
+        name = _normalize_archive_member_name(member.name)
+        if name is None:
+            continue
+
+        source = archive.extractfile(member)
+        if source is None:
+            continue
+
+        with source:
+            content, remaining_bytes = _read_member_with_limit(source, remaining_bytes)
+        files[name] = content
+
+    return files
+
+
+class _ArchiveEntryLoader:
+    """Loads ``archive``-type ``skill://index.json`` entries entirely in memory.
+
+    Each entry's ``url`` points to a single archive resource (ZIP, TAR, or
+    gzip-compressed TAR). The archive is downloaded and unpacked **in memory** into a
+    :class:`FileSkill` whose ``SKILL.md`` body drives the skill and whose sibling files
+    (matching the configured resource extensions, within the configured depth) become
+    in-memory :class:`InlineSkillResource` resources. Nothing is written to disk, so
+    there are no temporary directories to create, own, or prune.
+
+    Bundled scripts are never surfaced as runnable scripts: only files matching the
+    resource extensions become readable resources; a script file is at most a readable
+    resource, never a :class:`SkillScript`.
+
+    Extraction is hardened against path-traversal ("zip-slip") member names, non-regular
+    TAR members (links/devices), oversized downloads, excessive file counts, and
+    decompression bombs.
+    """
+
+    def __init__(
+        self,
+        session_provider: Callable[[], ClientSession],
+        *,
+        resource_extensions: tuple[str, ...] | None,
+        resource_search_depth: int,
+        max_file_count: int,
+        max_size_bytes: int,
+        max_uncompressed_size_bytes: int,
+    ) -> None:
+        self._session_provider = session_provider
+        self._resource_extensions: tuple[str, ...] = (
+            resource_extensions if resource_extensions is not None else DEFAULT_RESOURCE_EXTENSIONS
+        )
+        self._resource_search_depth = resource_search_depth
+        self._max_file_count = max_file_count
+        self._max_size_bytes = max_size_bytes
+        self._max_uncompressed_size_bytes = max_uncompressed_size_bytes
+
+    async def load(self, entries: list[_McpSkillIndexEntry], context: SkillsSourceContext) -> list[Skill]:
+        """Download and unpack every valid archive entry into an in-memory skill.
+
+        Args:
+            entries: The ``archive`` index entries. May be empty.
+            context: Accepted for symmetry with the skill-md path; unused, since archive
+                discovery does not depend on the invoking agent or session.
+
+        Returns:
+            A list of discovered :class:`FileSkill` instances (in-memory backed).
+        """
+        skills: list[Skill] = []
+        seen_names: set[str] = set()
+
+        for entry in entries:
+            if not entry.name or not entry.name.strip():
+                logger.debug("Skipping archive entry: missing required 'name' field")
+                continue
+            if not entry.url or not entry.url.strip():
+                logger.debug("Skipping entry '%s': missing required 'url' field", entry.name)
+                continue
+
+            downloaded = await self._download(entry)
+            if downloaded is None:
+                continue
+
+            data, mime_type = downloaded
+            skill = self._build_skill(entry, data, mime_type)
+            if skill is None:
+                continue
+
+            if skill.frontmatter.name in seen_names:
+                logger.warning(
+                    "Duplicate archive skill name '%s': later entry skipped in favor of the first",
+                    skill.frontmatter.name,
+                )
+                continue
+
+            seen_names.add(skill.frontmatter.name)
+            skills.append(skill)
+            logger.info("Loaded archive skill: %s", skill.frontmatter.name)
+
+        return skills
+
+    async def _download(self, entry: _McpSkillIndexEntry) -> tuple[bytes, str | None] | None:
+        """Download and decode the binary content of a skill's archive resource.
+
+        Only "resource not found" MCP errors are swallowed (the skill is skipped);
+        every other exception (auth failure, ``INTERNAL_ERROR``, connection drop,
+        timeout, etc.) propagates so a transient transport failure is not silently
+        turned into a missing skill — which, under :class:`CachingSkillsSource`,
+        would otherwise overwrite a previously cached list with a partial result.
+
+        Returns:
+            A ``(data, mime_type)`` tuple, or ``None`` when the resource is not found,
+            contains no binary content, is empty, or exceeds the configured size limit.
+
+        Raises:
+            Exception: Any error other than a "resource not found" MCP error raised
+                while reading the archive resource is re-raised.
+        """
+        try:
+            result = await self._session_provider().read_resource(_mcp_any_url(cast(str, entry.url)))
+        except Exception as ex:
+            if _is_mcp_resource_not_found(ex):
+                logger.debug("Archive resource '%s' for skill '%s' not available: %s", entry.url, entry.name, ex)
+                return None
+            logger.warning("Failed to read archive resource for skill '%s'.", entry.name, exc_info=True)
+            raise
+
+        blob = _mcp_first_blob(result)
+        if blob is None:
+            logger.debug("Skipping skill '%s': archive resource returned no binary content", entry.name)
+            return None
+
+        data, mime_type = blob
+        if not data:
+            logger.debug("Skipping skill '%s': archive resource returned empty content", entry.name)
+            return None
+
+        if len(data) > self._max_size_bytes:
+            logger.debug(
+                "Skipping skill '%s': archive resource exceeds the maximum allowed size (%d bytes)",
+                entry.name,
+                self._max_size_bytes,
+            )
+            return None
+
+        return data, mime_type
+
+    def _build_skill(self, entry: _McpSkillIndexEntry, data: bytes, mime_type: str | None) -> FileSkill | None:
+        """Detect the format of and unpack one archive entry into an in-memory :class:`FileSkill`.
+
+        Returns:
+            A :class:`FileSkill`, or ``None`` when the archive cannot be materialized
+            (unsupported format, malformed archive, missing/invalid ``SKILL.md``, or a
+            frontmatter name that does not match the advertised entry name).
+        """
+        archive_format = _detect_archive_format(data, mime_type, entry.url)
+        if archive_format is _ArchiveFormat.UNKNOWN:
+            logger.debug("Skipping skill '%s': unsupported archive media type '%s'", entry.name, mime_type or "(none)")
+            return None
+
+        try:
+            files = _extract_archive_to_memory(
+                data, archive_format, self._max_file_count, self._max_uncompressed_size_bytes
+            )
+        except (OSError, ValueError, EOFError, tarfile.TarError, zipfile.BadZipFile, gzip.BadGzipFile):
+            logger.warning("Failed to extract archive for skill '%s'.", entry.name, exc_info=True)
+            return None
+
+        return self._skill_from_files(entry, files)
+
+    def _skill_from_files(self, entry: _McpSkillIndexEntry, files: dict[str, bytes]) -> FileSkill | None:
+        """Assemble an in-memory :class:`FileSkill` from the archive's extracted files."""
+        skill_md_key = self._find_skill_md(files)
+        if skill_md_key is None:
+            logger.debug("Skipping skill '%s': archive contains no SKILL.md", entry.name)
+            return None
+
+        try:
+            content = files[skill_md_key].decode("utf-8")
+        except UnicodeDecodeError:
+            logger.debug("Skipping skill '%s': SKILL.md is not valid UTF-8", entry.name)
+            return None
+
+        frontmatter = FileSkillsSource._extract_frontmatter(  # pyright: ignore[reportPrivateUsage]
+            content, f"{cast(str, entry.name)}/{SKILL_FILE_NAME}"
+        )
+        if frontmatter is None:
+            return None
+
+        if frontmatter.name != entry.name:
+            logger.debug(
+                "Skipping skill '%s': SKILL.md frontmatter name '%s' does not match the advertised entry name",
+                entry.name,
+                frontmatter.name,
+            )
+            return None
+
+        # The SKILL.md's directory within the archive is the skill root; resources are
+        # discovered relative to it, mirroring file-based skill discovery.
+        root_prefix = skill_md_key[: skill_md_key.rfind("/") + 1] if "/" in skill_md_key else ""
+        resources = self._build_resources(files, skill_md_key, root_prefix)
+
+        # ``path`` records the archive's origin URL; it is informational only, as the
+        # skill and its resources are served entirely from memory (no filesystem access).
+        return FileSkill(
+            frontmatter=frontmatter,
+            content=content,
+            path=cast(str, entry.url),
+            resources=resources,
+            scripts=[],
+        )
+
+    @staticmethod
+    def _find_skill_md(files: dict[str, bytes]) -> str | None:
+        """Return the key of the shallowest ``SKILL.md`` (case-insensitive), or ``None``."""
+        candidates = [key for key in files if key.rsplit("/", 1)[-1].upper() == SKILL_FILE_NAME.upper()]
+        if not candidates:
+            return None
+        # Prefer the shallowest SKILL.md; break ties deterministically by name.
+        return min(candidates, key=lambda key: (key.count("/"), key))
+
+    def _build_resources(self, files: dict[str, bytes], skill_md_key: str, root_prefix: str) -> list[SkillResource]:
+        """Build in-memory resources from archive files under the ``SKILL.md`` directory.
+
+        A file is included when it sits under *root_prefix*, is not the ``SKILL.md``
+        itself, matches an allowed resource extension, is within the configured search
+        depth, and decodes as UTF-8 text. Scripts are never emitted, so bundled scripts
+        can at most surface as readable resources, never as runnable scripts.
+        """
+        allowed = {ext.lower() for ext in self._resource_extensions}
+        resources: list[SkillResource] = []
+
+        for key in sorted(files):
+            if key == skill_md_key:
+                continue
+            if root_prefix and not key.startswith(root_prefix):
+                continue
+
+            rel = key[len(root_prefix) :]
+            if not rel:
+                continue
+
+            # Depth: the skill root is depth 1, one nested directory is depth 2, and so on.
+            if rel.count("/") + 1 > self._resource_search_depth:
+                continue
+
+            basename = rel.rsplit("/", 1)[-1]
+            dot = basename.rfind(".")
+            suffix = basename[dot:].lower() if dot > 0 else ""
+            if suffix not in allowed:
+                continue
+
+            try:
+                text = files[key].decode("utf-8")
+            except UnicodeDecodeError:
+                logger.debug("Skipping resource '%s': not valid UTF-8", rel)
+                continue
+
+            resources.append(InlineSkillResource(name=rel, content=text))
+
+        return resources
+
+
 @experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
 class MCPSkillsSource(SkillsSource):
     """A :class:`SkillsSource` that discovers Agent Skills served over MCP.
 
     Discovery follows the SEP-2640 recommended approach: the source reads
     the well-known ``skill://index.json`` resource and constructs one
-    :class:`MCPSkill` per ``skill-md`` entry directly from the entry's
-    ``name``, ``description``, and ``url`` fields.
+    :class:`Skill` per index entry.
 
-    The referenced ``SKILL.md`` resource is **not** read during discovery;
-    the host fetches its body on demand via ``resources/read`` when the
-    skill content is needed.
+    Index entries are dispatched by their ``type`` (matched case-insensitively):
 
-    Only index entries of type ``skill-md`` are supported; entries of any
-    other type are silently skipped.
+    * ``skill-md`` — one :class:`MCPSkill` is created directly from the entry's
+      ``name``, ``description``, and ``url`` fields. The referenced ``SKILL.md``
+      resource is **not** read during discovery; the host fetches its body on
+      demand via ``resources/read`` when the skill content is needed.
+    * ``archive`` — the entry's ``url`` points to a single archive resource
+      (ZIP, TAR, or gzip-compressed TAR) whose content unpacks into the skill's
+      namespace. The archive is downloaded and unpacked **in memory** into a
+      skill whose ``SKILL.md`` body drives it and whose sibling files become
+      in-memory resources; nothing is written to disk. Scripts bundled inside an
+      archive are surfaced as read-only resources only; MCP-delivered scripts
+      are never discovered as runnable.
+
+    Entries whose type has no registered handler (e.g. ``mcp-resource-template``)
+    are skipped.
 
     If ``skill://index.json`` is absent, unreadable, empty, or fails to
     parse, this source returns an empty list.
+
+    Archive extraction behavior is configured via the ``archive_*`` constructor
+    keyword arguments. Because Python's :class:`CachingSkillsSource` decorator
+    already provides refresh/caching for any source, this source does not offer
+    a separate refresh interval; wrap it in :class:`CachingSkillsSource` to cache.
 
     Security considerations:
         Discovering skills over MCP means an *external* MCP server controls
@@ -4312,7 +4842,9 @@ class MCPSkillsSource(SkillsSource):
         instructions/scripts designed to exfiltrate data once loaded and, for
         script-capable skills, executed. Only connect this source to MCP
         servers you have vetted and trust, and treat their responses as
-        untrusted input.
+        untrusted input. Archive extraction is hardened against path-traversal
+        ("zip-slip"), link-based escapes, and decompression bombs, but the
+        skill *content* is still untrusted.
 
     Examples:
         .. code-block:: python
@@ -4327,12 +4859,18 @@ class MCPSkillsSource(SkillsSource):
 
     _INDEX_URI: Final[str] = "skill://index.json"
     _SKILL_MD_TYPE: Final[str] = "skill-md"
+    _ARCHIVE_TYPE: Final[str] = "archive"
 
     def __init__(
         self,
         client: ClientSession | None = None,
         *,
         session_provider: Callable[[], ClientSession] | None = None,
+        archive_resource_extensions: tuple[str, ...] | None = None,
+        archive_resource_search_depth: int = DEFAULT_SEARCH_DEPTH,
+        archive_max_file_count: int = _DEFAULT_ARCHIVE_MAX_FILE_COUNT,
+        archive_max_size_bytes: int = _DEFAULT_ARCHIVE_MAX_SIZE_BYTES,
+        archive_max_uncompressed_size_bytes: int = _DEFAULT_ARCHIVE_MAX_UNCOMPRESSED_SIZE_BYTES,
     ) -> None:
         """Initialize an MCPSkillsSource.
 
@@ -4352,18 +4890,43 @@ class MCPSkillsSource(SkillsSource):
                 reconnect), so cached skills keep using the live session. The
                 provider is forwarded to every :class:`MCPSkill` this source
                 creates.
+            archive_resource_extensions: Allowed file extensions for resources discovered
+                in ``archive``-type skills. When ``None`` (the default), the file-source
+                default set (``.md``, ``.json``, ``.yaml``, ``.yml``, ``.csv``, ``.xml``,
+                ``.txt``) is used. Files that would otherwise be scripts are never exposed
+                as runnable.
+            archive_resource_search_depth: Maximum depth to search for resource files
+                within each archive skill. ``1`` searches only the skill root; ``2`` (the
+                default) searches the root plus one level of subdirectories. Must be >= 1.
+            archive_max_file_count: Maximum number of files that may be extracted from a
+                single archive skill (excessive-file-count DoS guard). Defaults to ``20``.
+                An archive that exceeds the limit is skipped.
+            archive_max_size_bytes: Maximum size, in bytes, of a downloaded archive skill
+                resource. Defaults to ``1 MB``. An archive that exceeds the limit is skipped.
+            archive_max_uncompressed_size_bytes: Maximum total uncompressed size, in bytes,
+                of all files extracted from a single archive skill (decompression-bomb
+                guard). Defaults to ``1 MB``. An archive that exceeds the limit is skipped.
 
         Raises:
             ValueError: If both or neither of *client* and *session_provider* are
                 provided.
         """
         self._session_provider = _resolve_mcp_session_provider(client, session_provider)
+        self._archive_loader = _ArchiveEntryLoader(
+            self._session_provider,
+            resource_extensions=archive_resource_extensions,
+            resource_search_depth=archive_resource_search_depth,
+            max_file_count=archive_max_file_count,
+            max_size_bytes=archive_max_size_bytes,
+            max_uncompressed_size_bytes=archive_max_uncompressed_size_bytes,
+        )
 
     async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
         """Discover and return skills from the MCP server.
 
-        Reads ``skill://index.json``, parses it, and creates an
-        :class:`MCPSkill` for each valid ``skill-md`` entry.
+        Reads ``skill://index.json``, parses it, dispatches each entry to the
+        handler for its ``type`` (``skill-md`` or ``archive``), and returns the
+        aggregated skill list.
 
         Args:
             context: Contextual information about the agent and session
@@ -4372,14 +4935,28 @@ class MCPSkillsSource(SkillsSource):
                 context.
 
         Returns:
-            A list of discovered :class:`MCPSkill` instances.
+            A list of discovered :class:`Skill` instances.
         """
         index = await self._try_read_index()
-        if index is None:
-            return []
+
+        skill_md_entries: list[_McpSkillIndexEntry] = []
+        archive_entries: list[_McpSkillIndexEntry] = []
+        if index is not None:
+            for entry in index.skills:
+                entry_type = (entry.type or "").strip().lower()
+                if entry_type == self._SKILL_MD_TYPE:
+                    skill_md_entries.append(entry)
+                elif entry_type == self._ARCHIVE_TYPE:
+                    archive_entries.append(entry)
+                else:
+                    logger.debug(
+                        "Skipping entry '%s': unsupported type '%s'",
+                        entry.name or "(unnamed)",
+                        entry.type or "(none)",
+                    )
 
         skills: list[Skill] = []
-        for entry in index.skills:
+        for entry in skill_md_entries:
             result = self._try_create_skill(entry)
             if result is not None:
                 skills.append(result)
@@ -4389,6 +4966,10 @@ class MCPSkillsSource(SkillsSource):
                     "Skipping skill index entry '%s'",
                     entry.name or "(unnamed)",
                 )
+
+        # Always invoke the archive loader (even with no archive entries) so the
+        # dispatch mirrors the skill-md path; it simply returns an empty list.
+        skills.extend(await self._archive_loader.load(archive_entries, context))
 
         logger.info("Successfully loaded %d skills from MCP server", len(skills))
         return skills
@@ -4421,23 +5002,18 @@ class MCPSkillsSource(SkillsSource):
             return None
 
     def _try_create_skill(self, entry: _McpSkillIndexEntry) -> MCPSkill | None:
-        """Attempt to create an :class:`MCPSkill` from an index entry.
+        """Attempt to create an :class:`MCPSkill` from a ``skill-md`` index entry.
+
+        The caller has already dispatched the entry to this handler by its
+        ``type``; this method validates the remaining required fields.
 
         Args:
-            entry: A single entry from the skill index.
+            entry: A single ``skill-md`` entry from the skill index.
 
         Returns:
             An :class:`MCPSkill` if the entry is valid, or ``None`` if the
             entry should be skipped.
         """
-        if entry.type != self._SKILL_MD_TYPE:
-            logger.debug(
-                "Skipping entry '%s': unsupported type '%s'",
-                entry.name or "(unnamed)",
-                entry.type or "(none)",
-            )
-            return None
-
         if not entry.name or not entry.name.strip():
             logger.debug("Skipping entry: missing required 'name' field")
             return None

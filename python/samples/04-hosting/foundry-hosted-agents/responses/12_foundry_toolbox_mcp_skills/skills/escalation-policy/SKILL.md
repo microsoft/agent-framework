@@ -25,20 +25,10 @@ You must follow this escalation policy on every conversation.
 
 ## Refund authority
 
-Before quoting any refund amount or approval timeline, apply this matrix and
-route the request to the correct approver. Quote the tier and approver exactly.
-
-| Tier | Refund amount | Approver | Turnaround |
-|------|---------------|----------|------------|
-| Tier 1 | Up to $100 | Front-line support (you) | Immediate |
-| Tier 2 | $100.01 – $500 | Support team lead | Same business day |
-| Tier 3 | Over $500 | Senior specialist (escalation required) | 1 business day |
-
-- A Tier 3 refund always requires escalation per the rules above; you may not
-  approve it yourself.
-- Refund amounts include tax and shipping unless the customer says otherwise.
-- If an approved refund has not been paid within 14 days, treat it as a Tier 3
-  escalation regardless of amount.
+Before quoting any refund amount or approval timeline, read the supplementary
+resource `references/refund-matrix.md` for the current approval tiers and route
+the request to the correct approver. Quote the tier and approver from that
+resource exactly — never guess the limits.
 
 ## Do not escalate
 

@@ -24,12 +24,18 @@ async def main() -> None:
     toolbox = FoundryToolbox(credential, load_tools=False)
 
     # as_skills_provider() discovers skills from skill://index.json on the toolbox
-    # MCP session and exposes them as an agent context provider; SKILL.md bodies are
-    # fetched on demand via resources/read. disable_load_skill_approval=True registers
-    # the load_skill tool with approval_mode="never_require" so this unattended agent
-    # can load skills without an approval round-trip -- the Responses host runs the
+    # MCP session and exposes them as an agent context provider; SKILL.md bodies and
+    # any archive resources are fetched on demand via resources/read. Archive-type
+    # skills (ZIP/TAR) are downloaded and unpacked in memory -- nothing is written to
+    # disk -- so no writable working directory is needed. Disabling the load_skill and
+    # read_skill_resource approvals registers those tools with
+    # approval_mode="never_require" so this unattended agent can load skills and read
+    # their resources without an approval round-trip -- the Responses host runs the
     # agent without an AgentSession, which the default approval flow requires.
-    skills_provider = toolbox.as_skills_provider(disable_load_skill_approval=True)
+    skills_provider = toolbox.as_skills_provider(
+        disable_load_skill_approval=True,
+        disable_read_skill_resource_approval=True,
+    )
 
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
