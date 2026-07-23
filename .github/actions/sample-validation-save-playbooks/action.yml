@@ -5,7 +5,7 @@ description: >
   validation step fails. Combining restore+save via actions/cache would skip the
   save on a failing job (post-if: success()), so freshly authored playbooks for
   samples that failed validation would never persist. Invoke this with
-  `if: ${{ !cancelled() }}` after the validation step in each job.
+  'if: not-cancelled' after the validation step in each job.
 
 runs:
   using: "composite"
