@@ -24,7 +24,16 @@ from ag_ui.core import (
     ToolCallEndEvent,
     ToolCallStartEvent,
 )
-from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, Workflow, WorkflowRunState
+from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
+    CheckpointStorage,
+    Content,
+    Message,
+    Workflow,
+    WorkflowCheckpoint,
+    WorkflowRunState,
+)
 
 from ._message_adapters import normalize_agui_input_messages
 from ._run_common import (
@@ -143,6 +152,59 @@ async def _pending_request_events(workflow: Workflow) -> dict[str, Any]:
 
     if isinstance(pending, dict):
         return cast(dict[str, Any], pending)
+    return {}
+
+
+async def _load_checkpoint(
+    workflow: Workflow,
+    checkpoint_id: str,
+    checkpoint_storage: CheckpointStorage | None,
+) -> WorkflowCheckpoint | None:
+    """Best-effort load of a persisted checkpoint *without* restoring it.
+
+    Storage resolution mirrors ``Workflow.run(checkpoint_id=..., checkpoint_storage=...)``:
+    an explicitly supplied ``checkpoint_storage`` (which the resume run installs as its
+    runtime override) takes precedence; otherwise the workflow's build-time checkpoint
+    storage, exposed through its runner context, is used. Loading only reads the persisted
+    ``WorkflowCheckpoint`` -- it never mutates workflow state and never invokes executor
+    ``on_checkpoint_restore`` hooks. Any failure is swallowed here and surfaced by the
+    core ``workflow.run(checkpoint_id=...)`` call instead.
+    """
+    try:
+        if checkpoint_storage is not None:
+            return await checkpoint_storage.load(checkpoint_id)
+        runner_context = getattr(workflow, "_runner_context", None)
+        has_checkpointing = getattr(runner_context, "has_checkpointing", None)
+        load_checkpoint = getattr(runner_context, "load_checkpoint", None)
+        if callable(has_checkpointing) and has_checkpointing() and load_checkpoint is not None:
+            return cast(WorkflowCheckpoint, await load_checkpoint(checkpoint_id))
+    except Exception:  # pragma: no cover - defensive; the core run re-raises the real error
+        logger.warning(
+            "Could not load checkpoint for resume-response coercion; the core run will surface any error.",
+            exc_info=True,
+        )
+    return None
+
+
+async def _pending_request_events_from_checkpoint(
+    workflow: Workflow,
+    checkpoint_id: str,
+    checkpoint_storage: CheckpointStorage | None,
+) -> dict[str, Any]:
+    """Read pending request_info events from a persisted checkpoint without restoring it.
+
+    Resume responses are coerced against the requests that were pending when the
+    checkpoint was written. On a cold checkpoint resume those requests are not yet live
+    on the workflow instance, so the coercion cannot see them. Reading
+    ``pending_request_info_events`` straight from the persisted ``WorkflowCheckpoint``
+    exposes them without running any executor ``on_checkpoint_restore`` hook. The single
+    ``workflow.run(checkpoint_id=...)`` below then performs the one real restore, so the
+    restore -- and every custom restore hook -- runs exactly once per resume.
+    """
+    checkpoint = await _load_checkpoint(workflow, checkpoint_id, checkpoint_storage)
+    pending = getattr(checkpoint, "pending_request_info_events", None)
+    if isinstance(pending, dict):
+        return dict(cast(dict[str, Any], pending))
     return {}
 
 
@@ -775,8 +837,24 @@ def _details_code(details: Any) -> str | None:
 async def run_workflow_stream(
     input_data: dict[str, Any],
     workflow: Workflow,
+    *,
+    checkpoint_storage: CheckpointStorage | None = None,
+    checkpoint_id: str | None = None,
 ) -> AsyncGenerator[BaseEvent]:
-    """Run a Workflow and emit AG-UI protocol events."""
+    """Run a Workflow and emit AG-UI protocol events.
+
+    Args:
+        input_data: Normalized AG-UI request payload (a ``RunAgentInput`` dump).
+        workflow: The core ``Workflow`` instance to execute.
+        checkpoint_storage: Optional checkpoint storage forwarded to the core
+            workflow. When provided, the workflow creates a checkpoint at the end
+            of each superstep, mirroring ``Workflow.run(checkpoint_storage=...)``.
+        checkpoint_id: Optional checkpoint id to resume from. When provided the run
+            restores the persisted workflow state instead of starting a fresh turn,
+            mirroring ``Workflow.run(checkpoint_id=...)``. Any incoming messages are
+            treated as request-info responses (or ignored) rather than a new
+            start-executor message, so resume stays consistent with the core API.
+    """
     thread_id = input_data.get("thread_id") or input_data.get("threadId") or str(uuid.uuid4())
     run_id = input_data.get("run_id") or input_data.get("runId") or str(uuid.uuid4())
     available_interrupts = input_data.get("available_interrupts") or input_data.get("availableInterrupts")
@@ -794,7 +872,23 @@ async def run_workflow_stream(
     last_assistant_text: str | None = None
 
     resume_payload = _extract_resume_payload(input_data)
-    pending_before_run = await _pending_request_events(workflow)
+
+    # A checkpoint resume that carries an explicit resume payload targets the requests
+    # that were pending when the checkpoint was written; those only reappear on the live
+    # instance once the checkpoint is restored. Rather than restore up front (which would
+    # invoke every executor's ``on_checkpoint_restore`` hook a second time, since
+    # ``workflow.run(checkpoint_id=...)`` restores again below), read the pending request
+    # events straight from the persisted checkpoint. That gives ``pending_before_run``
+    # (and the resume contract + coercion below) the same post-restore pending set the
+    # non-checkpoint path sees from live requests, without any extra restore. Without it a
+    # raw JSON resume payload (e.g. a ``function_approval_response`` dict) would reach core
+    # uncoerced and be rejected with a response-type mismatch. Only load the checkpoint's
+    # pending set when a resume payload is present so a pure checkpoint restore still
+    # surfaces its pending interrupts instead of tripping the "resume required" contract.
+    if checkpoint_id is not None and resume_payload is not None:
+        pending_before_run = await _pending_request_events_from_checkpoint(workflow, checkpoint_id, checkpoint_storage)
+    else:
+        pending_before_run = await _pending_request_events(workflow)
     pending_interrupt_ids = _pending_workflow_interrupt_ids(pending_before_run)
     resume_entries: list[dict[str, Any]] = []
     if pending_interrupt_ids:
@@ -836,7 +930,11 @@ async def run_workflow_stream(
         return
     pending_interrupts = _interrupts_from_pending_requests(pending_before_run)
 
-    if not responses and pending_before_run:
+    # A checkpoint resume must always reach ``workflow.run(checkpoint_id=...)`` so the
+    # core restores persisted state and re-emits any pending requests from the
+    # checkpoint. ``pending_before_run`` reflects the live (pre-restore) instance, so
+    # short-circuiting on it here would skip the restore entirely.
+    if checkpoint_id is None and not responses and pending_before_run:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         for request_event in pending_before_run.values():
             request_payload = _request_payload_from_request_event(request_event)
@@ -853,7 +951,7 @@ async def run_workflow_stream(
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=pending_interrupts)
         return
 
-    if not responses and not messages:
+    if checkpoint_id is None and not responses and not messages:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=pending_interrupts)
         return
@@ -889,11 +987,27 @@ async def run_workflow_stream(
             logger.debug("workflow.run() does not accept function_invocation_kwargs; dropping forwarded_props")
             fwd_kwargs = {}
 
+    # Forward checkpoint storage so the core workflow creates a checkpoint at the end
+    # of each superstep (parity with ``Workflow.run(checkpoint_storage=...)``).
+    checkpoint_kwargs: dict[str, Any] = {}
+    if checkpoint_storage is not None:
+        checkpoint_kwargs["checkpoint_storage"] = checkpoint_storage
+
     try:
-        if responses:
-            event_stream = workflow.run(responses=responses, stream=True, **fwd_kwargs)
+        if checkpoint_id is not None:
+            # Resume from a checkpoint. ``message`` is mutually exclusive with
+            # ``checkpoint_id`` in the core API, so incoming messages are only
+            # forwarded as request-info responses (``responses``), never as a new
+            # start-executor message. ``responses`` + ``checkpoint_id`` performs a
+            # restore-then-send in a single call.
+            run_kwargs: dict[str, Any] = {"checkpoint_id": checkpoint_id, **checkpoint_kwargs}
+            if responses:
+                run_kwargs["responses"] = responses
+            event_stream = workflow.run(stream=True, **run_kwargs, **fwd_kwargs)
+        elif responses:
+            event_stream = workflow.run(responses=responses, stream=True, **checkpoint_kwargs, **fwd_kwargs)
         else:
-            event_stream = workflow.run(message=messages, stream=True, **fwd_kwargs)
+            event_stream = workflow.run(message=messages, stream=True, **checkpoint_kwargs, **fwd_kwargs)
 
         async for event in event_stream:
             event_type = getattr(event, "type", None)
