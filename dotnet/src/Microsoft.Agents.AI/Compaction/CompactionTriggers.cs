@@ -51,6 +51,14 @@ public static class CompactionTriggers
         index => index.IncludedTokenCount > maxTokens;
 
     /// <summary>
+    /// Creates a trigger that fires when the included message count is below the specified maximum.
+    /// </summary>
+    /// <param name="maxMessages">The message threshold.</param>
+    /// <returns>A <see cref="CompactionTrigger"/> that evaluates included message count.</returns>
+    public static CompactionTrigger MessagesBelow(int maxMessages) =>
+        index => index.IncludedMessageCount < maxMessages;
+
+    /// <summary>
     /// Creates a trigger that fires when the included message count exceeds the specified maximum.
     /// </summary>
     /// <param name="maxMessages">The message threshold.</param>
