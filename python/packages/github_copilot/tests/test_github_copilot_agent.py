@@ -3439,6 +3439,34 @@ class TestGitHubCopilotAttachments:
 
         assert attachments is None
 
+    async def test_non_base64_data_uri_is_skipped_not_raised(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """A non-base64 ``data:`` URI is skipped instead of failing the whole request."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+        # ``Content.from_uri`` classifies this as type="data" but it is not base64-encoded,
+        # so extracting its bytes raises ContentError internally.
+        non_base64 = Content.from_uri("data:text/plain,hello")
+        assert non_base64.type == "data"
+        message = Message(role="user", contents=[Content.from_text("hi"), non_base64])
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        # Should complete without raising.
+        await agent.run(message)
+
+        assert mock_session.send_and_wait.call_args.kwargs["attachments"] is None
+
+    def test_prepare_attachments_skips_non_base64_data_uri(self) -> None:
+        """The helper drops a non-base64 ``data:`` URI rather than raising ContentError."""
+        message = Message(role="user", contents=[Content.from_uri("data:text/plain,hello")])
+
+        attachments = GitHubCopilotAgent._prepare_attachments_for_copilot([message])
+
+        assert attachments is None
+
 
 # ---------------------------------------------------------------------------
 # Integration tests — require COPILOT_GITHUB_TOKEN env var

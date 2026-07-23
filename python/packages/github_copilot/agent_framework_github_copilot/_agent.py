@@ -35,7 +35,7 @@ from agent_framework._types import (
     _get_data_bytes_as_str,  # pyright: ignore[reportPrivateUsage]
     normalize_tools,
 )
-from agent_framework.exceptions import AgentException
+from agent_framework.exceptions import AgentException, ContentError
 from agent_framework.observability import AgentTelemetryLayer
 
 if sys.version_info >= (3, 11):
@@ -930,10 +930,13 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         Scans the outgoing messages for ``data`` content (binary payloads such as
         images or documents carried as base64 data URIs) and maps each one to an
-        inline ``blob`` attachment understood by the Copilot SDK. This mirrors the
-        .NET provider, which forwards ``DataContent`` as attachments. Remote URI
-        content (for example ``https://`` links) is left in the prompt text and not
-        attached, matching the SDK's supported attachment shapes.
+        inline ``blob`` attachment understood by the Copilot SDK.
+
+        Only base64 ``data:`` content is forwarded as an attachment. Other content
+        is not turned into an attachment: text content is already carried in the
+        prompt, while remote URIs (for example ``https://`` links) and malformed or
+        non-base64 ``data:`` URIs are skipped -- they are neither attached nor added
+        to the prompt.
 
         Args:
             messages: The messages being sent to the Copilot session.
@@ -947,7 +950,14 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             for content in message.contents:
                 if content.type != "data":
                     continue
-                data_str = _get_data_bytes_as_str(content)
+                try:
+                    data_str = _get_data_bytes_as_str(content)
+                except ContentError:
+                    logger.warning(
+                        "Skipping GitHub Copilot attachment with an unsupported data URI; "
+                        "only base64-encoded 'data:' URIs can be forwarded as attachments."
+                    )
+                    continue
                 if not data_str:
                     continue
                 if not content.media_type:
