@@ -379,7 +379,7 @@ class RawFoundryAgentChatClient(
         if not self.allow_preview:
             extra_body.setdefault("agent_reference", _build_agent_reference(self.agent_name, self.agent_version))
             should_strip_model = _uses_foundry_agent_session(conversation_id) or (
-                conversation_id is None and not options.get("model")  # falsy catches None and "" (#7272)
+                conversation_id is None and not options.get("model")
             )
             if should_strip_model:
                 run_options.pop("model", None)

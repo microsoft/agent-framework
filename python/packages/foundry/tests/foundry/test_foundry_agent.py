@@ -1967,3 +1967,37 @@ async def test_env_model_is_stripped_from_agent_reference_payload(
     assert "model" not in result or not result.get("model"), (
         f"Empty/falsy model must be stripped from outgoing payload, got model={result.get('model')!r}"
     )
+
+
+async def test_continuation_turn_strips_empty_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multi-turn continuation calls with conversation_id='resp_123' must also strip empty model strings."""
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+        agent_version="1.0",
+    )
+
+    with patch(
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+        new_callable=AsyncMock,
+        return_value={
+            "model": "",
+            "previous_response_id": "resp_123",
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
+        },
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents=["hi"])],
+            options={"conversation_id": "resp_123"},
+        )
+
+    assert "model" not in result or not result.get("model"), (
+        f"Empty/falsy model must be stripped on continuation turns, got model={result.get('model')!r}"
+    )
