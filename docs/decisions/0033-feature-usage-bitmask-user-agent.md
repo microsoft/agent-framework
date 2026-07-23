@@ -43,6 +43,9 @@ the per-language bit tables are in
 - **Versioning discipline** — v1 is a point-in-time decision. Adding bits later is
   easier than removing or redefining them, so the initial table should lean toward
   fewer bits and avoid forcing v2 shortly after launch.
+- **Allocation discipline** — each bit represents a stable framework-owned
+  capability with a concrete product/support question and an actual-use mark
+  point; implementation detail and speculative distinctions stay out.
 
 ## Considered Options
 
@@ -113,8 +116,8 @@ cleared. The token reflects "what this process has used so far."
   outbound request — an `Agent`, a workflow/orchestration, or a context/history
   provider is constructed once and lives for the session/process. A process-wide
   mask is the only scope that can represent them at all.
-- Good, trivial and cheap: one OR under a lock (Python) / `Interlocked.Or`
-  (.NET); no per-request state plumbing.
+- Good, trivial and cheap: one OR under a lock (Python) / one atomic OR into one
+  of two 64-bit lanes (.NET); no per-request state plumbing.
 - Neutral, coarser than per-call — early requests carry fewer bits than later
   ones, and the token says "this process used X", not "this call used X".
 
@@ -140,8 +143,9 @@ See [Prior art](#prior-art).
 ### Granularity
 
 The mechanism can support several granularities. The remaining decision before
-implementation is how detailed v1 should be. The estimates below are intentionally
-rough; 64-bit is a useful simplicity target, not a hard requirement.
+implementation is how detailed v1 should be. The estimates below are
+intentionally rough; v1 uses a fixed 128-bit bound to leave useful headroom
+without making the registry unbounded.
 
 #### F0. Package-level bits
 
@@ -188,6 +192,8 @@ Examples that get bits:
 - `Workflow` / `FunctionalWorkflow` as one workflow capability.
 - `FunctionTool`; MCP transports as one MCP capability; shell tools as one shell
   capability.
+- Skills provider plus stable source types: file, in-memory/programmatic, and
+  MCP-backed skills (with .NET inline/class skill distinctions).
 - Foundry chat/agent/embedding capabilities; OpenAI chat/embedding capabilities.
 
 Examples that do **not** get separate bits: `InMemoryHistoryProvider` vs
@@ -195,14 +201,15 @@ Examples that do **not** get separate bits: `InMemoryHistoryProvider` vs
 `FanOutEdgeGroup`; `MCPStdioTool` vs `MCPStreamableHTTPTool` vs
 `MCPWebsocketTool`; `LocalShellTool` vs `DockerShellTool` vs
 `ShellEnvironmentProvider` vs `ShellPolicy`; `OpenAIChatClient` vs
-`OpenAIChatCompletionClient`.
+`OpenAIChatCompletionClient`; skill-source decorators such as caching, filtering,
+deduplication, and aggregation.
 
-Rough estimate: Python ~55-65 bits; .NET ~40-50 bits. The current candidate
-registry is already at 59 Python / 46 .NET assigned bits.
+Rough estimate: Python ~60-70 bits; .NET ~45-55 bits. The current candidate
+registry is at 62 Python / 51 .NET assigned bits.
 
 - Good, likely answers the first product adoption questions while staying compact.
-- Neutral, still fits the preferred 64-bit simplicity target, but Python has
-  little growth room.
+- Good, fits comfortably within 128 bits while leaving room for additive package
+  and feature growth.
 - Neutral, some provider internals remain collapsed until a later additive bit is
   justified.
 
@@ -228,8 +235,8 @@ approval mode or result parser choices.
 Rough estimate: Python ~70-100 bits; .NET ~55-80 bits.
 
 - Good, concrete and directly tied to public API use.
-- Neutral, likely exceeds the preferred 64-bit target for Python, but that target
-  is not a hard requirement.
+- Neutral, fits within 128 bits at the current estimate, but consumes much of the
+  deliberate growth reserve.
 - Bad, adds many call sites and more fingerprint specificity for v1.
 
 #### F3. Construct subtype / configuration bits
@@ -254,7 +261,8 @@ count; model/deployment names, prompts, tool arguments, payloads.
 Rough estimate: Python ~110-150 bits; .NET ~85-125 bits.
 
 - Good, useful where mode-level distinctions are decision-relevant.
-- Bad, trades simplicity for precision and increases fingerprint specificity.
+- Bad, trades simplicity for precision, increases fingerprint specificity, and
+  may exhaust or exceed 128 bits in Python.
 
 #### F4. Option / behavior flag bits
 
@@ -278,8 +286,8 @@ content, model names, URLs, tenant/user/session identifiers.
 Rough estimate: Python 150+ bits; .NET 120+ bits.
 
 - Good, maximum framework-owned detail.
-- Bad, too detailed for a first v1 unless there is already a concrete decision
-  that requires it.
+- Bad, exceeds or nearly exhausts 128 bits and is too detailed for v1 without a
+  concrete decision that requires it.
 
 ### Registry sharing model
 
@@ -321,45 +329,45 @@ already present in the UA product token.
 
 ### Representation (how the mask is rendered as text)
 
-All examples below encode the same mask — bits 0, 2, 16, 22, 27 set
+All examples below encode the same mask — bits 0, 2, 32, 48, 56 set
 (agent + workflow + sequential-orchestration + foundry.chat_client + openai, in
-the Python v1 list) = decimal `138477573`.
+the Python v1 list) = decimal `72339073309605893`.
 
-#### L. Decimal — `feat=v1.138477573`
+#### L. Decimal — `feat=v1.72339073309605893`
 
 - Good, human-familiar; trivial to parse.
 - Neutral, no visual alignment to bit/nibble boundaries; slightly longer than hex
   for large masks. No advantage over hex.
 
-#### M. Hex (chosen) — `feat=v1.8410005`
+#### M. Hex (chosen) — `feat=v1.101000100000005`
 
-- Good, compact (≤16 chars for a 64-bit mask).
+- Good, compact (≤32 chars for a 128-bit mask).
 - Good, decodes with one stdlib call in every language (`int(x, 16)` /
-  `Convert.ToUInt64(x, 16)`); nibble boundaries are eyeball-able.
+  two 64-bit lane parses in .NET); nibble boundaries are eyeball-able.
 - Good, lowercase, no `0x` prefix, no leading zeros — unambiguous and stable.
 
-#### N. Binary / bit-list — `feat=v1.1000010000010000000000000101` or `feat=v1.0,2,16,22,27`
+#### N. Binary / bit-list — `feat=v1.100000001000000000000000100000000000000000000000000000101` or `feat=v1.0,2,32,48,56`
 
 - Good, most directly human-readable ("which bits").
 - Bad, longest form in the UA; the bit-list needs delimiter handling and grows
   with the number of set bits.
 
-#### O. Alphabet / base-N (e.g. Crockford base32 `feat=v1.442005`, base62 `feat=v1.9n2lf`)
+#### O. Alphabet / base-N (e.g. Crockford base32 `feat=v1.208004000005`, base62 `feat=v1.5LJRx1i6xJ`)
 
 - Good, shortest representation.
 - Bad, needs a custom alphabet + decode table on both ends; base62 is
   case-sensitive (fragile through case-normalizing intermediaries); not
-  eyeball-able. Premature optimization for a value that is already ≤16 chars in
+  eyeball-able. Premature optimization for a value that is already ≤32 chars in
   hex.
 
 ## Decision Outcome
 
 Chosen: **a per-request, first-party-only User-Agent `(feat=...)` token (A),
-with a process-global monotonic accumulator (S1), per-language bit lists (H),
-hand-written enums kept honest by a parity test (J), rendered as lowercase hex
-(M).**
+with a 128-bit process-global monotonic accumulator (S1), per-language bit lists
+(H), hand-written enums kept honest by a parity test (J), rendered as lowercase
+hex (M).**
 
-This is the smallest design that answers the question. A preferably 64-bit
+This is a bounded design with enough v1 headroom. A 128-bit
 **process-global, monotonic** mask accumulates from universal
 `mark_feature_used()` calls (so it spans construction-time and session-scoped
 features that aren't bound to any request — the per-request set model (S2) can't);
@@ -367,7 +375,7 @@ the token is **stamped per request** only on approved Azure/Foundry client
 pipelines, so it reflects the live mask without freezing at construction (live,
 no third-party leak); each
 SDK owns an independent bit list selected by the language already in the UA; the
-mask is rendered as hex (`feat=v1.8410005`). **Two opt-out env vars are
+mask is rendered as hex (`feat=v1.101000100000005`). **Two opt-out env vars are
 provided:** a dedicated `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` that drops only
 the mask while keeping the base SDK identity/version User-Agent, and the existing
 `AGENT_FRAMEWORK_USER_AGENT_DISABLED` that drops the whole contribution. OTel (C)
@@ -384,9 +392,10 @@ F0-F4. This is a point-in-time decision: adding new bits later is easier than
 removing or redefining them, because removals/redefinitions require a new
 registry version and historical decode tables. For v1, prefer the least detailed
 level that answers the known product/support questions so we do not force a v2
-shortly after launch. The refreshed candidate registry uses **59 Python bits and
-46 .NET bits**, leaving only five unassigned Python positions; that is evidence
-against adding detail without a concrete query.
+shortly after launch. The refreshed candidate registry uses **62 Python bits and
+51 .NET bits**, leaving 66 and 77 positions respectively. That headroom supports
+normal growth; it does not waive the registry's
+[allocation tenet](../specs/feature-usage-bit-registry.md#allocation-tenet).
 
 ### Consequences
 
@@ -397,9 +406,9 @@ against adding detail without a concrete query.
   Python and added to .NET with this work).
 - Good, first-party-only + per-request emission gives a live mask and no
   third-party fingerprint leak.
-- Good, staying within 64-bit keeps .NET lock-free via `Interlocked`/CAS;
-  per-language lists remove all cross-language sync; hand-written enums avoid a
-  codegen toolchain.
+- Good, 128 bits leaves useful v1 headroom; .NET remains lock-free by storing two
+  independently atomic 64-bit lanes; per-language lists remove all cross-language
+  sync; hand-written enums avoid a codegen toolchain.
 - Neutral, the token's reach equals eligible framework-configured first-party
   traffic; broader per-call signal (OTel) can be added later if needed.
 - Neutral, v1 granularity is intentionally a separate choice; the registry should
@@ -429,11 +438,11 @@ Takeaways that shaped (or validate) our choices:
   bitmask** (compact, bounded, decode-by-AND, but needs per-language bit
   allocation). We keep the bitmask for boundedness and trivial AND-decoding;
   AWS's short-code set is recorded as a viable alternative if bit-position
-  coordination ever becomes painful (it would also drop the preferred 64-bit target).
+  coordination ever becomes painful (it would also drop the fixed 128-bit bound).
 - **A fixed-width bitmask gives bounded token size for free.** botocore must cap
   the `m/` component at 1024 bytes and truncate at delimiter boundaries (with a
-  fallback log) precisely *because* its short-code set is unbounded. Our 64-bit
-  hex is ≤16 chars by construction — no size cap, no truncation logic.
+  fallback log) precisely *because* its short-code set is unbounded. Our 128-bit
+  hex is ≤32 chars by construction — no size cap, no truncation logic.
 - **Scope is where we diverge most — and deliberately.** botocore collects
   features into a per-request `contextvars` set that is **reset between
   requests**, and no-ops outside a request context to prevent cross-request
@@ -480,8 +489,11 @@ independent for Python and .NET.
   version.
 - **A bump (v2) is required only for breaking changes:** renumbering or
   re-partitioning existing bits, changing the *meaning* of an already-assigned
-  bit, or widening beyond 64-bit. Within a version a bit is **never** reused or
+  bit, or widening beyond 128-bit. Within a version a bit is **never** reused or
   reassigned — that invariant is what lets old decoders stay correct.
+- **The draft 64→128 change is still v1.** No v1 token or enum has shipped, so
+  this pre-implementation repartition establishes the initial contract rather
+  than migrating an existing one.
 - **Mixed-version coexistence is the norm.** A fleet runs many SDK releases at
   once, so `v1` and `v2` tokens appear simultaneously for a long time (old SDKs
   keep emitting `v1`). The decoder keeps **every** published `(language,
@@ -508,7 +520,7 @@ independent for Python and .NET.
 | **Shared processes intentionally carry usage across agents and tenants.** A request can include bits first set by another workload in the same worker. | Process-global monotonic scope (S1) | The token must be interpreted only as process-level "used so far," never as request/user/tenant attribution. Privacy review must explicitly accept this. |
 | **Counts are request-weighted and sticky.** Once set, a bit appears on every later eligible request from that process, so long-lived/high-traffic processes dominate. | Monotonic mask emitted per request | The signal supports traffic prevalence and co-occurrence, not first-use counts, unique-process counts, or exact feature invocation frequency. |
 | **Granularity may be too coarse or too detailed.** The chosen level may miss useful distinctions or create more specificity than needed. | v1 granularity choice (F0-F4) | This is the main remaining decision. Adding bits later is easier than removing/redefining them, so v1 should lean toward fewer bits that answer known questions. |
-| **Python v1 has little 64-bit headroom.** The refreshed candidate registry assigns 59 bits, leaving five. | 64-bit target + current candidate granularity | This is still enough to ship, but it makes speculative bits expensive and may force a Python v2 sooner than .NET. |
+| **.NET snapshots span two atomic lanes.** A bit can be marked between the low/high reads, so one request may omit that just-added bit. | 128-bit width without a global lock | The mask is monotonic: the snapshot cannot invent or clear a bit, and the next request includes the addition. This matches the existing "usage so far" timing semantics. |
 | **Fingerprinting risk is reduced, not eliminated.** A feature-combination mask is still a deployment signature, and it transits intermediaries (proxies/CDNs) even when first-party-scoped. | Emitting any feature-combination value | Scope + opt-out + coarse granularity mitigate it; v1 should avoid unnecessary detailed bits. |
 
 ## Open Questions (for decider discussion)

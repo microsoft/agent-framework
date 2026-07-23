@@ -32,13 +32,14 @@ doing so would leak a deployment fingerprint into logs we cannot read (see
 
 The current candidate uses package-level bits plus selected major capabilities:
 one bit per orchestration pattern (sequential / concurrent / group-chat /
-magentic / handoff), **one bit per built-in context/history provider**, and
-separate Foundry chat/agent/memory/evals/toolbox bits (plus embedding in Python).
+magentic / handoff), **one bit per built-in context/history provider**, selected
+skill source types, and separate Foundry chat/agent/memory/evals/toolbox bits
+(plus embedding in Python).
 See the
 [registry](feature-usage-bit-registry.md). ADR-0033 still leaves final v1
-granularity open. The refreshed candidate assigns 59 Python bits and 46 .NET
-bits: it still fits 64-bit and keeps .NET lock-free, but leaves only five Python
-positions unassigned.
+granularity open. The refreshed candidate assigns 62 Python bits and 51 .NET
+bits. V1 uses 128 bits, leaving 66 Python and 77 .NET positions for additive
+growth.
 
 Success metric: within one release after rollout, ≥80% of **eligible,
 framework-created** first-party (Foundry) requests carry a **non-empty** feature
@@ -69,7 +70,8 @@ we already send is far cheaper and easier to reason about for privacy.
 The accumulator and its helpers live in the existing
 `agent_framework/_telemetry.py` (alongside `get_user_agent()` /
 `prepend_agent_framework_to_user_agent()`), so the User-Agent machinery stays in
-one module. It owns a process-global 64-bit accumulator. Two env vars can disable
+one module. It owns a process-global 128-bit accumulator. Python's arbitrary-size
+`int` stores it directly. Two env vars can disable
 it: the existing Python `AGENT_FRAMEWORK_USER_AGENT_DISABLED` (which drops the
 whole User-Agent contribution, mask included), and a **dedicated**
 `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` that drops **only** the feature mask while
@@ -102,6 +104,8 @@ def mark_feature_used(bit: int) -> None:
     global _feature_mask
     if not _feature_mask_enabled():
         return
+    if not 0 <= bit < 128:
+        raise ValueError(f"Feature bit must be in range 0..127, got {bit}")
     with _feature_mask_lock:
         _feature_mask |= 1 << bit
 
@@ -124,11 +128,11 @@ def get_feature_token() -> str | None:
   provider is constructed once and used across the session. The single global
   mask is the only scope that can represent them, and its monotonic "usage so
   far" growth is the intended semantic, not a bleed bug. Concurrency-safe via the
-  module lock (Python) / lock-free `Interlocked` OR or compare-exchange loop
-  (.NET, depending on target framework).
+  module lock (Python) / two atomic 64-bit lanes in .NET.
 - **Token is safe by construction.** The emitted value is `v{int}.{hex}` —
   characters limited to `[0-9a-fv.]` — so no header-injection sanitization is
-  required (contrast botocore, which must sanitize arbitrary component strings).
+  required. A 128-bit mask is at most 32 hex characters (contrast botocore,
+  which must sanitize and cap arbitrary component strings).
 - **Private API.** `mark_feature_used`, `get_feature_token`, `apply_feature_token`
   and the mask itself are internal helpers; only the emitted token and the
   per-language registry tables are the stable, decodable contract.
@@ -151,7 +155,7 @@ from agent_framework._telemetry import FeatureBit, mark_feature_used
 
 class RawFoundryChatClient(...):  # base client; FoundryChatClient builds on it
     def __init__(self, ...):
-        mark_feature_used(FeatureBit.FOUNDRY_CHAT_CLIENT)  # bit 22 in v1
+        mark_feature_used(FeatureBit.FOUNDRY_CHAT_CLIENT)  # bit 48 in v1
         ...
 ```
 
@@ -161,7 +165,7 @@ that constructs a Foundry chat client — including the higher-level
 
 Using the shared enum (not literals) keeps `core` free of optional-package
 imports while guaranteeing the bit values match the registry. For reference, in
-v1 `FoundryChatClient` → bit 22, `FoundryAgent` → bit 23, Foundry memory → bit 24.
+v1 `FoundryChatClient` → bit 48, `FoundryAgent` → bit 49, Foundry memory → bit 50.
 
 ## Emission
 
@@ -293,7 +297,7 @@ from agent_framework_openai import OpenAIChatClient
 
 # First-party (Foundry) client: per-request hook stamps the live feat token.
 agent = Agent(client=FoundryChatClient(...), instructions="...")
-# Agent use marks bit 0; FoundryChatClient marks bit 22
+# Agent use marks bit 0; FoundryChatClient marks bit 48
 await agent.run("Hello")
 # Outgoing request to Foundry carries:
 #   User-Agent: agent-framework-python/1.2.3 (feat=v1.<mask-at-send-time>)
@@ -321,17 +325,20 @@ AGENT_FRAMEWORK_USER_AGENT_DISABLED=true python app.py
 ## .NET mapping
 
 - `core` has a hand-written `FeatureBit` enum whose values are **bit indexes
-  `0..63`** — the source of truth for the .NET bit list, matching the .NET table
+  `0..127`** — the source of truth for the .NET bit list, matching the .NET table
   in the registry doc — plus `FeatureUsage.MarkUsed(FeatureBit)` (universal
   marking, as in Python). It is not a `[Flags]` enum and its members are not mask
   values.
-- 64-bit width means the accumulator remains **lock-free**. Use
-  `Interlocked.Or` on target frameworks that expose it and a
-  `Interlocked.CompareExchange` loop on `netstandard2.0` / `net472`. Store the
-  bits in a `long`, build them as
-  `unchecked((long)(1UL << (int)bit))`, and encode by converting the atomic
-  snapshot back to `ulong`; this keeps bit 63 valid without sign/formatting bugs.
-  Reject indexes outside `0..63`.
+- Store the 128-bit mask as **two `long` lanes** (`low` for bits 0–63, `high`
+  for 64–127). Marking touches one lane with `Interlocked.Or` where available
+  and a small `Interlocked.CompareExchange` loop on `netstandard2.0` / `net472`.
+  Read each lane atomically. Since bits only move from zero to one, a concurrent
+  two-lane snapshot may miss a just-added bit but can never invent or clear one;
+  the next request includes it.
+- Format without depending on `UInt128`: if `high == 0`, emit `low` as lowercase
+  hex; otherwise emit `high` without leading zeros followed by `low:x16`. Cast
+  each signed lane to `ulong` before formatting so bits 63 and 127 are preserved.
+  Reject indexes outside `0..127`.
 - **Emission is per-request and first-party-scoped**, matching Python. The
   existing `AgentFrameworkUserAgentPolicy` / `HostedAgentUserAgentPolicy`
   pipeline policies already run per request — extend them to append/refresh the
@@ -381,7 +388,7 @@ table) are ignored.
    signal, retention, access, allowed queries, and opt-out behavior before code
    ships.
 2. **Core accumulator + enum** — in `agent_framework/_telemetry.py` add the
-   64-bit mask, lock, `mark_feature_used`, `get_feature_token`,
+   128-bit mask, lock, `mark_feature_used`, `get_feature_token`,
    `apply_feature_token`, and the hand-written `FeatureBit` IntEnum (source of
    truth, matching the Python table in the registry doc); `get_user_agent()`
    stays base-only. Unit tests for the live/idempotent stamper.
@@ -399,12 +406,12 @@ table) are ignored.
    wrapper inherits the marking, in the `__init__` of **each** core
    construct that owns a bit — including every built-in context/history provider
    (memory, skills, file-access, compaction, todo, agent-mode, background-agents,
-   in-memory/file history) and each orchestration builder — and at the first
-   public helper call for function-only packages such as `hosting-a2a`,
-   `hosting-responses`, and `hosting-telegram`. Marking is universal; emission
-   stays first-party-only.
+   in-memory/file history), each selected skill source type, and each
+   orchestration builder — and at the first public helper call for function-only
+   packages such as `hosting-a2a`, `hosting-responses`, and `hosting-telegram`.
+   Marking is universal; emission stays first-party-only.
 5. **.NET parity** — hand-written index-valued `FeatureBit` enum (source of truth
-   for the .NET table); `FeatureUsage.MarkUsed` with `Interlocked.Or` plus a
+   for the .NET table); two atomic 64-bit lanes with `Interlocked.Or` plus a
    compare-exchange fallback for legacy targets; extend both existing per-request
    Foundry UA policies through one shared formatter so `(feat=...)` is refreshed
    once and survives hosted-prefix replacement. The .NET enum is
@@ -425,6 +432,7 @@ This spec is the implementation reference; it does not re-litigate those choices
 
 Implementation-only note:
 
-- **Per-request hook overhead is negligible** (a flag check, a lock-free read of
-  the mask, and a string concat per first-party request), but benchmark the hot
-  path once if a high-QPS Foundry scenario is in scope.
+- **Per-request hook overhead is negligible** (a flag check, one Python integer
+  snapshot or two atomic .NET lane reads, and a string concat per first-party
+  request), but benchmark the hot path once if a high-QPS Foundry scenario is in
+  scope.

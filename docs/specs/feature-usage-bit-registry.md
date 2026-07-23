@@ -2,7 +2,7 @@
 
 > **Status:** draft, accompanies [ADR-0033](../decisions/0033-feature-usage-bitmask-user-agent.md)
 > and [SPEC-004](004-feature-usage-telemetry.md).
-> **Version:** `1` per language · **Width:** 64-bit
+> **Version:** `1` per language · **Width:** 128-bit
 
 This document is the proposed human-readable registry for the feature-usage
 mask. Until ADR-0033 is accepted and the enums ship, these tables are a
@@ -17,16 +17,29 @@ whole User-Agent — see [Opt-out](#opt-out)).
 
 ## What is collected
 
-A single 64-bit integer (the *feature mask*) describing **which Agent Framework
+A single 128-bit integer (the *feature mask*) describing **which Agent Framework
 features were exercised** in a process — not which packages are installed. The
 candidate below uses package-level bits plus selected major capabilities: core
-agent/workflow/MCP features, each orchestration pattern, each individual built-in
-context/history provider, and distinct Foundry surfaces. ADR-0033 still leaves
-the final v1 granularity open. A feature sets its bit the first time it is
-genuinely used; the SDK ORs the bits together and emits the value.
+agent/workflow/MCP features, stable skill source types, each orchestration
+pattern, each individual built-in context/history provider, and distinct Foundry
+surfaces. ADR-0033 still leaves the final v1 granularity open. A feature sets its
+bit the first time it is genuinely used; the SDK ORs the bits together and emits
+the value.
 
 No identifiers, arguments, prompts, payloads, or user data are encoded — only the
 coarse boolean \"this feature was used\" per registered bit.
+
+## Allocation tenet
+
+**A bit represents a stable, framework-owned capability whose adoption answers a
+concrete product or support question.** It has a clear actual-use mark point in a
+public entry path, and the privacy review covers the resulting distinction.
+
+Keep imports, installation state, aliases, wrappers, internal helpers, and
+implementation decorators such as caching/filtering/deduplication within their
+own capability bit. Customer/runtime values — names, prompts, arguments, URLs,
+identifiers, configuration choices — never become bits. A proposed distinction
+without a concrete query and named decision owner waits.
 
 ## Per-language, not shared
 
@@ -40,7 +53,7 @@ no \"same bit, same meaning\" rule.
 
 ## Encoding
 
-- **Width:** 64-bit unsigned integer per language.
+- **Width:** 128-bit unsigned integer per language.
 - **Versioning:** the emission carries the version so a decoder knows the bit
   mapping in effect (version is per language).
 - **User-Agent:** the mask is an RFC 7231 **comment** (metadata, not a product
@@ -78,8 +91,8 @@ no \"same bit, same meaning\" rule.
 
 ## Bit table — Python (`agent-framework-python`, version 1)
 
-Layout: core feature + provider bits 0–15 (contiguous, with room to grow),
-orchestration patterns 16–21, provider/integration packages from 22.
+Layout: core features 0–31, orchestration patterns 32–47, and
+provider/integration packages from 48.
 
 | Bit | Id | Feature | Marked at (representative) |
 | --- | --- | --- | --- |
@@ -97,54 +110,57 @@ orchestration patterns 16–21, provider/integration packages from 22.
 | 11 | `core.background_agents_provider` | Background-agents provider | `agent_framework.BackgroundAgentsProvider` |
 | 12 | `core.in_memory_history_provider` | In-memory history provider | `agent_framework.InMemoryHistoryProvider` |
 | 13 | `core.file_history_provider` | File history provider | `agent_framework.FileHistoryProvider` |
-| 14–15 | _reserved_ | growth | — |
-| 16 | `orchestration.sequential` | Sequential orchestration | `agent_framework_orchestrations.SequentialBuilder` |
-| 17 | `orchestration.concurrent` | Concurrent orchestration | `agent_framework_orchestrations.ConcurrentBuilder` |
-| 18 | `orchestration.group_chat` | Group-chat orchestration | `agent_framework_orchestrations.GroupChatBuilder` |
-| 19 | `orchestration.magentic` | Magentic orchestration | `agent_framework_orchestrations.MagenticBuilder` |
-| 20 | `orchestration.handoff` | Handoff orchestration | `agent_framework_orchestrations.HandoffBuilder` |
-| 21 | _reserved_ | growth | — |
-| 22 | `foundry.chat_client` | Foundry chat client | `agent_framework_foundry` `RawFoundryChatClient` |
-| 23 | `foundry.agent` | Foundry agent | `agent_framework_foundry.FoundryAgent` |
-| 24 | `foundry.memory` | Foundry memory provider | `agent_framework_foundry.FoundryMemoryProvider` |
-| 25 | `foundry_local` | Foundry Local client | `agent_framework_foundry_local.FoundryLocalClient` |
-| 26 | `foundry_hosting` | Foundry hosting layer | `agent_framework_foundry_hosting.ResponsesHostServer` / `InvocationsHostServer` |
-| 27 | `openai` | OpenAI clients | `agent_framework_openai` |
-| 28 | `anthropic` | Anthropic clients | `agent_framework_anthropic` |
-| 29 | `bedrock` | AWS Bedrock clients | `agent_framework_bedrock` |
-| 30 | `gemini` | Gemini chat client | `agent_framework_gemini` |
-| 31 | `mistral` | Mistral embedding client | `agent_framework_mistral` |
-| 32 | `ollama` | Ollama clients | `agent_framework_ollama` |
-| 33 | `claude` | Claude Agent SDK agent | `agent_framework_claude` |
-| 34 | `copilotstudio` | Copilot Studio agent | `agent_framework_copilotstudio` |
-| 35 | `github_copilot` | GitHub Copilot agent | `agent_framework_github_copilot` |
-| 36 | `azure_ai_search` | Azure AI Search context provider | `agent_framework_azure_ai_search` |
-| 37 | `azure_cosmos` | Azure Cosmos history / checkpoint store | `agent_framework_azure_cosmos` |
-| 38 | `azure_contentunderstanding` | Azure Content Understanding context provider | `agent_framework_azure_contentunderstanding.ContentUnderstandingContextProvider` |
-| 39 | `redis` | Redis context / history provider | `agent_framework_redis` |
-| 40 | `mem0` | Mem0 memory provider | `agent_framework_mem0.Mem0ContextProvider` |
-| 41 | `purview` | Purview client | `agent_framework_purview.PurviewClient` |
-| 42 | `a2a` | A2A agent / executor | `agent_framework_a2a.A2AAgent` / `A2AExecutor` |
-| 43 | `ag_ui` | AG-UI chat client / agent | `agent_framework_ag_ui` |
-| 44 | `chatkit` | ChatKit integration | `agent_framework_chatkit` |
-| 45 | `devui` | DevUI served | `agent_framework_devui.serve` |
-| 46 | `declarative` | Declarative agent / workflow | `agent_framework_declarative` |
-| 47 | `durabletask` | Durable task runtime | `agent_framework_durabletask` |
-| 48 | `azurefunctions` | Azure Functions agent host | `agent_framework_azurefunctions` |
-| 49 | `tools` | Shell tools | `agent_framework_tools.shell.LocalShellTool` / `DockerShellTool` |
-| 50 | `monty` | Monty CodeAct provider | `agent_framework_monty.MontyCodeActProvider` |
-| 51 | `hyperlight` | Hyperlight CodeAct provider | `agent_framework_hyperlight.HyperlightCodeActProvider` |
-| 52 | `foundry.embedding` | Foundry embedding client | `agent_framework_foundry.RawFoundryEmbeddingClient` |
-| 53 | `foundry.evals` | Foundry evaluations | `agent_framework_foundry.FoundryEvals` |
-| 54 | `foundry.toolbox` | Foundry Toolbox MCP tool | `agent_framework_foundry_hosting.FoundryToolbox` |
-| 55 | `azure_cosmos_memory` | Azure Cosmos DB semantic-memory provider | `agent_framework_azure_cosmos_memory.CosmosMemoryContextProvider` |
-| 56 | `hosting` | App-owned agent/workflow hosting state | `agent_framework_hosting.AgentState` / `WorkflowState` |
-| 57 | `hosting.a2a` | A2A hosting converters | `agent_framework_hosting_a2a.a2a_to_run` / `a2a_from_run` |
-| 58 | `hosting.mcp` | MCP hosting adapters | `agent_framework_hosting_mcp.AgentMCPTool` / `WorkflowMCPTool` |
-| 59 | `hosting.responses` | OpenAI Responses hosting converters | `agent_framework_hosting_responses.responses_to_run` |
-| 60 | `hosting.telegram` | Telegram hosting converters | `agent_framework_hosting_telegram.telegram_to_run` |
-| 61 | `lab` | Experimental Agent Framework Lab features | `agent_framework.lab` feature entry points |
-| 62–63 | _reserved_ | future packages | — |
+| 14 | `core.file_skills_source` | File-backed skills | `agent_framework.FileSkillsSource` |
+| 15 | `core.in_memory_skills_source` | In-memory / programmatic skills | `agent_framework.InMemorySkillsSource` |
+| 16 | `core.mcp_skills_source` | MCP-backed skills | `agent_framework.MCPSkillsSource` |
+| 17–31 | _reserved_ | core growth | — |
+| 32 | `orchestration.sequential` | Sequential orchestration | `agent_framework_orchestrations.SequentialBuilder` |
+| 33 | `orchestration.concurrent` | Concurrent orchestration | `agent_framework_orchestrations.ConcurrentBuilder` |
+| 34 | `orchestration.group_chat` | Group-chat orchestration | `agent_framework_orchestrations.GroupChatBuilder` |
+| 35 | `orchestration.magentic` | Magentic orchestration | `agent_framework_orchestrations.MagenticBuilder` |
+| 36 | `orchestration.handoff` | Handoff orchestration | `agent_framework_orchestrations.HandoffBuilder` |
+| 37–47 | _reserved_ | orchestration growth | — |
+| 48 | `foundry.chat_client` | Foundry chat client | `agent_framework_foundry.RawFoundryChatClient` |
+| 49 | `foundry.agent` | Foundry agent | `agent_framework_foundry.FoundryAgent` |
+| 50 | `foundry.memory` | Foundry memory provider | `agent_framework_foundry.FoundryMemoryProvider` |
+| 51 | `foundry.embedding` | Foundry embedding client | `agent_framework_foundry.RawFoundryEmbeddingClient` |
+| 52 | `foundry.evals` | Foundry evaluations | `agent_framework_foundry.FoundryEvals` |
+| 53 | `foundry.toolbox` | Foundry Toolbox MCP tool | `agent_framework_foundry_hosting.FoundryToolbox` |
+| 54 | `foundry_local` | Foundry Local client | `agent_framework_foundry_local.FoundryLocalClient` |
+| 55 | `foundry_hosting` | Foundry hosting layer | `agent_framework_foundry_hosting.ResponsesHostServer` / `InvocationsHostServer` |
+| 56 | `openai` | OpenAI clients | `agent_framework_openai` |
+| 57 | `anthropic` | Anthropic clients | `agent_framework_anthropic` |
+| 58 | `bedrock` | AWS Bedrock clients | `agent_framework_bedrock` |
+| 59 | `gemini` | Gemini chat client | `agent_framework_gemini` |
+| 60 | `mistral` | Mistral embedding client | `agent_framework_mistral` |
+| 61 | `ollama` | Ollama clients | `agent_framework_ollama` |
+| 62 | `claude` | Claude Agent SDK agent | `agent_framework_claude` |
+| 63 | `copilotstudio` | Copilot Studio agent | `agent_framework_copilotstudio` |
+| 64 | `github_copilot` | GitHub Copilot agent | `agent_framework_github_copilot` |
+| 65 | `azure_ai_search` | Azure AI Search context provider | `agent_framework_azure_ai_search` |
+| 66 | `azure_cosmos` | Azure Cosmos history / checkpoint store | `agent_framework_azure_cosmos` |
+| 67 | `azure_contentunderstanding` | Azure Content Understanding context provider | `agent_framework_azure_contentunderstanding.ContentUnderstandingContextProvider` |
+| 68 | `redis` | Redis context / history provider | `agent_framework_redis` |
+| 69 | `mem0` | Mem0 memory provider | `agent_framework_mem0.Mem0ContextProvider` |
+| 70 | `purview` | Purview client | `agent_framework_purview.PurviewClient` |
+| 71 | `a2a` | A2A agent / executor | `agent_framework_a2a.A2AAgent` / `A2AExecutor` |
+| 72 | `ag_ui` | AG-UI chat client / agent | `agent_framework_ag_ui` |
+| 73 | `chatkit` | ChatKit integration | `agent_framework_chatkit` |
+| 74 | `devui` | DevUI served | `agent_framework_devui.serve` |
+| 75 | `declarative` | Declarative agent / workflow | `agent_framework_declarative` |
+| 76 | `durabletask` | Durable task runtime | `agent_framework_durabletask` |
+| 77 | `azurefunctions` | Azure Functions agent host | `agent_framework_azurefunctions` |
+| 78 | `tools` | Shell tools | `agent_framework_tools.shell.LocalShellTool` / `DockerShellTool` |
+| 79 | `monty` | Monty CodeAct provider | `agent_framework_monty.MontyCodeActProvider` |
+| 80 | `hyperlight` | Hyperlight CodeAct provider | `agent_framework_hyperlight.HyperlightCodeActProvider` |
+| 81 | `azure_cosmos_memory` | Azure Cosmos DB semantic-memory provider | `agent_framework_azure_cosmos_memory.CosmosMemoryContextProvider` |
+| 82 | `hosting` | App-owned agent/workflow hosting state | `agent_framework_hosting.AgentState` / `WorkflowState` |
+| 83 | `hosting.a2a` | A2A hosting converters | `agent_framework_hosting_a2a.a2a_to_run` / `a2a_from_run` |
+| 84 | `hosting.mcp` | MCP hosting adapters | `agent_framework_hosting_mcp.AgentMCPTool` / `WorkflowMCPTool` |
+| 85 | `hosting.responses` | OpenAI Responses hosting converters | `agent_framework_hosting_responses.responses_to_run` |
+| 86 | `hosting.telegram` | Telegram hosting converters | `agent_framework_hosting_telegram.telegram_to_run` |
+| 87 | `lab` | Experimental Agent Framework Lab features | `agent_framework.lab` feature entry points |
+| 88–127 | _reserved_ | future packages | — |
 
 ## Bit table — .NET (`agent-framework-dotnet`, version 1)
 
@@ -165,40 +181,45 @@ orchestration patterns 16–21, provider/integration packages from 22.
 | 12 | `core.background_agents_provider` | Background-agents provider | `Microsoft.Agents.AI.BackgroundAgentsProvider` |
 | 13 | `core.in_memory_history_provider` | In-memory history provider | `Microsoft.Agents.AI.InMemoryChatHistoryProvider` |
 | 14 | `core.mcp` | MCP tasks / skills integration | `Microsoft.Agents.AI.Mcp.McpClientTaskExtensions` |
-| 15 | _reserved_ | growth | — |
-| 16 | `orchestration.sequential` | Sequential orchestration | `Microsoft.Agents.AI.Workflows.SequentialWorkflowBuilder` |
-| 17 | `orchestration.concurrent` | Concurrent orchestration | `Microsoft.Agents.AI.Workflows.ConcurrentWorkflowBuilder` |
-| 18 | `orchestration.group_chat` | Group-chat orchestration | `Microsoft.Agents.AI.Workflows.GroupChatWorkflowBuilder` |
-| 19 | `orchestration.magentic` | Magentic orchestration | `Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder` |
-| 20 | `orchestration.handoff` | Handoff orchestration | `Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilder` |
-| 21 | _reserved_ | growth | — |
-| 22 | `foundry.chat_client` | Foundry chat client | `Microsoft.Agents.AI.Foundry.FoundryChatClient` |
-| 23 | `foundry.agent` | Foundry agent | `Microsoft.Agents.AI.Foundry.FoundryAgent` |
-| 24 | `foundry.memory` | Foundry memory provider | `Microsoft.Agents.AI.Foundry.FoundryMemoryProvider` |
-| 25 | `foundry_hosting` | Foundry hosting layer | `Microsoft.Agents.AI.Foundry.Hosting.FoundryHostingExtensions.AddFoundryResponses` |
-| 26 | `openai` | OpenAI integration | `Microsoft.Agents.AI.OpenAI` |
-| 27 | `anthropic` | Anthropic integration | `Microsoft.Agents.AI.Anthropic` |
-| 28 | `copilotstudio` | Copilot Studio agent | `Microsoft.Agents.AI.CopilotStudio.CopilotStudioAgent` |
-| 29 | `github_copilot` | GitHub Copilot agent | `Microsoft.Agents.AI.GitHub.Copilot.GitHubCopilotAgent` |
-| 30 | `azure_cosmos` | Cosmos history / checkpoint store | `Microsoft.Agents.AI.CosmosChatHistoryProvider` |
-| 31 | `valkey` | Valkey chat-history provider | `Microsoft.Agents.AI.Valkey.ValkeyChatHistoryProvider` |
-| 32 | `mem0` | Mem0 memory provider | `Microsoft.Agents.AI.Mem0.Mem0Provider` |
-| 33 | `purview` | Purview integration | `Microsoft.Agents.AI.Purview` |
-| 34 | `a2a` | A2A agent | `Microsoft.Agents.AI.A2A.A2AAgent` |
-| 35 | `hosting.ag_ui` | AG-UI hosting endpoint | `Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.AGUIEndpointRouteBuilderExtensions.MapAGUIServer` |
-| 36 | `devui` | DevUI served | `Microsoft.Agents.AI.DevUI` |
-| 37 | `declarative` | Declarative agent factory | `Microsoft.Agents.AI.ChatClientPromptAgentFactory` |
-| 38 | `durabletask` | Durable task runtime | `Microsoft.Agents.AI.DurableTask` |
-| 39 | `azurefunctions` | Azure Functions agent host | `Microsoft.Agents.AI.Hosting.AzureFunctions` |
-| 40 | `tools` | Shell tools | `Microsoft.Agents.AI.Tools.Shell.ShellExecutor` |
-| 41 | `hyperlight` | Hyperlight CodeAct provider | `Microsoft.Agents.AI.Hyperlight.HyperlightCodeActProvider` |
-| 42 | `hosting` | Generic AF hosting | `Microsoft.Agents.AI.Hosting.AIHostAgent` |
-| 43 | `foundry.evals` | Foundry evaluations | `Microsoft.Agents.AI.Foundry.FoundryEvals` |
-| 44 | `foundry.toolbox` | Foundry Toolbox MCP tool | `Microsoft.Agents.AI.Foundry.HostedMcpToolboxAITool` |
-| 45 | `local_codeact` | Local Python CodeAct provider | `Microsoft.Agents.AI.LocalCodeAct.LocalCodeActProvider` |
-| 46 | `hosting.a2a` | A2A hosting endpoints | `Microsoft.AspNetCore.Builder.A2AEndpointRouteBuilderExtensions.MapA2AJsonRpc` |
-| 47 | `hosting.openai` | OpenAI-compatible hosting endpoints | `Microsoft.AspNetCore.Builder.MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExtensions.MapOpenAIResponses` |
-| 48–63 | _reserved_ | future packages | — |
+| 15 | `core.file_skills_source` | File-backed skills | `Microsoft.Agents.AI.AgentFileSkillsSource` |
+| 16 | `core.in_memory_skills_source` | In-memory skills | `Microsoft.Agents.AI.AgentInMemorySkillsSource` |
+| 17 | `core.inline_skill` | Inline programmatic skill | `Microsoft.Agents.AI.AgentInlineSkill` |
+| 18 | `core.class_skill` | Class-based programmatic skill | `Microsoft.Agents.AI.AgentClassSkill` |
+| 19 | `core.mcp_skills_source` | MCP-backed skills | `Microsoft.Agents.AI.AgentSkillsProviderBuilderMcpExtensions.UseMcpSkills` |
+| 20–31 | _reserved_ | core growth | — |
+| 32 | `orchestration.sequential` | Sequential orchestration | `Microsoft.Agents.AI.Workflows.SequentialWorkflowBuilder` |
+| 33 | `orchestration.concurrent` | Concurrent orchestration | `Microsoft.Agents.AI.Workflows.ConcurrentWorkflowBuilder` |
+| 34 | `orchestration.group_chat` | Group-chat orchestration | `Microsoft.Agents.AI.Workflows.GroupChatWorkflowBuilder` |
+| 35 | `orchestration.magentic` | Magentic orchestration | `Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder` |
+| 36 | `orchestration.handoff` | Handoff orchestration | `Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilder` |
+| 37–47 | _reserved_ | orchestration growth | — |
+| 48 | `foundry.chat_client` | Foundry chat client | `Microsoft.Agents.AI.Foundry.FoundryChatClient` |
+| 49 | `foundry.agent` | Foundry agent | `Microsoft.Agents.AI.Foundry.FoundryAgent` |
+| 50 | `foundry.memory` | Foundry memory provider | `Microsoft.Agents.AI.Foundry.FoundryMemoryProvider` |
+| 51 | `foundry.evals` | Foundry evaluations | `Microsoft.Agents.AI.Foundry.FoundryEvals` |
+| 52 | `foundry.toolbox` | Foundry Toolbox MCP tool | `Microsoft.Agents.AI.Foundry.HostedMcpToolboxAITool` |
+| 53 | `foundry_hosting` | Foundry hosting layer | `Microsoft.Agents.AI.Foundry.Hosting.FoundryHostingExtensions.AddFoundryResponses` |
+| 54 | `openai` | OpenAI integration | `Microsoft.Agents.AI.OpenAI` |
+| 55 | `anthropic` | Anthropic integration | `Microsoft.Agents.AI.Anthropic` |
+| 56 | `copilotstudio` | Copilot Studio agent | `Microsoft.Agents.AI.CopilotStudio.CopilotStudioAgent` |
+| 57 | `github_copilot` | GitHub Copilot agent | `Microsoft.Agents.AI.GitHub.Copilot.GitHubCopilotAgent` |
+| 58 | `azure_cosmos` | Cosmos history / checkpoint store | `Microsoft.Agents.AI.CosmosChatHistoryProvider` |
+| 59 | `valkey` | Valkey chat-history provider | `Microsoft.Agents.AI.Valkey.ValkeyChatHistoryProvider` |
+| 60 | `mem0` | Mem0 memory provider | `Microsoft.Agents.AI.Mem0.Mem0Provider` |
+| 61 | `purview` | Purview integration | `Microsoft.Agents.AI.Purview` |
+| 62 | `a2a` | A2A agent | `Microsoft.Agents.AI.A2A.A2AAgent` |
+| 63 | `hosting.ag_ui` | AG-UI hosting endpoint | `Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.AGUIEndpointRouteBuilderExtensions.MapAGUIServer` |
+| 64 | `devui` | DevUI served | `Microsoft.Agents.AI.DevUI` |
+| 65 | `declarative` | Declarative agent factory | `Microsoft.Agents.AI.ChatClientPromptAgentFactory` |
+| 66 | `durabletask` | Durable task runtime | `Microsoft.Agents.AI.DurableTask` |
+| 67 | `azurefunctions` | Azure Functions agent host | `Microsoft.Agents.AI.Hosting.AzureFunctions` |
+| 68 | `tools` | Shell tools | `Microsoft.Agents.AI.Tools.Shell.ShellExecutor` |
+| 69 | `hyperlight` | Hyperlight CodeAct provider | `Microsoft.Agents.AI.Hyperlight.HyperlightCodeActProvider` |
+| 70 | `hosting` | Generic AF hosting | `Microsoft.Agents.AI.Hosting.AIHostAgent` |
+| 71 | `local_codeact` | Local Python CodeAct provider | `Microsoft.Agents.AI.LocalCodeAct.LocalCodeActProvider` |
+| 72 | `hosting.a2a` | A2A hosting endpoints | `Microsoft.AspNetCore.Builder.A2AEndpointRouteBuilderExtensions.MapA2AJsonRpc` |
+| 73 | `hosting.openai` | OpenAI-compatible hosting endpoints | `Microsoft.AspNetCore.Builder.MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExtensions.MapOpenAIResponses` |
+| 74–127 | _reserved_ | future packages | — |
 
 ## Opt-out
 
@@ -223,9 +244,10 @@ in Python; .NET adds both names when implementing this design.
    implementation; the matching table here is the published contract. Add the
    enum member and table row in the same PR. A small parity test keeps them
    aligned (no generated artifact).
-3. Adding a feature: add the enum member, add the table row, mark it at the call
-   site (the `Raw*` base / entry point so wrappers inherit it).
-4. Widening beyond 64-bit or re-partitioning bumps that language's version; old
+3. Adding a feature: apply the [allocation tenet](#allocation-tenet), name the
+   concrete query/decision owner, add the enum member and table row, and mark the
+   stable public entry point where actual use begins.
+4. Widening beyond 128-bit or re-partitioning bumps that language's version; old
    decoders keep working because the version prefix disambiguates the mapping.
 
 > **No machine-readable registry file ships today.** Nothing consumes one at
