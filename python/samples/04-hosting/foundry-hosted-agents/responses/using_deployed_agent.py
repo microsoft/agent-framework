@@ -46,7 +46,7 @@ async def create_hosted_agent_session(
         agent_details = await project_client.agents.get(agent_name)
         resolved_agent_version = agent_details.versions.latest.version
 
-    service_session = await project_client.beta.agents.create_session(
+    service_session = await project_client.agents.create_session(
         agent_name,
         version_indicator=VersionRefIndicator(agent_version=resolved_agent_version),
     )
@@ -60,7 +60,7 @@ async def delete_hosted_agent_session(
     session: AgentSession,
 ) -> None:
     """Delete a hosted-agent service session."""
-    await project_client.beta.agents.delete_session(
+    await project_client.agents.delete_session(
         agent_name,
         session.session_id,
     )
