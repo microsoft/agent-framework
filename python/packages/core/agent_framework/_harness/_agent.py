@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 from .._agents import Agent, SupportsAgentRun
 from .._clients import SupportsShellTool, SupportsWebSearchTool
 from .._compaction import CompactionProvider, ContextWindowCompactionStrategy
-from .._feature_stage import ExperimentalFeature, experimental
+from .._feature_stage import ExperimentalFeature, warn_experimental_feature
 from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider, MessageInjectionMiddleware
 from .._skills import SkillsProvider
 from .._types import ChatOptions
@@ -269,8 +269,35 @@ OptionsCoT = TypeVar(
     default="ChatOptions[None]",
 )
 
+# Dedup label for the pre-release shell tooling (provided by the alpha-stage
+# agent-framework-tools package). It is not a feature-stage-decorated feature, so it uses a
+# label distinct from ExperimentalFeature.HARNESS to avoid suppressing unrelated HARNESS warnings.
+_SHELL_TOOLING_FEATURE_ID = "SHELL_TOOLING"
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
+
+def _warn_experimental_harness_params(
+    param_names: Sequence[str],
+    *,
+    feature_id: str,
+    detail: str,
+) -> None:
+    """Emit a single ExperimentalWarning when experimental harness features are enabled.
+
+    ``create_harness_agent`` itself is released, but some of the features it can wire in
+    remain experimental or pre-release. When a caller opts into one of those features, warn
+    once (pointing at the caller's call site) naming the responsible parameter(s), and seed a
+    per-feature dedup key so the downstream experimental provider does not warn again.
+    """
+    if not param_names:
+        return
+    joined = ", ".join(repr(name) for name in param_names)
+    warn_experimental_feature(
+        f"[{feature_id}] create_harness_agent parameter(s) {joined} enable "
+        f"{detail} that may change or be removed in future versions without notice.",
+        feature_id=feature_id,
+    )
+
+
 def create_harness_agent(
     client: SupportsChatGetResponse[OptionsCoT],
     *,
@@ -333,6 +360,14 @@ def create_harness_agent(
     - **OpenTelemetry** — observability via ``AgentTelemetryLayer``
 
     Each feature can be disabled or customized via keyword arguments.
+
+    .. note:: Experimental features
+
+        ``create_harness_agent`` is released, but a few of the features it can wire in are
+        still experimental or pre-release: **background agents** (``background_agents``),
+        **file access** (``file_access_store``), **looping** (``loop_should_continue``), and
+        the **shell tooling** (``shell_executor``, provided by the pre-release
+        ``agent-framework-tools`` package). Enabling any of them emits an ``ExperimentalWarning``.
 
     Examples:
         Basic usage:
@@ -501,6 +536,28 @@ def create_harness_agent(
         and max_output_tokens >= max_context_window_tokens
     ):
         raise ValueError("max_output_tokens must be less than max_context_window_tokens.")
+
+    # Warn when opting into harness features that are still experimental. create_harness_agent
+    # itself is released, but background agents, file access, and looping remain experimental,
+    # and the shell tooling is provided by the pre-release agent-framework-tools package.
+    experimental_params: list[str] = []
+    if background_agents:
+        experimental_params.append("background_agents")
+    if file_access_store is not None:
+        experimental_params.append("file_access_store")
+    if loop_should_continue is not None:
+        experimental_params.append("loop_should_continue")
+    _warn_experimental_harness_params(
+        experimental_params,
+        feature_id=ExperimentalFeature.HARNESS.value,
+        detail="experimental harness features",
+    )
+    if shell_executor is not None:
+        _warn_experimental_harness_params(
+            ["shell_executor"],
+            feature_id=_SHELL_TOOLING_FEATURE_ID,
+            detail="pre-release shell tooling from the agent-framework-tools package",
+        )
 
     # Build history provider.
     resolved_history = history_provider or InMemoryHistoryProvider()

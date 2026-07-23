@@ -211,6 +211,34 @@ public sealed class ChatClientAgentOptions
     public bool DisableApprovalNotRequiredFunctionBypassing { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether to disable binding inbound tool-approval responses to the
+    /// model-originated approval requests that the framework surfaced.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// By default (when this property is <see langword="false"/>), an <see cref="ApprovalResponseBindingChatClient"/>
+    /// decorator is injected as the outermost decorator above <see cref="FunctionInvokingChatClient"/>. It records each
+    /// <see cref="ToolApprovalRequestContent"/> the framework surfaces and, on the next request, binds every
+    /// <see cref="ToolApprovalResponseContent"/> to its recorded request: the response's tool call is rebound to the
+    /// model-originated call, and only approvals tied to a genuine, framework-issued request take effect. This keeps an
+    /// approved call aligned with exactly what a human was asked to approve.
+    /// </para>
+    /// <para>
+    /// Set this property to <see langword="true"/> to disable this behavior. Keeping it enabled is recommended, as it
+    /// strengthens the human-in-the-loop approval control; disable it only when approval binding is enforced elsewhere.
+    /// </para>
+    /// <para>
+    /// This option has no effect when <see cref="UseProvidedChatClientAsIs"/> is <see langword="true"/>.
+    /// When using a custom chat client stack, you can add an <see cref="ApprovalResponseBindingChatClient"/>
+    /// manually via the <see cref="ChatClientBuilderExtensions.UseApprovalResponseBinding"/> extension method.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="false"/>.
+    /// </value>
+    public bool DisableApprovalResponseBinding { get; set; }
+
+    /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
     /// </summary>
     public ChatClientAgentOptions Clone()
@@ -229,5 +257,6 @@ public sealed class ChatClientAgentOptions
             RequirePerServiceCallChatHistoryPersistence = this.RequirePerServiceCallChatHistoryPersistence,
             EnableMessageInjection = this.EnableMessageInjection,
             DisableApprovalNotRequiredFunctionBypassing = this.DisableApprovalNotRequiredFunctionBypassing,
+            DisableApprovalResponseBinding = this.DisableApprovalResponseBinding,
         };
 }

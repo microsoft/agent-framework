@@ -896,7 +896,7 @@ class DevServer:
                     logger.info(f"[CANCELLATION] Cancelling task for {response_id}")
                     task.cancel()
                     # Wait briefly for cancellation to propagate
-                    try:  # noqa: SIM105
+                    try:  # ruff:ignore[suppressible-exception]
                         await asyncio.wait_for(task, timeout=0.5)
                     except (asyncio.CancelledError, asyncio.TimeoutError):
                         pass

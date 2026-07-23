@@ -16,11 +16,12 @@ Status is grouped into these buckets:
 | --- | --- | --- |
 | `agent-framework` | `python/` | `released` |
 | `agent-framework-a2a` | `python/packages/a2a` | `beta` |
-| `agent-framework-ag-ui` | `python/packages/ag-ui` | `rc` |
+| `agent-framework-ag-ui` | `python/packages/ag-ui` | `released` |
 | `agent-framework-anthropic` | `python/packages/anthropic` | `beta` |
-| `agent-framework-azure-contentunderstanding` | `python/packages/azure-contentunderstanding` | `alpha` |
+| `agent-framework-azure-contentunderstanding` | `python/packages/azure-contentunderstanding` | `beta` |
 | `agent-framework-azure-ai-search` | `python/packages/azure-ai-search` | `beta` |
 | `agent-framework-azure-cosmos` | `python/packages/azure-cosmos` | `beta` |
+| `agent-framework-azure-cosmos-memory` | `python/packages/azure-cosmos-memory` | `alpha` |
 | `agent-framework-azurefunctions` | `python/packages/azurefunctions` | `beta` |
 | `agent-framework-bedrock` | `python/packages/bedrock` | `beta` |
 | `agent-framework-chatkit` | `python/packages/chatkit` | `beta` |
@@ -31,23 +32,26 @@ Status is grouped into these buckets:
 | `agent-framework-devui` | `python/packages/devui` | `beta` |
 | `agent-framework-durabletask` | `python/packages/durabletask` | `beta` |
 | `agent-framework-foundry` | `python/packages/foundry` | `released` |
+| `agent-framework-foundry-hosting` | `python/packages/foundry_hosting` | `beta` |
 | `agent-framework-foundry-local` | `python/packages/foundry_local` | `beta` |
-| `agent-framework-gemini` | `python/packages/gemini` | `alpha` |
+| `agent-framework-gemini` | `python/packages/gemini` | `beta` |
 | `agent-framework-github-copilot` | `python/packages/github_copilot` | `rc` |
 | `agent-framework-hosting` | `python/packages/hosting` | `alpha` |
 | `agent-framework-hosting-a2a` | `python/packages/hosting-a2a` | `alpha` |
+| `agent-framework-hosting-mcp` | `python/packages/hosting-mcp` | `alpha` |
 | `agent-framework-hosting-responses` | `python/packages/hosting-responses` | `alpha` |
 | `agent-framework-hosting-telegram` | `python/packages/hosting-telegram` | `alpha` |
 | `agent-framework-hyperlight` | `python/packages/hyperlight` | `beta` |
 | `agent-framework-lab` | `python/packages/lab` | `beta` |
 | `agent-framework-mem0` | `python/packages/mem0` | `beta` |
-| `agent-framework-mistral` | `python/packages/mistral` | `alpha` |
-| `agent-framework-monty` | `python/packages/monty` | `alpha` |
+| `agent-framework-mistral` | `python/packages/mistral` | `beta` |
+| `agent-framework-monty` | `python/packages/monty` | `beta` |
 | `agent-framework-ollama` | `python/packages/ollama` | `beta` |
 | `agent-framework-openai` | `python/packages/openai` | `released` |
 | `agent-framework-orchestrations` | `python/packages/orchestrations` | `released` |
 | `agent-framework-purview` | `python/packages/purview` | `beta` |
 | `agent-framework-redis` | `python/packages/redis` | `beta` |
+| `agent-framework-tools` | `python/packages/tools` | `beta` |
 
 ## Deprecated / removed packages
 

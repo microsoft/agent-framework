@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.11.0"
+version = "1.12.1"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,31 +23,31 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.11.0",
+    "agent-framework-core[all]==1.12.1",
 ]
 
 [dependency-groups]
 dev = [
-    "uv==0.11.28",
+    "uv==0.11.29",
     "flit==3.12.0",
-    "ruff==0.15.20",
+    "ruff==0.15.22",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
     "pytest-xdist[psutil]==3.8.0",
     "pytest-timeout==2.4.0",
     "pytest-retry==1.7.0",
-    "mypy==2.2.0",
+    "mypy==2.3.0",
     "pyright==1.1.411",
     "pyrefly==1.1.1",
-    "ty==0.0.55",
-    "zuban==0.8.2",
+    "ty==0.0.60",
+    "zuban==0.9.0",
     "opentelemetry-sdk",
     #tasks
     "poethepoet==0.48.0",
     "rich>=13.7.1,<16.0.0",
     "tomli==2.4.1",
-    "prek==0.4.8",
+    "prek==0.4.10",
 ]
 test = [
     "azure-monitor-opentelemetry",
@@ -93,6 +93,7 @@ agent-framework-gemini = { workspace = true }
 agent-framework-github-copilot = { workspace = true }
 agent-framework-hosting = { workspace = true }
 agent-framework-hosting-a2a = { workspace = true }
+agent-framework-hosting-mcp = { workspace = true }
 agent-framework-hosting-responses = { workspace = true }
 agent-framework-hosting-telegram = { workspace = true }
 agent-framework-hyperlight = { workspace = true }
@@ -235,6 +236,7 @@ follow_imports_for_stubs = true
 # ty (preview) over tests + samples. Relaxed: ty's defaults are gradual, and a few
 # categories are too noisy on test/mock-heavy code to gate on yet.
 [tool.ty.rules]
+unused-ignore-comment = "ignore"
 unused-type-ignore-comment = "ignore"
 
 [tool.bandit]
