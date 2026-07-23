@@ -21,7 +21,7 @@ nothing to configure in code:
 | Channel | Install | Data-plane `api-version` (chosen by the SDK) |
 | --- | --- | --- |
 | **Stable** | `pip install azure-search-documents` (`>=12.0.0`) | `2026-04-01` |
-| **Preview** | `pip install --pre azure-search-documents` (e.g. `12.1.0b1`) | `2026-05-01-preview` |
+| **Preview** | `pip install --pre "azure-search-documents>=12.1.0b1"` | `2026-05-01-preview` |
 
 The provider never pins an `api-version`; the installed build selects its own, so newer
 releases work without code changes.
@@ -34,10 +34,11 @@ explicitly requested. Switching channels is a single change — the install — 
 ### Query-time user identity
 
 Agentic retrieval can forward a caller-specific Azure AI Search authorization token when the
-index uses permission fields for document-level access control. Pass an async credential for the
-caller via `query_source_credential`; the provider requests the Azure AI Search resource scope and
-forwards the token on each Knowledge Base retrieval request. This capability requires a preview
-build of `azure-search-documents`, installed with `pip install --pre azure-search-documents`.
+index uses permission fields for document-level access control. Pass a sync or async Azure token
+credential for the caller via `query_source_credential`; the provider requests the Azure AI Search
+resource scope and forwards the token on each Knowledge Base retrieval request. This capability
+requires `azure-search-documents>=12.1.0b1`, installed with
+`pip install --pre "azure-search-documents>=12.1.0b1"`.
 
 ```python
 context_provider = AzureAISearchContextProvider(

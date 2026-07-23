@@ -334,6 +334,22 @@ class TestInitAgenticValidation:
         assert provider._use_existing_knowledge_base is False
         assert provider.knowledge_base_name == "idx-kb"
 
+    def test_invalid_query_source_credential_raises_before_client_construction(self) -> None:
+        with (
+            patch("agent_framework_azure_ai_search._context_provider.SearchIndexClient") as index_client_cls,
+            pytest.raises(TypeError, match="query_source_credential must be an Azure TokenCredential"),
+        ):
+            cast(Any, AzureAISearchContextProvider)(
+                source_id="s",
+                endpoint="https://test.search.windows.net",
+                knowledge_base_name="my-kb",
+                api_key="key",
+                mode="agentic",
+                query_source_credential=object(),
+            )
+
+        index_client_cls.assert_not_called()
+
     def test_agentic_explicit_kb_ignores_env_index_name(self) -> None:
         with patch.dict(os.environ, {"AZURE_SEARCH_INDEX_NAME": "env-index"}, clear=False):
             provider = AzureAISearchContextProvider(
@@ -1987,6 +2003,43 @@ class TestBeforeRunAgentic:
 
         assert captured_headers["x-ms-query-source-authorization"] == "user-token"
 
+    async def test_query_source_token_failure_happens_before_knowledge_base_access(self) -> None:
+        query_source_credential = AsyncMock()
+        query_source_credential.get_token = AsyncMock(side_effect=RuntimeError("token acquisition failed"))
+        mock_index_client = AsyncMock()
+        mock_index_client.get_knowledge_base.return_value = SimpleNamespace(knowledge_sources=[])
+
+        with (
+            patch.object(_context_provider, "_query_source_authorization_available", True),
+            patch(
+                "agent_framework_azure_ai_search._context_provider.SearchIndexClient",
+                return_value=mock_index_client,
+            ),
+        ):
+            provider = AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                knowledge_base_name="kb",
+                api_key="key",
+                mode="agentic",
+                query_source_credential=query_source_credential,
+            )
+            session = AgentSession(session_id="test-session")
+            context = SessionContext(
+                input_messages=[Message(role="user", contents=["agentic question"])],
+                session_id="test-session",
+            )
+
+            with pytest.raises(RuntimeError, match="token acquisition failed"):
+                await provider.before_run(
+                    agent=cast(Any, None),
+                    session=session,
+                    context=context,
+                    state=session.state.setdefault(provider.source_id, {}),
+                )
+
+        mock_index_client.get_knowledge_base.assert_not_awaited()
+        mock_index_client.create_or_update_knowledge_base.assert_not_awaited()
+
     async def test_without_query_source_credential_omits_authorization(self) -> None:
         mock_index_client = AsyncMock()
         mock_index_client.get_knowledge_base.return_value = SimpleNamespace(knowledge_sources=[])
@@ -2025,12 +2078,13 @@ class TestBeforeRunAgentic:
         assert mock_retrieval_client.retrieve.await_args is not None
         assert "headers" not in mock_retrieval_client.retrieve.await_args.kwargs
 
-    async def test_sync_query_source_credential_is_rejected_before_retrieval(self) -> None:
+    async def test_sync_query_source_credential_is_forwarded_to_retrieval(self) -> None:
         query_source_credential = Mock()
         query_source_credential.get_token.return_value = SimpleNamespace(token="user-token")
         mock_index_client = AsyncMock()
         mock_index_client.get_knowledge_base.return_value = SimpleNamespace(knowledge_sources=[])
         mock_retrieval_client = AsyncMock()
+        mock_retrieval_client.retrieve.return_value = SimpleNamespace(response=[], references=None)
 
         with (
             patch.object(_context_provider, "_query_source_authorization_available", True),
@@ -2043,7 +2097,7 @@ class TestBeforeRunAgentic:
                 return_value=mock_retrieval_client,
             ),
         ):
-            provider = cast(Any, AzureAISearchContextProvider)(
+            provider = AzureAISearchContextProvider(
                 endpoint="https://test.search.windows.net",
                 knowledge_base_name="kb",
                 api_key="key",
@@ -2056,16 +2110,18 @@ class TestBeforeRunAgentic:
                 session_id="test-session",
             )
 
-            with pytest.raises(TypeError, match="query_source_credential must be an async Azure credential"):
-                await provider.before_run(
-                    agent=cast(Any, None),
-                    session=session,
-                    context=context,
-                    state=session.state.setdefault(provider.source_id, {}),
-                )
+            await provider.before_run(
+                agent=cast(Any, None),
+                session=session,
+                context=context,
+                state=session.state.setdefault(provider.source_id, {}),
+            )
 
         query_source_credential.get_token.assert_called_once_with("https://search.azure.com/.default")
-        mock_retrieval_client.retrieve.assert_not_awaited()
+        assert mock_retrieval_client.retrieve.await_args is not None
+        assert mock_retrieval_client.retrieve.await_args.kwargs["headers"] == {
+            "x-ms-query-source-authorization": "user-token"
+        }
 
     async def test_agentic_mode_calls_agentic_search(self) -> None:
         provider = _make_provider()

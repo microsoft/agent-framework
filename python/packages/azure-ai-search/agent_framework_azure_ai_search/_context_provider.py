@@ -202,7 +202,7 @@ class AzureAISearchContextProvider(ContextProvider):
         azure_openai_api_key: str | None = None,
         knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
-        query_source_credential: AsyncTokenCredential | None = None,
+        query_source_credential: AzureCredentialTypes | None = None,
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -257,7 +257,7 @@ class AzureAISearchContextProvider(ContextProvider):
         azure_openai_api_key: str | None = None,
         knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
-        query_source_credential: AsyncTokenCredential | None = None,
+        query_source_credential: AzureCredentialTypes | None = None,
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -283,8 +283,8 @@ class AzureAISearchContextProvider(ContextProvider):
             azure_openai_api_key: Optional Azure OpenAI API key for Knowledge Base creation.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
             retrieval_reasoning_effort: Reasoning effort for query planning.
-            query_source_credential: Async Azure credential used to authorize each retrieval query.
-                Requires a preview build of ``azure-search-documents``.
+            query_source_credential: Sync or async Azure credential used to authorize each retrieval query.
+                Requires ``azure-search-documents>=12.1.0b1``.
             agentic_message_history_count: Number of recent messages included in retrieval.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -313,7 +313,7 @@ class AzureAISearchContextProvider(ContextProvider):
         azure_openai_api_key: str | None = None,
         knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
-        query_source_credential: AsyncTokenCredential | None = None,
+        query_source_credential: AzureCredentialTypes | None = None,
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -339,8 +339,8 @@ class AzureAISearchContextProvider(ContextProvider):
             azure_openai_api_key: Unused when connecting to an existing Knowledge Base.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
             retrieval_reasoning_effort: Reasoning effort for query planning.
-            query_source_credential: Async Azure credential used to authorize each retrieval query.
-                Requires a preview build of ``azure-search-documents``.
+            query_source_credential: Sync or async Azure credential used to authorize each retrieval query.
+                Requires ``azure-search-documents>=12.1.0b1``.
             agentic_message_history_count: Number of recent messages included in retrieval.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -369,7 +369,7 @@ class AzureAISearchContextProvider(ContextProvider):
         azure_openai_api_key: str | None = None,
         knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
-        query_source_credential: AsyncTokenCredential | None = None,
+        query_source_credential: AzureCredentialTypes | None = None,
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -399,8 +399,8 @@ class AzureAISearchContextProvider(ContextProvider):
             azure_openai_api_key: Optional Azure OpenAI API key for Knowledge Base creation.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
             retrieval_reasoning_effort: Reasoning effort for query planning.
-            query_source_credential: Async Azure credential used to authorize each retrieval query.
-                Requires a preview build of ``azure-search-documents``.
+            query_source_credential: Sync or async Azure credential used to authorize each retrieval query.
+                Requires ``azure-search-documents>=12.1.0b1``.
             agentic_message_history_count: Number of recent messages included in retrieval.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -428,7 +428,7 @@ class AzureAISearchContextProvider(ContextProvider):
         azure_openai_api_key: str | None = None,
         knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
-        query_source_credential: AsyncTokenCredential | None = None,
+        query_source_credential: AzureCredentialTypes | None = None,
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -457,13 +457,16 @@ class AzureAISearchContextProvider(ContextProvider):
             azure_openai_api_key: Azure OpenAI API key.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
             retrieval_reasoning_effort: Reasoning effort for Knowledge Base query planning.
-            query_source_credential: Async Azure credential used to authorize each agentic retrieval query.
-                Requires a preview build of ``azure-search-documents``.
+            query_source_credential: Sync or async Azure credential used to authorize each agentic retrieval query.
+                Requires ``azure-search-documents>=12.1.0b1``.
             agentic_message_history_count: Number of recent messages for agentic mode.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
         """
         super().__init__(source_id)
+
+        if query_source_credential is not None and not callable(getattr(query_source_credential, "get_token", None)):
+            raise TypeError("query_source_credential must be an Azure TokenCredential or AsyncTokenCredential.")
 
         required: list[str | tuple[str, ...]]
         ignored_agentic_field: Literal["index_name", "knowledge_base_name"] | None = None
@@ -888,8 +891,16 @@ class AzureAISearchContextProvider(ContextProvider):
             installed = _installed_search_documents_version()
             raise ValueError(
                 "query_source_credential requires a preview build of azure-search-documents "
-                f"(installed: {installed}). Install it with `pip install --pre azure-search-documents`."
+                f"(installed: {installed}). Install `azure-search-documents>=12.1.0b1`."
             )
+
+        query_source_authorization: str | None = None
+        if self.query_source_credential is not None:
+            access_token_result = self.query_source_credential.get_token(_AZURE_SEARCH_RESOURCE_SCOPE)
+            access_token = (
+                await access_token_result if inspect.isawaitable(access_token_result) else access_token_result
+            )
+            query_source_authorization = access_token.token
 
         await self._ensure_knowledge_base()
 
@@ -935,15 +946,8 @@ class AzureAISearchContextProvider(ContextProvider):
         if not self._retrieval_client:
             raise RuntimeError("Retrieval client not initialized.")
         retrieve_kwargs: dict[str, Any] = {"retrieval_request": retrieval_request}
-        if self.query_source_credential is not None:
-            access_token_result = self.query_source_credential.get_token(_AZURE_SEARCH_RESOURCE_SCOPE)
-            if not inspect.isawaitable(access_token_result):
-                raise TypeError(
-                    "query_source_credential must be an async Azure credential. "
-                    "Pass an azure.core.credentials_async.AsyncTokenCredential."
-                )
-            access_token = await access_token_result
-            retrieve_kwargs["headers"] = {"x-ms-query-source-authorization": access_token.token}
+        if query_source_authorization is not None:
+            retrieve_kwargs["headers"] = {"x-ms-query-source-authorization": query_source_authorization}
         retrieval_result = await self._retrieval_client.retrieve(**retrieve_kwargs)
 
         return self._parse_messages_from_kb_response(retrieval_result)

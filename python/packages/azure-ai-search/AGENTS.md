@@ -29,7 +29,8 @@ they are explicitly requested. Semantic mode is unaffected.
 
 Agentic query-time user identity is also preview-only. It is gated by
 `_query_source_authorization_available`; when enabled, `query_source_credential` supplies a
-per-request Azure AI Search token through the `x-ms-query-source-authorization` header.
+per-request Azure AI Search token through the `x-ms-query-source-authorization` header. Both sync
+and async Azure token credentials are supported, starting with `azure-search-documents>=12.1.0b1`.
 
 ## Usage
 
