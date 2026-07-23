@@ -1704,3 +1704,266 @@ def test_parse_chunk_surfaces_oauth_consent_requested_event() -> None:
     assert consent_contents[0].consent_link == "https://consent-host.example.com/authorize?code=xyz"
     assert update.role == "assistant"
     assert update.raw_representation is mock_event
+
+
+def test_client_model_not_set_from_openai_chat_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """client.model must be empty when OPENAI_CHAT_MODEL is set."""
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+    )
+
+    assert client.model != "gpt-4.1-from-env", "client.model must not be sourced from OPENAI_CHAT_MODEL"
+    assert not client.model, f"Expected empty/falsy model, got {client.model!r}"
+
+
+def test_agent_default_options_not_polluted_by_openai_chat_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Agent.default_options['model'] must not be the env-var value."""
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+    )
+    agent = Agent(client=client, instructions="test")
+
+    model_in_options = agent.default_options.get("model")
+    assert model_in_options != "gpt-4.1-from-env", (
+        f"default_options['model'] must not be 'gpt-4.1-from-env', got {model_in_options!r}"
+    )
+    assert not model_in_options, f"default_options['model'] must be falsy (empty or absent), got {model_in_options!r}"
+
+
+def test_client_model_not_set_from_openai_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """client.model must be empty when OPENAI_MODEL is set (no OPENAI_CHAT_MODEL)."""
+    monkeypatch.delenv("OPENAI_CHAT_MODEL", raising=False)
+    monkeypatch.setenv("OPENAI_MODEL", "generic-gpt-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+    )
+
+    assert client.model != "generic-gpt-from-env", "client.model must not be sourced from OPENAI_MODEL"
+    assert not client.model, f"Expected empty/falsy model, got {client.model!r}"
+
+
+def test_raw_foundry_agent_chat_client_rejects_model_keyword_arg() -> None:
+    """RawFoundryAgentChatClient.__init__ does not accept a 'model' parameter."""
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        RawFoundryAgentChatClient(
+            project_client=mock_project,
+            agent_name="my-prompt-agent",
+            model="gpt-5.4",  # type: ignore[call-arg]
+        )
+
+
+def test_explicit_model_in_agent_default_options_survives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit model in Agent(default_options=...) must survive into default_options."""
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+    )
+    agent = Agent(
+        client=client,
+        instructions="test",
+        default_options={"model": "gpt-5.4"},
+    )
+
+    assert agent.default_options.get("model") == "gpt-5.4", (
+        f"Explicit model override must survive in default_options, got {agent.default_options.get('model')!r}"
+    )
+
+
+def test_explicit_model_in_as_agent_default_options_survives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit model passed to client.as_agent(default_options=...) survives."""
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+    )
+    agent = client.as_agent(
+        instructions="test",
+        default_options={"model": "gpt-5.4"},
+    )
+
+    assert agent.default_options.get("model") == "gpt-5.4", (
+        f"Explicit model in as_agent default_options must survive, got {agent.default_options.get('model')!r}"
+    )
+
+
+def test_allow_preview_client_model_not_set_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """allow_preview=True clients must also not inherit OPENAI_CHAT_MODEL env var into client.model."""
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="hosted-agent",
+        allow_preview=True,
+    )
+
+    assert client.model != "gpt-4.1-from-env", (
+        "Hosted-agent client (allow_preview=True) must not inherit OPENAI_CHAT_MODEL"
+    )
+    assert not client.model, f"Expected empty/falsy model, got {client.model!r}"
+
+
+def test_allow_preview_binds_agent_name_to_get_openai_client() -> None:
+    """When allow_preview=True, agent_name is passed to get_openai_client for endpoint binding."""
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="hosted-agent",
+        allow_preview=True,
+    )
+
+    mock_project.get_openai_client.assert_called_once_with(agent_name="hosted-agent")
+    assert client.allow_preview is True
+
+
+async def test_allow_preview_get_response_executes_successfully_with_empty_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end get_response test on allow_preview=True with OPENAI_CHAT_MODEL set in env."""
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
+
+    mock_response = MagicMock()
+    mock_response.id = "resp_123"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.output = []
+    mock_response.usage = None
+    mock_response.finish_reason = None
+    mock_response.conversation = None
+    mock_response.status = "completed"
+    mock_response.parse.return_value = mock_response
+    mock_response.headers = {}
+
+    mock_openai = MagicMock()
+    mock_openai.responses.with_raw_response.create = AsyncMock(return_value=mock_response)
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="hosted-agent",
+        allow_preview=True,
+    )
+
+    assert client.model == ""
+
+    response = await client.get_response([Message(role="user", contents=["Hello hosted agent"])])
+
+    assert response.response_id == "resp_123"
+
+    create_call = mock_openai.responses.with_raw_response.create.await_args
+    assert create_call is not None
+    kwargs = create_call.kwargs
+
+    assert kwargs.get("model") != "gpt-4.1-from-env"
+    assert "extra_body" not in kwargs or "agent_reference" not in kwargs.get("extra_body", {})
+
+
+def test_azure_openai_chat_model_does_not_leak(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AZURE_OPENAI_CHAT_MODEL must not leak into client.model."""
+    monkeypatch.delenv("OPENAI_CHAT_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    monkeypatch.setenv("AZURE_OPENAI_CHAT_MODEL", "azure-gpt-4.1-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+    )
+
+    assert client.model != "azure-gpt-4.1-from-env", "client.model must not be sourced from AZURE_OPENAI_CHAT_MODEL"
+    assert not client.model, f"Expected empty/falsy model, got {client.model!r}"
+
+
+def test_azure_openai_model_does_not_leak(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AZURE_OPENAI_MODEL must not leak into client.model."""
+    monkeypatch.delenv("OPENAI_CHAT_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    monkeypatch.setenv("AZURE_OPENAI_MODEL", "azure-model-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+    )
+
+    assert client.model != "azure-model-from-env", "client.model must not be sourced from AZURE_OPENAI_MODEL"
+    assert not client.model, f"Expected empty/falsy model, got {client.model!r}"
+
+
+async def test_env_model_is_stripped_from_agent_reference_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Even if '' survives into default_options, it must not appear in the API payload."""
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+        agent_version="1.0",
+    )
+
+    with patch(
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+        new_callable=AsyncMock,
+        return_value={
+            "model": "",
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
+        },
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents=["hi"])],
+            options={},
+        )
+
+    assert "model" not in result or not result.get("model"), (
+        f"Empty/falsy model must be stripped from outgoing payload, got model={result.get('model')!r}"
+    )
