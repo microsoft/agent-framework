@@ -274,7 +274,7 @@ class RawFoundryAgentChatClient(
             tokenizer=tokenizer,
             additional_properties=additional_properties,
         )
-        self.model = ""  # Foundry agents resolve model server-side; ignore env vars (#7272)
+        self.model = ""  # Foundry agents resolve model server-side; ignore env vars (issue #7272).
 
     @override
     def as_agent(

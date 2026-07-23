@@ -1735,7 +1735,7 @@ def test_agent_default_options_not_polluted_by_openai_chat_model(
         project_client=mock_project,
         agent_name="my-prompt-agent",
     )
-    agent = Agent(client=client, instructions="test")
+    agent = Agent(client=cast(Any, client), instructions="test")
 
     model_in_options = agent.default_options.get("model")
     assert model_in_options != "gpt-4.1-from-env", (
@@ -1766,11 +1766,12 @@ def test_raw_foundry_agent_chat_client_rejects_model_keyword_arg() -> None:
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
 
+    cls = cast(Any, RawFoundryAgentChatClient)
     with pytest.raises(TypeError, match="unexpected keyword argument"):
-        RawFoundryAgentChatClient(
+        cls(
             project_client=mock_project,
             agent_name="my-prompt-agent",
-            model="gpt-5.4",  # type: ignore[call-arg]
+            model="gpt-5.4",
         )
 
 
@@ -1788,9 +1789,9 @@ def test_explicit_model_in_agent_default_options_survives(
         agent_name="my-prompt-agent",
     )
     agent = Agent(
-        client=client,
+        client=cast(Any, client),
         instructions="test",
-        default_options={"model": "gpt-5.4"},
+        default_options=cast(Any, {"model": "gpt-5.4"}),
     )
 
     assert agent.default_options.get("model") == "gpt-5.4", (
@@ -1813,7 +1814,7 @@ def test_explicit_model_in_as_agent_default_options_survives(
     )
     agent = client.as_agent(
         instructions="test",
-        default_options={"model": "gpt-5.4"},
+        default_options=cast(Any, {"model": "gpt-5.4"}),
     )
 
     assert agent.default_options.get("model") == "gpt-5.4", (
