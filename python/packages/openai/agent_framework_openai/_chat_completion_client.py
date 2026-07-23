@@ -16,6 +16,7 @@ from collections.abc import (
 from datetime import datetime, timezone
 from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
+from uuid import uuid4
 
 from agent_framework._clients import BaseChatClient
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
@@ -118,6 +119,106 @@ DEFAULT_AZURE_OPENAI_CHAT_COMPLETION_API_VERSION = "2024-12-01-preview"
 
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
+
+
+def _extract_reasoning_text(reasoning_details: Any) -> str | None:
+    """Extract visible plaintext from a reasoning_details payload.
+
+    OpenAI-compatible providers return reasoning_details in various forms:
+    - A list of dicts with ``"text"`` keys (e.g. OpenRouter: ``[{"type": "reasoning.text", "text": "..."}]``)
+    - A dict with a ``"content"`` key (list of text entries or a plain string)
+    - A plain string
+
+    Returns the concatenated plaintext if any is found, otherwise None.
+    """
+    if isinstance(reasoning_details, str):
+        return reasoning_details or None
+
+    if isinstance(reasoning_details, list):
+        parts: list[str] = []
+        for item in cast(list[object], reasoning_details):
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                entry_dict = cast(dict[str, object], item)
+                # Check "text" field (reasoning.text entries)
+                entry_text = entry_dict.get("text")
+                if isinstance(entry_text, str) and entry_text:
+                    parts.append(entry_text)
+                    continue
+                # Check "summary" field (reasoning.summary entries)
+                entry_summary = entry_dict.get("summary")
+                if isinstance(entry_summary, str) and entry_summary:
+                    parts.append(entry_summary)
+        return "".join(parts) or None
+
+    if isinstance(reasoning_details, dict):
+        detail_dict = cast(dict[str, object], reasoning_details)
+        # Handle {"text": "..."} style
+        text_val = detail_dict.get("text")
+        if isinstance(text_val, str) and text_val:
+            return text_val
+        # Handle {"summary": "..."} style (reasoning.summary entries)
+        summary_val = detail_dict.get("summary")
+        if isinstance(summary_val, str) and summary_val:
+            return summary_val
+        # Handle {"content": [...]} or {"content": "..."} style
+        content_val = detail_dict.get("content")
+        if isinstance(content_val, str) and content_val:
+            return content_val
+        if isinstance(content_val, list):
+            parts = []
+            for item in cast(list[object], content_val):
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    entry_dict2 = cast(dict[str, object], item)
+                    entry_text2 = entry_dict2.get("text")
+                    if isinstance(entry_text2, str) and entry_text2:
+                        parts.append(entry_text2)
+                        continue
+                    entry_summary2 = entry_dict2.get("summary")
+                    if isinstance(entry_summary2, str) and entry_summary2:
+                        parts.append(entry_summary2)
+            return "".join(parts) or None
+
+    return None
+
+
+def _parse_reasoning_content(source: Any) -> list[Content]:
+    """Parse reasoning content from a chat message or streaming delta.
+
+    ``reasoning_details`` (structured, possibly encrypted) takes priority. When it is
+    absent, the top-level plaintext ``reasoning`` / ``reasoning_content`` fields used by
+    some OpenAI-compatible providers (e.g. OpenRouter, vLLM) are surfaced instead. The
+    originating field name is recorded in ``additional_properties["_reasoning_source_field"]``
+    so it can be echoed back under the same key on subsequent requests, which providers
+    such as vLLM require for multi-turn reasoning continuity.
+
+    Args:
+        source: The ``ChatCompletionMessage`` or streaming ``ChoiceDelta`` to inspect.
+
+    Returns:
+        A list with a single reasoning ``Content`` when reasoning is present, otherwise
+        an empty list.
+    """
+    if reasoning_details := getattr(source, "reasoning_details", None):
+        return [
+            Content.from_text_reasoning(
+                text=_extract_reasoning_text(reasoning_details),
+                protected_data=json.dumps(reasoning_details),
+            )
+        ]
+    for field in ("reasoning", "reasoning_content"):
+        value = getattr(source, field, None)
+        if isinstance(value, str) and value:
+            return [
+                Content.from_text_reasoning(
+                    text=value,
+                    additional_properties={"_reasoning_source_field": field},
+                )
+            ]
+    return []
 
 
 # region OpenAI Chat Options TypedDict
@@ -742,12 +843,10 @@ class RawOpenAIChatCompletionClient(
             if choice.finish_reason:
                 finish_reason = "tool_calls" if choice.finish_reason == "function_call" else choice.finish_reason  # type: ignore[assignment]
             contents: list[Content] = []
-            if text_content := self._parse_text_from_openai(choice):
-                contents.append(text_content)
+            contents.extend(self._parse_text_from_openai(choice))
             if parsed_tool_calls := [tool for tool in self._parse_tool_calls_from_openai(choice)]:
                 contents.extend(parsed_tool_calls)
-            if reasoning_details := getattr(choice.message, "reasoning_details", None):
-                contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
+            contents.extend(_parse_reasoning_content(choice.message))
             messages.append(Message(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
@@ -788,10 +887,8 @@ class RawOpenAIChatCompletionClient(
                 continue
 
             contents.extend(self._parse_tool_calls_from_openai(choice))
-            if text_content := self._parse_text_from_openai(choice):
-                contents.append(text_content)
-            if reasoning_details := getattr(choice.delta, "reasoning_details", None):
-                contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
+            contents.extend(self._parse_text_from_openai(choice))
+            contents.extend(_parse_reasoning_content(choice.delta))
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
@@ -828,14 +925,74 @@ class RawOpenAIChatCompletionClient(
                 details["cache_read_input_token_count"] = tokens
         return details
 
-    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
-        """Parse the choice into a Content object with type='text'."""
+    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> list[Content]:
+        """Parse the choice into Content objects with type='text' and/or 'text_reasoning'.
+
+        Handles both plain string content and structured list content (e.g. Mistral
+        reasoning models that return ``[{"type": "thinking", ...}, {"type": "text", ...}]``).
+        """
         message = choice.message if isinstance(choice, Choice) else choice.delta
         if message.content:
-            return Content.from_text(text=message.content, raw_representation=choice)
+            content = message.content
+            # Some OpenAI-compatible providers (e.g. Mistral reasoning models) return
+            # content as a list of typed chunks rather than a plain string.
+            if isinstance(content, list):
+                return self._parse_chunked_content(content, choice)
+            return [Content.from_text(text=content, raw_representation=choice)]
         if hasattr(message, "refusal") and message.refusal:
-            return Content.from_text(text=message.refusal, raw_representation=choice)
-        return None
+            return [Content.from_text(text=message.refusal, raw_representation=choice)]
+        return []
+
+    @staticmethod
+    def _parse_chunked_content(chunks: list[Any], choice: Choice | ChunkChoice) -> list[Content]:
+        """Parse structured content chunks (e.g. Mistral thinking/text format).
+
+        Handles chunk types:
+        - ``{"type": "thinking", "thinking": "..." | [{"type": "text", "text": "..."}]}``
+        - ``{"type": "text", "text": "..."}``
+
+        The original chunk list is stored on the first emitted Content item's
+        ``additional_properties["_source_content_list"]`` (regardless of that item's
+        type) so that ``_prepare_message_for_openai`` can reconstruct the original list
+        format required by Mistral for multi-turn reasoning. Every emitted item is also
+        tagged with a shared ``additional_properties["_structured_content_group"]`` id so
+        the serializer skips exactly the siblings that belong to this list and nothing
+        else.
+        """
+        results: list[Content] = []
+        for item in cast(list[object], chunks):
+            if not isinstance(item, dict):
+                continue
+            chunk_dict = cast(dict[str, object], item)
+            chunk_type = chunk_dict.get("type")
+            if chunk_type == "thinking":
+                thinking = chunk_dict.get("thinking")
+                if isinstance(thinking, str):
+                    text = thinking
+                elif isinstance(thinking, list):
+                    text = "".join(
+                        str(cast(dict[str, object], part).get("text", ""))
+                        for part in cast(list[object], thinking)
+                        if isinstance(part, dict)
+                    )
+                else:
+                    text = ""
+                if text:
+                    results.append(Content.from_text_reasoning(text=text, raw_representation=choice))
+            elif chunk_type == "text":
+                text_val = chunk_dict.get("text")
+                if isinstance(text_val, str) and text_val:
+                    results.append(Content.from_text(text=text_val, raw_representation=choice))
+
+        # Store the original list on the first item so it can round-trip correctly, and
+        # tag every item with a shared group id so siblings (and only siblings) can be
+        # collapsed back into a single message during serialization.
+        if results:
+            group_id = str(uuid4())
+            for result in results:
+                result.additional_properties["_structured_content_group"] = group_id
+            results[0].additional_properties["_source_content_list"] = chunks
+        return results
 
     def _get_metadata_from_chat_response(self, response: ChatCompletion) -> dict[str, Any]:
         """Get metadata from a chat response."""
@@ -929,9 +1086,23 @@ class RawOpenAIChatCompletionClient(
 
         all_messages: list[dict[str, Any]] = []
         pending_reasoning: Any = None
+        pending_reasoning_fields: dict[str, str] = {}
+        emitted_structured_groups: set[str] = set()
         for content in message.contents:
             # Skip approval content - it's internal framework state, not for the LLM
             if content.type in ("function_approval_request", "function_approval_response"):
+                continue
+
+            # A structured (chunked) content list round-trips as a single message.
+            # Skip sibling items belonging to a group already emitted via its
+            # source-list marker; unrelated content (and the source item itself) is
+            # left untouched.
+            sibling_group = content.additional_properties.get("_structured_content_group")
+            if (
+                sibling_group is not None
+                and sibling_group in emitted_structured_groups
+                and "_source_content_list" not in content.additional_properties
+            ):
                 continue
 
             args: dict[str, Any] = {
@@ -943,6 +1114,23 @@ class RawOpenAIChatCompletionClient(
                 details := message.additional_properties["reasoning_details"]
             ):
                 args["reasoning_details"] = details
+
+            # Emit structured chunked content (e.g. Mistral thinking+text) as a single
+            # message with the original list, regardless of the first item's type, so it
+            # round-trips intact for multi-turn reasoning / tool continuation.
+            if "_source_content_list" in content.additional_properties:
+                args["content"] = content.additional_properties["_source_content_list"]
+                if sibling_group is not None:
+                    emitted_structured_groups.add(sibling_group)
+                if pending_reasoning is not None:
+                    args["reasoning_details"] = pending_reasoning
+                    pending_reasoning = None
+                for field, value in pending_reasoning_fields.items():
+                    args[field] = value
+                pending_reasoning_fields.clear()
+                all_messages.append(args)
+                continue
+
             match content.type:
                 case "function_call":
                     if all_messages and "tool_calls" in all_messages[-1]:
@@ -966,6 +1154,18 @@ class RawOpenAIChatCompletionClient(
                         args["content"] = content.result if content.result is not None else ""
                     all_messages.append(args)
                     continue
+                case "text_reasoning" if (
+                    reasoning_field := content.additional_properties.get("_reasoning_source_field")
+                ) is not None:
+                    # Plaintext reasoning surfaced from a top-level provider field
+                    # (e.g. vLLM's `reasoning`). Providers expect it echoed back under
+                    # the same key on the next request, so buffer it to attach to the
+                    # message that carries the answer / tool call.
+                    if content.text is not None:
+                        field_name = cast(str, reasoning_field)
+                        pending_reasoning_fields[field_name] = (
+                            pending_reasoning_fields.get(field_name, "") + content.text
+                        )
                 case "text_reasoning" if (protected_data := content.protected_data) is not None:
                     # Buffer reasoning to attach to the next message with content/tool_calls
                     pending_reasoning = json.loads(protected_data)
@@ -982,18 +1182,28 @@ class RawOpenAIChatCompletionClient(
                 if pending_reasoning is not None:
                     args["reasoning_details"] = pending_reasoning
                     pending_reasoning = None
+                for field, value in pending_reasoning_fields.items():
+                    args[field] = value
+                pending_reasoning_fields.clear()
                 all_messages.append(args)
 
-        # If reasoning was the only content, emit a valid message with empty content
-        if pending_reasoning is not None:
+        # If reasoning was the only content, attach it to the last message (if any) or
+        # emit a valid standalone message with empty content.
+        if pending_reasoning is not None or pending_reasoning_fields:
             if all_messages:
-                all_messages[-1]["reasoning_details"] = pending_reasoning
+                if pending_reasoning is not None:
+                    all_messages[-1]["reasoning_details"] = pending_reasoning
+                for field, value in pending_reasoning_fields.items():
+                    all_messages[-1][field] = value
             else:
                 pending_args: dict[str, Any] = {
                     "role": message.role,
                     "content": "",
-                    "reasoning_details": pending_reasoning,
                 }
+                if pending_reasoning is not None:
+                    pending_args["reasoning_details"] = pending_reasoning
+                for field, value in pending_reasoning_fields.items():
+                    pending_args[field] = value
                 if message.author_name and message.role != "tool":
                     pending_args["name"] = message.author_name
                 all_messages.append(pending_args)
