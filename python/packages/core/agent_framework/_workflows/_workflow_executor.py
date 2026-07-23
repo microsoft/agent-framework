@@ -480,6 +480,16 @@ class WorkflowExecutor(Executor):
         for execution_context in legacy_execution_contexts.values():
             if isinstance(execution_context, ExecutionContext):
                 request_info_events.extend(execution_context.pending_requests.values())
+                if execution_context.collected_responses:
+                    logger.warning(
+                        "WorkflowExecutor %s restored legacy checkpoint with collected responses for "
+                        "execution_id %s. The sub-workflow is the single source of truth for its pending "
+                        "requests, so these responses will be ignored. Resume instead from a checkpoint created "
+                        "prior to any responses being collected if legacy request/response state must be "
+                        "preserved. Legacy execution contexts for sub-workflows will be removed in a future release.",
+                        self.id,
+                        execution_context.execution_id,
+                    )
         await asyncio.gather(*[
             self.workflow._runner_context.add_request_info_event(event)  # pyright: ignore[reportPrivateUsage]
             for event in request_info_events
