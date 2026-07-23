@@ -11,8 +11,8 @@ informed:
 
 > Companion design for [ADR-0033](../decisions/0033-feature-usage-bitmask-user-agent.md).
 > The per-language bit tables, encoding, opt-out, and governance live in
-> [feature-usage-bit-registry.md](feature-usage-bit-registry.md). Each SDK's
-> hand-written `FeatureBit` enum is the source of truth for that language.
+> [feature-usage-bit-registry.md](feature-usage-bit-registry.md). The registry
+> allocates indexes; package-local `FeatureIndex` declarations implement them.
 
 ## What is the goal of this feature?
 
@@ -43,7 +43,7 @@ growth.
 
 Success metric: within one release after rollout, ≥80% of **eligible,
 framework-created** first-party (Foundry) requests carry a **non-empty** feature
-token whose mask reflects features marked **after** client construction (i.e.
+token whose mask reflects features activated **after** client construction (i.e.
 the token is live, not frozen — see the per-request requirement below).
 Secondary: ability to break down first-party traffic by feature combination
 (e.g. "% of Foundry traffic that also uses workflows").
@@ -95,7 +95,7 @@ def _feature_mask_enabled() -> bool:
     return os.environ.get(FEATURE_MASK_DISABLED_ENV_VAR, "false").lower() not in ("true", "1")
 
 
-def mark_feature_used(bit: int) -> None:
+def mark_feature_used(index: int) -> None:
     """OR a feature bit into the process-global mask.
 
     Called the first time a feature is exercised. Cheap and idempotent;
@@ -104,10 +104,10 @@ def mark_feature_used(bit: int) -> None:
     global _feature_mask
     if not _feature_mask_enabled():
         return
-    if not 0 <= bit < 128:
-        raise ValueError(f"Feature bit must be in range 0..127, got {bit}")
+    if not 0 <= index < 128:
+        raise ValueError(f"Feature index must be in range 0..127, got {index}")
     with _feature_mask_lock:
-        _feature_mask |= 1 << bit
+        _feature_mask |= 1 << index
 
 
 def get_feature_token() -> str | None:
@@ -117,15 +117,19 @@ def get_feature_token() -> str | None:
     return f"v{REGISTRY_VERSION}.{_feature_mask:x}"
 ```
 
-- **Per package/feature, usage-based:** `mark_feature_used()` is called the first
-  time a feature is genuinely exercised — at construction of a representative
-  type (e.g. `Agent`, an `MCPTool`, a provider, a Foundry surface), never at
-  import time. The mask grows over the process lifetime.
+- **Per package/feature, usage-based:** `mark_feature_used()` is called at the
+  feature's first meaningful activation, never at import/install time. For
+  operational clients, tools, providers, and hosts, activation is the first
+  public operation that exercises the capability. Construction is a valid mark
+  point only when construction itself performs the capability (for example,
+  registering/starting runtime resources), not merely because a DI container
+  instantiated an otherwise-unused object.
 - **Process-global and monotonic — intentionally never reset.** Unlike a
   per-request scheme (e.g. botocore's `contextvars` feature set that resets
   between calls), our mask spans the whole process because many features are not
-  bound to any request — an agent, workflow/orchestration, or context/history
-  provider is constructed once and used across the session. The single global
+  bound to any service request — an agent or workflow may first run, a provider
+  may first participate in a session, and a host may start serving independently
+  of the later request that emits the token. The single global
   mask is the only scope that can represent them, and its monotonic "usage so
   far" growth is the intended semantic, not a bleed bug. Concurrency-safe via the
   module lock (Python) / two atomic 64-bit lanes in .NET.
@@ -136,43 +140,60 @@ def get_feature_token() -> str | None:
 - **Private API.** `mark_feature_used`, `get_feature_token`, `apply_feature_token`
   and the mask itself are internal helpers; only the emitted token and the
   per-language registry tables are the stable, decodable contract.
-- **No import cycles:** the call lives in each package's own module, so `core`
-  never imports optional packages. Each package references its bit via the shared
-  `FeatureBit` IntEnum in `agent_framework._telemetry`.
+- **No import cycles:** the accumulator lives in core, while each package owns
+  private index constants for its own features and calls the core marker. Core
+  never imports optional packages.
 
 ### Bit constants
 
-`core` defines a hand-written `FeatureBit` IntEnum in `_telemetry.py` alongside
-the accumulator. **The enum is the source of truth** for Python; the
-Python table in [feature-usage-bit-registry.md](feature-usage-bit-registry.md) is
-its published contract, kept aligned in the same PR (see
-[Keeping the bitmap in sync](#keeping-the-bitmap-in-sync)). Each package imports
-its named member and marks it where the feature is first exercised:
+The registry is the allocation authority. Each package defines a private,
+hand-written `FeatureIndex` IntEnum (or equivalent constants) containing only
+the rows it owns. Core owns core indexes plus the accumulator; optional packages
+can allocate and ship new indexes without requiring a core release after the
+marker API exists.
 
 ```python
-# agent_framework_foundry/_chat_client.py
-from agent_framework._telemetry import FeatureBit, mark_feature_used
+# agent_framework_foundry/_feature_usage.py
+from enum import IntEnum
 
-class RawFoundryChatClient(...):  # base client; FoundryChatClient builds on it
-    def __init__(self, ...):
-        mark_feature_used(FeatureBit.FOUNDRY_CHAT_CLIENT)  # bit 48 in v1
+from agent_framework._telemetry import mark_feature_used  # pyright: ignore[reportAttributeAccessIssue]
+
+
+class FeatureIndex(IntEnum):
+    FOUNDRY_CHAT_CLIENT = 48
+
+
+class RawFoundryChatClient:
+    async def _send_request(self) -> None:
+        mark_feature_used(FeatureIndex.FOUNDRY_CHAT_CLIENT)
         ...
 ```
 
-Mark in the **`Raw*` base client** (e.g. `RawFoundryChatClient`) so every path
-that constructs a Foundry chat client — including the higher-level
-`FoundryChatClient` — sets the bit exactly once.
+A repository validation test reads every package-local declaration and the
+matching language/version table. It fails when an index is out of range, missing
+from the registry, duplicated/overlapping across packages, or mapped to the wrong
+id. For reference, in v1 `FoundryChatClient` → index 48,
+`FoundryAgent` → index 49, Foundry memory → index 50.
 
-Using the shared enum (not literals) keeps `core` free of optional-package
-imports while guaranteeing the bit values match the registry. For reference, in
-v1 `FoundryChatClient` → bit 48, `FoundryAgent` → bit 49, Foundry memory → bit 50.
+### Usage activation points
+
+- **Clients/embeddings/evals:** first outbound operation.
+- **Tools/MCP:** first connection, discovery, or invocation that exercises the
+  tool surface.
+- **Context/history providers:** first provider hook or load/save operation, not
+  constructor-only registration.
+- **Agents/workflows/orchestrations:** first run/build/start operation that
+  activates the defined runtime.
+- **Hosting:** first serve/start/route activation.
+- **Constructor marking:** allowed only when construction itself performs one of
+  those activations or acquires/registers the runtime resource.
 
 ## Emission
 
 **One path in v1: the User-Agent `feat=` token, stamped per request on an
 explicit allowlist of first-party Azure/Foundry client pipelines only.**
 
-Marking (`mark_feature_used`) is **universal** — every feature sets its bit
+Marking (`mark_feature_used`) is **universal** — every feature sets its index
 regardless of provider. Only **emission** is scoped. A user who never calls a
 first-party endpoint emits no token; this is the honest, intended behaviour (no
 third-party leakage, no signal we couldn't read anyway).
@@ -199,30 +220,44 @@ def apply_feature_token(user_agent: str) -> str:
     return f"{base} (feat={token})" if token else base
 ```
 
-Because the existing base-UA values are static, eligible first-party clients
-install a **per-request hook** that calls `apply_feature_token()` on each
-outgoing request:
+Emission requires **both**:
+
+1. an explicitly approved framework client/pipeline family; and
+2. the actual request's normalized HTTPS origin matching that family's reviewed
+   first-party origin allowlist.
+
+Credentials, `use_azure`, or an Azure-named setting alone do not approve a
+destination. Approval depends on the **resolved origin**: customer-specific
+subdomains on reviewed Azure/Foundry suffixes remain eligible even when supplied
+through `base_url` / `AZURE_OPENAI_BASE_URL`, while customer gateways and unknown
+OpenAI-compatible origins are denied by default. The check runs on every actual
+request, including redirect hops; a cross-origin or otherwise unapproved redirect
+removes `(feat=...)` before sending.
+
+Eligible first-party clients install a **per-request hook** that performs this
+classification and calls `apply_feature_token()`:
 
 - **OpenAI-SDK clients created by Agent Framework**: construct the underlying
   client with
-  `http_client=httpx.AsyncClient(event_hooks={"request": [_stamp_feat_hook]})`,
-  where the hook mutates the fully merged `request.headers["User-Agent"]`.
-  Gate on the existing `use_azure` result in
-  `agent_framework_openai/_shared.py` — not on the concrete client class —
-  because Azure `/openai/v1` intentionally uses `AsyncOpenAI`. Foundry-created
-  OpenAI clients get the same hook. Generic OpenAI clients never do.
+  `http_client=DefaultAsyncHttpxClient(event_hooks={"request": [_stamp_feat_hook]})`.
+  Using OpenAI's `DefaultAsyncHttpxClient` preserves the SDK's redirect,
+  connection-limit, and timeout defaults; a plain `httpx.AsyncClient` must not
+  replace them. The hook adds or removes the token based on the approved pipeline
+  plus actual-origin classification. Caller-supplied clients/transports are not
+  replaced or patched.
 - **azure-core pipeline clients**: start with `AIProjectClient` paths whose
   telemetry is confirmed ingestible. When Agent Framework constructs/configures
-  an approved pipeline, add a tiny per-call `SansIOHTTPPolicy` whose `on_request`
-  calls `apply_feature_token()` on
+  an approved pipeline, add a separate per-call `SansIOHTTPPolicy` whose
+  `on_request` performs the same actual-origin check and calls
+  `apply_feature_token()` on
   `request.http_request.headers["User-Agent"]`. Do not stamp `SearchClient`,
   `CosmosClient`, or another Azure client merely because it is first-party; add
   it to the allowlist only after confirming the data path. This mirrors .NET's
   per-request `PipelinePolicy` exactly.
 
 This fixes the frozen-at-construction problem: the token is materialised at
-**send time**, not client-init time, so it carries features constructed after the
-client. It also confines the token to first-party endpoints. Caller-owned
+**send time**, not client-init time, so it carries features activated after the
+client was created. It also confines the token to first-party endpoints. Caller-owned
 clients are not patched, and toolkit-owned clients without a supported public
 hook are outside v1 coverage.
 
@@ -252,16 +287,16 @@ scoped/redacted variant; v1 ships the UA path only. See
 New **internal cross-package** surface in
 `agent_framework._telemetry` (not exported from `agent_framework`):
 
-- `mark_feature_used(bit: int) -> None`
+- `mark_feature_used(index: int) -> None`
 - `get_feature_token() -> str | None` — returns `v<ver>.<hex>` or `None`.
 - `apply_feature_token(user_agent: str) -> str` — live, idempotent UA stamper
   used by first-party per-request hooks.
-- `FeatureBit` (IntEnum) — hand-written source of truth for the Python bit list
-  (see [Keeping the bitmap in sync](#keeping-the-bitmap-in-sync)).
 - `FEATURE_MASK_DISABLED_ENV_VAR` constant — the dedicated mask-only opt-out env
   var name (`AGENT_FRAMEWORK_FEATURE_MASK_DISABLED`).
 
-Two independent opt-outs gate the mask; see [Opt-out](#opt-out).
+Each package also adds a private package-local `FeatureIndex` declaration for
+the rows it owns. Two independent opt-outs gate the mask; see
+[Opt-out](#opt-out).
 
 Behavioural change to existing API:
 
@@ -324,11 +359,10 @@ AGENT_FRAMEWORK_USER_AGENT_DISABLED=true python app.py
 
 ## .NET mapping
 
-- `core` has a hand-written `FeatureBit` enum whose values are **bit indexes
-  `0..127`** — the source of truth for the .NET bit list, matching the .NET table
-  in the registry doc — plus `FeatureUsage.MarkUsed(FeatureBit)` (universal
-  marking, as in Python). It is not a `[Flags]` enum and its members are not mask
-  values.
+- Core owns `FeatureUsage.MarkUsed(int index)` plus the core package's private
+  index declaration. Each optional assembly owns a private `FeatureIndex` enum
+  containing only its allocated rows. These are index positions `0..127`, not
+  `[Flags]` values; `MarkUsed` performs the shift.
 - Store the 128-bit mask as **two `long` lanes** (`low` for bits 0–63, `high`
   for 64–127). Marking touches one lane with `Interlocked.Or` where available
   and a small `Interlocked.CompareExchange` loop on `netstandard2.0` / `net472`.
@@ -341,10 +375,10 @@ AGENT_FRAMEWORK_USER_AGENT_DISABLED=true python app.py
   Reject indexes outside `0..127`.
 - **Emission is per-request and first-party-scoped**, matching Python. The
   existing `AgentFrameworkUserAgentPolicy` / `HostedAgentUserAgentPolicy`
-  pipeline policies already run per request — extend them to append/refresh the
-  `(feat=...)` comment, and register the feat-stamping policy **only on approved
-  Azure/Foundry clients** (e.g. `FoundryChatClient`), not on third-party
-  `IChatClient`s.
+  pipeline policies already run per request — extend them to apply the same
+  approved-pipeline + actual-origin classifier, append/refresh the `(feat=...)`
+  comment only for approved destinations, and remove it on unapproved redirect
+  hops. Do not register it on third-party `IChatClient`s.
 - Same **wire format** (`v<version>.<hex>` comment, hex encoding) and the same
   two opt-out env vars (`AGENT_FRAMEWORK_FEATURE_MASK_DISABLED`,
   `AGENT_FRAMEWORK_USER_AGENT_DISABLED`) in both SDKs — but the **mask is decoded
@@ -356,18 +390,22 @@ AGENT_FRAMEWORK_USER_AGENT_DISABLED=true python app.py
 
 ## Keeping the bitmap in sync
 
-The **`FeatureBit` enum in each SDK is the source of truth** for that language.
-[feature-usage-bit-registry.md](feature-usage-bit-registry.md) holds the matching
-**published table per language** — the contract a decoder reads. There is
-deliberately **no shared numbering** and **no machine-readable registry file**: a
-Python bit and a .NET bit with the same index need not mean the same thing, and
-each SDK adds features without coordinating with the other.
+[feature-usage-bit-registry.md](feature-usage-bit-registry.md) is the published
+allocation contract. Package-local `FeatureIndex` declarations are the runtime
+implementation. There is deliberately **no shared numbering across languages**
+and **no machine-readable registry file**.
 
-Adding a feature is one PR: add the `FeatureBit` enum member, add the matching
-row in that language's table, and mark it at the call site. A small parity test
-checks the enum against that language's Markdown table. This is still not worth
-a generator or generated registry file. If a programmatic decoder is built
-later, export that language's table to JSON for it then.
+One repository validation test gathers every package-local declaration for one
+language/version and parses the matching Markdown table. It asserts:
+
+1. every declared index is within `0..127`;
+2. every `(index, id)` exactly matches one registry row;
+3. the union of declarations has no duplicate/overlapping indexes;
+4. every non-reserved registry row is declared exactly once.
+
+Adding an optional-package feature therefore changes that package and the
+registry, not core. If a programmatic decoder is built later, export the table
+to JSON then.
 
 ### Decoding
 
@@ -387,36 +425,26 @@ table) are ignored.
 1. **Privacy approval** — confirm the first-party-only feature-combination
    signal, retention, access, allowed queries, and opt-out behavior before code
    ships.
-2. **Core accumulator + enum** — in `agent_framework/_telemetry.py` add the
-   128-bit mask, lock, `mark_feature_used`, `get_feature_token`,
-   `apply_feature_token`, and the hand-written `FeatureBit` IntEnum (source of
-   truth, matching the Python table in the registry doc); `get_user_agent()`
-   stays base-only. Unit tests for the live/idempotent stamper.
-3. **First-party per-request hooks** — add the httpx `event_hooks` request hook
-   to Agent-Framework-created OpenAI clients (gated on `use_azure`, including
-   Azure `/openai/v1` clients that use `AsyncOpenAI`) and the azure-core
-   `SansIOHTTPPolicy` where Agent Framework constructs/configures approved
-   `AIProjectClient` pipelines. Verify against a real Foundry call that the UA
-   carries a **non-empty, post-construction** mask. **Do not** add hooks to
-   third-party clients, unapproved Azure services, or caller-owned/private
-   pipelines.
-4. **Mark feature usage** — call `mark_feature_used(FeatureBit.X)` once per
-   feature, the first time it is exercised: at the **`Raw*` base client/entry
-   point** per package (e.g. `RawFoundryChatClient`) so every higher-level
-   wrapper inherits the marking, in the `__init__` of **each** core
-   construct that owns a bit — including every built-in context/history provider
-   (memory, skills, file-access, compaction, todo, agent-mode, background-agents,
-   in-memory/file history), each selected skill source type, and each
-   orchestration builder — and at the first public helper call for function-only
-   packages such as `hosting-a2a`, `hosting-responses`, and `hosting-telegram`.
-   Marking is universal; emission stays first-party-only.
-5. **.NET parity** — hand-written index-valued `FeatureBit` enum (source of truth
-   for the .NET table); two atomic 64-bit lanes with `Interlocked.Or` plus a
-   compare-exchange fallback for legacy targets; extend both existing per-request
-   Foundry UA policies through one shared formatter so `(feat=...)` is refreshed
-   once and survives hosted-prefix replacement. The .NET enum is
-   **independent** of Python's.
-6. **Docs & tests** — update package `AGENTS.md`/skills; tests for **both**
+2. **Core accumulator** — in `agent_framework/_telemetry.py` add the 128-bit
+   mask, lock, `mark_feature_used(index)`, `get_feature_token`, and
+   `apply_feature_token`; `get_user_agent()` stays base-only.
+3. **Package-local indexes + validation** — add private `FeatureIndex`
+   declarations to packages and a repository test for exact registry parity,
+   complete coverage, range, and zero overlap.
+4. **First-party per-request hooks** — use OpenAI's
+   `DefaultAsyncHttpxClient` for framework-created clients and the separate
+   azure-core `SansIOHTTPPolicy`. Require approved pipeline **and** approved
+   actual origin on every request/redirect hop. Verify custom origins and
+   cross-origin redirects never carry the token.
+5. **Mark feature usage** — call `mark_feature_used(FeatureIndex.X)` at the
+   first meaningful activation. Operational clients/providers/tools mark on
+   their first real operation; build/start points mark compositional features.
+   Constructor-only marking requires construction itself to exercise the
+   capability.
+6. **.NET parity** — package-local index enums plus the two atomic 64-bit lanes
+   with `Interlocked.Or` / compare-exchange fallback; extend existing per-request
+   Foundry UA policies through the shared destination classifier and formatter.
+7. **Docs & tests** — update package `AGENTS.md`/skills; tests for **both**
    opt-out env vars (mask-only and whole-UA), first-party scoping, and the live
    (non-frozen) UA.
 

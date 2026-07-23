@@ -5,11 +5,11 @@
 > **Version:** `1` per language · **Width:** 128-bit
 
 This document is the proposed human-readable registry for the feature-usage
-mask. Until ADR-0033 is accepted and the enums ship, these tables are a
-**candidate mapping**, not a stable wire contract. After implementation, each
-SDK's hand-written `FeatureBit` enum is the source of truth and these tables are
-the published decoder contract. A small parity test keeps each enum and table in
-sync; there is no generated artifact.
+mask. Until ADR-0033 is accepted and the index declarations ship, these tables
+are a **candidate mapping**, not a stable wire contract. The table is the
+allocation authority and published decoder contract; package-local private
+`FeatureIndex` declarations implement the rows they own. There is no generated
+artifact.
 
 This telemetry is intentionally **transparent**: this registry is public, the
 emitted value is human-decodable, and two env vars disable it (mask-only or the
@@ -23,15 +23,15 @@ candidate below uses package-level bits plus selected major capabilities: core
 agent/workflow/MCP features, stable skill source types, each orchestration
 pattern, each individual built-in context/history provider, and distinct Foundry
 surfaces. ADR-0033 still leaves the final v1 granularity open. A feature sets its
-bit the first time it is genuinely used; the SDK ORs the bits together and emits
-the value.
+index at first meaningful activation; the SDK shifts that index, ORs the mask,
+and emits the value.
 
 No identifiers, arguments, prompts, payloads, or user data are encoded — only the
 coarse boolean \"this feature was used\" per registered bit.
 
 ## Allocation tenet
 
-**A bit represents a stable, framework-owned capability whose adoption answers a
+**An index represents a stable, framework-owned capability whose adoption answers a
 concrete product or support question.** It has a clear actual-use mark point in a
 public entry path, and the privacy review covers the resulting distinction.
 
@@ -41,9 +41,14 @@ own capability bit. Customer/runtime values — names, prompts, arguments, URLs,
 identifiers, configuration choices — never become bits. A proposed distinction
 without a concrete query and named decision owner waits.
 
+Operational clients, tools, providers, and hosts mark on their first real public
+operation/participation. Constructor marking is reserved for cases where
+construction itself activates or registers the capability; DI instantiation
+alone is not usage.
+
 ## Per-language, not shared
 
-The two tables below are **independent**. Bit indexes are **not** shared across
+The two tables below are **independent**. Feature indexes are **not** shared across
 languages — Python bit 13 and .NET bit 13 do not mean the same thing. This is
 deliberate: the User-Agent product token already names the language
 (`agent-framework-python` vs `agent-framework-dotnet`), so a decoder selects the
@@ -71,17 +76,18 @@ no \"same bit, same meaning\" rule.
   ```
 
 - **Decoding:** read the **language** from the product token, pick that table;
-  read `vN`, pick that version; `AND` the hex mask against each bit. Unknown bits
+  read `vN`, pick that version; test `mask & (1 << index)` for each row. Unknown indexes
   (newer SDK than the decoder's copy) are ignored.
 
 ## Emission scope (where the mask is sent)
 
-- **Marking is universal:** every feature sets its bit the first time it is used,
-  regardless of provider.
+- **Marking is universal:** every feature sets its index at first meaningful
+  activation, regardless of provider.
 - **User-Agent `(feat=...)` comment — approved first-party clients only, per
-  request.** Stamped only through an explicit allowlist of **Azure / Foundry**
-  client pipelines whose User-Agent telemetry the team can ingest, re-evaluated
-  **per request** so it reflects the live mask. It is
+  request.** Stamped only when both the **Azure / Foundry** client/pipeline family
+  and the actual HTTPS origin are approved, re-evaluated on every request and
+  redirect hop. Custom origins are default-deny and an unapproved redirect removes
+  the token. It is
   **never** sent to third-party providers — a feature fingerprint must not leak
   into logs we cannot read. See [SPEC-004](004-feature-usage-telemetry.md#emission).
 - **OpenTelemetry: not in v1.** Deferred primarily for privacy (a span attribute
@@ -89,12 +95,12 @@ no \"same bit, same meaning\" rule.
   APM vendors). Left open behind the version prefix; see
   [ADR-0033](../decisions/0033-feature-usage-bitmask-user-agent.md#considered-options).
 
-## Bit table — Python (`agent-framework-python`, version 1)
+## Index table — Python (`agent-framework-python`, version 1)
 
 Layout: core features 0–31, orchestration patterns 32–47, and
 provider/integration packages from 48.
 
-| Bit | Id | Feature | Marked at (representative) |
+| Index | Id | Feature | Activated at (representative) |
 | --- | --- | --- | --- |
 | 0 | `core.agent` | Agent | `agent_framework.Agent` |
 | 1 | `core.harness_agent` | Harness agent | `agent_framework.create_harness_agent` |
@@ -162,9 +168,9 @@ provider/integration packages from 48.
 | 87 | `lab` | Experimental Agent Framework Lab features | `agent_framework.lab` feature entry points |
 | 88–127 | _reserved_ | future packages | — |
 
-## Bit table — .NET (`agent-framework-dotnet`, version 1)
+## Index table — .NET (`agent-framework-dotnet`, version 1)
 
-| Bit | Id | Feature | Marked at (representative) |
+| Index | Id | Feature | Activated at (representative) |
 | --- | --- | --- | --- |
 | 0 | `core.agent` | Agent | `Microsoft.Agents.AI.ChatClientAgent` |
 | 1 | `core.harness_agent` | Harness agent | `Microsoft.Agents.AI.HarnessAgent` |
@@ -237,19 +243,22 @@ in Python; .NET adds both names when implementing this design.
 
 ## Governance
 
-1. One bit per package/feature, **numbered independently per language**, in the
-   table for that language. New bits are added by editing this file in a reviewed
-   PR; bits are never reused within a `(language, version)`.
-2. The **`FeatureBit` enum in each SDK is the source of truth** after
-   implementation; the matching table here is the published contract. Add the
-   enum member and table row in the same PR. A small parity test keeps them
-   aligned (no generated artifact).
+1. One index per package/feature, **numbered independently per language**, in the
+   table for that language. New indexes are added by editing this file in a reviewed
+   PR; indexes are never reused within a `(language, version)`.
+2. Each package owns a private `FeatureIndex` declaration containing only its
+   rows. Core owns the accumulator API and core indexes, but never imports
+   optional packages. Adding a new optional-package index therefore does not
+   require a core release once the marker API exists.
 3. Adding a feature: apply the [allocation tenet](#allocation-tenet), name the
-   concrete query/decision owner, add the enum member and table row, and mark the
+   concrete query/decision owner, add the package-local index and table row, and mark the
    stable public entry point where actual use begins.
 4. Widening beyond 128-bit or re-partitioning bumps that language's version; old
    decoders keep working because the version prefix disambiguates the mapping.
+5. A repository validation test gathers all package-local declarations for each
+   `(language, version)` and asserts exact table parity, complete non-reserved
+   coverage, `0..127` range, and **no duplicate/overlapping indexes**.
 
 > **No machine-readable registry file ships today.** Nothing consumes one at
-> runtime (each SDK owns its enum). If/when a programmatic decoder is built, this
+> runtime (packages own private declarations). If/when a programmatic decoder is built, this
 > table is the contract to export to JSON for it then.

@@ -26,10 +26,10 @@ the per-language bit tables are in
 
 - **Transparency** — openly documented, human-decodable, user-controllable. No
   hidden or obfuscated telemetry.
-- **First-party scope / no third-party leakage** — emit only through an explicit
-  allowlist of Azure/Foundry client pipelines whose User-Agent telemetry the team
-  can ingest; never infer safety from a hostname or leak a feature fingerprint
-  into logs we cannot read.
+- **First-party scope / no third-party leakage** — emission requires both an
+  explicitly approved client/pipeline family and an approved actual HTTPS origin
+  on every request (including redirects). Credentials or an Azure setting alone
+  never approve a custom gateway/origin.
 - **Live signal** — reflect features exercised *so far*, re-evaluated per request,
   not frozen at client construction.
 - **Low cost / few moving parts** — reuse telemetry already in the request path;
@@ -37,9 +37,9 @@ the per-language bit tables are in
 - **Privacy** — encode only coarse boolean feature usage; no identifiers,
   arguments, prompts, payloads, model/deployment names, endpoints, or
   customer-defined names.
-- **Use, not presence** — package-level bits must mean a package-owned public API,
-  client, provider, or tool was used, not that the package was installed,
-  imported, or loaded.
+- **Use, not presence** — package-level indexes mean a capability reached its
+  first meaningful activation, not that a package was installed/imported or a
+  DI container constructed an unused service.
 - **Versioning discipline** — v1 is a point-in-time decision. Adding bits later is
   easier than removing or redefining them, so the initial table should lean toward
   fewer bits and avoid forcing v2 shortly after launch.
@@ -62,6 +62,8 @@ client pipelines, and re-evaluate it per request.
 - Good, reuses telemetry already sent to approved backends we can read.
 - Good, per-request stamping reflects the live mask (not frozen at construction).
 - Good, first-party scoping means no fingerprint leaks to third-party providers.
+- Good, two-factor destination approval (pipeline + actual origin) denies custom
+  `base_url` gateways and strips the token on unapproved redirect hops.
 - Good, maps onto .NET's existing per-request UA pipeline policies unchanged.
 - Neutral, v1 stamps only pipelines the framework creates or can configure
   through supported public hooks. It does not mutate caller-owned clients or
@@ -113,9 +115,10 @@ A single mask per process; bits are OR-ed in as features are first used and neve
 cleared. The token reflects "what this process has used so far."
 
 - Good, fits our **mixed feature lifecycle**: many features are *not* bound to an
-  outbound request — an `Agent`, a workflow/orchestration, or a context/history
-  provider is constructed once and lives for the session/process. A process-wide
-  mask is the only scope that can represent them at all.
+  outbound service request — an agent/workflow may first run or build, a
+  context/history provider may first participate in a session, and a host may
+  start serving before the request that later emits the token. A process-wide
+  mask can carry those activations forward.
 - Good, trivial and cheap: one OR under a lock (Python) / one atomic OR into one
   of two 64-bit lanes (.NET); no per-request state plumbing.
 - Neutral, coarser than per-call — early requests carry fewer bits than later
@@ -132,8 +135,8 @@ See [Prior art](#prior-art).
 - Bad, **assumes every feature is exercised inside a single service request** —
   true for botocore (an SDK natively bound to AWS service calls), but *not* for
   us. Our features split into request-scoped ones (a chat call, an MCP tool
-  invocation) and decidedly non-request ones (agent/workflow/provider
-  construction, session setup). The latter have no request to attach to, so a
+  invocation) and decidedly non-request ones (workflow build/start, provider
+  participation, hosting startup). The latter have no service request to attach to, so a
   per-request set would simply miss them.
 - Bad, needs `contextvars` propagation through every async/threaded path and a
   reset discipline; the bleed-guard botocore documents is the warning sign.
@@ -155,19 +158,19 @@ provider, or tool. It is **not** set on install, import, or assembly load.
 Examples that get bits:
 
 - `agent-framework-core` when `Agent`, `AgentSession`, `Workflow`, etc. is used.
-- `agent-framework-tools` when `LocalShellTool` or `DockerShellTool` is created
-  or used.
-- `agent-framework-foundry` when `FoundryChatClient`, `FoundryAgent`, etc. is
-  created or called.
+- `agent-framework-tools` when a `LocalShellTool` or `DockerShellTool` first
+  executes/probes its shell capability.
+- `agent-framework-foundry` when a `FoundryChatClient`, `FoundryAgent`, etc.
+  performs its first Foundry operation.
 - `agent-framework-openai` when `OpenAIChatClient`,
-  `OpenAIEmbeddingClient`, etc. is created or called.
+  `OpenAIEmbeddingClient`, etc. performs its first provider operation.
 - `agent-framework-azure-ai-search` when `AzureAISearchContextProvider` is used.
 - `agent-framework-azure-cosmos` when `CosmosHistoryProvider` is used.
 - `agent-framework-redis` when `RedisContextProvider` or `RedisHistoryProvider`
   is used.
 
 Examples that do **not** get separate bits: merely installed dependencies;
-imports with no construction/use; `Agent` vs `AgentSession` vs
+imports or DI construction with no activation; `Agent` vs `AgentSession` vs
 `InMemoryHistoryProvider`; `FunctionTool` vs `MCPStdioTool` vs `LocalShellTool`
 vs `DockerShellTool`; `FoundryChatClient` vs `FoundryAgent`; `OpenAIChatClient`
 vs `OpenAIEmbeddingClient`.
@@ -314,11 +317,14 @@ already present in the UA product token.
 
 ### Registry maintenance
 
-#### J. Hand-written enum + parity test (chosen)
+#### J. Package-local indexes + parity/no-overlap test (chosen)
 
-- Good, the registry is small enough to maintain by hand for the likely v1
-  granularities; a parity test between the enum and the per-language table in the
-  registry doc is enough.
+- Good, each package owns private `FeatureIndex` declarations only for its own
+  rows; adding an optional-provider index does not require a core release after
+  the marker API exists.
+- Good, one repository test compares the package-local declarations with the
+  per-language table and rejects missing rows, wrong ids, out-of-range indexes,
+  and any duplicate/overlapping index.
 - Good, no build step, no generator to own.
 
 #### K. Code-generate the enums from the registry
@@ -364,16 +370,16 @@ the Python v1 list) = decimal `72339073309605893`.
 
 Chosen: **a per-request, first-party-only User-Agent `(feat=...)` token (A),
 with a 128-bit process-global monotonic accumulator (S1), per-language bit lists
-(H), hand-written enums kept honest by a parity test (J), rendered as lowercase
-hex (M).**
+(H), package-local index enums kept honest by parity and no-overlap tests (J),
+rendered as lowercase hex (M).**
 
 This is a bounded design with enough v1 headroom. A 128-bit
 **process-global, monotonic** mask accumulates from universal
-`mark_feature_used()` calls (so it spans construction-time and session-scoped
-features that aren't bound to any request — the per-request set model (S2) can't);
-the token is **stamped per request** only on approved Azure/Foundry client
-pipelines, so it reflects the live mask without freezing at construction (live,
-no third-party leak); each
+`mark_feature_used()` calls (so it spans build/start/participation activations
+that aren't bound to any service request — the per-request set model (S2) can't);
+the token is **stamped per request** only when both the client/pipeline and the
+actual HTTPS origin are approved, so custom origins and cross-origin redirects
+cannot inherit the fingerprint; each
 SDK owns an independent bit list selected by the language already in the UA; the
 mask is rendered as hex (`feat=v1.101000100000005`). **Two opt-out env vars are
 provided:** a dedicated `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` that drops only
@@ -408,13 +414,14 @@ normal growth; it does not waive the registry's
   third-party fingerprint leak.
 - Good, 128 bits leaves useful v1 headroom; .NET remains lock-free by storing two
   independently atomic 64-bit lanes; per-language lists remove all cross-language
-  sync; hand-written enums avoid a codegen toolchain.
+  sync; package-local enums avoid both codegen and provider→core release coupling.
 - Neutral, the token's reach equals eligible framework-configured first-party
   traffic; broader per-call signal (OTel) can be added later if needed.
 - Neutral, v1 granularity is intentionally a separate choice; the registry should
   start with fewer bits unless a more detailed bit answers a concrete question.
-- Bad, each feature must add a `mark_feature_used()` call, and first-party clients
-  need a per-request hook (small, mirrors existing patterns).
+- Bad, each feature must add an activation mark, first-party clients need a
+  per-request destination-aware hook, and the registry validator must scan all
+  package-local index declarations.
 
 ## Prior art
 
@@ -449,7 +456,7 @@ Takeaways that shaped (or validate) our choices:
   bleed. That works because every botocore feature is exercised *inside* an AWS
   service request. We are more general: some features are request-scoped (a chat
   call, an MCP tool invocation) but many are **not bound to any request**
-  (agent / workflow / provider construction, session setup). So we use a
+  (workflow build/start, provider participation, hosting startup). So we use a
   **process-global, monotonic** mask (option S1), which is the only scope that can
   represent the non-request features. Our mask therefore intentionally "bleeds"
   (accumulates) for the life of the process — the opposite of botocore's reset —
@@ -489,7 +496,7 @@ independent for Python and .NET.
   version.
 - **A bump (v2) is required only for breaking changes:** renumbering or
   re-partitioning existing bits, changing the *meaning* of an already-assigned
-  bit, or widening beyond 128-bit. Within a version a bit is **never** reused or
+  index, or widening beyond 128-bit. Within a version an index is **never** reused or
   reassigned — that invariant is what lets old decoders stay correct.
 - **The draft 64→128 change is still v1.** No v1 token or enum has shipped, so
   this pre-implementation repartition establishes the initial contract rather
@@ -503,10 +510,10 @@ independent for Python and .NET.
   record "unknown registry version" rather than decode against an older table —
   bit meanings may differ across versions, so mis-attribution is worse than
   no data.
-- **Producing v2:** publish the v2 table alongside v1 in the registry doc, bump
-  that SDK's `FeatureBit` enum + version constant; the SDK emits `v2` from the
-  release it ships in. Prefer staying on v1 (additive) and reserving a clean v2
-  for an eventual deliberate re-partition.
+- **Producing v2:** publish the v2 table alongside v1, update the affected
+  package-local `FeatureIndex` declarations and SDK version constant, and emit
+  `v2` from the release that ships them. Prefer staying on v1 (additive) and
+  reserving a clean v2 for an eventual deliberate re-partition.
 
 ## Limitations
 
@@ -514,9 +521,10 @@ independent for Python and .NET.
 | --- | --- | --- |
 | **No signal for self-hosted or third-party-only traffic.** If a process never calls Azure/Foundry, we see nothing. | First-party-only emission (A) | We can't read third-party logs anyway, and must not leak a fingerprint into them. Reach traded for privacy. |
 | **Not every first-party client is stampable.** Caller-supplied `AIProjectClient` / OpenAI clients and toolkit-owned clients may not expose a supported per-request policy hook. | Supported-hook-only emission (A) | V1 does not mutate caller-owned clients or private SDK pipelines. Those features may still appear on another eligible request from the same process-global mask. |
+| **Custom origins intentionally receive no feature token.** A customer gateway may use Azure credentials or Azure-named settings but route to a non-approved origin. | Two-factor destination classification (A) | Credentials and configuration names are not proof of telemetry ownership. Unknown/custom origins and cross-origin redirects are denied by default. |
 | **No OTel / per-call signal in v1.** | OTel deferred (C) — primarily on **privacy** and availability grounds | A broadly-emitted span attribute would push the fingerprint into the user's general telemetry / third-party APM vendors, undoing the first-party-only scoping. It also requires customer/user OTel setup, and even Foundry users may not export data where we can query it. Left open only if there is a compelling reason to add. |
 | **Mask reflects "usage so far," not the whole session.** Early requests carry fewer bits than later ones. | Process-global accumulator + per-request stamping | Honest and still useful; the team aggregates across requests. The per-request design is what makes it *grow* rather than freeze. |
-| **No per-agent / per-call attribution.** The mask is one process-wide value — "this process used X", not "this agent/call used X". | Process-global monotonic scope (S1) | A deliberate choice, not a transport limit: botocore *does* per-call attribution in the UA via a per-request `contextvars` set (S2), but that assumes every feature lives inside a service request. Many of ours don't (agent/workflow/provider construction, session setup), so process-global is the only scope that captures them. Per-call detail for the request-scoped subset is left to the deferred OTel path. |
+| **No per-agent / per-call attribution.** The mask is one process-wide value — "this process used X", not "this agent/call used X". | Process-global monotonic scope (S1) | A deliberate choice, not a transport limit: botocore *does* per-call attribution in the UA via a per-request `contextvars` set, but many AF activations (workflow build/start, provider participation, hosting startup) occur outside the service request that later emits the token. Per-call detail remains deferred to OTel. |
 | **Shared processes intentionally carry usage across agents and tenants.** A request can include bits first set by another workload in the same worker. | Process-global monotonic scope (S1) | The token must be interpreted only as process-level "used so far," never as request/user/tenant attribution. Privacy review must explicitly accept this. |
 | **Counts are request-weighted and sticky.** Once set, a bit appears on every later eligible request from that process, so long-lived/high-traffic processes dominate. | Monotonic mask emitted per request | The signal supports traffic prevalence and co-occurrence, not first-use counts, unique-process counts, or exact feature invocation frequency. |
 | **Granularity may be too coarse or too detailed.** The chosen level may miss useful distinctions or create more specificity than needed. | v1 granularity choice (F0-F4) | This is the main remaining decision. Adding bits later is easier than removing/redefining them, so v1 should lean toward fewer bits that answer known questions. |
@@ -562,6 +570,12 @@ These are unresolved and should be decided before implementation:
   clients or clients with a supported public policy/hook registration point. It
   does not patch private pipelines; injected clients are an explicit coverage
   limitation.
+- **Destination approval is explicit and redirect-aware.** An eligible pipeline
+  still emits only to a reviewed HTTPS origin. Custom origins are default-deny,
+  and the token is removed on an unapproved redirect hop.
+- **Marking uses activation, not DI construction.** Operational surfaces mark on
+  first real use; a constructor marks only when construction itself exercises or
+  registers the capability.
 
 ## More Information
 
