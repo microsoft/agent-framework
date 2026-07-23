@@ -243,7 +243,8 @@ public class InMemoryChatHistoryProviderTests
         var session = CreateMockSession();
 
         // Arrange
-        var originalMessages = new List<ChatMessage>
+        // Existing messages in state from a previous turn.
+        var existingMessages = new List<ChatMessage>
         {
             new(ChatRole.User, "Hello"),
             new(ChatRole.Assistant, "Hi there!")
@@ -253,22 +254,78 @@ public class InMemoryChatHistoryProviderTests
             new(ChatRole.User, "Reduced")
         };
 
+        // New messages being added in the current turn.
+        var newRequestMessage = new ChatMessage(ChatRole.User, "New message");
+        var newResponseMessage = new ChatMessage(ChatRole.Assistant, "New response");
+
         var reducerMock = new Mock<IChatReducer>();
         reducerMock
-            .Setup(r => r.ReduceAsync(It.Is<List<ChatMessage>>(x => x.SequenceEqual(originalMessages)), It.IsAny<CancellationToken>()))
+            .Setup(r => r.ReduceAsync(It.Is<List<ChatMessage>>(x => x.SequenceEqual(existingMessages)), It.IsAny<CancellationToken>()))
             .ReturnsAsync(reducedMessages);
 
         var provider = new InMemoryChatHistoryProvider(new() { ChatReducer = reducerMock.Object, ReducerTriggerEvent = InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.AfterMessageAdded });
+        provider.SetMessages(session, new List<ChatMessage>(existingMessages));
 
         // Act
-        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, originalMessages, []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, [newRequestMessage], [newResponseMessage]);
         await provider.InvokedAsync(context, CancellationToken.None);
 
         // Assert
+        // The reducer is called on existing messages before the new ones are added.
+        reducerMock.Verify(r => r.ReduceAsync(It.Is<List<ChatMessage>>(x => x.SequenceEqual(existingMessages)), It.IsAny<CancellationToken>()), Times.Once);
+
+        // Final state: reduced existing messages + new current-turn messages (preserved in full).
         var messages = provider.GetMessages(session);
-        Assert.Single(messages);
+        Assert.Equal(3, messages.Count);
         Assert.Equal("Reduced", messages[0].Text);
-        reducerMock.Verify(r => r.ReduceAsync(It.Is<List<ChatMessage>>(x => x.SequenceEqual(originalMessages)), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal("New message", messages[1].Text);
+        Assert.Equal("New response", messages[2].Text);
+    }
+
+    [Fact]
+    public async Task AddMessagesAsync_WithReducer_AfterMessageAdded_PreservesCurrentTurnFunctionCallsAsync()
+    {
+        var session = CreateMockSession();
+
+        // Arrange - verify that function call and tool result messages from the current turn are preserved
+        // even when a reducer is configured with AfterMessageAdded trigger. The reducer should only
+        // be applied to existing (previous-turn) messages, not to the new messages being added.
+        var existingMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Previous question"),
+            new(ChatRole.Assistant, "Previous answer")
+        };
+
+        var reducerMock = new Mock<IChatReducer>();
+        reducerMock
+            .Setup(r => r.ReduceAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);  // Simulates an aggressive reducer that clears all messages it receives
+
+        var provider = new InMemoryChatHistoryProvider(new() { ChatReducer = reducerMock.Object, ReducerTriggerEvent = InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.AfterMessageAdded });
+        provider.SetMessages(session, new List<ChatMessage>(existingMessages));
+
+        var requestMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "What is the weather in Taggia?")
+        };
+        var responseMessages = new List<ChatMessage>
+        {
+            new(ChatRole.Assistant, [new FunctionCallContent("call1", "GetWeather", new Dictionary<string, object?> { ["location"] = "Taggia" })]),
+            new(ChatRole.Tool, [new FunctionResultContent("call1", "Cloudy with a high of 15°C")]),
+            new(ChatRole.Assistant, "The weather in Taggia is cloudy with a high of 15°C.")
+        };
+
+        // Act
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, requestMessages, responseMessages);
+        await provider.InvokedAsync(context, CancellationToken.None);
+
+        // Assert - all current-turn messages (including function call and tool result) are preserved
+        var messages = provider.GetMessages(session);
+        Assert.Equal(4, messages.Count);
+        Assert.Equal("What is the weather in Taggia?", messages[0].Text);
+        Assert.True(messages[1].Contents.OfType<FunctionCallContent>().Any(), "Function call message should be preserved");
+        Assert.True(messages[2].Contents.OfType<FunctionResultContent>().Any(), "Tool result message should be preserved");
+        Assert.Equal("The weather in Taggia is cloudy with a high of 15°C.", messages[3].Text);
     }
 
     [Fact]
