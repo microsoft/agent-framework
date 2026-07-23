@@ -11,9 +11,11 @@ the registered _handle_create handler.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, overload
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -4316,5 +4318,98 @@ class TestWorkflowAgentHosting:
         assert len(approval_responses) == 1
         assert approval_responses[0].approved is False  # type: ignore[attr-defined]
 
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+class TestCheckpointStoragePath:
+    """
+    In hosted mode, WorkflowAgent checkpoints must be stored under
+    $HOME/.checkpoints (durable across compute recreation), not
+    /.checkpoints (ephemeral root path that is wiped on idle).
+    """
+
+    @staticmethod
+    def _make_mock_workflow_agent() -> MagicMock:
+        """Create a mock WorkflowAgent for path-only tests."""
+        mock_workflow = MagicMock()
+        mock_workflow._runner_context.has_checkpointing.return_value = False
+        mock_workflow.name = "test-checkpoint-path"
+
+        mock_agent = MagicMock(spec=WorkflowAgent)
+        mock_agent.workflow = mock_workflow
+        mock_agent.context_providers = []
+
+        return mock_agent
+
+    def test_local_checkpoint_path_uses_cwd(self) -> None:
+        """In local mode, checkpoints should be under cwd, NOT root `/`."""
+        mock_agent = self._make_mock_workflow_agent()
+        _original_isinstance = isinstance
+
+        def _patched_isinstance(obj: Any, cls: Any) -> bool:
+            if cls is WorkflowAgent:
+                return True
+            return _original_isinstance(obj, cls)
+
+        with patch(
+            "agent_framework_foundry_hosting._responses.isinstance",
+            side_effect=_patched_isinstance,
+        ):
+            server = _make_server(mock_agent)
+
+        assert server._checkpoint_storage_path == os.path.join(os.getcwd(), ".checkpoints")
+
+    def test_hosted_checkpoint_path_uses_home(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """In hosted mode with valid HOME, checkpoints must be under $HOME/.checkpoints."""
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "true")
+        monkeypatch.setenv("HOME", "/home/testuser")
+        mock_agent = self._make_mock_workflow_agent()
+        _original_isinstance = isinstance
+
+        def _patched_isinstance(obj: Any, cls: Any) -> bool:
+            if cls is WorkflowAgent:
+                return True
+            return _original_isinstance(obj, cls)
+
+        with patch(
+            "agent_framework_foundry_hosting._responses.isinstance",
+            side_effect=_patched_isinstance,
+        ):
+            server = ResponsesHostServer(mock_agent, store=InMemoryResponseProvider())
+
+        actual_normalized = server._checkpoint_storage_path.replace("\\", "/")
+        assert actual_normalized.endswith("/home/testuser/.checkpoints")
+        assert not actual_normalized.startswith("/.checkpoints")
+
+    def test_hosted_without_home_env_uses_default_session_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When HOME is unset in hosted mode, fall back to /home/session/.checkpoints."""
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "true")
+        monkeypatch.delenv("HOME", raising=False)
+        mock_agent = self._make_mock_workflow_agent()
+
+        with patch(
+            "agent_framework_foundry_hosting._responses.isinstance",
+            side_effect=lambda o, c: c is WorkflowAgent or isinstance(o, c),
+        ):
+            server = ResponsesHostServer(mock_agent, store=InMemoryResponseProvider())
+
+        assert server._checkpoint_storage_path == "/home/session/.checkpoints"
+
+    @pytest.mark.parametrize("bad_home", ["/", "", "   "])
+    def test_hosted_with_unusable_home_falls_back_to_default(
+        self, monkeypatch: pytest.MonkeyPatch, bad_home: str
+    ) -> None:
+        """Filesystem-root or empty HOME must NOT produce /.checkpoints."""
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "true")
+        monkeypatch.setenv("HOME", bad_home)
+        mock_agent = self._make_mock_workflow_agent()
+
+        with patch(
+            "agent_framework_foundry_hosting._responses.isinstance",
+            side_effect=lambda o, c: c is WorkflowAgent or isinstance(o, c),
+        ):
+            server = ResponsesHostServer(mock_agent, store=InMemoryResponseProvider())
+
+        assert server._checkpoint_storage_path == "/home/session/.checkpoints"
+        assert server._checkpoint_storage_path != "/.checkpoints"
 
 # endregion
