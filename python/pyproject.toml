@@ -395,9 +395,26 @@ args = [
 ]
 
 [tool.poe.tasks.validate-dependency-bounds-test]
-help = "Run workspace dependency-bound validation in test mode, optionally scoped with -P/--package short names such as `core`."
+help = "Run the exhaustive workspace dependency-bound test+typing matrix, optionally scoped with -P/--package short names such as `core`."
 shell = "python -m scripts.dependencies.validate_dependency_bounds --mode test --package \"$project\""
 args = [{ name = "project", default = "*", options = ["-P", "--package"] }]
+
+[tool.poe.tasks.validate-python-release]
+help = "Refresh uv.lock, then run lock-independent lower/upper import probes for package metadata changed from -B/--base-ref."
+executor = "simple"
+shell = """
+python -m scripts.dependencies.validate_dependency_bounds \
+  --mode release \
+  --base-ref "${base_ref}" \
+  --python "${python}" \
+  --release-timeout-seconds "${timeout}"
+"""
+interpreter = "bash"
+args = [
+    { name = "base_ref", options = ["-B", "--base-ref"] },
+    { name = "python", default = "3.10", options = ["--python"] },
+    { name = "timeout", default = "300", options = ["--timeout-seconds"] },
+]
 
 [tool.poe.tasks.validate-dependency-bounds-project]
 help = "Validate lower and upper dependency bounds for a -P/--package workspace package, optionally narrowed with -M/--mode and -D/--dependency."

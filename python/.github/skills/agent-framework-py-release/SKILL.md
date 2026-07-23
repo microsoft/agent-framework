@@ -28,7 +28,7 @@ For release work, derive the live tier map at release time from `python/PACKAGE_
 
 ## Inputs to confirm before bumping
 
-1. **The changeset**: explicit commits/PRs the release covers, OR derive from `git log ${LAST_RELEASED_TAG}..origin/main -- python/`.
+1. **The changeset**: explicit commits/PRs the release covers, OR derive from `git log ${LAST_RELEASED_TAG}..${RELEASE_BASE} -- python/`.
 2. **Per-package CHANGELOG entries**: which packages will get a line in the new release section. This list IS the bump list.
 3. **Per-released-package semver bump**: for each released-tier package that has a CHANGELOG entry, decide PATCH / MINOR / MAJOR.
 4. **Date stamp** (only if any alpha/beta is being bumped): default from the `python-package-management`
@@ -55,12 +55,20 @@ If the user states target versions or a date explicitly, use exactly what they s
 git fetch origin main --tags --quiet
 git fetch upstream main --tags --quiet 2>/dev/null || true
 git status
+
+# Fork clones use upstream/main as the authoritative release base; direct clones use origin/main.
+if git show-ref --verify --quiet refs/remotes/upstream/main; then
+  RELEASE_BASE=upstream/main
+else
+  RELEASE_BASE=origin/main
+fi
+git log -1 --oneline "$RELEASE_BASE"
 ```
 
 If the user already has a `bump-py-ver-release-*` branch checked out, use it. Otherwise:
 
 ```bash
-git checkout -b bump-py-ver-release-YYMMDD origin/main
+git checkout -b bump-py-ver-release-YYMMDD "$RELEASE_BASE"
 ```
 
 ### 2. Build the live tier map
@@ -84,20 +92,20 @@ echo "Compare base: $LAST_RELEASED_TAG"
 List commits and packages touched:
 
 ```bash
-git log --oneline ${LAST_RELEASED_TAG}..origin/main -- python/ ':!python/CHANGELOG.md'
+git log --oneline ${LAST_RELEASED_TAG}..${RELEASE_BASE} -- python/ ':!python/CHANGELOG.md'
 
 # Per-commit package footprint
-for sha in $(git log --format='%H' ${LAST_RELEASED_TAG}..origin/main -- python/); do
+for sha in $(git log --format='%H' ${LAST_RELEASED_TAG}..${RELEASE_BASE} -- python/); do
   echo "--- $(git show -s --format='%h %s' $sha) ---"
   git show --name-only --format='' $sha | grep '^python/packages/' | \
     sed 's|^python/packages/||' | awk -F/ '{print $1}' | sort -u
 done
 ```
 
-If the release ultimately tags from `upstream/main` but `origin/main` is behind, also run:
+When both remotes exist, record whether the fork is behind the authoritative base:
 
 ```bash
-git log --oneline ${LAST_RELEASED_TAG}..upstream/main -- python/ ':!python/CHANGELOG.md'
+git rev-list --left-right --count origin/main...upstream/main
 ```
 
 If user provides an explicit commit/PR list, treat THAT as authoritative.
@@ -108,14 +116,14 @@ Aggregate the per-commit footprint into a single union across the whole range. T
 
 ```bash
 # Union of all touched package directories across the range
-git log --name-only --format='' ${LAST_RELEASED_TAG}..origin/main -- python/packages/ \
+git log --name-only --format='' ${LAST_RELEASED_TAG}..${RELEASE_BASE} -- python/packages/ \
   | grep '^python/packages/' \
   | sed 's|^python/packages/||' \
   | awk -F/ '{print $1}' \
   | sort -u
 
 # Root-level files (drive a root agent-framework entry if substantive)
-git log --name-only --format='' ${LAST_RELEASED_TAG}..origin/main \
+git log --name-only --format='' ${LAST_RELEASED_TAG}..${RELEASE_BASE} \
   -- python/pyproject.toml python/agent_framework_meta/ python/README.md \
   2>/dev/null | grep -v '^$' | sort -u
 ```
@@ -175,13 +183,13 @@ Before moving on, prove that every ship-affecting touched package has at least o
 
 ```bash
 # 1. Touched ship-affecting packages and root package files (from step 3a)
-TOUCHED_PACKAGES=$(git log --name-only --format='' ${LAST_RELEASED_TAG}..origin/main -- python/packages/ \
+TOUCHED_PACKAGES=$(git log --name-only --format='' ${LAST_RELEASED_TAG}..${RELEASE_BASE} -- python/packages/ \
   | grep '^python/packages/' \
   | sed 's|^python/packages/||' \
   | awk -F/ '{print $1}' \
   | sort -u)
 
-ROOT_TOUCHED=$(git log --name-only --format='' ${LAST_RELEASED_TAG}..origin/main \
+ROOT_TOUCHED=$(git log --name-only --format='' ${LAST_RELEASED_TAG}..${RELEASE_BASE} \
   -- python/pyproject.toml python/agent_framework_meta/ python/README.md \
   2>/dev/null | grep -v '^$' | sort -u)
 
@@ -279,7 +287,7 @@ Spot-check with `grep '^version' python/pyproject.toml python/packages/*/pyproje
 Only relevant when `core` itself bumped this cycle. Two policies, pick one explicitly with the user:
 
 - **Conservative (default)**: raise `agent-framework-core>=X.Y.Z` to the new core version on every non-core package that is ALSO bumping this cycle. Leaves packages-not-bumped at their existing floor.
-- **Strict per-upstream-doc**: only raise the floor on packages that actually consume a new core API introduced in the bump. This requires per-package code inspection. Use only when the user is comfortable letting `validate-dependency-bounds-test` (lower-resolution pass) catch any mistakes.
+- **Strict per-upstream-doc**: only raise the floor on packages that actually consume a new core API introduced in the bump. This requires per-package code inspection because release probes use the co-released local core and cannot prove compatibility with an older published core floor.
 
 When raising a core floor, replace only the `>=OLD` half of the bound you intend to change:
 
@@ -294,12 +302,28 @@ If `core` did not bump this cycle, do not touch floors.
 ### 7. Validate
 
 ```bash
-cd python && uv run poe validate-dependency-bounds-test
+cd python && uv run poe validate-python-release --base-ref "$RELEASE_BASE"
 ```
 
-Must exit 0. This is the safety net for selective bumping: the lower-resolution pass catches floors set too low for code that depends on new APIs, and the upper pass catches caps that exclude installable versions. If it fails, the output names the offending bound — fix and re-run before committing. This step also regenerates `uv.lock` to match new bounds.
+Use the same freshly fetched main ref that the release branch was based on (`upstream/main` above; use `origin/main`
+when that is the authoritative release base). Must exit 0. This task first regenerates `uv.lock`, then discovers the
+package `pyproject.toml` files changed from that base and runs their published runtime dependencies and
+non-development extras through lock-independent `lowest-direct` and `highest` import probes. The probes run in
+parallel on Python 3.10 and share a hard 300-second deadline.
 
-If only prereleases changed (no `core` bump, no floor changes), this validation is still required — `uv.lock` regeneration alone justifies the run.
+This is the release safety net for selective bumping: the lower probe catches unresolvable or unimportable external
+floors, internal constraints that reject co-released package versions, and the upper probe catches caps that exclude
+an installable package set. The JSON report records the concrete versions resolved in both scenarios. It does not
+replace the package-by-package code inspection required by the strict core-floor policy. If it fails, fix the named
+package/bound and re-run before committing.
+
+Do not substitute the workspace-wide `validate-dependency-bounds-test` command here. That command runs every
+package's full tests and Pyright in separate isolated environments and is intentionally reserved for CI or an
+explicit dependency-range audit. If the release itself changes an external dependency range, also run
+`validate-dependency-bounds-project --mode both --package <pkg> --dependency <name>` for that dependency.
+
+If only prereleases changed (no `core` bump, no floor changes), release validation is still required because the
+lockfile and both ends of each changed package's published dependency metadata must remain installable.
 
 ### 8. Commit (expect hook retry)
 
@@ -349,7 +373,7 @@ The push output includes a `Create a pull request for '<branch>' on GitHub by vi
   do not infer a local timezone from the user's current shell.
 - **`Co-Authored-By` trailer.** Never add it. Rewrite/amend if it slipped in.
 - **Stale inventory in this skill.** Always read `python/PACKAGE_STATUS.md` for the live tier map. Do not trust a hardcoded list.
-- **Divergent origin vs upstream.** If the release tags from `upstream/main` but `origin/main` is behind, check both — warn if they differ and offer to sync.
+- **Divergent origin vs upstream.** In fork clones, use freshly fetched `upstream/main` consistently for branch creation, changeset discovery, and release validation. A stale `origin/main` must never become the implicit compare base.
 - **`--pre` README cleanup on promotion.** When a package is promoted to `released` in this cycle, grep for `pip install agent-framework-<pkg> --pre` in READMEs and drop the `--pre` flag.
 - **RC counter inflation.** Do not increment `1.0.0rcN` without a CHANGELOG entry for that package. The counter tracks iterations, not calendar.
 
@@ -357,5 +381,6 @@ The push output includes a `Create a pull request for '<branch>' on GitHub by vi
 
 - Package lifecycle and versioning source of truth: `python/.github/skills/python-package-management/SKILL.md`
 - Lifecycle source of truth: `python/PACKAGE_STATUS.md`
-- Validator: `python/scripts/dependencies/validate_dependency_bounds.py` (runs `lowest-direct` and `highest` resolution smoke tests; catches floors/caps that don't match the code)
+- Release validator: `python/scripts/dependencies/validate_dependency_bounds.py --mode release` (changed-package,
+  lock-independent `lowest-direct` and `highest` import probes under a five-minute deadline)
 - Poe task definitions: `python/pyproject.toml` `[tool.poe.tasks]`

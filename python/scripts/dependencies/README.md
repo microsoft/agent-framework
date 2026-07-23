@@ -12,9 +12,17 @@ Run the commands below from the `python/` directory.
 
 - `validate_dependency_bounds.py`
   - Main entrypoint for dependency-bound workflows.
-  - Supports `test`, `lower`, `upper`, and `both` modes.
-  - `test` runs workspace-wide smoke validation at the lower and upper ends of the currently allowed ranges.
+  - Supports `release`, `test`, `lower`, `upper`, and `both` modes.
+  - `release` refreshes `uv.lock`, then runs changed packages through fast lock-independent lower/upper import probes.
+  - `test` runs the exhaustive workspace test+typing compatibility matrix.
   - `lower`, `upper`, and `both` dispatch to the lower/upper optimizer implementations for one package.
+
+- `_dependency_bounds_release_impl.py`
+  - Discovers package metadata changed from the selected release base.
+  - Resolves published runtime dependencies and non-development extras independently of `uv.lock` with both
+    `lowest-direct` and `highest` strategies.
+  - Imports each changed package and records resolved dependency versions in a JSON report.
+  - Runs probes concurrently under one five-minute deadline.
 
 - `upgrade_dev_dependencies.py`
   - Refreshes exact dev dependency pins across the root `pyproject.toml` and package `pyproject.toml` files.
@@ -45,6 +53,7 @@ These are the normal user-facing entrypoints:
 ```bash
 uv run poe upgrade-dev-dependency-pins
 uv run poe upgrade-dev-dependencies
+uv run poe validate-python-release --base-ref upstream/main
 uv run poe validate-dependency-bounds-test
 uv run poe validate-dependency-bounds-test --package core
 uv run poe validate-dependency-bounds-project --mode both --package core --dependency "<dependency-name>"
@@ -52,7 +61,10 @@ uv run poe validate-dependency-bounds-project --mode both --package core --depen
 
 - `upgrade-dev-dependency-pins` only refreshes exact dev pins in `pyproject.toml` files.
 - `upgrade-dev-dependencies` refreshes dev pins (using task above), runs `uv lock --upgrade`, reinstalls from the frozen lockfile, then runs `check`, `typing`, and `test`.
-- `validate-dependency-bounds-test` runs the repo-wide lower/upper smoke gate.
+- `validate-python-release` is the bounded release gate: it refreshes `uv.lock`, finds changed package metadata,
+  and probes both dependency-bound extremes without reusing the lockfile.
+- `validate-dependency-bounds-test` runs the exhaustive package test+typing matrix and is intentionally not part of
+  the routine release path.
 - `validate-dependency-bounds-project` is the single package-scoped task; use `--mode lower`, `--mode upper`, or `--mode both` for the target package/dependency pair. Its `--package` argument defaults to `*`, and `--dependency` is optional, so automation can also use it for repo-wide upper-bound runs.
 
 ### GitHub Actions workflows
@@ -76,6 +88,7 @@ These are useful for debugging or targeted manual runs:
 
 ```bash
 python -m scripts.dependencies.upgrade_dev_dependencies --dry-run --version-source lock
+python -m scripts.dependencies.validate_dependency_bounds --mode release --base-ref upstream/main --dry-run
 python -m scripts.dependencies.validate_dependency_bounds --mode test --package core --dry-run
 python -m scripts.dependencies.validate_dependency_bounds --mode both --package core --dependencies openai --dry-run
 python -m scripts.dependencies._dependency_bounds_lower_impl --packages core --dependencies openai --dry-run
@@ -89,6 +102,7 @@ Use the direct lower/upper implementation modules mainly for debugging or develo
 The validators write JSON reports into this folder:
 
 - `dependency-bounds-test-results.json`
+- `dependency-bounds-release-results.json`
 - `dependency-lower-bound-results.json`
 - `dependency-range-results.json`
 
