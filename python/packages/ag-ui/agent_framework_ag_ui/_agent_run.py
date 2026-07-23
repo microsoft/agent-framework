@@ -1570,7 +1570,7 @@ def _append_segmented_snapshot_messages(flow: FlowState, all_messages: list[dict
 
     leftover_calls = [tc for tc in flow.pending_tool_calls if tc.get("id") not in emitted_call_ids]
     if leftover_calls:
-        leftover_ids = {call.get("id") for call in leftover_calls if call.get("id") is not None}
+        leftover_ids = {cid for call in leftover_calls if (cid := call.get("id")) is not None}
         all_messages.append(
             {
                 "id": tool_open_id or generate_event_id(),
