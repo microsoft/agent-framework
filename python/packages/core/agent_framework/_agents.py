@@ -7,6 +7,7 @@ import re
 import sys
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from contextvars import ContextVar
 from copy import deepcopy
 from functools import partial
 from itertools import chain
@@ -72,6 +73,13 @@ if TYPE_CHECKING:
     from ._types import ChatOptions
 
 logger = logging.getLogger("agent_framework")
+
+# Set by AgentLoopMiddleware to the looping agent while a loop iteration is
+# running, so providers scoped to the whole user turn
+# (``after_run_once_per_turn``) skip their per-iteration ``after_run`` and only
+# fire once at the loop boundary. Keyed to the agent instance: a nested
+# ``agent.run()`` inside the iteration is a separate run, not a loop iteration.
+_LOOP_ITERATION_ACTIVE: ContextVar[Any] = ContextVar("agent_loop_iteration_active", default=None)
 
 if TYPE_CHECKING:
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -528,12 +536,17 @@ class BaseAgent(SerializationMixin):
         *,
         session: AgentSession | None,
         context: SessionContext,
+        only_per_turn: bool = False,
     ) -> None:
         """Run after_run on all context providers in reverse order.
 
         Keyword Args:
             session: The conversation session.
             context: The invocation context with response populated.
+            only_per_turn: When True, run only providers that opted into
+                once-per-turn semantics (``after_run_once_per_turn``); used by
+                AgentLoopMiddleware when a loop ends. When False, those
+                providers are skipped while a loop iteration is in progress.
         """
         provider_session = session
         if provider_session is None and self.context_providers:
@@ -545,8 +558,14 @@ class BaseAgent(SerializationMixin):
         per_service_call_history_required = self.require_per_service_call_history_persistence and any(
             isinstance(provider, HistoryProvider) for provider in self.context_providers
         )
+        in_loop_iteration = _LOOP_ITERATION_ACTIVE.get() is self
         for provider in reversed(self.context_providers):
             if per_service_call_history_required and isinstance(provider, HistoryProvider):
+                continue
+            once_per_turn = getattr(provider, "after_run_once_per_turn", False)
+            if only_per_turn and not once_per_turn:
+                continue
+            if in_loop_iteration and once_per_turn:
                 continue
             if provider_session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")

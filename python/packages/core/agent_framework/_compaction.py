@@ -1285,6 +1285,10 @@ class CompactionProvider(ContextProvider):
             await agent.run("Hello", session=session)
     """
 
+    # Compacting persisted history mid-task rewrites the transcript the loop
+    # still works from, so defer it to the end of the user turn.
+    after_run_once_per_turn = True
+
     def __init__(
         self,
         *,

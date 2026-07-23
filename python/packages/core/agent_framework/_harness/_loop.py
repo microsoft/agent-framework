@@ -34,8 +34,10 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 from pydantic import BaseModel, Field
 from typing_extensions import Self
 
+from .._agents import _LOOP_ITERATION_ACTIVE
 from .._feature_stage import ExperimentalFeature, experimental
 from .._middleware import AgentContext, AgentMiddleware, MiddlewareTermination
+from .._sessions import SessionContext
 from .._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -472,6 +474,35 @@ class AgentLoopMiddleware(AgentMiddleware):
         session.service_session_id = restored.service_session_id
         session.state = restored.state
 
+    async def _fire_turn_scoped_after_providers(
+        self,
+        context: AgentContext,
+        response: AgentResponse | None,
+        input_messages: list[Message],
+    ) -> None:
+        """Fire deferred ``after_run`` for turn-scoped providers at the loop boundary.
+
+        Iterations suppress providers that set ``after_run_once_per_turn``; the
+        loop runs them here once, with the turn-level response.
+        """
+        agent = context.agent
+        run_after = getattr(agent, "_run_after_providers", None)
+        if response is None or run_after is None:
+            return
+        if not any(
+            getattr(provider, "after_run_once_per_turn", False)
+            for provider in getattr(agent, "context_providers", [])
+        ):
+            return
+        session_context = SessionContext(
+            session_id=context.session.session_id if context.session else None,
+            service_session_id=context.session.service_session_id if context.session else None,
+            input_messages=list(input_messages),
+            options=dict(context.options or {}),
+        )
+        session_context._response = response
+        await run_after(session=context.session, context=session_context, only_per_turn=True)
+
     async def _process_non_streaming(
         self,
         context: AgentContext,
@@ -488,7 +519,11 @@ class AgentLoopMiddleware(AgentMiddleware):
         aggregated_usage: UsageDetails | None = None
         final_result: AgentResponse | None = None
         while True:
-            await call_next()
+            loop_token = _LOOP_ITERATION_ACTIVE.set(context.agent)
+            try:
+                await call_next()
+            finally:
+                _LOOP_ITERATION_ACTIVE.reset(loop_token)
             iteration += 1
 
             result = context.result
@@ -555,6 +590,11 @@ class AgentLoopMiddleware(AgentMiddleware):
 
         if not self.return_final_only:
             context.result = self._aggregate_response(final_result, aggregated, aggregated_usage)
+        await self._fire_turn_scoped_after_providers(
+            context,
+            context.result if isinstance(context.result, AgentResponse) else final_result,
+            original_messages,
+        )
 
     def _process_streaming(
         self,
@@ -571,58 +611,52 @@ class AgentLoopMiddleware(AgentMiddleware):
             iteration = 0
             work_iterations = 0
             progress: list[str] = []
-            while True:
-                try:
-                    await call_next()
-                    inner = context.result
-                    if not isinstance(inner, ResponseStream):
-                        raise TypeError(
-                            "AgentLoopMiddleware expected a ResponseStream from a streaming run, "
-                            f"got {type(inner).__name__}."
-                        )
+            try:
+                while True:
+                    loop_token = _LOOP_ITERATION_ACTIVE.set(context.agent)
+                    try:
+                        await call_next()
+                        inner = context.result
+                        if not isinstance(inner, ResponseStream):
+                            raise TypeError(
+                                "AgentLoopMiddleware expected a ResponseStream from a streaming run, "
+                                f"got {type(inner).__name__}."
+                            )
 
-                    async for update in inner:
-                        yield update
+                        async for update in inner:
+                            yield update
 
-                    holder["final"] = await inner.get_final_response()
-                except MiddlewareTermination:
-                    # The pipeline's MiddlewareTermination suppression is no longer active once
-                    # process() has returned (the stream is consumed lazily), so a termination
-                    # raised by a downstream middleware or during stream consumption surfaces here.
-                    # Stop cleanly and keep whatever final response we have from a prior iteration.
-                    return
+                        holder["final"] = await inner.get_final_response()
+                    except MiddlewareTermination:
+                        # The pipeline's MiddlewareTermination suppression is no longer active once
+                        # process() has returned (the stream is consumed lazily), so a termination
+                        # raised by a downstream middleware or during stream consumption surfaces here.
+                        # Stop cleanly and keep whatever final response we have from a prior iteration.
+                        return
+                    finally:
+                        _LOOP_ITERATION_ACTIVE.reset(loop_token)
 
-                iteration += 1
+                    iteration += 1
 
-                messages_used = context.messages
-                final = holder["final"]
-                # Escape hatch: if this iteration is asking for tool approval, stop the loop and
-                # let the caller approve, instead of continuing or injecting next_message.
-                if self._has_pending_approval_request(final):
-                    return
-                loop_kwargs = self._build_loop_kwargs(
-                    context=context,
-                    iteration=iteration,
-                    last_result=final,
-                    messages_used=messages_used,
-                    original_messages=original_messages,
-                    progress=progress,
-                )
+                    messages_used = context.messages
+                    final = holder["final"]
+                    # Escape hatch: if this iteration is asking for tool approval, stop the loop and
+                    # let the caller approve, instead of continuing or injecting next_message.
+                    if self._has_pending_approval_request(final):
+                        return
+                    loop_kwargs = self._build_loop_kwargs(
+                        context=context,
+                        iteration=iteration,
+                        last_result=final,
+                        messages_used=messages_used,
+                        original_messages=original_messages,
+                        progress=progress,
+                    )
 
-                work_iterations += 1
-                # Decide whether to stop and capture any feedback from should_continue first, so the
-                # feedback is available to both the progress and next-message callables this iteration.
-                stop, feedback = await self._evaluate_stop(loop_kwargs, work_iterations)
-                loop_kwargs = self._build_loop_kwargs(
-                    context=context,
-                    iteration=iteration,
-                    last_result=final,
-                    messages_used=messages_used,
-                    original_messages=original_messages,
-                    progress=progress,
-                    feedback=feedback,
-                )
-                if await self._record_progress(final, loop_kwargs, progress):
+                    work_iterations += 1
+                    # Decide whether to stop and capture any feedback from should_continue first, so the
+                    # feedback is available to both the progress and next-message callables this iteration.
+                    stop, feedback = await self._evaluate_stop(loop_kwargs, work_iterations)
                     loop_kwargs = self._build_loop_kwargs(
                         context=context,
                         iteration=iteration,
@@ -632,20 +666,32 @@ class AgentLoopMiddleware(AgentMiddleware):
                         progress=progress,
                         feedback=feedback,
                     )
-                if stop:
-                    return
-                if snapshot is not None and context.session is not None:
-                    # Reset the session to the pre-loop baseline before the next run. The final
-                    # response was already awaited above, so the service-side conversation id has
-                    # been propagated and is safe to discard here.
-                    self._restore_session(context.session, snapshot)
-                next_messages = await self._resolve_next_message(loop_kwargs, messages_used, original_messages)
-                context.messages = next_messages
-                # Surface the injected "nudge" messages in the stream so consumers see the user
-                # turns that drive each subsequent iteration (the equivalent of the aggregated
-                # transcript that non-streaming runs return).
-                for message in next_messages:
-                    yield self._message_to_update(message)
+                    if await self._record_progress(final, loop_kwargs, progress):
+                        loop_kwargs = self._build_loop_kwargs(
+                            context=context,
+                            iteration=iteration,
+                            last_result=final,
+                            messages_used=messages_used,
+                            original_messages=original_messages,
+                            progress=progress,
+                            feedback=feedback,
+                        )
+                    if stop:
+                        return
+                    if snapshot is not None and context.session is not None:
+                        # Reset the session to the pre-loop baseline before the next run. The final
+                        # response was already awaited above, so the service-side conversation id has
+                        # been propagated and is safe to discard here.
+                        self._restore_session(context.session, snapshot)
+                    next_messages = await self._resolve_next_message(loop_kwargs, messages_used, original_messages)
+                    context.messages = next_messages
+                    # Surface the injected "nudge" messages in the stream so consumers see the user
+                    # turns that drive each subsequent iteration (the equivalent of the aggregated
+                    # transcript that non-streaming runs return).
+                    for message in next_messages:
+                        yield self._message_to_update(message)
+            finally:
+                await self._fire_turn_scoped_after_providers(context, holder["final"], original_messages)
 
         def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
             if holder["final"] is not None:
