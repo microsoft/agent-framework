@@ -40,6 +40,7 @@ from fastapi.params import Depends
 from fastapi.testclient import TestClient
 
 from agent_framework_ag_ui import (
+    AGUIRequest,
     AGUIThreadSnapshot,
     InMemoryAGUIThreadSnapshotStore,
     add_agent_framework_fastapi_endpoint,
@@ -5178,13 +5179,20 @@ async def test_workflow_factory_cache_is_scoped_by_resolver_without_snapshot_sto
         created_workflows.append(workflow)
         return workflow
 
+    def resolve_scope(request: AGUIRequest) -> str:
+        forwarded_props = request.forwarded_props
+        assert forwarded_props is not None
+        tenant = forwarded_props["tenant"]
+        assert isinstance(tenant, str)
+        return tenant
+
     app = FastAPI()
     runner = AgentFrameworkWorkflow(workflow_factory=factory)
     add_agent_framework_fastapi_endpoint(
         app,
         runner,
         path="/workflow",
-        snapshot_scope_resolver=lambda request: request.forwarded_props["tenant"],
+        snapshot_scope_resolver=resolve_scope,
     )
     client = TestClient(app)
 
