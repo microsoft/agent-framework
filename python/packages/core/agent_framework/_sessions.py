@@ -424,7 +424,14 @@ class ContextProvider:
     Attributes:
         source_id: Unique identifier for this provider instance (required).
             Used for message/tool attribution so other providers can filter.
+        after_run_once_per_turn: When True, ``after_run`` is scoped to the user
+            turn instead of the individual agent run: inside an
+            ``AgentLoopMiddleware`` loop it is deferred until the loop ends.
+            Providers that mutate persisted history (e.g. compaction) opt in,
+            since firing mid-task would rewrite history the task still needs.
     """
+
+    after_run_once_per_turn: bool = False
 
     def __init__(self, source_id: str):
         """Initialize the provider.

@@ -22,6 +22,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ContextProvider,
     JudgeVerdict,
     Message,
     MiddlewareTermination,
@@ -1395,3 +1396,78 @@ async def test_streaming_escape_hatch_stops_on_pending_approval() -> None:
     assert client.call_count == 1
     assert calls == []
     assert AgentLoopMiddleware._has_pending_approval_request(final) is True
+
+
+# region turn-scoped after_run providers (#7236)
+
+
+class _TurnScopedRecordingProvider(ContextProvider):
+    after_run_once_per_turn = True
+
+    def __init__(self) -> None:
+        super().__init__("turn-scoped-test")
+        self.after_calls = 0
+
+    async def after_run(self, *, agent: Any, session: Any, context: Any, state: dict[str, Any]) -> None:
+        self.after_calls += 1
+
+
+class _RunScopedRecordingProvider(ContextProvider):
+    def __init__(self) -> None:
+        super().__init__("run-scoped-test")
+        self.after_calls = 0
+
+    async def after_run(self, *, agent: Any, session: Any, context: Any, state: dict[str, Any]) -> None:
+        self.after_calls += 1
+
+
+async def test_turn_scoped_after_run_fires_once_per_loop() -> None:
+    client = RecordingChatClient()
+    turn_scoped = _TurnScopedRecordingProvider()
+    run_scoped = _RunScopedRecordingProvider()
+    agent = Agent(
+        client=client,
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=3)],
+        context_providers=[turn_scoped, run_scoped],
+    )
+
+    await agent.run("start")
+
+    assert client.call_count == 3
+    assert turn_scoped.after_calls == 1
+    assert run_scoped.after_calls == 3
+
+
+async def test_turn_scoped_after_run_fires_once_per_loop_streaming() -> None:
+    client = RecordingChatClient()
+    turn_scoped = _TurnScopedRecordingProvider()
+    run_scoped = _RunScopedRecordingProvider()
+    agent = Agent(
+        client=client,
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=3)],
+        context_providers=[turn_scoped, run_scoped],
+    )
+
+    stream = agent.run("start", stream=True)
+    _ = [update async for update in stream]
+    await stream.get_final_response()
+
+    assert client.call_count == 3
+    assert turn_scoped.after_calls == 1
+    assert run_scoped.after_calls == 3
+
+
+async def test_turn_scoped_after_run_fires_normally_without_loop() -> None:
+    client = RecordingChatClient()
+    turn_scoped = _TurnScopedRecordingProvider()
+    agent = Agent(client=client, context_providers=[turn_scoped])
+
+    await agent.run("start")
+
+    assert turn_scoped.after_calls == 1
+
+
+def test_compaction_provider_defers_to_turn_boundary() -> None:
+    from agent_framework._compaction import CompactionProvider
+
+    assert CompactionProvider(after_strategy=None).after_run_once_per_turn is True
