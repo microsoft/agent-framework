@@ -694,7 +694,7 @@ requires-dist = [{ name = "agent-framework-core", editable = "packages/core" }]
 
 [[package]]
 name = "agent-framework-hosting-a2a"
-version = "1.0.0a260721"
+version = "1.0.0a260723"
 source = { editable = "packages/hosting-a2a" }
 dependencies = [
     { name = "a2a-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },

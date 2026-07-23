@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [hosting-a2a-1.0.0a260723] - 2026-07-23
+
+### Added
+- **agent-framework-hosting-a2a**: Add progressive agent and workflow A2A adapters with native card generation, skill discovery, typed conversion, and mode-aware validation ([#7258](https://github.com/microsoft/agent-framework/pull/7258))
+
+### Changed
+- **samples**: Update the app-owned A2A hosting sample to use the progressive adapter surface ([#7258](https://github.com/microsoft/agent-framework/pull/7258))
+
 ## [1.12.1] - 2026-07-22
 
 ### Added
