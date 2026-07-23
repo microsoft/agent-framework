@@ -52,6 +52,21 @@ internal class MagenticTaskContext(List<ChatMessage> taskDefinition, List<AIAgen
 
     public List<ChatMessage> ChatHistory { get; internal set; } = new();
 
+    /// <summary>
+    /// Optional concrete language (e.g. "English", "Chinese") that the manager's internally generated messages
+    /// must be written in, configured via <c>MagenticWorkflowBuilder.WithResponseLanguage</c>. When
+    /// <see langword="null"/> the built-in English prompts are used as-is. This is build-time configuration
+    /// (re-applied from the builder after a checkpoint restore), not runtime state.
+    /// </summary>
+    public string? ResponseLanguage { get; internal set; }
+
+    /// <summary>
+    /// Optional user-supplied overrides for the manager's internal prompt templates, configured via
+    /// <c>MagenticWorkflowBuilder.WithPromptOverrides</c>. When <see langword="null"/> the built-in templates
+    /// are used. This is build-time configuration (re-applied from the builder after a checkpoint restore).
+    /// </summary>
+    public MagenticPromptOverrides? PromptOverrides { get; internal set; }
+
     public TaskLedger? TaskLedger { get; internal set; }
 
     public TaskLimits TaskLimits => limits;

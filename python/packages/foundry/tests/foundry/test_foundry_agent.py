@@ -3,23 +3,31 @@
 from __future__ import annotations
 
 import inspect
+import json
 import os
 import sys
+from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 from agent_framework import (
     Agent,
+    AgentExecutor,
     AgentResponse,
     AgentSession,
     ChatContext,
     ChatMiddleware,
     ChatResponse,
     ChatResponseUpdate,
+    FunctionInvocationContext,
+    FunctionMiddleware,
     Message,
+    MiddlewareTermination,
+    WorkflowBuilder,
     tool,
 )
 from agent_framework_openai._chat_client import RawOpenAIChatClient
@@ -27,6 +35,7 @@ from azure.ai.projects import models as projects_models
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
+from openai import AsyncOpenAI
 
 from agent_framework_foundry._agent import (
     FoundryAgent,
@@ -108,6 +117,70 @@ def test_raw_foundry_agent_chat_client_init_with_agent_name() -> None:
     assert client.agent_name == "test-agent"
     assert client.agent_version == "1.0"
     mock_project.get_openai_client.assert_called_once_with()
+
+
+async def test_foundry_agent_basic_call_does_not_request_unsupported_encrypted_reasoning() -> None:
+    """A Foundry agent call must not opt into encrypted reasoning unless the caller requests it."""
+    mock_response = MagicMock()
+    mock_response.id = "response_123"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.output = []
+    mock_response.usage = None
+    mock_response.finish_reason = None
+    mock_response.conversation = None
+    mock_response.status = "completed"
+    mock_response.parse.return_value = mock_response
+    mock_response.headers = {}
+
+    async def create_response(**kwargs: Any) -> Any:
+        if "reasoning.encrypted_content" in kwargs.get("include", []):
+            raise ValueError("Encrypted content is not supported with this model.")
+        return mock_response
+
+    mock_openai = MagicMock()
+    mock_openai.responses.with_raw_response.create = AsyncMock(side_effect=create_response)
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = mock_openai
+    client = RawFoundryAgentChatClient(project_client=mock_project, agent_name="test-agent")
+
+    response = await client.get_response([Message(role="user", contents=["Hello"])])
+
+    assert response.response_id == "response_123"
+
+
+async def test_foundry_agent_preserves_caller_requested_encrypted_reasoning() -> None:
+    """A caller can explicitly opt into encrypted reasoning on a capable Foundry deployment."""
+    mock_response = MagicMock()
+    mock_response.id = "response_123"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.output = []
+    mock_response.usage = None
+    mock_response.finish_reason = None
+    mock_response.conversation = None
+    mock_response.status = "completed"
+    mock_response.parse.return_value = mock_response
+    mock_response.headers = {}
+
+    mock_openai = MagicMock()
+    mock_openai.responses.with_raw_response.create = AsyncMock(return_value=mock_response)
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = mock_openai
+    client = RawFoundryAgentChatClient(project_client=mock_project, agent_name="test-agent")
+
+    await client.get_response(
+        [Message(role="user", contents=["Hello"])],
+        options={"include": ["reasoning.encrypted_content"]},
+    )
+
+    await_args = mock_openai.responses.with_raw_response.create.await_args
+    assert await_args is not None
+    assert await_args.kwargs["include"] == ["reasoning.encrypted_content"]
 
 
 def test_agent_accepts_raw_foundry_agent_chat_client() -> None:
@@ -1192,6 +1265,176 @@ async def test_foundry_agent_configure_azure_monitor_import_error() -> None:
         pytest.raises(ImportError, match="azure-monitor-opentelemetry is required"),
     ):
         await agent.configure_azure_monitor()
+
+
+@pytest.mark.parametrize("terminate_tool_loop", [False, True])
+async def test_foundry_agent_workflow_replays_parallel_reasoning_function_group(
+    terminate_tool_loop: bool,
+) -> None:
+    """Stateless cross-agent replay keeps a parallel reasoning/function batch atomic."""
+    summary_inputs: list[list[dict[str, Any]]] = []
+
+    def _message(message_id: str, text: str) -> dict[str, Any]:
+        return {
+            "id": message_id,
+            "content": [{"annotations": [], "text": text, "type": "output_text"}],
+            "role": "assistant",
+            "status": "completed",
+            "type": "message",
+        }
+
+    def _response(response_id: str, output: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "id": response_id,
+            "created_at": 0,
+            "model": "gpt-5.4",
+            "object": "response",
+            "output": output,
+            "parallel_tool_calls": True,
+            "status": "completed",
+            "tool_choice": "auto",
+            "tools": [],
+        }
+
+    async def foundry_responses_boundary(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        agent_name = payload["agent_reference"]["name"]
+
+        if agent_name == "research-agent" and "previous_response_id" not in payload:
+            return httpx.Response(
+                200,
+                json=_response(
+                    "resp_research_tool",
+                    [
+                        {
+                            "encrypted_content": "encrypted-reasoning",
+                            "id": "rs_required",
+                            "summary": [{"text": "I need both local tools.", "type": "summary_text"}],
+                            "type": "reasoning",
+                        },
+                        {
+                            "arguments": '{"query":"Agent Framework"}',
+                            "call_id": "call_paired",
+                            "id": "fc_paired",
+                            "name": "lookup_docs",
+                            "status": "completed",
+                            "type": "function_call",
+                        },
+                        {
+                            "arguments": '{"query":"stateless replay"}',
+                            "call_id": "call_guarded",
+                            "id": "fc_guarded",
+                            "name": "guarded_lookup",
+                            "status": "completed",
+                            "type": "function_call",
+                        },
+                    ],
+                ),
+            )
+
+        if agent_name == "research-agent":
+            return httpx.Response(
+                200,
+                json=_response(
+                    "resp_research_final",
+                    [_message("msg_research", "Microsoft Agent Framework")],
+                ),
+            )
+
+        input_items = payload["input"]
+        summary_inputs.append(input_items)
+        input_types = {item.get("type") for item in input_items if isinstance(item, dict)}
+        if "function_call" in input_types and "reasoning" not in input_types:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": (
+                            "Item 'fc_paired' of type 'function_call' was provided without its "
+                            "required 'reasoning' item: 'rs_required'."
+                        ),
+                        "type": "invalid_request_error",
+                        "code": "invalid_request_error",
+                    }
+                },
+            )
+
+        return httpx.Response(
+            200,
+            json=_response(
+                "resp_summary",
+                [_message("msg_summary", "The research result was Microsoft Agent Framework.")],
+            ),
+        )
+
+    @tool(name="lookup_docs", approval_mode="never_require")
+    def lookup_docs(query: str) -> str:
+        return f"Found documentation for {query}"
+
+    @tool(name="guarded_lookup", approval_mode="never_require")
+    def guarded_lookup(query: str) -> str:
+        return f"Found guarded documentation for {query}"
+
+    class TerminateToolLoopMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            if context.function.name == "guarded_lookup":
+                context.result = "Blocked by policy"
+                raise MiddlewareTermination("Policy blocked tool execution")
+            await call_next()
+
+    transport = httpx.MockTransport(foundry_responses_boundary)
+    responses_client = AsyncOpenAI(
+        api_key="test-key",
+        http_client=httpx.AsyncClient(transport=transport),
+        max_retries=0,
+    )
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = responses_client
+
+    research_agent = FoundryAgent(
+        project_client=project_client,
+        agent_name="research-agent",
+        tools=[lookup_docs, guarded_lookup],
+        middleware=[TerminateToolLoopMiddleware()] if terminate_tool_loop else None,
+    )
+    summary_agent = FoundryAgent(
+        project_client=project_client,
+        agent_name="summary-agent",
+    )
+    research_executor = AgentExecutor(research_agent, id="research")
+    summary_executor = AgentExecutor(summary_agent, id="summary")
+    workflow = (
+        WorkflowBuilder(start_executor=research_executor, output_from=[summary_executor])
+        .add_edge(research_executor, summary_executor)
+        .build()
+    )
+
+    result = await workflow.run("Research Agent Framework and summarize the result")
+
+    outputs = result.get_outputs()
+    assert outputs
+    assert outputs[-1].text == "The research result was Microsoft Agent Framework."
+    assert len(summary_inputs) == 1
+    assert [item["type"] for item in summary_inputs[0]] == [
+        "message",
+        "reasoning",
+        "function_call",
+        "function_call",
+        "function_call_output",
+        "function_call_output",
+        *(["message"] if not terminate_tool_loop else []),
+    ]
+    assert summary_inputs[0][1]["encrypted_content"] == "encrypted-reasoning"
+    assert [item["call_id"] for item in summary_inputs[0][2:4]] == ["call_paired", "call_guarded"]
+    assert [item["call_id"] for item in summary_inputs[0][4:6]] == ["call_paired", "call_guarded"]
+    assert summary_inputs[0][4]["output"] == "Found documentation for Agent Framework"
+    assert summary_inputs[0][5]["output"] == (
+        "Blocked by policy" if terminate_tool_loop else "Found guarded documentation for stateless replay"
+    )
 
 
 @pytest.mark.flaky

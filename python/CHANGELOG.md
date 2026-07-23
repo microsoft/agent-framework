@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [hosting-a2a-1.0.0a260723] - 2026-07-23
+
+### Added
+- **agent-framework-hosting-a2a**: Add progressive agent and workflow A2A adapters with native card generation, skill discovery, typed conversion, and mode-aware validation ([#7258](https://github.com/microsoft/agent-framework/pull/7258))
+
+### Changed
+- **samples**: Update the app-owned A2A hosting sample to use the progressive adapter surface ([#7258](https://github.com/microsoft/agent-framework/pull/7258))
+
+## [1.12.1] - 2026-07-22
+
+### Added
+- **agent-framework-openai**: Add explicit prompt cache breakpoints for GPT-5.6 models and a usage sample ([#7163](https://github.com/microsoft/agent-framework/pull/7163))
+
+### Changed
+- **agent-framework-ag-ui**: Promote the package from release candidate to stable
+- **agent-framework-core**: Add security guidance for custom MCP Streamable HTTP clients ([#7245](https://github.com/microsoft/agent-framework/pull/7245))
+
+### Fixed
+- **agent-framework-gemini**: Preserve Gemini 3 thought signatures across function-call replays ([#7095](https://github.com/microsoft/agent-framework/pull/7095))
+- **agent-framework-core**, **agent-framework-foundry**, **agent-framework-foundry-hosting**, **agent-framework-openai**: Fix stateless replay of reasoning-paired tool calls ([#7233](https://github.com/microsoft/agent-framework/pull/7233))
+
 ## [1.12.0] - 2026-07-21
 
 ### Added
@@ -1398,7 +1419,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.12.0...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.12.1...HEAD
+[1.12.1]: https://github.com/microsoft/agent-framework/compare/python-1.12.0...python-1.12.1
 [1.12.0]: https://github.com/microsoft/agent-framework/compare/python-1.11.0...python-1.12.0
 [1.11.0]: https://github.com/microsoft/agent-framework/compare/python-1.10.0...python-1.11.0
 [1.10.0]: https://github.com/microsoft/agent-framework/compare/python-1.9.0...python-1.10.0
