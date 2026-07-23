@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import copy
 import inspect
 import json
 import logging
@@ -2409,7 +2410,20 @@ async def _process_function_requests(
         had_errors=had_errors,
         max_errors=max_errors,
     )
-    result["function_call_results"] = list(function_call_results)
+    # The inner stream already yielded the declaration-only function_call chunks as they
+    # arrived, so re-emitting their arguments would make _process_update (which merges via +=)
+    # concatenate the argument string twice. Strip the arguments from any function_call items
+    # while retaining their control metadata (id, user_input_request) so streaming consumers
+    # (e.g. AgentExecutor) still receive the request-info/pause signal without duplicated arguments.
+    streamed_results: list[Content] = []
+    for r in function_call_results:
+        if r.type == "function_call":
+            metadata_only = copy.copy(r)
+            metadata_only.arguments = None
+            streamed_results.append(metadata_only)
+        else:
+            streamed_results.append(r)
+    result["function_call_results"] = streamed_results
     result["function_call_count"] = sum(1 for r in function_call_results if r.type == "function_result")
     # If middleware requested termination, change action to return
     if should_terminate:

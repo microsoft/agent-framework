@@ -1558,6 +1558,10 @@ class Content:
             call_id=self_call_id,
             name=getattr(self, "name", None) or getattr(other, "name", None),
             arguments=arguments,
+            id=getattr(self, "id", None) or getattr(other, "id", None),
+            user_input_request=(
+                getattr(self, "user_input_request", None) or getattr(other, "user_input_request", None)
+            ),
             exception=getattr(self, "exception", None) or getattr(other, "exception", None),
             informational_only=getattr(self, "informational_only", False)
             or getattr(other, "informational_only", False),
