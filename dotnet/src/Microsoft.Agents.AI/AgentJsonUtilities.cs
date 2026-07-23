@@ -108,6 +108,9 @@ internal static partial class AgentJsonUtilities
     [JsonSerializable(typeof(BackgroundTaskStatus))]
     [JsonSerializable(typeof(List<BackgroundTaskInfo>), TypeInfoPropertyName = "BackgroundTaskInfoList")]
 
+    // RoutingChatClient types
+    [JsonSerializable(typeof(RoutingState))]
+
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;
 }
