@@ -29,6 +29,7 @@ from ._feature_stage import (
     _warn_on_feature_use,  # pyright: ignore[reportPrivateUsage]
     experimental,
 )
+from ._telemetry import FeatureIndex, mark_feature_used
 from ._tools import FunctionTool
 from ._types import (
     ChatOptions,
@@ -1268,6 +1269,7 @@ class MCPTool:
         await self._run_on_lifecycle_owner("connect", reset=True, load_configured=False)
 
     async def connect(self, *, reset: bool = False) -> None:
+        mark_feature_used(FeatureIndex.CORE_MCP)
         if self._is_lifecycle_owner_task():
             await self._connect_on_owner(reset=reset)
             return

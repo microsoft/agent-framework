@@ -30,12 +30,12 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, cast
 
 from agent_framework import Agent, AgentResponse, AgentResponseUpdate, AgentSession, Message, SupportsAgentRun
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
 from agent_framework._workflows._executor import Executor
 from agent_framework._workflows._workflow import Workflow
-from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
 from pydantic import BaseModel, Field
 from typing_extensions import Never
@@ -49,6 +49,7 @@ from ._base_group_chat_orchestrator import (
     ParticipantRegistry,
     TerminationCondition,
 )
+from ._feature_usage import FeatureIndex
 from ._orchestration_request_info import AgentApprovalExecutor
 from ._orchestrator_helpers import clean_conversation_for_handoff
 from ._participant_output_config import (
@@ -59,6 +60,7 @@ from ._participant_output_config import (
     _ParticipantOutputSpecifier,  # pyright: ignore[reportPrivateUsage]
     _resolve_participant_output_config,  # pyright: ignore[reportPrivateUsage]
 )
+from ._workflow_builder import OrchestrationWorkflowBuilder as WorkflowBuilder
 
 if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
@@ -1010,6 +1012,7 @@ class GroupChatBuilder:
         Returns:
             Validated Workflow instance ready for execution
         """
+        mark_feature_used(FeatureIndex.GROUP_CHAT)
         # Resolve orchestrator and participants to executors
         participants: list[Executor] = self._resolve_participants()
         orchestrator: Executor = self._resolve_orchestrator(participants)

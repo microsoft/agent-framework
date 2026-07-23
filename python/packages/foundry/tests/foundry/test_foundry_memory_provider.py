@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 from typing import Any, cast
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import pytest
 from agent_framework import AgentResponse, Message
@@ -97,6 +97,7 @@ def test_init_with_project_endpoint_and_credential(mock_project_client: AsyncMoc
             credential=mock_credential,
             allow_preview=True,
             user_agent=get_user_agent(),
+            user_agent_policy=ANY,
         )
 
 

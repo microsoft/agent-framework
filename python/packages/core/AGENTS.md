@@ -17,6 +17,7 @@ agent_framework/
 ├── _sessions.py         # AgentSession and context provider abstractions
 ├── _skills.py           # Agent Skills system (models, executors, provider)
 ├── _mcp.py              # Model Context Protocol support
+├── _telemetry.py        # User-Agent identity and internal feature-usage mask
 ├── _workflows/          # Workflow orchestration (sequential, concurrent, handoff, etc.)
 ├── openai/              # Built-in OpenAI client
 ├── azure/               # Lazy-loading entry point for Azure integrations

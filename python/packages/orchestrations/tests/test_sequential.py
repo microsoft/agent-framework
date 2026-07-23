@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterable, Awaitable, Sequence
 from typing import Any, Literal, overload
 
+import agent_framework._telemetry as telemetry
 import pytest
 from agent_framework import (
     AgentExecutorResponse,
@@ -20,8 +21,12 @@ from agent_framework import (
     WorkflowRunState,
     handler,
 )
+from agent_framework._telemetry import FeatureIndex as CoreFeatureIndex
+from agent_framework._telemetry import get_feature_token
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework.orchestrations import SequentialBuilder
+
+from agent_framework_orchestrations._feature_usage import FeatureIndex
 
 
 class _EchoAgent(BaseAgent):
@@ -89,6 +94,19 @@ class _InvalidExecutor(Executor):
     @handler
     async def summarize(self, conversation: list[str], ctx: WorkflowContext[list[Message]]) -> None:
         pass
+
+
+def test_sequential_builder_does_not_mark_custom_workflow() -> None:
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+
+    SequentialBuilder(participants=[_EchoAgent(name="echo")]).build()
+
+    token = get_feature_token()
+    assert token is not None
+    mask = int(token.split(".", 1)[1], 16)
+    assert mask & (1 << FeatureIndex.SEQUENTIAL)
+    assert not mask & (1 << CoreFeatureIndex.CORE_WORKFLOW)
 
 
 def test_sequential_builder_rejects_empty_participants() -> None:

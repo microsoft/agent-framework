@@ -6,6 +6,7 @@ from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
+import agent_framework._telemetry as telemetry
 import pytest
 from agent_framework import (
     Agent,
@@ -27,6 +28,7 @@ from agent_framework import (
     WorkflowRunState,
     handler,
 )
+from agent_framework._telemetry import get_feature_token
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework.orchestrations import (
     GroupChatRequestMessage,
@@ -39,6 +41,8 @@ from agent_framework.orchestrations import (
     MagenticProgressLedgerItem,
     StandardMagenticManager,
 )
+
+from agent_framework_orchestrations._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -184,6 +188,17 @@ class DummyExec(Executor):
         self, message: GroupChatRequestMessage, ctx: WorkflowContext[Message]
     ) -> None:  # pragma: no cover - not called
         pass
+
+
+def test_magentic_builder_marks_feature_with_custom_manager() -> None:
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+
+    MagenticBuilder(participants=[DummyExec("agentA")], manager=FakeManager()).build()
+
+    token = get_feature_token()
+    assert token is not None
+    assert int(token.split(".", 1)[1], 16) & (1 << FeatureIndex.MAGENTIC)
 
 
 async def test_magentic_builder_returns_workflow_and_runs() -> None:

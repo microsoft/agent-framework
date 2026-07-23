@@ -18,6 +18,7 @@ from agent_framework import (
     Message,
     SupportsAgentRun,
 )
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._checkpoint import CheckpointStorage
 from agent_framework._workflows._events import WorkflowEvent
@@ -25,7 +26,6 @@ from agent_framework._workflows._executor import Executor, handler
 from agent_framework._workflows._model_utils import DictConvertible, encode_value
 from agent_framework._workflows._request_info_mixin import response_handler
 from agent_framework._workflows._workflow import Workflow
-from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
 from typing_extensions import Never, Sentinel
 
@@ -37,6 +37,7 @@ from ._base_group_chat_orchestrator import (
     GroupChatWorkflowContextOutT,
     ParticipantRegistry,
 )
+from ._feature_usage import FeatureIndex
 from ._participant_output_config import (
     UNSET,
     _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
@@ -45,6 +46,7 @@ from ._participant_output_config import (
     _ParticipantOutputSpecifier,  # pyright: ignore[reportPrivateUsage]
     _resolve_participant_output_config,  # pyright: ignore[reportPrivateUsage]
 )
+from ._workflow_builder import OrchestrationWorkflowBuilder as WorkflowBuilder
 
 if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
@@ -1774,6 +1776,7 @@ class MagenticBuilder:
 
     def build(self) -> Workflow:
         """Build a Magentic workflow with the orchestrator and all agent executors."""
+        mark_feature_used(FeatureIndex.MAGENTIC)
         logger.info(f"Building Magentic workflow with {len(self._participants)} participants")
 
         participants: list[Executor] = self._resolve_participants()

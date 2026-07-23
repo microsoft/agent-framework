@@ -5,6 +5,9 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import re
+import threading
+from enum import IntEnum
 from typing import Any, Final
 
 from . import __version__ as version_info
@@ -15,6 +18,8 @@ logger = logging.getLogger("agent_framework")
 # Note that if this environment variable does not exist, user agent telemetry is enabled.
 USER_AGENT_TELEMETRY_DISABLED_ENV_VAR = "AGENT_FRAMEWORK_USER_AGENT_DISABLED"
 IS_TELEMETRY_ENABLED = os.environ.get(USER_AGENT_TELEMETRY_DISABLED_ENV_VAR, "false").lower() not in ["true", "1"]
+FEATURE_MASK_DISABLED_ENV_VAR = "AGENT_FRAMEWORK_FEATURE_MASK_DISABLED"
+FEATURE_REGISTRY_VERSION = 1
 
 APP_INFO = (
     {
@@ -27,6 +32,29 @@ USER_AGENT_KEY: Final[str] = "User-Agent"
 HTTP_USER_AGENT: Final[str] = "agent-framework-python"
 AGENT_FRAMEWORK_USER_AGENT = f"{HTTP_USER_AGENT}/{version_info}"
 
+
+class FeatureIndex(IntEnum):
+    """Core-owned indexes in the Python feature-usage registry."""
+
+    CORE_AGENT = 0
+    CORE_HARNESS_AGENT = 1
+    CORE_WORKFLOW = 2
+    CORE_MCP = 3
+    CORE_TOOL_APPROVAL = 4
+    CORE_MEMORY_PROVIDER = 5
+    CORE_SKILLS_PROVIDER = 6
+    CORE_FILE_ACCESS_PROVIDER = 7
+    CORE_COMPACTION_PROVIDER = 8
+    CORE_TODO_PROVIDER = 9
+    CORE_AGENT_MODE_PROVIDER = 10
+    CORE_BACKGROUND_AGENTS_PROVIDER = 11
+    CORE_IN_MEMORY_HISTORY_PROVIDER = 12
+    CORE_FILE_HISTORY_PROVIDER = 13
+    CORE_FILE_SKILLS_SOURCE = 14
+    CORE_IN_MEMORY_SKILLS_SOURCE = 15
+    CORE_MCP_SKILLS_SOURCE = 16
+
+
 # This environment variable is reserved by the Foundry hosting environment to
 # indicate that the agent is running in a hosted environment.
 _FOUNDRY_HOSTING_ENV_VAR = "FOUNDRY_HOSTING_ENVIRONMENT"
@@ -35,6 +63,9 @@ _HOSTED_USER_AGENT_PREFIX = "foundry-hosting"
 
 _user_agent_prefixes: set[str] = set()
 _hosted_env_detected: bool = False
+_feature_mask = 0
+_feature_mask_lock = threading.Lock()
+_feature_comment_pattern = re.compile(r"\s+\(feat=v\d+\.[0-9a-fA-F]+\)")
 
 
 def _add_user_agent_prefix(prefix: str) -> None:
@@ -94,6 +125,53 @@ def get_user_agent() -> str:
     if not _user_agent_prefixes:
         return AGENT_FRAMEWORK_USER_AGENT
     return f"{'/'.join(sorted(_user_agent_prefixes))}/{AGENT_FRAMEWORK_USER_AGENT}"
+
+
+def _feature_mask_enabled() -> bool:
+    """Return whether feature-usage marking and emission are enabled."""
+    return IS_TELEMETRY_ENABLED and os.environ.get(FEATURE_MASK_DISABLED_ENV_VAR, "false").lower() not in ("true", "1")
+
+
+def mark_feature_used(index: IntEnum | int) -> None:
+    """Mark a feature as used in the process-global feature mask."""
+    if not _feature_mask_enabled():
+        return
+
+    feature_index = int(index)
+    if not 0 <= feature_index < 128:
+        raise ValueError(f"Feature index must be in range 0..127, got {feature_index}")
+
+    global _feature_mask
+    with _feature_mask_lock:
+        _feature_mask |= 1 << feature_index
+
+
+def get_feature_token() -> str | None:
+    """Return the current versioned feature token, or None when empty or disabled."""
+    if not _feature_mask_enabled():
+        return None
+
+    with _feature_mask_lock:
+        feature_mask = _feature_mask
+    if feature_mask == 0:
+        return None
+    return f"v{FEATURE_REGISTRY_VERSION}.{feature_mask:x}"
+
+
+def apply_feature_token(user_agent: str) -> str:
+    """Append or refresh the live feature token in a User-Agent value."""
+    base_user_agent = remove_feature_token(user_agent)
+    token = get_feature_token()
+    if token is None:
+        return base_user_agent
+    if not base_user_agent:
+        return f"(feat={token})"
+    return f"{base_user_agent} (feat={token})"
+
+
+def remove_feature_token(user_agent: str) -> str:
+    """Remove the Agent Framework feature token from a User-Agent value."""
+    return _feature_comment_pattern.sub("", user_agent).strip()
 
 
 def prepend_agent_framework_to_user_agent(headers: dict[str, Any] | None = None) -> dict[str, Any]:

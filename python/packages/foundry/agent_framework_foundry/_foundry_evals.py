@@ -43,9 +43,11 @@ from agent_framework._evaluation import (
     RubricScore,
 )
 from agent_framework._feature_stage import ExperimentalFeature, experimental
+from agent_framework._telemetry import mark_feature_used
 from openai import AsyncOpenAI
 
 from ._chat_client import FoundryChatClient
+from ._feature_usage import FeatureIndex, create_foundry_feature_usage_http_client
 
 if TYPE_CHECKING:
     from azure.ai.projects.aio import AIProjectClient
@@ -665,7 +667,7 @@ def _resolve_openai_client(
             return client.client
         return client
     if project_client is not None:
-        oai = project_client.get_openai_client()
+        oai = project_client.get_openai_client(http_client=create_foundry_feature_usage_http_client())
         if oai is None:  # pyright: ignore[reportUnnecessaryComparison]
             raise ValueError("project_client.get_openai_client() returned None. Check project configuration.")
         if not isinstance(oai, AsyncOpenAI):
@@ -716,7 +718,14 @@ async def _evaluate_via_responses_impl(
         data_source=data_source,  # type: ignore[arg-type]
     )
 
-    return await _poll_eval_run(client, eval_obj.id, run.id, poll_interval, timeout, provider=provider)
+    return await _poll_eval_run(
+        client,
+        eval_obj.id,
+        run.id,
+        poll_interval,
+        timeout,
+        provider=provider,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -879,6 +888,7 @@ class FoundryEvals:
         Returns:
             ``EvalResults`` with status, counts, and portal link.
         """
+        mark_feature_used(FeatureIndex.EVALS)
         # Resolve evaluators with auto-detection
         resolved = _resolve_default_evaluators(self._evaluators, items=items)
         # Filter tool evaluators if items don't have tools
@@ -1023,6 +1033,7 @@ async def evaluate_traces(
         )
     """
     oai_client = _resolve_openai_client(client, project_client)
+    mark_feature_used(FeatureIndex.EVALS)
     resolved_evaluators = _resolve_default_evaluators(evaluators)
 
     if response_ids:
@@ -1060,7 +1071,13 @@ async def evaluate_traces(
         data_source=trace_source,  # type: ignore[arg-type]
     )
 
-    return await _poll_eval_run(oai_client, eval_obj.id, run.id, poll_interval, timeout)
+    return await _poll_eval_run(
+        oai_client,
+        eval_obj.id,
+        run.id,
+        poll_interval,
+        timeout,
+    )
 
 
 @experimental(feature_id=ExperimentalFeature.EVALS)
@@ -1109,6 +1126,7 @@ async def evaluate_foundry_target(
     if "type" not in target:
         raise ValueError("target dict must include a 'type' key (e.g., 'azure_ai_agent').")
     oai_client = _resolve_openai_client(client, project_client)
+    mark_feature_used(FeatureIndex.EVALS)
     resolved_evaluators = _resolve_default_evaluators(evaluators)
 
     eval_obj = await oai_client.evals.create(
@@ -1135,4 +1153,10 @@ async def evaluate_foundry_target(
         data_source=data_source,  # type: ignore[arg-type]
     )
 
-    return await _poll_eval_run(oai_client, eval_obj.id, run.id, poll_interval, timeout)
+    return await _poll_eval_run(
+        oai_client,
+        eval_obj.id,
+        run.id,
+        poll_interval,
+        timeout,
+    )

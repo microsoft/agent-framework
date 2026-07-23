@@ -5,10 +5,11 @@ from __future__ import annotations
 import os
 from collections.abc import Sequence
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import Content
+from agent_framework._telemetry import get_user_agent
 
 from agent_framework_foundry import (
     FoundryEmbeddingClient,
@@ -200,12 +201,24 @@ class TestRawFoundryEmbeddingClient:
                 },
                 clear=True,
             ),
-            patch("agent_framework_foundry._embedding_client.EmbeddingsClient"),
-            patch("agent_framework_foundry._embedding_client.ImageEmbeddingsClient"),
+            patch("agent_framework_foundry._embedding_client.EmbeddingsClient") as text_client_type,
+            patch("agent_framework_foundry._embedding_client.ImageEmbeddingsClient") as image_client_type,
         ):
             client = RawFoundryEmbeddingClient()
             assert client.model == "env-model"
             assert client.image_model == "env-model"  # falls back to model
+            text_client_type.assert_called_once_with(
+                endpoint="https://env.inference.ai.azure.com",
+                credential=ANY,
+                user_agent=get_user_agent(),
+                user_agent_policy=ANY,
+            )
+            image_client_type.assert_called_once_with(
+                endpoint="https://env.inference.ai.azure.com",
+                credential=ANY,
+                user_agent=get_user_agent(),
+                user_agent_policy=ANY,
+            )
 
     def test_image_model_from_env(self) -> None:
         """image_model is loaded from its own environment variable."""

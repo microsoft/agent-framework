@@ -11,9 +11,10 @@ from pathlib import Path
 from typing import Annotated, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import agent_framework._telemetry as telemetry
 import pytest
 from agent_framework import Agent, ChatResponse, Content, Message, SupportsChatGetResponse, tool
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
 from agent_framework_openai import OpenAIContentFilterException
 from agent_framework_openai._chat_client import RawOpenAIChatClient
@@ -25,6 +26,7 @@ from pydantic import BaseModel
 from pytest import param
 
 from agent_framework_foundry import FoundryChatClient, RawFoundryChatClient
+from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsageUserAgentPolicy
 
 
 class OutputStruct(BaseModel):
@@ -32,6 +34,24 @@ class OutputStruct(BaseModel):
 
     location: str
     weather: str | None = None
+
+
+def test_foundry_feature_usage_policy_refreshes_user_agent() -> None:
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+    mark_feature_used(FeatureIndex.CHAT_CLIENT)
+    request = MagicMock()
+    request.http_request.url = "https://project.services.ai.azure.com/api/projects/test"
+    request.http_request.headers = {"User-Agent": "azsdk-python-ai-projects/1.0 agent-framework-python/1.0"}
+    FeatureUsageUserAgentPolicy().on_request(request)
+
+    assert request.http_request.headers["User-Agent"] == (
+        "azsdk-python-ai-projects/1.0 agent-framework-python/1.0 (feat=v1.1000000000000)"
+    )
+
+
+def test_raw_foundry_chat_client_owns_foundry_feature_bit() -> None:
+    assert RawFoundryChatClient._FEATURE_USAGE_INDEX is FeatureIndex.CHAT_CLIENT
 
 
 @tool(approval_mode="never_require")

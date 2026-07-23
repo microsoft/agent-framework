@@ -1,7 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import ast
+import concurrent.futures
 import os
+import re
+from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 import agent_framework._telemetry as _telemetry_mod
 from agent_framework import (
@@ -13,8 +19,14 @@ from agent_framework import (
 from agent_framework._telemetry import (
     _FOUNDRY_HOSTING_ENV_VAR,
     _HOSTED_USER_AGENT_PREFIX,
+    FEATURE_MASK_DISABLED_ENV_VAR,
+    FEATURE_REGISTRY_VERSION,
+    FeatureIndex,
     _add_user_agent_prefix,
     _detect_hosted_environment,
+    apply_feature_token,
+    get_feature_token,
+    mark_feature_used,
 )
 
 # region Test constants
@@ -33,6 +45,170 @@ def test_user_agent_key():
 def test_agent_framework_user_agent_format():
     """Test that the agent framework user agent is correctly formatted."""
     assert AGENT_FRAMEWORK_USER_AGENT.startswith("agent-framework-python/")
+
+
+def _reset_feature_mask() -> None:
+    with _telemetry_mod._feature_mask_lock:
+        _telemetry_mod._feature_mask = 0
+
+
+def test_feature_mask_disabled_env_var() -> None:
+    assert FEATURE_MASK_DISABLED_ENV_VAR == "AGENT_FRAMEWORK_FEATURE_MASK_DISABLED"
+
+
+def test_feature_registry_version() -> None:
+    assert FEATURE_REGISTRY_VERSION == 1
+
+
+def test_mark_feature_used_accumulates_and_deduplicates() -> None:
+    _reset_feature_mask()
+    with (
+        patch("agent_framework._telemetry.IS_TELEMETRY_ENABLED", True),
+        patch.dict(os.environ, {FEATURE_MASK_DISABLED_ENV_VAR: "false"}),
+    ):
+        mark_feature_used(FeatureIndex.CORE_AGENT)
+        mark_feature_used(FeatureIndex.CORE_AGENT)
+        mark_feature_used(FeatureIndex.CORE_WORKFLOW)
+
+        assert get_feature_token() == "v1.5"
+
+
+def test_mark_feature_used_supports_bit_127() -> None:
+    _reset_feature_mask()
+    with (
+        patch("agent_framework._telemetry.IS_TELEMETRY_ENABLED", True),
+        patch.dict(os.environ, {FEATURE_MASK_DISABLED_ENV_VAR: "false"}),
+    ):
+        mark_feature_used(127)
+
+        assert get_feature_token() == f"v1.{1 << 127:x}"
+
+
+@pytest.mark.parametrize("bit", [-1, 128])
+def test_mark_feature_used_rejects_out_of_range_bit(bit: int) -> None:
+    _reset_feature_mask()
+    with (
+        patch("agent_framework._telemetry.IS_TELEMETRY_ENABLED", True),
+        patch.dict(os.environ, {FEATURE_MASK_DISABLED_ENV_VAR: "false"}),
+        pytest.raises(ValueError, match="Feature index must be in range 0..127"),
+    ):
+        mark_feature_used(bit)
+
+
+@pytest.mark.parametrize("disabled_value", ["true", "TRUE", "1"])
+def test_feature_mask_env_var_disables_marking(disabled_value: str) -> None:
+    _reset_feature_mask()
+    with (
+        patch("agent_framework._telemetry.IS_TELEMETRY_ENABLED", True),
+        patch.dict(os.environ, {FEATURE_MASK_DISABLED_ENV_VAR: disabled_value}),
+    ):
+        mark_feature_used(FeatureIndex.CORE_AGENT)
+
+        assert get_feature_token() is None
+
+
+def test_user_agent_env_var_disables_feature_mask() -> None:
+    _reset_feature_mask()
+    with (
+        patch("agent_framework._telemetry.IS_TELEMETRY_ENABLED", False),
+        patch.dict(os.environ, {FEATURE_MASK_DISABLED_ENV_VAR: "false"}),
+    ):
+        mark_feature_used(FeatureIndex.CORE_AGENT)
+
+        assert get_feature_token() is None
+
+
+def test_apply_feature_token_adds_and_refreshes_live_mask() -> None:
+    _reset_feature_mask()
+    with (
+        patch("agent_framework._telemetry.IS_TELEMETRY_ENABLED", True),
+        patch.dict(os.environ, {FEATURE_MASK_DISABLED_ENV_VAR: "false"}),
+    ):
+        mark_feature_used(FeatureIndex.CORE_AGENT)
+        user_agent = apply_feature_token("foundry-hosting/agent-framework-python/1.0")
+        assert user_agent == "foundry-hosting/agent-framework-python/1.0 (feat=v1.1)"
+
+        mark_feature_used(FeatureIndex.CORE_WORKFLOW)
+        assert apply_feature_token(user_agent) == "foundry-hosting/agent-framework-python/1.0 (feat=v1.5)"
+
+
+def test_apply_feature_token_preserves_unrelated_comments() -> None:
+    _reset_feature_mask()
+    with (
+        patch("agent_framework._telemetry.IS_TELEMETRY_ENABLED", True),
+        patch.dict(os.environ, {FEATURE_MASK_DISABLED_ENV_VAR: "false"}),
+    ):
+        mark_feature_used(FeatureIndex.CORE_AGENT)
+
+        assert apply_feature_token("agent-framework-python/1.0 (custom=value)") == (
+            "agent-framework-python/1.0 (custom=value) (feat=v1.1)"
+        )
+
+
+def test_apply_feature_token_removes_stale_token_when_disabled() -> None:
+    _reset_feature_mask()
+    with (
+        patch("agent_framework._telemetry.IS_TELEMETRY_ENABLED", True),
+        patch.dict(os.environ, {FEATURE_MASK_DISABLED_ENV_VAR: "true"}),
+    ):
+        assert apply_feature_token("agent-framework-python/1.0 (feat=v1.5)") == "agent-framework-python/1.0"
+
+
+def test_mark_feature_used_is_thread_safe() -> None:
+    _reset_feature_mask()
+    with (
+        patch("agent_framework._telemetry.IS_TELEMETRY_ENABLED", True),
+        patch.dict(os.environ, {FEATURE_MASK_DISABLED_ENV_VAR: "false"}),
+        concurrent.futures.ThreadPoolExecutor() as executor,
+    ):
+        list(executor.map(mark_feature_used, range(128)))
+
+        assert get_feature_token() == f"v1.{(1 << 128) - 1:x}"
+
+
+def test_declared_feature_indexes_do_not_overlap() -> None:
+    registry_path = next(
+        (
+            parent / "docs" / "specs" / "feature-usage-bit-registry.md"
+            for parent in Path(__file__).resolve().parents
+            if (parent / "docs" / "specs" / "feature-usage-bit-registry.md").exists()
+        ),
+        None,
+    )
+    if registry_path is None:
+        pytest.skip("Feature-usage registry is not available outside a repository checkout.")
+
+    repository_root = registry_path.parents[2]
+    declaration_files = [
+        repository_root / "python" / "packages" / "core" / "agent_framework" / "_telemetry.py",
+        *repository_root.glob("python/packages/*/agent_framework*/_feature_usage.py"),
+    ]
+    declarations: dict[int, str] = {}
+    for declaration_file in declaration_files:
+        tree = ast.parse(declaration_file.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef) or node.name != "FeatureIndex":
+                continue
+            for member in node.body:
+                if not isinstance(member, ast.Assign) or len(member.targets) != 1:
+                    continue
+                target = member.targets[0]
+                if not isinstance(target, ast.Name) or not isinstance(member.value, ast.Constant):
+                    continue
+                index = member.value.value
+                if not isinstance(index, int):
+                    continue
+                assert 0 <= index < 128
+                assert index not in declarations, (
+                    f"Feature index {index} overlaps between {declarations[index]} and "
+                    f"{declaration_file.relative_to(repository_root)}:{target.id}"
+                )
+                declarations[index] = f"{declaration_file.relative_to(repository_root)}:{target.id}"
+
+    registry_text = registry_path.read_text(encoding="utf-8")
+    python_table = registry_text.split("## Index table — Python", 1)[1].split("## Index table — .NET", 1)[0]
+    registry_indexes = {int(index) for index in re.findall(r"^\| (\d+) \| `[^`]+` \|", python_table, re.MULTILINE)}
+    assert declarations.keys() <= registry_indexes
 
 
 def test_app_info_when_telemetry_enabled():

@@ -9,7 +9,7 @@ import sys
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import httpx
@@ -31,6 +31,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework_openai._chat_client import RawOpenAIChatClient
+from agent_framework_openai._feature_usage import FeatureIndex as OpenAIFeatureIndex
 from azure.ai.projects import models as projects_models
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import AzureCliCredential
@@ -44,6 +45,7 @@ from agent_framework_foundry._agent import (
     _FoundryAgentChatClient,
 )
 from agent_framework_foundry._chat_client import FoundryChatClient
+from agent_framework_foundry._feature_usage import FeatureIndex
 
 skip_if_foundry_agent_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("FOUNDRY_PROJECT_ENDPOINT", "") in ("", "https://test-project.services.ai.azure.com/")
@@ -58,6 +60,11 @@ _FOUNDRY_AZURE_AI_SEARCH_MODEL_ENV_VARS = (
     "AZURE_OPENAI_CHAT_MODEL",
     "FOUNDRY_MODEL",
 )
+
+
+def test_raw_foundry_agent_chat_client_does_not_mark_openai_feature() -> None:
+    assert RawOpenAIChatClient._FEATURE_USAGE_INDEX is OpenAIFeatureIndex.OPENAI
+    assert RawFoundryAgentChatClient._FEATURE_USAGE_INDEX is FeatureIndex.AGENT
 
 
 def _get_foundry_azure_ai_search_model() -> str | None:
@@ -116,7 +123,7 @@ def test_raw_foundry_agent_chat_client_init_with_agent_name() -> None:
 
     assert client.agent_name == "test-agent"
     assert client.agent_version == "1.0"
-    mock_project.get_openai_client.assert_called_once_with()
+    mock_project.get_openai_client.assert_called_once_with(http_client=ANY)
 
 
 async def test_foundry_agent_basic_call_does_not_request_unsupported_encrypted_reasoning() -> None:
@@ -214,6 +221,7 @@ def test_raw_foundry_agent_chat_client_init_passes_agent_name_when_preview_enabl
     mock_project.get_openai_client.assert_called_once_with(
         agent_name="hosted-agent",
         default_headers={"x-test": "1"},
+        http_client=ANY,
     )
 
 
