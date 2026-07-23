@@ -3,7 +3,7 @@
 Please install this package via pip:
 
 ```bash
-pip install agent-framework-github-copilot --pre
+pip install agent-framework-github-copilot
 ```
 
 ## GitHub Copilot Agent

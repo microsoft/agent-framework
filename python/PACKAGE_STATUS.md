@@ -35,7 +35,7 @@ Status is grouped into these buckets:
 | `agent-framework-foundry-hosting` | `python/packages/foundry_hosting` | `beta` |
 | `agent-framework-foundry-local` | `python/packages/foundry_local` | `beta` |
 | `agent-framework-gemini` | `python/packages/gemini` | `beta` |
-| `agent-framework-github-copilot` | `python/packages/github_copilot` | `rc` |
+| `agent-framework-github-copilot` | `python/packages/github_copilot` | `released` |
 | `agent-framework-hosting` | `python/packages/hosting` | `alpha` |
 | `agent-framework-hosting-a2a` | `python/packages/hosting-a2a` | `alpha` |
 | `agent-framework-hosting-mcp` | `python/packages/hosting-mcp` | `alpha` |
