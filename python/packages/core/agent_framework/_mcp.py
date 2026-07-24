@@ -3125,8 +3125,25 @@ class MCPStreamableHTTPTool(MCPTool):
                     # The transport may send this request from a task whose context was
                     # captured before call_tool set the ContextVar; fall back to the
                     # instance-level snapshot of the active call's headers.
-                    headers = _mcp_call_headers.get({}) or self._active_call_headers or {}
-                    for key, value in headers.items():
+                    headers = _mcp_call_headers.get({}) or self._active_call_headers
+                    if not headers:
+                        # Ambient request made outside call_tool (the initialize handshake,
+                        # load_tools/load_prompts discovery, or background pings). Invoke the
+                        # provider with empty kwargs so static providers can authenticate these
+                        # requests too; providers that require per-call kwargs raise here, so we
+                        # log and proceed unauthenticated (preserving prior behavior).
+                        assert self._header_provider is not None  # nosec B101  # ruff:ignore[assert]
+                        try:
+                            headers = self._header_provider({})
+                        except Exception:
+                            logger.warning(
+                                "header_provider raised for MCP server %r on an ambient request; "
+                                "proceeding without headers.",
+                                self.name,
+                                exc_info=True,
+                            )
+                            headers = {}
+                    for key, value in (headers or {}).items():
                         request.headers[key] = value
 
                 self._inject_headers_hook = _inject_headers

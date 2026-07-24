@@ -6027,6 +6027,70 @@ async def test_mcp_streamable_http_tool_header_provider_with_httpx_event_hook():
             await tool._httpx_client.aclose()  # type: ignore[union-attr]
 
 
+async def test_mcp_streamable_http_tool_header_provider_injects_on_ambient_request():
+    """Regression test for #7079: static header_provider must authenticate ambient requests.
+
+    The initialize handshake, load_tools/load_prompts discovery, and background pings run
+    outside call_tool, so the contextvar/snapshot are unset. A static header_provider should
+    still be invoked (with empty kwargs) so these requests carry auth headers.
+    """
+    import httpx
+
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda kw: {"Authorization": "******"},
+    )
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            # No contextvar set and no active call snapshot: simulates the initialize handshake.
+            request = httpx.Request("POST", "http://example.com/mcp")
+            await hooks[0](request)
+            assert request.headers.get("Authorization") == "******"
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()  # type: ignore[union-attr]
+
+
+async def test_mcp_streamable_http_tool_header_provider_ambient_request_tolerates_kwargs_provider():
+    """A header_provider that requires per-call kwargs must not crash ambient requests.
+
+    Providers like the mcp_api_key_auth.py sample index runtime kwargs (e.g. kw["mcp_api_key"])
+    that are absent at connect time. The hook should swallow the error and proceed without
+    headers rather than failing the initialize handshake.
+    """
+    import httpx
+
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda kw: {"Authorization": f"Bearer {kw['mcp_api_key']}"},
+    )
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            # No kwargs available at connect time -> provider raises KeyError -> hook swallows it.
+            request = httpx.Request("POST", "http://example.com/mcp")
+            await hooks[0](request)
+            assert "Authorization" not in request.headers
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()  # type: ignore[union-attr]
+
+
 async def test_mcp_streamable_http_tool_header_provider_skips_cross_origin_redirect():
     """The request hook must not re-add caller headers after a cross-origin redirect."""
     import httpx
