@@ -10,10 +10,11 @@ the registered _handle_create handler.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, overload
@@ -22,17 +23,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from agent_framework import (
+    Agent,
     AgentExecutorRequest,
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
+    BaseChatClient,
+    ChatResponse,
     Content,
     FileCheckpointStorage,
+    FileSessionStore,
     HistoryProvider,
+    InMemoryHistoryProvider,
     Message,
     RawAgent,
     ResponseStream,
     ServiceSessionId,
+    SessionStore,
     SupportsAgentRun,
     WorkflowAgent,
     WorkflowBuilder,
@@ -42,21 +49,37 @@ from agent_framework import (
     WorkflowMessage,
     executor,
 )
-from azure.ai.agentserver.responses import InMemoryResponseProvider
+from azure.ai.agentserver.responses import InMemoryResponseProvider, PlatformContext, ResponseContext
+from azure.ai.agentserver.responses.models import CreateResponse
 from mcp import McpError
 from mcp.types import ErrorData
 from typing_extensions import Any
 
-from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework_foundry_hosting import (
+    IsolationKeyScopedFileSessionStore,
+    ResponsesHostServer,
+    ResponsesSessionIsolationKeyResolver,
+)
 from agent_framework_foundry_hosting._responses import (
     _AZURE_RESPONSES_MESSAGE_ROLE_TYPE,  # pyright: ignore[reportPrivateUsage]
+    _SESSION_ISOLATION_STATE_KEY,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
     ConsentError,
     FileBasedFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     InMemoryFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
+    _conversation_object_id,  # pyright: ignore[reportPrivateUsage]
+    _custom_session_store_key,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
+    _resolve_durable_storage_root,  # pyright: ignore[reportPrivateUsage]
+    _resolve_session_conversation_key,  # pyright: ignore[reportPrivateUsage]
+    _response_id_partition,  # pyright: ignore[reportPrivateUsage]
+    _stamp_or_validate_session_isolation,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
+)
+from agent_framework_foundry_hosting._session_isolation import (  # pyright: ignore[reportPrivateUsage]
+    ResolvedSessionIsolation,
+    resolve_session_isolation,
 )
 
 
@@ -90,6 +113,7 @@ def _make_agent(
     agent.name = "Test Agent"
     agent.description = "A mock agent for testing"
     agent.context_providers = []
+    agent.create_session.side_effect = lambda *, session_id=None: AgentSession(session_id=session_id)
 
     if response is not None:
 
@@ -114,8 +138,33 @@ def _make_agent(
     return agent
 
 
+class _RecordingHistoryClient(BaseChatClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[list[Message]] = []
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse]:
+        del options, kwargs
+        if stream:
+            raise NotImplementedError("This test client only supports non-streaming responses.")
+        self.calls.append(list(messages))
+
+        async def get_response() -> ChatResponse:
+            return ChatResponse(messages=[Message(role="assistant", contents=[Content.from_text("recorded")])])
+
+        return get_response()
+
+
 def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
     """Create a ResponsesHostServer with an in-memory store."""
+    kwargs.setdefault("session_store", SessionStore())
     return ResponsesHostServer(agent, store=InMemoryResponseProvider(), **kwargs)
 
 
@@ -129,6 +178,8 @@ async def _post(
     top_p: float | None = None,
     max_output_tokens: int | None = None,
     parallel_tool_calls: bool | None = None,
+    previous_response_id: str | None = None,
+    conversation_id: str | None = None,
 ) -> httpx.Response:
     """Send a POST /responses request through the ASGI transport."""
     payload: dict[str, Any] = {"model": model, "input": input_text, "stream": stream}
@@ -140,6 +191,10 @@ async def _post(
         payload["max_output_tokens"] = max_output_tokens
     if parallel_tool_calls is not None:
         payload["parallel_tool_calls"] = parallel_tool_calls
+    if previous_response_id is not None:
+        payload["previous_response_id"] = previous_response_id
+    if conversation_id is not None:
+        payload["conversation"] = conversation_id
 
     transport = httpx.ASGITransport(app=server)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -188,6 +243,12 @@ class TestResponsesHostServerInit:
         )
         server = _make_server(agent)
         assert server is not None
+        assert len(agent.context_providers) == 1
+        history_sentinel = agent.context_providers[0]
+        assert isinstance(history_sentinel, InMemoryHistoryProvider)
+        assert history_sentinel.load_messages is True
+        assert history_sentinel.store_inputs is False
+        assert history_sentinel.store_outputs is False
 
     def test_init_rejects_history_provider_with_load_messages(self) -> None:
 
@@ -214,6 +275,443 @@ class TestResponsesHostServerInit:
         agent.context_providers = [hp]
         with pytest.raises(RuntimeError, match="history provider"):
             ResponsesHostServer(agent)
+
+    def test_init_rejects_unscoped_file_session_store(self, tmp_path: Path) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+
+        with pytest.raises(ValueError, match="IsolationKeyScopedFileSessionStore"):
+            ResponsesHostServer(
+                agent,
+                store=InMemoryResponseProvider(),
+                session_store=FileSessionStore(tmp_path),
+            )
+
+    async def test_hosted_request_requires_user_partition_key(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        server = _make_server(agent)
+        request = CreateResponse(model="m", input="hi")
+        context = ResponseContext(
+            response_id="caresp_aaaaaaaaaaaaaaaa00" + "1" * 32,
+            mode_flags=MagicMock(),
+            platform_context=PlatformContext(call_id="call-1"),
+        )
+
+        with (
+            patch.object(server.config, "is_hosted", True),
+            pytest.raises(RuntimeError, match="did not resolve"),
+        ):
+            await server._handle_response(  # pyright: ignore[reportPrivateUsage]
+                request,
+                context,
+                asyncio.Event(),
+            )
+
+    async def test_custom_isolation_resolver_is_called_once_per_request(self) -> None:
+        calls = 0
+
+        async def resolver(request: CreateResponse, context: ResponseContext) -> str:
+            nonlocal calls
+            calls += 1
+            assert request.model == "m"
+            assert context.response_id == "response-1"
+            return "user-1"
+
+        server = _make_server(_make_agent(), session_isolation_key_resolver=resolver)
+        request = CreateResponse(model="m", input="hi")
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+        expected = MagicMock()
+
+        with patch.object(server, "_handle_inner_agent", return_value=expected) as handler:
+            result = await server._handle_response(  # pyright: ignore[reportPrivateUsage]
+                request,
+                context,
+                asyncio.Event(),
+            )
+
+        assert result is expected
+        assert calls == 1
+        isolation = handler.call_args.args[2]
+        assert isolation.directory_segment == "user-user-1"
+
+
+# endregion
+
+
+# region Session persistence
+
+
+class TestSessionPersistenceHelpers:
+    def test_resolver_type_alias_is_public(self) -> None:
+        def resolver(request: CreateResponse, context: ResponseContext) -> str | None:
+            del request
+            return context.platform_context.user_id_key
+
+        typed_resolver: ResponsesSessionIsolationKeyResolver = resolver
+        assert callable(typed_resolver)
+
+    async def test_sync_and_async_isolation_resolvers(self) -> None:
+        request = CreateResponse(model="m", input="hi")
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+
+        sync_isolation = await resolve_session_isolation(
+            lambda request, context: "user-1",
+            request,
+            context,
+            is_hosted=True,
+        )
+
+        async def async_resolver(request: CreateResponse, context: ResponseContext) -> str:
+            del request, context
+            return "user-2"
+
+        async_isolation = await resolve_session_isolation(
+            async_resolver,
+            request,
+            context,
+            is_hosted=True,
+        )
+
+        assert sync_isolation.directory_segment == "user-user-1"
+        assert async_isolation.directory_segment == "user-user-2"
+        assert sync_isolation.fingerprint != async_isolation.fingerprint
+
+    async def test_local_missing_isolation_key_is_unscoped(self) -> None:
+        request = CreateResponse(model="m", input="hi")
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+
+        isolation = await resolve_session_isolation(
+            lambda request, context: None,
+            request,
+            context,
+            is_hosted=False,
+        )
+
+        assert isolation == ResolvedSessionIsolation(None, None, None)
+
+    async def test_contextvar_backed_resolvers_do_not_cross_contaminate(self) -> None:
+        from contextvars import ContextVar
+
+        current_user: ContextVar[str | None] = ContextVar("current_user", default=None)
+        request = CreateResponse(model="m", input="hi")
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+
+        def resolver(request: CreateResponse, context: ResponseContext) -> str | None:
+            del request, context
+            return current_user.get()
+
+        async def resolve_for(user_id: str) -> ResolvedSessionIsolation:
+            token = current_user.set(user_id)
+            try:
+                await asyncio.sleep(0)
+                return await resolve_session_isolation(resolver, request, context, is_hosted=True)
+            finally:
+                current_user.reset(token)
+
+        first, second = await asyncio.gather(resolve_for("user-1"), resolve_for("user-2"))
+
+        assert first.key == "user-1"
+        assert second.key == "user-2"
+        assert first.fingerprint != second.fingerprint
+
+    @pytest.mark.parametrize("key", ["../escape", "user/name", "user:name", "trailing."])
+    async def test_invalid_isolation_key_is_rejected(self, key: str) -> None:
+        request = CreateResponse(model="m", input="hi")
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+
+        with pytest.raises(ValueError, match="isolation key"):
+            await resolve_session_isolation(
+                lambda request, context: key,
+                request,
+                context,
+                is_hosted=True,
+            )
+
+    def test_response_id_partition_supports_current_legacy_and_raw_ids(self) -> None:
+        current_partition = "a" * 18
+        legacy_partition = "b" * 16
+
+        assert _response_id_partition(f"caresp_{current_partition}{'1' * 32}") == current_partition
+        assert _response_id_partition(f"caresp_{'2' * 32}{legacy_partition}") == legacy_partition
+        assert _response_id_partition("custom-response") == "custom-response"
+        assert _response_id_partition(None) is None
+
+    def test_session_conversation_key_prefers_conversation_then_previous_then_response(self) -> None:
+        previous_partition = "a" * 18
+        response_partition = "b" * 18
+        previous_response_id = f"caresp_{previous_partition}{'1' * 32}"
+        response_id = f"caresp_{response_partition}{'2' * 32}"
+        request = CreateResponse(model="m", input="hi", previous_response_id=previous_response_id)
+
+        assert (
+            _resolve_session_conversation_key(
+                request,
+                ResponseContext(
+                    response_id=response_id,
+                    previous_response_id=previous_response_id,
+                    conversation_id="conversation-1",
+                    mode_flags=MagicMock(),
+                ),
+            )
+            == "conversation-1"
+        )
+        assert (
+            _resolve_session_conversation_key(
+                request,
+                ResponseContext(
+                    response_id=response_id,
+                    previous_response_id=previous_response_id,
+                    mode_flags=MagicMock(),
+                ),
+            )
+            == previous_partition
+        )
+        assert (
+            _resolve_session_conversation_key(
+                CreateResponse(model="m", input="hi"),
+                ResponseContext(response_id=response_id, mode_flags=MagicMock()),
+            )
+            == response_partition
+        )
+
+    def test_custom_store_key_partitions_by_agent_and_isolation(self) -> None:
+        agent = _make_agent()
+        other_agent = _make_agent()
+        other_agent.name = "Other Agent"
+        isolation_a = ResolvedSessionIsolation("user-a", "user-user-a", "a" * 64)
+        isolation_b = ResolvedSessionIsolation("user-b", "user-user-b", "b" * 64)
+
+        key_a = _custom_session_store_key(agent, "conversation-1", isolation=isolation_a)
+        key_b = _custom_session_store_key(agent, "conversation-1", isolation=isolation_b)
+        key_other_agent = _custom_session_store_key(other_agent, "conversation-1", isolation=isolation_a)
+
+        assert key_a != key_b
+        assert key_a != key_other_agent
+        assert key_a.startswith("foundry_")
+        assert len(key_a) == len("foundry_") + 64
+        assert all(character.isascii() and (character.isalnum() or character in "-_") for character in key_a)
+        assert key_a == _custom_session_store_key(agent, "conversation-1", isolation=isolation_a)
+
+    def test_conversation_object_id_preserves_safe_values_and_hashes_unsafe_values(self) -> None:
+        assert _conversation_object_id("conversation-1") == "conversation-1"
+        assert _conversation_object_id("conversation/unsafe").startswith("conversation_")
+
+    def test_durable_storage_root_matches_hosted_and_local_layouts(self, tmp_path: Path) -> None:
+        home = tmp_path / "home"
+        current = tmp_path / "work"
+
+        assert (
+            _resolve_durable_storage_root(
+                is_hosted=False,
+                home_directory=str(home),
+                current_directory=str(current),
+            )
+            == (current / ".checkpoints").resolve()
+        )
+        assert (
+            _resolve_durable_storage_root(
+                is_hosted=True,
+                home_directory=str(home),
+                current_directory=str(current),
+            )
+            == (home / ".checkpoints").resolve()
+        )
+        assert (
+            _resolve_durable_storage_root(
+                is_hosted=True,
+                home_directory="/",
+                current_directory=str(current),
+            )
+            == Path("/home/session/.checkpoints").resolve()
+        )
+
+
+class TestAgentSessionPersistence:
+    async def test_file_store_uses_per_user_child_directory_and_preserves_format(self, tmp_path: Path) -> None:
+        template = IsolationKeyScopedFileSessionStore(tmp_path, serialization_format="msgpack")
+        server = _make_server(_make_agent(), session_store=template)
+        isolation_a = ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64)
+        isolation_b = ResolvedSessionIsolation("user-B", "user-user-B", "b" * 64)
+
+        store = server._session_store  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(store, IsolationKeyScopedFileSessionStore)
+        assert store.storage_path == tmp_path
+        assert store.serialization_format == "msgpack"
+
+        with store.use_isolation(isolation_a):
+            await store.set("conversation-1", AgentSession(session_id="conversation-1"))
+        with store.use_isolation(isolation_b):
+            await store.set("conversation-1", AgentSession(session_id="conversation-1"))
+
+        assert (tmp_path / "user-user-A" / "conversation-1.msgpack").is_file()
+        assert (tmp_path / "user-user-B" / "conversation-1.msgpack").is_file()
+
+    def test_session_isolation_stamp_rejects_mismatch(self) -> None:
+        session = AgentSession(session_id="conversation-1")
+        isolation_a = ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64)
+        isolation_b = ResolvedSessionIsolation("user-B", "user-user-B", "b" * 64)
+
+        _stamp_or_validate_session_isolation(session, isolation_a)
+        assert session.state[_SESSION_ISOLATION_STATE_KEY] == "a" * 64
+        assert "user-A" not in session.state.values()
+
+        with pytest.raises(RuntimeError, match="identity context mismatch"):
+            _stamp_or_validate_session_isolation(session, isolation_b)
+
+    async def test_previous_response_chain_restores_session_state(self) -> None:
+        seen_counts: list[int] = []
+        seen_session_ids: list[str] = []
+
+        async def run_with_state(*args: Any, **kwargs: Any) -> AgentResponse:
+            session = kwargs["session"]
+            assert isinstance(session, AgentSession)
+            count = int(session.state.get("turn_count", 0)) + 1
+            session.state["turn_count"] = count
+            seen_counts.append(count)
+            seen_session_ids.append(session.session_id)
+            return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(f"turn {count}")])])
+
+        agent = _make_agent()
+        agent.run = AsyncMock(side_effect=run_with_state)
+        server = _make_server(agent)
+
+        first = await _post(server)
+        second = await _post(server, previous_response_id=first.json()["id"])
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert seen_counts == [1, 2]
+        assert seen_session_ids[0] == seen_session_ids[1]
+
+    async def test_responses_history_is_not_duplicated_by_default_local_history(self) -> None:
+        client = _RecordingHistoryClient()
+        agent = Agent(client=client, name="History Test Agent")
+        store = SessionStore()
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider(), session_store=store)
+
+        first = await _post(server, input_text="first")
+        await _post(server, input_text="second", previous_response_id=first.json()["id"])
+
+        assert [[message.text for message in call] for call in client.calls] == [
+            ["first"],
+            ["first", "recorded", "second"],
+        ]
+        assert [provider.source_id for provider in agent.context_providers] == ["_foundry_responses_history"]
+
+        conversation_key = _response_id_partition(first.json()["id"])
+        assert conversation_key is not None
+        stored = await store.get(
+            _custom_session_store_key(
+                agent,
+                _conversation_object_id(conversation_key),
+                isolation=ResolvedSessionIsolation(None, None, None),
+            )
+        )
+        assert stored is not None
+        assert InMemoryHistoryProvider.DEFAULT_SOURCE_ID not in stored.state
+
+    async def test_file_store_restores_session_across_server_instances(self, tmp_path: Path) -> None:
+        seen_counts: list[int] = []
+        response_store = InMemoryResponseProvider()
+
+        def make_agent() -> MagicMock:
+            agent = _make_agent()
+
+            async def run_with_state(*args: Any, **kwargs: Any) -> AgentResponse:
+                session = kwargs["session"]
+                assert isinstance(session, AgentSession)
+                count = int(session.state.get("turn_count", 0)) + 1
+                session.state["turn_count"] = count
+                seen_counts.append(count)
+                return AgentResponse(
+                    messages=[Message(role="assistant", contents=[Content.from_text(f"turn {count}")])]
+                )
+
+            agent.run = AsyncMock(side_effect=run_with_state)
+            return agent
+
+        first_server = ResponsesHostServer(
+            make_agent(),
+            store=response_store,
+            session_store=IsolationKeyScopedFileSessionStore(tmp_path),
+        )
+        first = await _post(first_server)
+
+        second_server = ResponsesHostServer(
+            make_agent(),
+            store=response_store,
+            session_store=IsolationKeyScopedFileSessionStore(tmp_path),
+        )
+        second = await _post(second_server, previous_response_id=first.json()["id"])
+
+        assert second.status_code == 200
+        assert seen_counts == [1, 2]
+
+    async def test_streaming_run_saves_final_session_state(self) -> None:
+        store = SessionStore()
+        agent = _make_agent()
+
+        def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream:
+            session = kwargs["session"]
+            assert isinstance(session, AgentSession)
+
+            async def updates() -> AsyncIterator[AgentResponseUpdate]:
+                session.state["stream_complete"] = True
+                yield AgentResponseUpdate(contents=[Content.from_text("done")], role="assistant")
+
+            return ResponseStream(updates())
+
+        agent.run = MagicMock(side_effect=run_streaming)
+        server = _make_server(agent, session_store=store)
+
+        response = await _post(server, stream=True)
+        response_id = _parse_sse_events(response.text)[-1]["data"]["response"]["id"]
+        conversation_key = _response_id_partition(response_id)
+        assert conversation_key is not None
+
+        stored = await store.get(
+            _custom_session_store_key(
+                agent,
+                _conversation_object_id(conversation_key),
+                isolation=ResolvedSessionIsolation(None, None, None),
+            )
+        )
+
+        assert stored is not None
+        assert stored.state["stream_complete"] is True
+
+    async def test_failed_run_still_saves_mutated_session(self) -> None:
+        store = SessionStore()
+        agent = _make_agent()
+
+        async def failing_run(*args: Any, **kwargs: Any) -> AgentResponse:
+            session = kwargs["session"]
+            assert isinstance(session, AgentSession)
+            session.state["before_failure"] = "saved"
+            raise RuntimeError("agent failed")
+
+        agent.run = AsyncMock(side_effect=failing_run)
+        server = _make_server(agent, session_store=store)
+
+        response = await _post(server)
+        body = response.json()
+        conversation_key = _response_id_partition(body["id"])
+        assert conversation_key is not None
+
+        stored = await store.get(
+            _custom_session_store_key(
+                agent,
+                _conversation_object_id(conversation_key),
+                isolation=ResolvedSessionIsolation(None, None, None),
+            )
+        )
+
+        assert body["status"] == "failed"
+        assert stored is not None
+        assert stored.state["before_failure"] == "saved"
 
 
 # endregion
@@ -1737,6 +2235,7 @@ def _make_multi_response_agent(
     agent.name = "Test Agent"
     agent.description = "A mock agent for testing"
     agent.context_providers = []
+    agent.create_session.side_effect = lambda *, session_id=None: AgentSession(session_id=session_id)
 
     call_index = [0]
 
@@ -2836,7 +3335,8 @@ class TestFunctionApprovalRoundTrip:
             approval_request_id
         )
         assert loaded.type == "function_approval_request"
-        assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
+        assert loaded.function_call is not None
+        assert loaded.function_call.name == "delete_file"
 
     async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
         request_content = _make_function_approval_request_content(request_id="apr_streaming")
@@ -3212,57 +3712,53 @@ class TestCheckpointContextPathValidation:
         assert storage.storage_path.parent == root.resolve()
         assert storage.storage_path.name == "%2e%2e"
 
-    def test_user_id_scopes_storage_under_user_partition(self, tmp_path: Any) -> None:
-        """A per-user partition key nests the context dir under ``<root>/<user_id>``."""
+    def test_isolation_scopes_storage_under_user_partition(self, tmp_path: Any) -> None:
         helper = self._helper()
         root = tmp_path / "root"
         root.mkdir()
-        storage = helper(str(root), "resp_abc123", user_id="user-A")
+        isolation = ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64)
+        storage = helper(str(root), "resp_abc123", isolation=isolation)
         assert storage.storage_path.is_dir()
-        assert storage.storage_path == (root / "user-A" / "resp_abc123").resolve()
+        assert storage.storage_path == (root / "user-user-A" / "resp_abc123").resolve()
 
-    @pytest.mark.parametrize("absent_user_id", [None, ""])
-    def test_absent_user_id_uses_unscoped_layout(self, tmp_path: Any, absent_user_id: str | None) -> None:
-        """``None``/empty user id (local dev or protocol v1) falls back to the unscoped layout."""
+    def test_absent_isolation_uses_unscoped_layout(self, tmp_path: Any) -> None:
         helper = self._helper()
         root = tmp_path / "root"
         root.mkdir()
-        storage = helper(str(root), "resp_abc123", user_id=absent_user_id)
+        storage = helper(str(root), "resp_abc123", isolation=ResolvedSessionIsolation(None, None, None))
         assert storage.storage_path == (root / "resp_abc123").resolve()
 
-    def test_distinct_users_get_isolated_storage(self, tmp_path: Any) -> None:
-        """Two users sharing a context id must not resolve to the same directory."""
+    def test_distinct_isolation_keys_get_isolated_storage(self, tmp_path: Any) -> None:
         helper = self._helper()
         root = tmp_path / "root"
         root.mkdir()
-        a = helper(str(root), "shared_context", user_id="user-A")
-        b = helper(str(root), "shared_context", user_id="user-B")
+        a = helper(
+            str(root),
+            "shared_context",
+            isolation=ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64),
+        )
+        b = helper(
+            str(root),
+            "shared_context",
+            isolation=ResolvedSessionIsolation("user-B", "user-user-B", "b" * 64),
+        )
         assert a.storage_path != b.storage_path
-        assert a.storage_path.is_relative_to((root / "user-A").resolve())
-        assert b.storage_path.is_relative_to((root / "user-B").resolve())
+        assert a.storage_path.is_relative_to((root / "user-user-A").resolve())
+        assert b.storage_path.is_relative_to((root / "user-user-B").resolve())
 
-    @pytest.mark.parametrize(
-        "bad_user_id",
-        [
-            "../../escape",
-            "..",
-            ".",
-            "/tmp/escape",
-            "C:\\temp\\escape",
-            "user/../../escape",
-            "with\x00null",
-            "a/b",
-        ],
-    )
-    def test_malicious_user_id_is_rejected(self, tmp_path: Any, bad_user_id: str) -> None:
+    def test_malicious_isolation_directory_is_rejected(self, tmp_path: Any) -> None:
         helper = self._helper()
         root = tmp_path / "root"
         root.mkdir()
         before = sorted(p.name for p in tmp_path.iterdir())
         with pytest.raises(RuntimeError):
-            helper(str(root), "resp_abc123", user_id=bad_user_id)
+            helper(
+                str(root),
+                "resp_abc123",
+                isolation=ResolvedSessionIsolation("bad", "../../escape", "a" * 64),
+            )
         after = sorted(p.name for p in tmp_path.iterdir())
-        assert before == after, f"Unexpected filesystem artifacts created for user id {bad_user_id!r}"
+        assert before == after
         assert list(root.iterdir()) == []
 
     @pytest.mark.parametrize(
@@ -3433,56 +3929,46 @@ class TestCheckpointContextPathValidation:
 
 
 class TestApprovalStoragePathValidation:
-    """Path-traversal and per-user scoping tests for function approval storage.
-
-    Mirrors the checkpoint validation: the per-user approval directory is
-    derived by joining the platform-injected ``x-agent-user-id`` partition key
-    under the base approval directory, and the user id must be a single safe
-    path segment (CWE-22).
-    """
+    """Path containment and per-user scoping tests for approval storage."""
 
     @staticmethod
     def _helper() -> Callable[..., str]:
         from agent_framework_foundry_hosting._responses import (  # pyright: ignore[reportPrivateUsage]
-            _approval_storage_path_for_user,
+            _approval_storage_path,
         )
 
-        return _approval_storage_path_for_user
+        return _approval_storage_path
 
-    def test_user_id_scopes_path_under_base_directory(self, tmp_path: Any) -> None:
+    def test_isolation_scopes_path_under_base_directory(self, tmp_path: Any) -> None:
         from pathlib import Path
 
         helper = self._helper()
-        base = tmp_path / "approvals" / "requests.json"
-        scoped = Path(helper(str(base), "user-A"))
-        assert scoped.name == "requests.json"
-        assert scoped.parent.name == "user-A"
+        base = tmp_path / "approvals"
+        isolation = ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64)
+        scoped = Path(helper(str(base), isolation))
+        assert scoped.name == "approval_requests.json"
+        assert scoped.parent.name == "user-user-A"
         assert scoped.parent.parent == (tmp_path / "approvals").resolve()
 
-    def test_distinct_users_get_isolated_paths(self, tmp_path: Any) -> None:
+    def test_distinct_isolation_keys_get_isolated_paths(self, tmp_path: Any) -> None:
         helper = self._helper()
-        base = tmp_path / "approvals" / "requests.json"
-        assert helper(str(base), "user-A") != helper(str(base), "user-B")
+        base = tmp_path / "approvals"
+        assert helper(
+            str(base),
+            ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64),
+        ) != helper(
+            str(base),
+            ResolvedSessionIsolation("user-B", "user-user-B", "b" * 64),
+        )
 
-    @pytest.mark.parametrize(
-        "bad_user_id",
-        [
-            "../../escape",
-            "..",
-            ".",
-            "/tmp/escape",
-            "C:\\temp\\escape",
-            "user/../../escape",
-            "with\x00null",
-            "a/b",
-            "",
-        ],
-    )
-    def test_malicious_user_id_is_rejected(self, tmp_path: Any, bad_user_id: str) -> None:
+    def test_malicious_isolation_directory_is_rejected(self, tmp_path: Any) -> None:
         helper = self._helper()
-        base = tmp_path / "approvals" / "requests.json"
+        base = tmp_path / "approvals"
         with pytest.raises(RuntimeError):
-            helper(str(base), bad_user_id)
+            helper(
+                str(base),
+                ResolvedSessionIsolation("bad", "../../escape", "a" * 64),
+            )
 
 
 # region Agent lifecycle (lazy entry & OAuth consent surfacing)
@@ -3740,6 +4226,7 @@ class TestResponseFailedSurfacing:
         agent.name = "Test Agent"
         agent.description = "A mock agent for testing"
         agent.context_providers = []
+        agent.create_session.side_effect = lambda *, session_id=None: AgentSession(session_id=session_id)
 
         def run_streaming(*args: Any, **kwargs: Any) -> Any:
             if kwargs.get("stream"):
@@ -3783,6 +4270,7 @@ class TestResponseFailedSurfacing:
         agent.name = "Test Agent"
         agent.description = "A mock agent for testing"
         agent.context_providers = []
+        agent.create_session.side_effect = lambda *, session_id=None: AgentSession(session_id=session_id)
 
         def run_streaming(*args: Any, **kwargs: Any) -> Any:
             return ResponseStream(_raise_stream())  # type: ignore[arg-type]
@@ -4143,7 +4631,8 @@ class TestWorkflowAgentHosting:
             approval_request_id
         )
         assert loaded.type == "function_approval_request"
-        assert loaded.function_call.name == "delete_file"  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
+        assert loaded.function_call is not None
+        assert loaded.function_call.name == "delete_file"
         assert mock_agent.run_count == 1
 
     async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:

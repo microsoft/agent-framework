@@ -75,13 +75,16 @@ agent_framework/
 ### Sessions (`_sessions.py`)
 
 - **`AgentSession`** - Manages conversation state and session metadata
+- **`SessionStore`** - Experimental in-memory `session_id -> AgentSession` snapshot store; reads return independent copies
+- **`FileSessionStore`** - Experimental msgspec file-backed session snapshot store with atomic last-writer-wins updates; JSON is the default and `serialization_format="msgpack"` enables binary MessagePack
+- **`register_state_type`** - Explicitly registers custom `AgentSession.state` classes with stable type IDs and optional mapping codecs; registration must happen before persistence/restoration, and conflicting IDs are rejected
 - **`ServiceSessionId`** - Mapping alias for structured service-owned continuation handles used in `AgentSession.service_session_id`
 - **`SessionContext`** - Context object for session-scoped data during agent runs. `extend_messages(...)` can attach
   ordered, deduplicated `origin_session_ids` attribution when a provider injects content from other sessions.
 - **`ContextProvider`** - Base class for context providers (RAG, memory systems)
 - **`HistoryProvider`** - Base class for conversation history storage
 - **`InMemoryHistoryProvider`** - Built-in session-state history provider for local runs
-- **`FileHistoryProvider`** - JSON Lines file-backed history provider storing one file per session with one message record per line
+- **`FileHistoryProvider`** - Experimental append-only file-backed history provider; msgspec JSON Lines is the default and `serialization_format="msgpack"` uses length-prefixed binary MessagePack records. Custom `dumps`/`loads` remain as deprecated JSON-only compatibility hooks and emit `DeprecationWarning` when supplied.
 
 ### Skills (`_skills.py`)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -16,13 +17,17 @@ from pathlib import Path
 from typing import Literal, Protocol, cast
 
 from agent_framework import (
+    AgentSession,
     ChatOptions,
     Content,
     ContextProvider,
     FileCheckpointStorage,
+    FileSessionStore,
     HistoryProvider,
+    InMemoryHistoryProvider,
     Message,
     RawAgent,
+    SessionStore,
     SupportsAgentRun,
     WorkflowAgent,
 )
@@ -117,10 +122,31 @@ from mcp import McpError
 from typing_extensions import Any
 
 from ._feature_usage import FeatureIndex
+from ._session_isolation import (
+    IsolationKeyScopedFileSessionStore,
+    ResolvedSessionIsolation,
+    ResponsesSessionIsolationKeyResolver,
+    platform_session_isolation_key_resolver,
+    resolve_session_isolation,
+)
 
 logger = logging.getLogger(__name__)
 
 _AZURE_RESPONSES_MESSAGE_ROLE_TYPE = f"{MessageRole.__module__}:{MessageRole.__qualname__}"
+_CURRENT_RESPONSE_ID_BODY_LENGTH = 50
+_CURRENT_RESPONSE_ID_PARTITION_LENGTH = 18
+_LEGACY_RESPONSE_ID_BODY_LENGTH = 48
+_LEGACY_RESPONSE_ID_PARTITION_LENGTH = 16
+_HOSTED_SESSION_DATA_DIRECTORY_ENVIRONMENT_VARIABLE = "HOME"
+_DEFAULT_HOSTED_SESSION_DATA_DIRECTORY = "/home/session"
+_CHECKPOINT_DIRECTORY_NAME = ".checkpoints"
+_SESSION_DIRECTORY_NAME = "sessions"
+_WORKFLOW_CHECKPOINT_DIRECTORY_NAME = "checkpoints"
+_FUNCTION_APPROVAL_DIRECTORY_NAME = "function-approvals"
+_FUNCTION_APPROVAL_FILE_NAME = "approval_requests.json"
+_HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
+_SESSION_ISOLATION_STATE_KEY = "foundry_hosting.session_isolation_fingerprint"
+_UNSCOPED_SESSION_ISOLATION = ResolvedSessionIsolation(None, None, None)
 
 
 # region Approval Storage
@@ -253,30 +279,129 @@ def _validate_path_segment(segment: str, *, kind: Literal["context id", "user id
         raise RuntimeError(f"Invalid {kind}: {segment!r}")
 
 
-def _checkpoint_storage_for_context(root: str, context_id: str, *, user_id: str | None = None) -> FileCheckpointStorage:
+def _is_usable_hosted_home_directory(home_directory: str | None) -> bool:
+    """Return whether ``home_directory`` can safely contain hosted durable state."""
+    if home_directory is None or not home_directory.strip():
+        return False
+    try:
+        resolved = Path(home_directory).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return False
+    return resolved != Path(resolved.anchor)
+
+
+def _resolve_durable_storage_root(
+    *,
+    is_hosted: bool,
+    home_directory: str | None,
+    current_directory: str,
+) -> Path:
+    """Resolve the shared root for Foundry session snapshots and workflow checkpoints."""
+    if is_hosted:
+        if home_directory is not None and _is_usable_hosted_home_directory(home_directory):
+            base_directory = Path(home_directory).expanduser()
+        else:
+            base_directory = Path(_DEFAULT_HOSTED_SESSION_DATA_DIRECTORY)
+    else:
+        base_directory = Path(current_directory)
+    return (base_directory / _CHECKPOINT_DIRECTORY_NAME).resolve()
+
+
+def _response_id_partition(response_id: str | None) -> str | None:
+    """Extract the stable Responses SDK partition from an item/response ID."""
+    if response_id is None or not response_id.strip():
+        return None
+    _, separator, body = response_id.partition("_")
+    if not separator:
+        body = response_id
+    if len(body) == _CURRENT_RESPONSE_ID_BODY_LENGTH:
+        return body[:_CURRENT_RESPONSE_ID_PARTITION_LENGTH]
+    if len(body) == _LEGACY_RESPONSE_ID_BODY_LENGTH:
+        return body[-_LEGACY_RESPONSE_ID_PARTITION_LENGTH:]
+    return response_id
+
+
+def _resolve_session_conversation_key(request: CreateResponse, context: ResponseContext) -> str:
+    """Resolve the stable conversation-level key used for AgentSession persistence."""
+    conversation_key = (
+        context.conversation_id
+        or _response_id_partition(request.previous_response_id)
+        or _response_id_partition(context.response_id)
+    )
+    if conversation_key is None:
+        raise RuntimeError("A Responses session key could not be resolved.")
+    return conversation_key
+
+
+def _conversation_object_id(conversation_key: str) -> str:
+    """Return a restricted store/file ID derived from the Responses conversation object."""
+    try:
+        SessionStore.validate_session_id(conversation_key)
+    except ValueError:
+        return f"conversation_{hashlib.sha256(conversation_key.encode('utf-8')).hexdigest()}"
+    return conversation_key
+
+
+def _custom_session_store_key(
+    agent: SupportsAgentRun,
+    object_id: str,
+    *,
+    isolation: ResolvedSessionIsolation,
+) -> str:
+    """Create an isolation-scoped key for a non-file custom store."""
+    key: dict[str, str] = {"object": object_id}
+    if agent.name:
+        key["agent"] = agent.name
+    if isolation.fingerprint:
+        key["isolation"] = isolation.fingerprint
+    canonical_key = json.dumps(key, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return f"foundry_{hashlib.sha256(canonical_key.encode('utf-8')).hexdigest()}"
+
+
+def _stamp_or_validate_session_isolation(
+    session: AgentSession,
+    isolation: ResolvedSessionIsolation,
+) -> None:
+    """Stamp a legacy/new session or reject a cross-isolation restore."""
+    existing = session.state.get(_SESSION_ISOLATION_STATE_KEY)
+    expected = isolation.fingerprint
+    if existing is None:
+        if expected is not None:
+            session.state[_SESSION_ISOLATION_STATE_KEY] = expected
+        return
+    if existing != expected:
+        raise RuntimeError("Hosted session identity context mismatch.")
+
+
+def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
+    """Return whether ``provider`` is the host's no-op history-loading sentinel."""
+    return (
+        isinstance(provider, InMemoryHistoryProvider)
+        and provider.source_id == _HOSTED_RESPONSES_HISTORY_SOURCE_ID
+        and not provider.store_inputs
+        and not provider.store_context_messages
+        and not provider.store_outputs
+    )
+
+
+def _checkpoint_storage_for_context(
+    root: str | Path,
+    context_id: str,
+    *,
+    isolation: ResolvedSessionIsolation = _UNSCOPED_SESSION_ISOLATION,
+) -> FileCheckpointStorage:
     """Build a ``FileCheckpointStorage`` for ``context_id`` rooted under ``root``.
 
-    When the platform supplies a per-user partition key (``user_id``, from the
-    ``x-agent-user-id`` header on container protocol v2), the per-conversation
-    checkpoint directory is nested under it: ``<root>/<user_id>/<context_id>``.
-    This isolates each tenant's workflow state so one user can never restore or
-    observe another user's checkpoint, even with a guessed or forged
-    ``context_id``. An absent (``None``) or empty ``user_id`` -- local
-    development or protocol v1 -- falls back to the unscoped
-    ``<root>/<context_id>`` layout.
-
-    Both ``context_id`` and ``user_id`` are validated as single safe path
-    segments, and each resolved directory is verified to stay under its parent
-    before any directory is created on disk (CWE-22).
+    Scoped requests use ``<root>/user-<identity>/<context_id>``. Local
+    unscoped requests use ``<root>/<context_id>``.
     """
     _validate_path_segment(context_id, kind="context id")
 
     base_path = Path(root).resolve()
-    if user_id:
-        _validate_path_segment(user_id, kind="user id")
-        user_path = (base_path / user_id).resolve()
+    if isolation.directory_segment:
+        user_path = (base_path / isolation.directory_segment).resolve()
         if not user_path.is_relative_to(base_path):
-            raise RuntimeError(f"Invalid user id: {user_id!r}")
+            raise RuntimeError(f"Invalid session isolation directory: {isolation.directory_segment!r}")
         base_path = user_path
 
     storage_path = (base_path / context_id).resolve()
@@ -290,23 +415,17 @@ def _checkpoint_storage_for_context(root: str, context_id: str, *, user_id: str 
     )
 
 
-def _approval_storage_path_for_user(base_path: str, user_id: str) -> str:
-    """Return the per-user approval storage file path under the base directory.
-
-    Inserts the validated ``user_id`` as a directory segment between the base
-    directory and the file name (``<dir>/<user_id>/<file>``), mirroring the
-    per-user checkpoint partitioning so one tenant can never read another
-    tenant's saved approval requests. The user id is validated as a single safe
-    path segment and the resulting directory is verified to stay under the base
-    directory before use (CWE-22).
-    """
-    _validate_path_segment(user_id, kind="user id")
-    directory, filename = os.path.split(base_path)
-    base_dir = Path(directory or ".").resolve()
-    user_dir = (base_dir / user_id).resolve()
-    if not user_dir.is_relative_to(base_dir):
-        raise RuntimeError(f"Invalid user id: {user_id!r}")
-    return str(user_dir / filename)
+def _approval_storage_path(
+    root: str | Path,
+    isolation: ResolvedSessionIsolation,
+) -> str:
+    """Return the approval file path for one resolved isolation identity."""
+    base_path = Path(root).resolve()
+    if isolation.directory_segment:
+        base_path = (base_path / isolation.directory_segment).resolve()
+        if not base_path.is_relative_to(Path(root).resolve()):
+            raise RuntimeError(f"Invalid session isolation directory: {isolation.directory_segment!r}")
+    return str(base_path / _FUNCTION_APPROVAL_FILE_NAME)
 
 
 # endregion Approval Storage
@@ -414,7 +533,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 pass
 
         return "/home/session/.checkpoints"
-
     def __init__(
         self,
         agent: SupportsAgentRun,
@@ -422,6 +540,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         prefix: str = "",
         options: ResponsesServerOptions | None = None,
         store: ResponseProviderProtocol | None = None,
+        session_store: SessionStore | None = None,
+        session_isolation_key_resolver: ResponsesSessionIsolationKeyResolver | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
@@ -431,6 +551,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             prefix: The URL prefix for the server.
             options: Optional server options.
             store: Optional response store.
+            session_store: Optional Agent Framework session store. Defaults to
+                an :class:`IsolationKeyScopedFileSessionStore` under the Foundry
+                durable storage root. A caller-supplied file store must already
+                be an ``IsolationKeyScopedFileSessionStore``.
+            session_isolation_key_resolver: Optional sync/async callable that
+                resolves a stable authenticated identity for the request.
+                Defaults to the trusted Foundry platform user key.
             **kwargs: Additional keyword arguments.
 
         Note:
@@ -444,6 +571,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         for provider in getattr(agent, "context_providers", []):
             if isinstance(provider, HistoryProvider) and provider.load_messages:
+                if _is_hosted_responses_history_sentinel(provider):
+                    continue
                 raise RuntimeError(
                     "There shouldn't be a history provider with `load_messages=True` already present. "
                     "History is managed by the hosting infrastructure."
@@ -455,6 +584,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 provider.source_id,
             )
 
+        self._storage_root = _resolve_durable_storage_root(
+            is_hosted=self.config.is_hosted,
+            home_directory=os.getenv(_HOSTED_SESSION_DATA_DIRECTORY_ENVIRONMENT_VARIABLE),
+            current_directory=os.getcwd(),
+        )
+        self._session_isolation_key_resolver = session_isolation_key_resolver or platform_session_isolation_key_resolver
         self._is_workflow_agent = False
         self._checkpoint_storage_path = None
         if isinstance(agent, WorkflowAgent):
@@ -466,20 +601,41 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             self._checkpoint_storage_path = self._resolve_checkpoint_root(self.config.is_hosted)
             self._is_workflow_agent = True
 
-        self._agent = agent
-        self._approval_storage = (
-            FileBasedFunctionApprovalStorage(self.FUNCTION_APPROVAL_STORAGE_PATH)
-            if self.config.is_hosted
-            else InMemoryFunctionApprovalStorage()
-        )
-        # Per-user (multi-tenant) approval stores. Hosted file-based approval
-        # storage is partitioned by the platform per-user partition key so one
-        # tenant can never read another tenant's saved approval requests.
-        # Instances are cached so concurrent requests for the same user share one
-        # lock, preserving serialized read-modify-write on the JSON file. Local
-        # (in-memory) dev and protocol v1 (no user id) keep the single shared
-        # ``self._approval_storage``.
-        self._approval_storages_by_user: dict[str, ApprovalStorage] = {}
+        if (
+            not self._is_workflow_agent
+            and isinstance(agent, RawAgent)
+            and not any(
+                _is_hosted_responses_history_sentinel(provider)
+                for provider in cast(Sequence[ContextProvider], agent.context_providers)
+            )
+        ):
+            # The Responses provider already supplies the complete transcript on every
+            # call. A loading no-op provider prevents Agent from auto-injecting its
+            # default InMemoryHistoryProvider and replaying that transcript twice.
+            agent.context_providers.append(
+                InMemoryHistoryProvider(
+                    source_id=_HOSTED_RESPONSES_HISTORY_SOURCE_ID,
+                    store_inputs=False,
+                    store_outputs=False,
+                )
+            )
+
+        self._agent: SupportsAgentRun = agent
+        if not self._is_workflow_agent and session_store is None:
+            session_store = IsolationKeyScopedFileSessionStore(self._storage_root / _SESSION_DIRECTORY_NAME)
+        elif isinstance(session_store, FileSessionStore) and not isinstance(
+            session_store,
+            IsolationKeyScopedFileSessionStore,
+        ):
+            raise ValueError(
+                "ResponsesHostServer requires IsolationKeyScopedFileSessionStore for file-backed session storage."
+            )
+        self._session_store = session_store
+        self._approval_storage: ApprovalStorage = InMemoryFunctionApprovalStorage()
+        self._approval_storage_root = self._storage_root / _FUNCTION_APPROVAL_DIRECTORY_NAME
+        # Per-user hosted approval stores share a process-local lock per identity.
+        # Local development keeps the single in-memory store.
+        self._approval_storages_by_isolation: dict[str, ApprovalStorage] = {}
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
         # failures during MCP connect can be surfaced to the client as an
@@ -505,7 +661,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             stack = AsyncExitStack()
             try:
                 if isinstance(self._agent, AbstractAsyncContextManager):
-                    await stack.enter_async_context(self._agent)
+                    await stack.enter_async_context(cast(AbstractAsyncContextManager[Any], self._agent))
             except BaseException:
                 await stack.aclose()
                 raise
@@ -518,27 +674,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             self._agent_stack = None
             await stack.aclose()
 
-    def _approval_storage_for_user(self, user_id: str | None) -> ApprovalStorage:
-        """Return the approval storage scoped to ``user_id`` when applicable.
-
-        For hosted multi-tenant deployments the file-based store is partitioned
-        by the platform per-user partition key, so one tenant can never read
-        another tenant's saved approval requests. Falls back to the single shared
-        store for local (in-memory) hosting or when no per-user partition key is
-        available (protocol v1 / local development). Instances are cached so
-        concurrent requests for the same user share one lock.
-
-        Raises:
-            RuntimeError: If ``user_id`` is not a safe single path segment.
-        """
-        if not self.config.is_hosted or not user_id:
+    def _approval_storage_for_isolation(self, isolation: ResolvedSessionIsolation) -> ApprovalStorage:
+        """Return the hosted approval store for one validated identity."""
+        if not self.config.is_hosted or isolation.key is None:
             return self._approval_storage
-        storage = self._approval_storages_by_user.get(user_id)
+        storage = self._approval_storages_by_isolation.get(isolation.key)
         if storage is None:
-            storage = FileBasedFunctionApprovalStorage(
-                _approval_storage_path_for_user(self.FUNCTION_APPROVAL_STORAGE_PATH, user_id)
-            )
-            self._approval_storages_by_user[user_id] = storage
+            storage = FileBasedFunctionApprovalStorage(_approval_storage_path(self._approval_storage_root, isolation))
+            self._approval_storages_by_isolation[isolation.key] = storage
         return storage
 
     async def _handle_response(
@@ -555,16 +698,23 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "Please upgrade your agent protocol to 2.0.0 in `agent.manifest.yaml` or `agent.yaml`, or "
                 "downgrade the `agent-framework-foundry-hosting` package to `1.0.0a260625` or before to use 1.0.0."
             )
+        isolation = await resolve_session_isolation(
+            self._session_isolation_key_resolver,
+            request,
+            context,
+            is_hosted=self.config.is_hosted,
+        )
 
         if self._is_workflow_agent:
             # Workflow agents are handled differently because they require checkpoint restoration
-            return self._handle_inner_workflow(request, context)
-        return self._handle_inner_agent(request, context)
+            return self._handle_inner_workflow(request, context, isolation)
+        return self._handle_inner_agent(request, context, isolation)
 
     async def _handle_inner_agent(
         self,
         request: CreateResponse,
         context: ResponseContext,
+        isolation: ResolvedSessionIsolation = _UNSCOPED_SESSION_ISOLATION,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response for a regular (non-workflow) agent."""
         response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
@@ -574,10 +724,44 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # Track the current active output item builder for streaming;
         # lazily created on matching content, closed when a different type arrives.
         tracker: _OutputItemTracker | None = None
+        session: AgentSession | None = None
+        request_session_store: SessionStore | None = None
+        session_store_key: str | None = None
+        session_save_attempted = False
+
+        async def save_session() -> None:
+            nonlocal session_save_attempted
+            session_save_attempted = True
+            if request_session_store is None:
+                raise RuntimeError("Session storage is not configured for a regular agent.")
+            if session is not None and session_store_key is not None:
+                if isinstance(request_session_store, IsolationKeyScopedFileSessionStore):
+                    with request_session_store.use_isolation(isolation):
+                        await request_session_store.set(session_store_key, session)
+                else:
+                    await request_session_store.set(session_store_key, session)
 
         try:
-            user_id = context.platform_context.user_id_key
-            approval_storage = self._approval_storage_for_user(user_id)
+            approval_storage = self._approval_storage_for_isolation(isolation)
+            conversation_key = _resolve_session_conversation_key(request, context)
+            object_id = _conversation_object_id(conversation_key)
+            request_session_store = self._session_store
+            if request_session_store is None:
+                raise RuntimeError("Session storage is not configured for a regular agent.")
+            session_store_key = (
+                object_id
+                if isinstance(request_session_store, IsolationKeyScopedFileSessionStore)
+                else _custom_session_store_key(self._agent, object_id, isolation=isolation)
+            )
+            if isinstance(request_session_store, IsolationKeyScopedFileSessionStore):
+                with request_session_store.use_isolation(isolation):
+                    session = await request_session_store.get(session_store_key)
+            else:
+                session = await request_session_store.get(session_store_key)
+            if session is None:
+                session = self._agent.create_session(session_id=object_id)
+            _stamp_or_validate_session_isolation(session, isolation)
+
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
 
@@ -586,7 +770,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "messages": [
                     *(await _output_items_to_messages(history, approval_storage=approval_storage)),
                     *input_messages,
-                ]
+                ],
+                "session": session,
             }
             is_streaming_request = request.stream is not None and request.stream is True
 
@@ -618,6 +803,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     builder = response_event_stream.add_output_item(oauth_item.id)
                     yield builder.emit_added(oauth_item)
                     yield builder.emit_done(oauth_item)
+                await save_session()
                 yield response_event_stream.emit_completed()
                 return
 
@@ -653,16 +839,26 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # Close any remaining active builder
                 for event in tracker.close():
                     yield event
+            await save_session()
             yield response_event_stream.emit_completed()
         except Exception as ex:
             logger.exception("Failed to produce response for agent")
+            if not session_save_attempted:
+                try:
+                    await save_session()
+                except Exception:
+                    logger.exception("Failed to persist the Agent Framework session after an agent failure")
             for event in self._emit_failure(response_event_stream, tracker, ex):
                 yield event
+        finally:
+            if session is not None and not session_save_attempted:
+                await save_session()
 
     async def _handle_inner_workflow(
         self,
         request: CreateResponse,
         context: ResponseContext,
+        isolation: ResolvedSessionIsolation = _UNSCOPED_SESSION_ISOLATION,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response for a workflow agent."""
         response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
@@ -674,8 +870,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         tracker: _OutputItemTracker | None = None
 
         try:
-            user_id = context.platform_context.user_id_key
-            approval_storage = self._approval_storage_for_user(user_id)
+            approval_storage = self._approval_storage_for_isolation(isolation)
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
             is_streaming_request = request.stream is not None and request.stream is True
@@ -723,7 +918,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             restore_storage: FileCheckpointStorage | None = None
             if context_id is not None:
                 restore_storage = _checkpoint_storage_for_context(
-                    self._checkpoint_storage_path, context_id, user_id=user_id
+                    self._checkpoint_storage_path,
+                    context_id,
+                    isolation=isolation,
                 )
                 latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
                 if latest_checkpoint is not None:
@@ -739,7 +936,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # directory and write_storage points at the *current* response's.
             write_context_id = context.conversation_id or context.response_id
             write_storage = _checkpoint_storage_for_context(
-                self._checkpoint_storage_path, write_context_id, user_id=user_id
+                self._checkpoint_storage_path,
+                write_context_id,
+                isolation=isolation,
             )
 
             # Multi-turn pattern: when we have a prior checkpoint, restore it

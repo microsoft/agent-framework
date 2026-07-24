@@ -57,7 +57,7 @@ class TestTelegramChatId:
 
 class TestTelegramSessionId:
     def test_private_chat_uses_bot_and_user_id(self) -> None:
-        assert telegram_session_id(_message_update(text="hi"), bot_id=123) == "telegram:123:777"
+        assert telegram_session_id(_message_update(text="hi"), bot_id=123) == "telegram_123_user_777"
 
     def test_returns_none_when_no_chat_id(self) -> None:
         assert telegram_session_id({"update_id": 1}, bot_id=123) is None
@@ -70,7 +70,7 @@ class TestTelegramSessionId:
     def test_group_chat_uses_bot_and_chat_id(self) -> None:
         update = _message_update(text="hi")
         update["message"]["chat"] = {"id": -555, "type": "supergroup"}
-        assert telegram_session_id(update, bot_id=123) == "telegram:123:-555"
+        assert telegram_session_id(update, bot_id=123) == "telegram_123_chat_-555"
 
     def test_private_callback_uses_callback_sender(self) -> None:
         update = {
@@ -81,7 +81,7 @@ class TestTelegramSessionId:
                 "message": {"chat": {"id": 555, "type": "private"}},
             },
         }
-        assert telegram_session_id(update, bot_id=123) == "telegram:123:888"
+        assert telegram_session_id(update, bot_id=123) == "telegram_123_user_888"
 
 
 class TestTelegramCommand:

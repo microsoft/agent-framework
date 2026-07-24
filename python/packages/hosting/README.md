@@ -4,12 +4,14 @@ Shared execution-state helpers for app-owned Agent Framework hosting.
 
 This package keeps Agent Framework state separate from web-framework concerns:
 
-- `AgentState` — pairs an agent target with a `SessionStore`
+- `AgentState` — pairs an agent target with a core `SessionStore`
   (`session_id -> AgentSession`).
 - `WorkflowState` — resolves a workflow target, including direct `Workflow`
   instances, workflow factories, `WorkflowBuilder`, and orchestration builders.
 
-`SessionStore` provides `get`/`set`/`delete` by an app-selected id. Each
+The experimental `SessionStore` and `FileSessionStore` implementations live in
+`agent-framework-core` and are imported from `agent_framework`. `SessionStore`
+provides `get`/`set`/`delete` by an app-selected id. Each
 successful `get` returns an independent copy, so a run works from a snapshot
 instead of mutating an older continuation point in place. The store does not
 know how to create a new value for an id it hasn't seen before — use
@@ -19,10 +21,43 @@ checkpointing should use the existing `CheckpointStorage` abstraction directly;
 if an app needs per-session resume, keep a small app-owned cursor such as
 `session_id -> checkpoint_id`.
 
+Session-store IDs are limited to 128 characters containing ASCII letters,
+digits, `-`, and `_`. This keeps protocol-derived IDs safe to pass through
+common storage backends, but it does not replace parameterized queries or
+backend-specific validation in custom stores.
+
+`FileSessionStore` uses msgspec JSON. Custom objects placed in
+`AgentSession.state` must be registered explicitly before the session is saved
+or restored:
+
+```python
+from agent_framework import register_state_type
+
+
+class MyState:
+    ...
+
+
+# Register at module import time, before any provider instance is created.
+register_state_type(MyState, type_id="my_state")
+```
+
+Classes with `to_dict()` / `from_dict()` methods and explicitly registered
+Pydantic models receive default codecs. Other classes can provide `encoder=`
+and `decoder=` callbacks. Keep registration at module level so importing the
+module prepares cold-start session restoration before its context provider is
+instantiated.
+
+JSON is the default file format. Use MessagePack for a compact binary file:
+
+```python
+store = FileSessionStore("storage/sessions", serialization_format="msgpack")
+```
+
 Use FastAPI, Starlette, Azure Functions, Django, or another framework for route
 registration, auth, middleware, response construction, and background work.
 
-> The built-in `SessionStore` is an in-memory `dict` with no eviction — every
+> The core `SessionStore` is an in-memory `dict` with no eviction — every
 > id ever stored stays resolvable for the life of the process. That is
 > intentional: protocols such as OpenAI Responses'
 > `previous_response_id` are designed to let a caller continue from *any*
@@ -35,12 +70,12 @@ registration, auth, middleware, response construction, and background work.
 ## Quickstart
 
 ```python
+from agent_framework import FileSessionStore
 from agent_framework.openai import OpenAIChatClient
 from agent_framework_hosting import AgentState
 
 agent = OpenAIChatClient().as_agent(name="Assistant")
-state = AgentState(agent)
-
+state = AgentState(agent, session_store=FileSessionStore("storage/sessions"))
 session = await state.get_or_create_session("conversation-1")
 result = await (await state.get_target()).run("Hello", session=session)
 ```

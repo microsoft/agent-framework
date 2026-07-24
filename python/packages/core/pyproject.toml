@@ -23,6 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
+    "msgspec>=0.20.0,<1",
     "typing-extensions>=4.15.0,<5",
     "pydantic>=2,<3",
     "python-dotenv>=1,<2",

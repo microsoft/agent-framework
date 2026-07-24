@@ -71,8 +71,8 @@ process just registered.
 
 - **Session continuity:** `telegram_session_id(..., bot_id=bot.id)` follows
   Telegram's native identity boundaries. Private chats use
-  `telegram:<bot_id>:<user_id>`; groups and supergroups use
-  `telegram:<bot_id>:<chat_id>`, creating a shared session for that group.
+  `telegram_<bot_id>_user_<user_id>`; groups and supergroups use
+  `telegram_<bot_id>_chat_<chat_id>`, creating a shared session for that group.
   Including `bot.id` prevents two bots from accidentally sharing state.
   aiogram derives that numeric bot id from `TELEGRAM_BOT_TOKEN`, so these local
   apps do not need a separate `TELEGRAM_BOT_ID` setting.

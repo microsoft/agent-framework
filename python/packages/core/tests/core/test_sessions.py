@@ -4,11 +4,14 @@ import asyncio
 import json
 import threading
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import msgspec
 import pytest
+from typing_extensions import Self
 
 from agent_framework import (
     AgentContext,
@@ -18,12 +21,15 @@ from agent_framework import (
     ContextProvider,
     ExperimentalFeature,
     FileHistoryProvider,
+    FileSessionStore,
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
     SessionContext,
+    SessionStore,
     agent_middleware,
     chat_middleware,
+    register_state_type,
 )
 from agent_framework._sessions import (
     LOCAL_HISTORY_CONVERSATION_ID,
@@ -653,6 +659,325 @@ class TestAgentSession:
         assert session.state == {}
 
 
+class _RegisteredSessionState:
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    @classmethod
+    def _get_type_identifier(cls) -> str:
+        return "registered_session_state"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"type": self._get_type_identifier(), "value": self.value}
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "_RegisteredSessionState":
+        return cls(value=str(value["value"]))
+
+
+register_state_type(_RegisteredSessionState)
+
+
+class TestStateTypeRegistry:
+    def test_same_registration_is_idempotent(self) -> None:
+        register_state_type(_RegisteredSessionState)
+
+    def test_type_constant_is_used_as_default_identifier(self) -> None:
+        class TypeConstantState:
+            TYPE = "type_constant_state_test"
+
+            def __init__(self, value: str) -> None:
+                self.value = value
+
+            def to_dict(self) -> dict[str, Any]:
+                return {"value": self.value}
+
+            @classmethod
+            def from_dict(cls, value: dict[str, Any]) -> Self:
+                return cls(str(value["value"]))
+
+        register_state_type(TypeConstantState)
+        session = AgentSession(session_id="type-constant")
+        session.state["value"] = TypeConstantState("ok")
+
+        restored = AgentSession.from_dict(session.to_dict())
+
+        assert isinstance(restored.state["value"], TypeConstantState)
+        assert restored.state["value"].value == "ok"
+
+    def test_custom_encoder_and_decoder_support_plain_classes(self) -> None:
+        @dataclass
+        class CallbackState:
+            value: str
+
+        def encode(value: CallbackState) -> dict[str, Any]:
+            return {"value": value.value}
+
+        def decode(value: Mapping[str, Any]) -> CallbackState:
+            return CallbackState(str(value["value"]))
+
+        register_state_type(
+            CallbackState,
+            type_id="callback_state_test",
+            encoder=encode,
+            decoder=decode,
+        )
+        session = AgentSession(session_id="callback")
+        session.state["value"] = CallbackState("ok")
+
+        restored = AgentSession.from_dict(session.to_dict())
+
+        assert isinstance(restored.state["value"], CallbackState)
+        assert restored.state["value"].value == "ok"
+
+    def test_explicit_pydantic_registration_round_trips(self) -> None:
+        from pydantic import BaseModel
+
+        class PydanticState(BaseModel):
+            value: str
+
+        register_state_type(PydanticState, type_id="pydantic_state_test")
+        session = AgentSession(session_id="pydantic")
+        session.state["value"] = PydanticState(value="ok")
+
+        restored = AgentSession.from_dict(session.to_dict())
+
+        assert isinstance(restored.state["value"], PydanticState)
+        assert restored.state["value"].value == "ok"
+
+    def test_conflicting_type_identifier_is_rejected(self) -> None:
+        class FirstState:
+            def to_dict(self) -> dict[str, Any]:
+                return {}
+
+            @classmethod
+            def from_dict(cls, value: dict[str, Any]) -> Self:
+                del value
+                return cls()
+
+        class SecondState(FirstState):
+            pass
+
+        register_state_type(FirstState, type_id="collision_state_test")
+
+        with pytest.raises(ValueError, match="already registered"):
+            register_state_type(SecondState, type_id="collision_state_test")
+
+    def test_unregistered_object_fails_with_state_path(self) -> None:
+        class UnregisteredState:
+            pass
+
+        session = AgentSession(session_id="unregistered")
+        session.state["nested"] = [{"value": UnregisteredState()}]
+
+        with pytest.raises(TypeError, match=r"state\.nested\[0\]\.value.*UnregisteredState"):
+            session.to_dict()
+
+    def test_unknown_type_tag_remains_a_raw_dict(self) -> None:
+        session = AgentSession.from_dict({
+            "session_id": "unknown",
+            "state": {"value": {"type": "future_state_type", "nested": {"count": 1}}},
+        })
+
+        assert session.state["value"] == {
+            "type": "future_state_type",
+            "nested": {"count": 1},
+        }
+
+    def test_registered_child_tag_does_not_hijack_message_payload(self) -> None:
+        @dataclass
+        class TextState:
+            value: str
+
+        register_state_type(
+            TextState,
+            type_id="text",
+            encoder=lambda value: {"value": value.value},
+            decoder=lambda value: TextState(str(value["value"])),
+        )
+        session = AgentSession(session_id="message")
+        session.state["message"] = Message(role="user", contents=["hello"])
+
+        restored = AgentSession.from_dict(session.to_dict())
+
+        assert isinstance(restored.state["message"], Message)
+        assert restored.state["message"].text == "hello"
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+    def test_non_finite_float_is_rejected(self, value: float) -> None:
+        session = AgentSession(session_id="float")
+        session.state["value"] = value
+
+        with pytest.raises(ValueError, match="finite float"):
+            session.to_dict()
+
+
+class TestSessionStore:
+    def test_is_marked_experimental(self) -> None:
+        for store_type in (SessionStore, FileSessionStore):
+            assert store_type.__feature_stage__ == "experimental"  # type: ignore[attr-defined, union-attr]  # ty: ignore[unresolved-attribute]
+            assert store_type.__feature_id__ == ExperimentalFeature.SESSION_STORE.value  # type: ignore[attr-defined, union-attr]  # ty: ignore[unresolved-attribute]
+            assert store_type.__doc__ is not None
+            assert ".. warning:: Experimental" in store_type.__doc__
+
+    async def test_get_returns_none_for_missing_id(self) -> None:
+        store = SessionStore()
+
+        assert await store.get("session-1") is None
+
+    async def test_set_then_get_returns_independent_copy(self) -> None:
+        store = SessionStore()
+        session = AgentSession(session_id="session-1")
+        session.state["nested"] = {"values": ["original"]}
+
+        await store.set("session-1", session)
+
+        stored = await store.get("session-1")
+        assert stored is not None
+        assert stored is not session
+        stored.state["nested"]["values"].append("changed")
+
+        reread = await store.get("session-1")
+        assert reread is not None
+        assert reread.state["nested"]["values"] == ["original"]
+
+    async def test_set_replaces_existing_entry(self) -> None:
+        store = SessionStore()
+        await store.set("session-1", AgentSession(session_id="first"))
+        await store.set("session-1", AgentSession(session_id="second"))
+
+        stored = await store.get("session-1")
+
+        assert stored is not None
+        assert stored.session_id == "second"
+
+    async def test_delete_forgets_session(self) -> None:
+        store = SessionStore()
+        await store.set("session-1", AgentSession(session_id="session-1"))
+
+        await store.delete("session-1")
+
+        assert await store.get("session-1") is None
+
+    @pytest.mark.parametrize(
+        "session_id",
+        [
+            "",
+            "two words",
+            "tenant/user",
+            "tenant:user",
+            "session.id",
+            "' OR 1=1 --",
+            "café",
+            "line\nbreak",
+            "a" * 129,
+        ],
+    )
+    async def test_invalid_session_id_raises(self, session_id: str) -> None:
+        store = SessionStore()
+        session = AgentSession()
+
+        with pytest.raises(ValueError, match="session_id"):
+            await store.get(session_id)
+        with pytest.raises(ValueError, match="session_id"):
+            await store.set(session_id, session)
+        with pytest.raises(ValueError, match="session_id"):
+            await store.delete(session_id)
+
+
+class TestFileSessionStore:
+    async def test_round_trips_session_across_store_instances(self, tmp_path: Path) -> None:
+        session = AgentSession(session_id="framework-session", service_session_id={"response_id": "resp-1"})
+        session.state["nested"] = {
+            "messages": [Message(role="user", contents=["hello"])],
+            "custom": [_RegisteredSessionState("persisted")],
+        }
+
+        await FileSessionStore(tmp_path).set("tenant_user-conversation", session)
+        restored = await FileSessionStore(tmp_path).get("tenant_user-conversation")
+
+        assert restored is not None
+        assert restored is not session
+        assert restored.session_id == "framework-session"
+        assert restored.service_session_id == {"response_id": "resp-1"}
+        assert isinstance(restored.state["nested"]["messages"][0], Message)
+        assert restored.state["nested"]["messages"][0].text == "hello"
+        assert isinstance(restored.state["nested"]["custom"][0], _RegisteredSessionState)
+        assert restored.state["nested"]["custom"][0].value == "persisted"
+
+        files = await asyncio.to_thread(lambda: list(tmp_path.iterdir()))
+        assert len(files) == 1
+        assert files[0].parent == tmp_path
+        assert files[0].suffix == ".json"
+
+    async def test_round_trips_binary_messagepack_session(self, tmp_path: Path) -> None:
+        store = FileSessionStore(tmp_path, serialization_format="msgpack")
+        session = AgentSession(session_id="binary-session")
+        session.state["nested"] = [_RegisteredSessionState("persisted")]
+
+        await store.set("binary-session", session)
+        restored = await store.get("binary-session")
+
+        assert restored is not None
+        assert isinstance(restored.state["nested"][0], _RegisteredSessionState)
+        assert restored.state["nested"][0].value == "persisted"
+        files = await asyncio.to_thread(lambda: list(tmp_path.iterdir()))
+        assert len(files) == 1
+        assert files[0].suffix == ".msgpack"
+        assert not (await asyncio.to_thread(files[0].read_bytes)).startswith(b"{")
+
+    async def test_rejects_custom_agent_session_subclass(self, tmp_path: Path) -> None:
+        class CustomAgentSession(AgentSession):
+            pass
+
+        store = FileSessionStore(tmp_path)
+
+        with pytest.raises(TypeError, match="AgentSession instances only"):
+            await store.set("custom-session", CustomAgentSession(session_id="custom-session"))
+
+    async def test_missing_and_deleted_sessions_return_none(self, tmp_path: Path) -> None:
+        store = FileSessionStore(tmp_path)
+        assert await store.get("session-1") is None
+
+        await store.set("session-1", AgentSession(session_id="session-1"))
+        await store.delete("session-1")
+
+        assert await store.get("session-1") is None
+
+    async def test_set_replaces_atomically_without_leaving_temp_files(self, tmp_path: Path) -> None:
+        store = FileSessionStore(tmp_path)
+        await store.set("session-1", AgentSession(session_id="first"))
+        await store.set("session-1", AgentSession(session_id="second"))
+
+        stored = await store.get("session-1")
+
+        assert stored is not None
+        assert stored.session_id == "second"
+        temp_files = await asyncio.to_thread(lambda: [*tmp_path.glob("*.tmp"), *tmp_path.glob(".*.tmp")])
+        assert not temp_files
+
+    async def test_corrupt_session_file_raises(self, tmp_path: Path) -> None:
+        store = FileSessionStore(tmp_path)
+        await store.set("session-1", AgentSession(session_id="session-1"))
+        session_file = await asyncio.to_thread(lambda: next(tmp_path.iterdir()))
+        await asyncio.to_thread(session_file.write_text, "{not-json", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Failed to deserialize session"):
+            await store.get("session-1")
+
+    @pytest.mark.parametrize("session_id", ["", "two words", "tenant/user", "session.id", "café"])
+    async def test_invalid_session_id_raises(self, tmp_path: Path, session_id: str) -> None:
+        store = FileSessionStore(tmp_path)
+        session = AgentSession()
+
+        with pytest.raises(ValueError, match="session_id"):
+            await store.get(session_id)
+        with pytest.raises(ValueError, match="session_id"):
+            await store.set(session_id, session)
+        with pytest.raises(ValueError, match="session_id"):
+            await store.delete(session_id)
+
+
 # ---------------------------------------------------------------------------
 # InMemoryHistoryProvider tests
 # ---------------------------------------------------------------------------
@@ -759,6 +1084,42 @@ class TestFileHistoryProvider:
         assert FileHistoryProvider.__doc__ is not None
         assert ".. warning:: Experimental" in FileHistoryProvider.__doc__
 
+    def test_uses_msgspec_json_by_default(self, tmp_path: Path) -> None:
+        provider = FileHistoryProvider(tmp_path)
+
+        serialized = provider.dumps({"text": "héllo"})
+
+        assert isinstance(serialized, bytes)
+        assert provider.loads(serialized) == {"text": "héllo"}
+
+    async def test_stores_and_loads_length_prefixed_msgpack(self, tmp_path: Path) -> None:
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+        messages = [
+            Message(role="user", contents=["hello"]),
+            Message(role="assistant", contents=["hi there"]),
+        ]
+
+        await provider.save_messages("binary-history", messages)
+        loaded = await provider.get_messages("binary-history")
+
+        assert [message.text for message in loaded] == ["hello", "hi there"]
+        session_file = provider._session_file_path("binary-history")
+        assert session_file.suffix == ".msgpack"
+        raw = await asyncio.to_thread(session_file.read_bytes)
+        first_record_length = int.from_bytes(raw[:4], "big")
+        assert first_record_length > 0
+        assert raw[4 : 4 + first_record_length] == msgspec.msgpack.encode(messages[0].to_dict())
+
+    def test_msgpack_rejects_custom_json_codecs(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="Custom dumps and loads"):
+            FileHistoryProvider(tmp_path, serialization_format="msgpack", dumps=json.dumps)
+
+    def test_custom_json_codecs_are_deprecated(self, tmp_path: Path) -> None:
+        with pytest.warns(DeprecationWarning, match=r"dumps.*loads.*deprecated"):
+            FileHistoryProvider(tmp_path / "dumps", dumps=json.dumps)
+        with pytest.warns(DeprecationWarning, match=r"dumps.*loads.*deprecated"):
+            FileHistoryProvider(tmp_path / "loads", loads=json.loads)
+
     async def test_stores_and_loads_messages(self, tmp_path: Path) -> None:
         from agent_framework import AgentResponse
 
@@ -842,7 +1203,8 @@ class TestFileHistoryProvider:
                 payload = payload.decode("utf-8")
             return json.loads(payload)
 
-        provider = FileHistoryProvider(tmp_path, dumps=dumps, loads=loads)
+        with pytest.warns(DeprecationWarning, match=r"dumps.*loads.*deprecated"):
+            provider = FileHistoryProvider(tmp_path, dumps=dumps, loads=loads)
 
         await provider.save_messages("custom-serializer", [Message(role="user", contents=["hello"])])
         loaded = await provider.get_messages("custom-serializer")
@@ -856,6 +1218,14 @@ class TestFileHistoryProvider:
         await asyncio.to_thread(provider._session_file_path("broken").write_text, "{not-json}\n", encoding="utf-8")
 
         with pytest.raises(ValueError, match="Failed to deserialize history line 1"):
+            await provider.get_messages("broken")
+
+    async def test_truncated_msgpack_record_raises(self, tmp_path: Path) -> None:
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+        session_file = provider._session_file_path("broken")
+        await asyncio.to_thread(session_file.write_bytes, (10).to_bytes(4, "big") + b"short")
+
+        with pytest.raises(ValueError, match="record 1.*truncated"):
             await provider.get_messages("broken")
 
     async def test_missing_session_file_returns_empty_messages(self, tmp_path: Path) -> None:
@@ -901,7 +1271,8 @@ class TestFileHistoryProvider:
         def dumps(payload: object) -> str:
             return json.dumps(payload, indent=2)
 
-        provider = FileHistoryProvider(tmp_path, dumps=dumps)
+        with pytest.warns(DeprecationWarning, match=r"dumps.*loads.*deprecated"):
+            provider = FileHistoryProvider(tmp_path, dumps=dumps)
 
         with pytest.raises(ValueError, match="single-line JSON"):
             await provider.save_messages("pretty-json", [Message(role="user", contents=["hello"])])

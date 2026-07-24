@@ -19,14 +19,15 @@ long-running service. Your app remains fully responsible for:
   a leading `/command`; your app decides what each command does.
 - **Sessions/storage** -- pair these helpers with
   [`agent-framework-hosting`](https://pypi.org/project/agent-framework-hosting/)'s
-  `AgentState` / `SessionStore` (or your own) to persist `AgentSession`s across turns.
+  `AgentState` and core's `SessionStore` or `FileSessionStore` to persist
+  `AgentSession`s across turns.
 
 ## Helpers
 
 - `telegram_chat_id(update)` -- the chat id an update belongs to.
 - `telegram_session_id(update, bot_id=...)` -- a bot-scoped `AgentState`
-  session id. Private chats use `telegram:<bot_id>:<user_id>`; other chats use
-  `telegram:<bot_id>:<chat_id>`.
+  session id. Private chats use `telegram_<bot_id>_user_<user_id>`; other chats
+  use `telegram_<bot_id>_chat_<chat_id>`.
 - `telegram_command(update)` -- a leading slash command, with `/name@bot args`
   normalized to `/name args`. Returns `None` if there is none.
 - `telegram_callback_query_id(update)` -- a callback query's id, so you can

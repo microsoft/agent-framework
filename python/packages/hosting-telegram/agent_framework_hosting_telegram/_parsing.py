@@ -95,8 +95,8 @@ def telegram_session_id(update: Mapping[str, Any], *, bot_id: int) -> str | None
         bot_id: The Telegram bot's numeric user id.
 
     Returns:
-        ``telegram:<bot_id>:<user_id>`` for a private chat,
-        ``telegram:<bot_id>:<chat_id>`` for other chats, or ``None`` when the
+        ``telegram_<bot_id>_user_<user_id>`` for a private chat,
+        ``telegram_<bot_id>_chat_<chat_id>`` for other chats, or ``None`` when the
         required Telegram identity is absent.
     """
     chat_id = telegram_chat_id(update)
@@ -114,7 +114,7 @@ def telegram_session_id(update: Mapping[str, Any], *, bot_id: int) -> str | None
     chat = cast("Mapping[str, Any]", chat_candidate) if isinstance(chat_candidate, Mapping) else None
     chat_type = chat.get("type") if chat is not None else None
     if chat_type != "private":
-        return f"telegram:{bot_id}:{chat_id}"
+        return f"telegram_{bot_id}_chat_{chat_id}"
 
     if callback_query is not None:
         sender_candidate = callback_query.get("from")
@@ -126,7 +126,7 @@ def telegram_session_id(update: Mapping[str, Any], *, bot_id: int) -> str | None
         return None
     sender = cast("Mapping[str, Any]", sender_candidate)
     sender_id = sender.get("id")
-    return f"telegram:{bot_id}:{sender_id}" if isinstance(sender_id, int) else None
+    return f"telegram_{bot_id}_user_{sender_id}" if isinstance(sender_id, int) else None
 
 
 def telegram_callback_query_id(update: Mapping[str, Any]) -> str | None:

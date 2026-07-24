@@ -16,10 +16,12 @@ from agent_framework import (
     Content,
     Message,
     ResponseStream,
+    SessionStore,
     Workflow,
 )
 
-from agent_framework_hosting import AgentState, SessionStore, WorkflowState
+import agent_framework_hosting
+from agent_framework_hosting import AgentState, WorkflowState
 
 
 def _workflow_fixture(name: str) -> Any:
@@ -100,84 +102,11 @@ class _FakeAgent:
         return _get_response()
 
 
-class TestSessionStore:
-    async def test_get_returns_none_for_missing_id(self) -> None:
-        store = SessionStore()
-
-        assert await store.get("session-1") is None
-
-    async def test_set_then_get_returns_session_copy(self) -> None:
-        store = SessionStore()
-        session = AgentSession(session_id="session-1")
-        session.state["nested"] = {"values": ["original"]}
-
-        await store.set("session-1", session)
-
-        stored = await store.get("session-1")
-        assert stored is not None
-        assert stored is not session
-        assert stored.session_id == session.session_id
-        assert stored.state == session.state
-
-        stored.state["nested"]["values"].append("changed")
-        reread = await store.get("session-1")
-        assert reread is not None
-        assert reread.state["nested"]["values"] == ["original"]
-
-    async def test_set_can_store_same_session_under_additional_id(self) -> None:
-        store = SessionStore()
-        session = AgentSession(session_id="resp_1")
-
-        await store.set("resp_1", session)
-        await store.set("resp_2", session)
-
-        first = await store.get("resp_1")
-        second = await store.get("resp_2")
-        assert first is not None
-        assert second is not None
-        assert first is not session
-        assert second is not session
-        assert first is not second
-
-    async def test_set_replaces_existing_entry(self) -> None:
-        store = SessionStore()
-        first = AgentSession(session_id="session-1")
-        second = AgentSession(session_id="session-1")
-
-        await store.set("session-1", first)
-        await store.set("session-1", second)
-
-        stored = await store.get("session-1")
-        assert stored is not None
-        assert stored is not second
-        assert stored.session_id == second.session_id
-
-    async def test_delete_forgets_session(self) -> None:
-        store = SessionStore()
-        await store.set("session-1", AgentSession(session_id="session-1"))
-
-        await store.delete("session-1")
-
-        assert await store.get("session-1") is None
-
-    async def test_delete_missing_id_is_a_no_op(self) -> None:
-        store = SessionStore()
-
-        await store.delete("never-stored")
-
-    async def test_empty_session_id_raises(self) -> None:
-        store = SessionStore()
-        session = AgentSession(session_id="session-1")
-
-        with pytest.raises(ValueError, match="session_id"):
-            await store.get("")
-        with pytest.raises(ValueError, match="session_id"):
-            await store.set("", session)
-        with pytest.raises(ValueError, match="session_id"):
-            await store.delete("")
-
-
 class TestAgentState:
+    def test_session_store_is_owned_by_core(self) -> None:
+        assert "SessionStore" not in agent_framework_hosting.__all__
+        assert not hasattr(agent_framework_hosting, "SessionStore")
+
     def test_default_session_store_is_fresh_in_memory_store(self) -> None:
         agent = _FakeAgent()
         state = AgentState(agent)
@@ -269,6 +198,16 @@ class TestAgentState:
         assert first.session_id == "session-1"
         assert second.session_id == "session-1"
         assert len(agent.created_sessions) == 1
+
+    @pytest.mark.parametrize("session_id", ["two words", "tenant/user", "tenant:conversation", "' OR 1=1 --"])
+    async def test_get_or_create_session_rejects_invalid_store_id(self, session_id: str) -> None:
+        agent = _FakeAgent()
+        state = AgentState(agent)
+
+        with pytest.raises(ValueError, match="ASCII letters"):
+            await state.get_or_create_session(session_id)
+
+        assert agent.created_sessions == []
 
     async def test_get_or_create_session_creates_once_for_concurrent_callers(self) -> None:
         class _YieldingSessionStore(SessionStore):

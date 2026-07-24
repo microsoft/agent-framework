@@ -980,8 +980,10 @@ class MemoryContextProvider(HistoryProvider):
             consolidation_client: Optional chat client override used only for consolidation so the
                 cleanup pass can use a cheaper or faster model than the main agent client.
             history_message_filter: Optional callback that can rewrite or drop messages before transcript save.
-            history_dumps: Callable used to serialize transcript JSONL.
-            history_loads: Callable used to deserialize transcript JSONL and state JSON.
+            history_dumps: Deprecated callback forwarded to ``FileHistoryProvider.dumps``.
+                Omit it to use msgspec JSON.
+            history_loads: Deprecated callback forwarded to ``FileHistoryProvider.loads``.
+                Omit it to use msgspec JSON.
         """
         super().__init__(
             source_id=source_id,
