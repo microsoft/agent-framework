@@ -160,3 +160,36 @@ class TestCapturingRunnerContext:
         """Test that apply_checkpoint raises NotImplementedError."""
         with pytest.raises(NotImplementedError):
             await context.apply_checkpoint(Mock())
+
+    def test_checkpoint_storage_noops_are_safe(self, context: CapturingRunnerContext) -> None:
+        """Unsupported checkpoint-storage hooks remain harmless no-ops."""
+        storage = Mock()
+
+        context.set_runtime_checkpoint_storage(storage)
+        context.clear_runtime_checkpoint_storage()
+
+        assert context.has_checkpointing() is False
+
+    def test_yield_output_classifier_can_be_overridden(self, context: CapturingRunnerContext) -> None:
+        """Custom yield-output classification is delegated to the configured classifier."""
+        context.set_yield_output_classifier(lambda executor_id: None if executor_id == "secret" else "output")
+
+        assert context.classify_yielded_output("secret") is None
+        assert context.classify_yielded_output("visible") == "output"
+
+    async def test_add_request_info_event_tracks_pending_requests(self, context: CapturingRunnerContext) -> None:
+        """Request-info events are both queued and retained for later correlation."""
+        event = WorkflowEvent("request_info", executor_id="reviewer", data={"question": "approve?"}, request_id="req-1")
+
+        await context.add_request_info_event(event)
+
+        pending = await context.get_pending_request_info_events()
+        queued = await context.drain_events()
+
+        assert pending == {"req-1": event}
+        assert queued == [event]
+
+    async def test_send_request_info_response_raises_not_implemented(self, context: CapturingRunnerContext) -> None:
+        """Activity contexts cannot resolve HITL responses directly."""
+        with pytest.raises(NotImplementedError, match="orchestrator level"):
+            await context.send_request_info_response("req-1", {"approved": True})

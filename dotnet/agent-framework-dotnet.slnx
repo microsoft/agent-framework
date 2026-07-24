@@ -29,6 +29,7 @@
     <Project Path="samples/02-agents/AgentProviders/azure/Agent_With_AzureOpenAIChatCompletion/Agent_With_AzureOpenAIChatCompletion.csproj" />
     <Project Path="samples/02-agents/AgentProviders/azure/Agent_With_AzureOpenAIResponses/Agent_With_AzureOpenAIResponses.csproj" />
     <Project Path="samples/02-agents/AgentProviders/custom/Agent_With_CustomImplementation/Agent_With_CustomImplementation.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/dapr/Agent_With_Dapr/Agent_With_Dapr.csproj" />
     <Project Path="samples/02-agents/AgentProviders/github-copilot/Agent_With_GitHubCopilot/Agent_With_GitHubCopilot.csproj" />
     <Project Path="samples/02-agents/AgentProviders/google-gemini/Agent_With_GoogleGemini/Agent_With_GoogleGemini.csproj" />
     <Project Path="samples/02-agents/AgentProviders/ollama/Agent_With_Ollama/Agent_With_Ollama.csproj" />
@@ -65,6 +66,8 @@
     <Project Path="samples/02-agents/Agents/Agent_Step19_InFunctionLoopCheckpointing/Agent_Step19_InFunctionLoopCheckpointing.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step20_DynamicFunctionTools/Agent_Step20_DynamicFunctionTools.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step21_ShellWithEnvironment/Agent_Step21_ShellWithEnvironment.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step22_AgentMode/Agent_Step22_AgentMode.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step23_TodoList/Agent_Step23_TodoList.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/DeclarativeAgents/">
     <Project Path="samples/02-agents/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
