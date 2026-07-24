@@ -9,6 +9,7 @@ This directory groups provider-specific samples for Agent Framework.
 | [`azure/`](azure/) | Azure OpenAI chat completion samples using `OpenAIChatCompletionClient`, including basic usage, explicit configuration, tools, and sessions. |
 | [`copilotstudio/`](copilotstudio/) | Microsoft Copilot Studio agent samples, including required environment/app registration setup and explicit authentication patterns. |
 | [`custom/`](custom/) | Framework extensibility samples for building custom `BaseAgent` and `BaseChatClient` implementations, including layer-composition guidance. |
+| [`edenai/`](edenai/) | Eden AI samples using `EdenAIChatClient`, an OpenAI-compatible gateway to many providers with one key (models in `provider/model` format). |
 | [`foundry/`](foundry/) | Microsoft Foundry and Foundry Local samples using `FoundryChatClient`, `FoundryAgent`, `RawFoundryAgentChatClient`, and `FoundryLocalClient` for hosted agents, Responses API, local inference, tools, MCP, and sessions. |
 | [`gemini/`](gemini/) | Google Gemini samples covering tool calling, streaming, extended thinking, grounding, and built-in code execution. |
 | [`github_copilot/`](github_copilot/) | `GitHubCopilotAgent` samples showing basic usage, session handling, permission-scoped shell/file/url access, and MCP integration. |
