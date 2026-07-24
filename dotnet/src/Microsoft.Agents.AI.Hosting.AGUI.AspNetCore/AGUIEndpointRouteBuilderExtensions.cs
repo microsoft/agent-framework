@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -110,66 +110,143 @@ public static class AGUIEndpointRouteBuilderExtensions
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(aiAgent);
 
-        var agentSessionStore = endpoints.ServiceProvider.GetKeyedService<AgentSessionStore>(aiAgent.Name);
+        var hostAgent = BuildHostAgent(endpoints.ServiceProvider, aiAgent, aiAgent.Name);
+
+        return endpoints.MapPost(pattern, (
+            [FromBody] RunAgentInput? input,
+            [FromServices] IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
+            HttpContext context,
+            CancellationToken cancellationToken)
+            => HandleRunAsync(input, hostAgent, jsonOptions, context, cancellationToken));
+    }
+
+    /// <summary>
+    /// Maps an AG-UI agent endpoint that resolves the agent <strong>per request</strong> via a factory
+    /// delegate, rather than capturing a single agent instance at startup.
+    /// </summary>
+    /// <param name="endpoints">The endpoint route builder.</param>
+    /// <param name="agentName">The logical agent name passed to the factory and used as the
+    /// <see cref="AgentSessionStore"/> resolution key and the agent's stable session identity.</param>
+    /// <param name="pattern">The URL pattern for the endpoint.</param>
+    /// <param name="createAgentDelegate">A factory invoked once per request with the request's
+    /// <see cref="IServiceProvider"/> and the <paramref name="agentName"/>, returning the
+    /// <see cref="AIAgent"/> that handles that request.</param>
+    /// <returns>An <see cref="IEndpointConventionBuilder"/> for the mapped endpoint.</returns>
+    /// <remarks>
+    /// <para>
+    /// Use this overload when the agent must be built with request-scoped state — per-request
+    /// authentication, scoped tool/MCP sessions, or conversation-scoped configuration — rather than a
+    /// process-wide singleton resolved once at startup (as the other <c>MapAGUIServer</c> overloads do).
+    /// The factory receives the request's <see cref="IServiceProvider"/>
+    /// (<see cref="HttpContext.RequestServices"/>), so scoped services resolve correctly within the request.
+    /// </para>
+    /// <para>
+    /// The keyed <see cref="AgentSessionStore"/> lookup and the <c>ThreadId</c> trust model are identical
+    /// to <see cref="MapAGUIServer(IEndpointRouteBuilder, string, AIAgent)"/>; the store is resolved per
+    /// request from <see cref="HttpContext.RequestServices"/> using <paramref name="agentName"/> as the key.
+    /// </para>
+    /// <para>
+    /// Because the agent is created per request, this overload assigns it a <strong>stable session
+    /// identity</strong> equal to <paramref name="agentName"/> so that <see cref="AgentSessionStore"/>
+    /// lookups — keyed by <c>(agent.Id, conversationId)</c> — stay consistent across requests and the
+    /// AG-UI <c>ThreadId</c> continues the same persisted session on every turn. Without this, each
+    /// request's agent would report a different per-instance <see cref="AIAgent.Id"/> and the previously
+    /// saved session would never be found. Any id set on the agent returned by
+    /// <paramref name="createAgentDelegate"/> is therefore not used for session keying.
+    /// </para>
+    /// </remarks>
+    public static IEndpointConventionBuilder MapAGUIServer(
+        this IEndpointRouteBuilder endpoints,
+        string agentName,
+        [StringSyntax("route")] string pattern,
+        Func<IServiceProvider, string, AIAgent> createAgentDelegate)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentNullException.ThrowIfNull(agentName);
+        ArgumentNullException.ThrowIfNull(createAgentDelegate);
+
+        return endpoints.MapPost(pattern, (
+            [FromBody] RunAgentInput? input,
+            [FromServices] IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
+            HttpContext context,
+            CancellationToken cancellationToken) =>
+        {
+            var created = createAgentDelegate(context.RequestServices, agentName)
+                ?? throw new InvalidOperationException($"The agent factory for '{agentName}' returned null.");
+
+            // The session store keys persisted sessions by (agent.Id, conversationId), and AIAgent.Id
+            // defaults to a per-instance value. Since this overload builds a fresh agent every request,
+            // wrap it so the id is the stable agentName; otherwise each request would key a different
+            // session and AG-UI thread continuation would silently reset. See StableIdentityAIAgent.
+            var stableAgent = new StableIdentityAIAgent(created, agentName);
+            var hostAgent = BuildHostAgent(context.RequestServices, stableAgent, agentName);
+            return HandleRunAsync(input, hostAgent, jsonOptions, context, cancellationToken);
+        });
+    }
+
+    private static AIHostAgent BuildHostAgent(IServiceProvider services, AIAgent agent, string? sessionStoreKey)
+    {
+        var agentSessionStore = services.GetKeyedService<AgentSessionStore>(sessionStoreKey);
 
         // Ensure that we have an IsolationKeyScopedAgentSessionStore registered.
-        var isolationKeyProvider = endpoints.ServiceProvider.GetService<SessionIsolationKeyProvider>();
+        var isolationKeyProvider = services.GetService<SessionIsolationKeyProvider>();
         if (agentSessionStore?.GetService<IsolationKeyScopedAgentSessionStore>() is null)
         {
             agentSessionStore ??= new NoopAgentSessionStore();
             agentSessionStore = new IsolationKeyScopedAgentSessionStore(agentSessionStore, isolationKeyProvider, new() { Strict = isolationKeyProvider != null });
         }
 
-        var hostAgent = new AIHostAgent(aiAgent, agentSessionStore);
+        return new AIHostAgent(agent, agentSessionStore);
+    }
 
-        return endpoints.MapPost(pattern, async (
-            [FromBody] RunAgentInput? input,
-            [FromServices] IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
-            HttpContext context,
-            CancellationToken cancellationToken) =>
+    private static async Task<IResult> HandleRunAsync(
+        RunAgentInput? input,
+        AIHostAgent hostAgent,
+        IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        if (input is null)
         {
-            if (input is null)
-            {
-                return Results.BadRequest();
-            }
+            return Results.BadRequest();
+        }
 
-            var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
-            var streamOptions = context.GetEndpoint()?.Metadata.GetMetadata<AGUIStreamOptions>()
-                ?? context.RequestServices.GetService<IOptions<AGUIStreamOptions>>()?.Value;
+        var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
+        var streamOptions = context.GetEndpoint()?.Metadata.GetMetadata<AGUIStreamOptions>()
+            ?? context.RequestServices.GetService<IOptions<AGUIStreamOptions>>()?.Value;
 
-            var ctx = input.ToChatRequestContext(jsonSerializerOptions, streamOptions);
+        var ctx = input.ToChatRequestContext(jsonSerializerOptions, streamOptions);
 
-            // AG-UI continuation is keyed by thread id. When the client does not supply one, generate a
-            // stable id and write it back onto the input so the persisted session, the RUN_STARTED /
-            // RUN_FINISHED events, and any continuation the client sends back all agree on the same id.
-            var threadId = string.IsNullOrWhiteSpace(ctx.Input.ThreadId) ? Guid.NewGuid().ToString("N") : ctx.Input.ThreadId;
-            ctx.Input.ThreadId = threadId;
+        // AG-UI continuation is keyed by thread id. When the client does not supply one, generate a
+        // stable id and write it back onto the input so the persisted session, the RUN_STARTED /
+        // RUN_FINISHED events, and any continuation the client sends back all agree on the same id.
+        var threadId = string.IsNullOrWhiteSpace(ctx.Input.ThreadId) ? Guid.NewGuid().ToString("N") : ctx.Input.ThreadId;
+        ctx.Input.ThreadId = threadId;
 
-            var session = await hostAgent.GetOrCreateSessionAsync(threadId, cancellationToken).ConfigureAwait(false);
+        var session = await hostAgent.GetOrCreateSessionAsync(threadId, cancellationToken).ConfigureAwait(false);
 
-            var events = hostAgent
-                .RunStreamingAsync(
-                    ctx.Messages,
-                    session: session,
-                    options: new ChatClientAgentRunOptions { ChatOptions = ctx.ChatOptions },
-                    cancellationToken: cancellationToken)
-                .AsChatResponseUpdatesAsync()
-                .AsAGUIEventStreamAsync(ctx, cancellationToken);
+        var events = hostAgent
+            .RunStreamingAsync(
+                ctx.Messages,
+                session: session,
+                options: new ChatClientAgentRunOptions { ChatOptions = ctx.ChatOptions },
+                cancellationToken: cancellationToken)
+            .AsChatResponseUpdatesAsync()
+            .AsAGUIEventStreamAsync(ctx, cancellationToken);
 
-            // Wrap the event stream to save the session after streaming completes.
-            var eventsWithSessionSave = SaveSessionAfterStreamingAsync(events, hostAgent, threadId, session, cancellationToken);
+        // Wrap the event stream to save the session after streaming completes.
+        var eventsWithSessionSave = SaveSessionAfterStreamingAsync(events, hostAgent, threadId, session, cancellationToken);
 
 #if NET10_0_OR_GREATER
-            // On net10+ the framework provides first-class SSE result that flows through the
-            // configured ASP.NET Core JsonSerializerOptions (which AddAGUIServer() augments with
-            // AGUIJsonSerializerContext via the resolver chain).
-            return TypedResults.ServerSentEvents(eventsWithSessionSave);
+        // On net10+ the framework provides first-class SSE result that flows through the
+        // configured ASP.NET Core JsonSerializerOptions (which AddAGUIServer() augments with
+        // AGUIJsonSerializerContext via the resolver chain).
+        return TypedResults.ServerSentEvents(eventsWithSessionSave);
 #else
-            // On older TFMs we ship a small polyfill that emulates TypedResults.ServerSentEvents.
-            var sseLogger = context.RequestServices.GetRequiredService<ILogger<AGUIServerSentEventsResult>>();
-            return new AGUIServerSentEventsResult(eventsWithSessionSave, sseLogger);
+        // On older TFMs we ship a small polyfill that emulates TypedResults.ServerSentEvents.
+        var sseLogger = context.RequestServices.GetRequiredService<ILogger<AGUIServerSentEventsResult>>();
+        return new AGUIServerSentEventsResult(eventsWithSessionSave, sseLogger);
 #endif
-        });
     }
 
     private static async IAsyncEnumerable<BaseEvent> SaveSessionAfterStreamingAsync(
