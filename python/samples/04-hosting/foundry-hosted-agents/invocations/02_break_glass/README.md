@@ -40,7 +40,7 @@ x-platform-server: azure-ai-agentserver-core/2.0.0a20260410006 (python/3.12)
 date: Fri, 17 Apr 2026 23:46:44 GMT
 server: hypercorn-h11
 
-{"response":"Hi! How can I help?"}
+Hi! How can I help?
 ```
 
 ### Multi-turn conversation

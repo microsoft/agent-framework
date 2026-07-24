@@ -1,13 +1,34 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import os
 import sys
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from agent_framework_tools.shell import LocalShellTool, ShellCommandError, ShellPolicy
+from agent_framework_tools.shell._executor import _popen_kwargs_for_group, run_stateless
 
-pytestmark = pytest.mark.asyncio
+
+class _FakeExecProcess:
+    def __init__(
+        self,
+        *,
+        returncode: int | None = 0,
+        communicate_results: list[tuple[bytes, bytes] | BaseException] | None = None,
+    ) -> None:
+        self.returncode = returncode
+        self.stdout = object()
+        self.stderr = object()
+        self._communicate_results = list(communicate_results or [(b"", b"")])
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        result = self._communicate_results.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        stdout, stderr = result
+        return stdout, stderr
 
 
 async def test_stateless_echo() -> None:
@@ -69,6 +90,123 @@ async def test_audit_hook_fires_for_allowed_commands() -> None:
     cmd = "Write-Output hi" if sys.platform == "win32" else "echo hi"
     await tool.run(cmd)
     assert seen == [cmd]
+
+
+def test_local_shell_tool_handles_mode_and_environment_variants(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(ValueError, match="mode must be"):
+        LocalShellTool(mode="bogus")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+
+    monkeypatch.setenv("INHERITED", "yes")
+    inherited = LocalShellTool(
+        mode="stateless",
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+        env={"EXTRA": "1"},
+    )
+    clean = LocalShellTool(
+        mode="stateless",
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+        env={"ONLY": "2"},
+        clean_env=True,
+    )
+
+    assert inherited._env is not None
+    assert inherited._env["INHERITED"] == "yes"
+    assert inherited._env["EXTRA"] == "1"
+    assert clean._env == {"ONLY": "2"}
+
+
+async def test_local_shell_tool_stateless_start_is_noop() -> None:
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
+    await tool.start()
+    await tool.close()
+
+
+async def test_local_shell_tool_raises_if_start_did_not_create_session() -> None:
+    tool = LocalShellTool(mode="persistent", approval_mode="never_require", acknowledge_unsafe=True)
+
+    with patch.object(tool, "start", AsyncMock()), pytest.raises(RuntimeError, match="session failed to start"):
+        await tool.run("echo hi")
+
+
+async def test_local_shell_tool_as_function_returns_policy_errors() -> None:
+    tool = LocalShellTool(mode="persistent", approval_mode="never_require", acknowledge_unsafe=True)
+
+    with patch.object(tool, "run", AsyncMock(side_effect=ShellCommandError("blocked"))):
+        function = tool.as_function(description="custom shell")
+        assert function.func is not None
+        result = await function.func("pwd")
+
+    assert result == "blocked"
+    assert function.description == "custom shell"
+
+
+def test_local_shell_tool_reanchors_powershell_paths() -> None:
+    tool = LocalShellTool(
+        mode="persistent",
+        shell="pwsh",
+        workdir="C:\\repo",
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+    )
+
+    assert tool._maybe_reanchor("Get-ChildItem").startswith("Set-Location -LiteralPath 'C:\\repo'")
+
+
+def test_popen_kwargs_for_group_covers_windows_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    import agent_framework_tools.shell._executor as executor_module
+
+    monkeypatch.setattr(executor_module.sys, "platform", "win32")
+    monkeypatch.setattr(executor_module.subprocess, "CREATE_NEW_PROCESS_GROUP", 77, raising=False)
+
+    assert _popen_kwargs_for_group() == {"creationflags": 77}
+
+
+async def test_run_stateless_adds_powershell_encoding_preamble() -> None:
+    proc = _FakeExecProcess(returncode=0, communicate_results=[(b"ok", b"")])
+
+    with (
+        patch("agent_framework_tools.shell._executor.is_powershell", return_value=True),
+        patch(
+            "agent_framework_tools.shell._executor.asyncio.create_subprocess_exec",
+            AsyncMock(return_value=proc),
+        ) as create_proc,
+    ):
+        result = await run_stateless(
+            ["pwsh", "-Command"],
+            "Write-Output hi",
+            workdir=None,
+            env=None,
+            timeout=1.0,
+            max_output_bytes=1024,
+        )
+
+    assert result.stdout == "ok"
+    assert create_proc.await_args is not None
+    assert create_proc.await_args.args[-1].startswith("$OutputEncoding = [Console]::OutputEncoding")
+
+
+async def test_run_stateless_timeout_returns_empty_output_if_drain_fails() -> None:
+    proc = _FakeExecProcess(returncode=None, communicate_results=[asyncio.TimeoutError(), RuntimeError("drain failed")])
+
+    with (
+        patch("agent_framework_tools.shell._executor.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        patch("agent_framework_tools.shell._executor.kill_process_tree", AsyncMock()) as kill_tree,
+    ):
+        result = await run_stateless(
+            ["/bin/sh", "-c"],
+            "sleep 5",
+            workdir=None,
+            env=None,
+            timeout=0.01,
+            max_output_bytes=1024,
+        )
+
+    kill_tree.assert_awaited_once_with(proc)
+    assert result.timed_out is True
+    assert result.stdout == ""
+    assert result.stderr == ""
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="persistent-mode sentinel on POSIX")

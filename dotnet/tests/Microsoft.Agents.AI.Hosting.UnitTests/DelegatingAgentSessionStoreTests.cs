@@ -387,11 +387,14 @@ public class DelegatingAgentSessionStoreTests
     /// </summary>
     private sealed class ConcreteAgentSessionStore : AgentSessionStore
     {
-        public override ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
+        public override ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string sessionStoreId, CancellationToken cancellationToken = default)
             => new(new TestAgentSession());
 
-        public override ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, CancellationToken cancellationToken = default)
+        public override ValueTask SaveSessionAsync(AIAgent agent, string sessionStoreId, AgentSession session, CancellationToken cancellationToken = default)
             => ValueTask.CompletedTask;
+
+        public override ValueTask DeleteSessionAsync(AIAgent agent, string sessionStoreId, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
     }
 
     private sealed class TestAgentSession : AgentSession;
