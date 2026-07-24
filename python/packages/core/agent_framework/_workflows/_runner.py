@@ -245,7 +245,11 @@ class RunnerImpl:
         self._state.commit()
 
     async def create_checkpoint_if_enabled(self) -> None:
-        """Create a checkpoint if checkpointing is enabled and attach a label and metadata."""
+        """Create a checkpoint and save the checkpoint to the configured storage if one is configured.
+
+        Note:
+            1. This method has no effect if checkpointing is not enabled in the context.
+        """
         if not self._ctx.has_checkpointing():
             return
 
@@ -339,6 +343,57 @@ class RunnerImpl:
         except Exception as e:
             logger.error(f"Failed to restore from checkpoint {checkpoint_id}: {e}")
             raise WorkflowCheckpointException(f"Failed to restore from checkpoint {checkpoint_id}") from e
+
+    async def build_checkpoint(self) -> WorkflowCheckpoint:
+        """Create a checkpoint object.
+
+        Returns:
+            A ``WorkflowCheckpoint``.
+        """
+        # Persist executor snapshots into committed shared state before exporting it.
+        await self._prepare_checkpoint_state()
+        return await self._ctx.build_checkpoint(
+            self._workflow_name,
+            self._graph_signature_hash,
+            self._state,
+            None,
+            self._iteration,
+        )
+
+    async def restore_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
+        """Restore runner state from an in-memory ``WorkflowCheckpoint`` object.
+
+        Unlike :meth:`restore_from_checkpoint`, this does not load from a storage
+        backend; it applies a checkpoint the caller already holds - for example, a
+        child workflow checkpoint embedded in a parent ``WorkflowExecutor``'s state.
+
+        Restores shared state, executor snapshots, in-flight messages, and pending
+        request_info events, then marks the runner as resumed.
+
+        Args:
+            checkpoint: The checkpoint whose state should be restored.
+
+        Raises:
+            WorkflowCheckpointException: If the checkpoint's graph signature does not
+                match this runner's workflow, or if restoration otherwise fails.
+        """
+        if self._graph_signature_hash != checkpoint.graph_signature_hash:
+            raise WorkflowCheckpointException(
+                "Workflow graph has changed since the checkpoint was created. "
+                "Please rebuild the original workflow before resuming."
+            )
+
+        try:
+            # Clear first so import_state (which merges) does not leak stale keys from a
+            # prior run on this Workflow instance.
+            self._state.clear()
+            self._state.import_state(checkpoint.state)
+            await self._restore_executor_states()
+            await self._ctx.apply_checkpoint(checkpoint)
+            self._mark_resumed(checkpoint)
+        except Exception as e:
+            logger.error(f"Failed to restore from checkpoint {checkpoint.checkpoint_id}: {e}")
+            raise WorkflowCheckpointException(f"Failed to restore from checkpoint {checkpoint.checkpoint_id}") from e
 
     async def _save_executor_states(self) -> None:
         """Populate executor state by calling checkpoint hooks on executors."""

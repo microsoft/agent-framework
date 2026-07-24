@@ -811,6 +811,24 @@ class FunctionalWorkflow:
                 execution is not allowed).
         """
         self._validate_run_params(message, responses, checkpoint_id)
+        # Warn (but don't block) when a fresh message or a checkpoint restore begins while a prior
+        # run left request_info events pending. Mirrors Workflow.run. Delivering responses is the
+        # normal way to complete the pending cycle and is intentionally not warned.
+        if (message is not None or checkpoint_id is not None) and self._last_pending_request_ids:
+            logger.warning(
+                "Workflow %s received %s while %d request_info event(s) are still pending from an "
+                "unfinished request/response cycle; %s. Deliver responses (responses=...) to complete "
+                "the pending cycle before starting new input.",
+                self.name,
+                "a fresh message" if message is not None else "a checkpoint restore",
+                len(self._last_pending_request_ids),
+                (
+                    "those requests remain answerable, but this run advances workflow state, so a "
+                    "response that arrives later may apply to a workflow that has moved on"
+                    if message is not None
+                    else "those pending requests will be overwritten by the checkpoint's state"
+                ),
+            )
         if responses and checkpoint_id is None:
             # Require at least one response key to match a currently-pending
             # request; prevents silent replay against stale state while still
