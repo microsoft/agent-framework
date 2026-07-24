@@ -5,7 +5,7 @@ Demonstrates the provider-owned CodeAct flow with three backends:
 | File | Backend | Notes |
 |------|---------|-------|
 | [`code_act.py`](code_act.py) | [Hyperlight](https://github.com/hyperlight-dev/hyperlight) WASM sandbox via `HyperlightCodeActProvider` | Hardened sandbox with WASM isolation; sandbox tools called via `call_tool(...)`. |
-| [`monty_code_act.py`](monty_code_act.py) | [Monty](https://github.com/pydantic/monty) Rust-based Python interpreter via `MontyCodeActProvider` (alpha) | Cross-platform pure interpreter; sandbox tools can be called as typed async functions (`await compute(...)`) or via `call_tool(...)`. |
+| [`monty_code_act.py`](monty_code_act.py) | [Monty](https://github.com/pydantic/monty) Rust-based Python interpreter via `MontyCodeActProvider` (beta) | Cross-platform pure interpreter; sandbox tools can be called as typed async functions (`await compute(...)`) or via `call_tool(...)`. |
 | [`tenki_code_act.py`](tenki_code_act.py) | [Tenki](https://tenki.cloud) managed Linux micro-VM via `TenkiCodeActProvider` (alpha) | Full Linux userland with `subprocess`, `apt`, and a persistent filesystem across `execute_code` calls; in-sandbox tool callbacks not supported. |
 
 The Hyperlight and Monty providers register sandbox-only tools (`compute`,
@@ -17,9 +17,9 @@ package installs).
 ## Installation
 
 ```bash
-pip install agent-framework agent-framework-hyperlight --pre   # Hyperlight sample
-pip install agent-framework agent-framework-monty --pre        # Monty sample
-pip install agent-framework agent-framework-tenki --pre        # Tenki sample
+pip install agent-framework-hyperlight agent-framework-foundry --pre  # Hyperlight sample
+pip install agent-framework-monty agent-framework-foundry --pre       # Monty sample
+pip install agent-framework-tenki agent-framework-foundry --pre       # Tenki sample
 ```
 
 > The Hyperlight Wasm backend is currently published only for `linux/x86_64` and
@@ -28,8 +28,7 @@ pip install agent-framework agent-framework-tenki --pre        # Tenki sample
 >
 > Monty is cross-platform and has no hypervisor/WASM backend dependency, but it
 > interprets a Python subset (e.g. `os`/network/subprocess access is blocked).
-> `agent-framework-monty` is an alpha package and is not yet part of
-> `agent-framework[all]`; install it explicitly with `--pre`.
+> The beta `agent-framework-monty` package is included in `agent-framework[all]`.
 >
 > Tenki runs code in a managed Linux micro-VM on the Tenki service, so it needs
 > `TENKI_API_KEY` (and `TENKI_PROJECT_ID` when the key spans multiple projects).

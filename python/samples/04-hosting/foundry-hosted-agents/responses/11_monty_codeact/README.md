@@ -8,9 +8,9 @@ tools (`compute`, `fetch_data`) are only reachable from inside the sandbox via
 typed `await compute(...)` calls or the generic `call_tool(...)` fallback.
 
 > [!NOTE]
-> `agent-framework-monty` is an **alpha** package, so the `pyproject.toml`
+> `agent-framework-monty` is a **beta** package, so the `pyproject.toml`
 > sets `[tool.uv] prerelease = "allow"` to let `uv sync` pick up the
-> `1.0.0a*` release from PyPI.
+> `1.0.0b*` release from PyPI.
 
 ## How It Works
 

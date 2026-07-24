@@ -72,6 +72,7 @@ jobs:
               - 'python/packages/tenki/**'
               - 'python/packages/core/agent_framework/_mcp.py'
               - 'python/packages/core/tests/core/test_mcp.py'
+              - 'python/packages/hosting-mcp/**'
               - 'python/scripts/local_mcp_streamable_http_server.py'
               - '.github/actions/setup-local-mcp-server/**'
               - '.github/workflows/python-merge-tests.yml'
@@ -349,6 +350,7 @@ jobs:
           packages/ollama/tests
           packages/tenki/tests
           packages/core/tests/core/test_mcp.py
+          packages/hosting-mcp/tests
           -m integration
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread

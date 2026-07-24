@@ -655,8 +655,14 @@ class FunctionTool(SerializationMixin):
                 if isinstance(arguments, Mapping):
                     parsed_arguments = dict(arguments)
                     if self.input_model is not None and not self._schema_supplied:
+                        # exclude_unset (not exclude_none): keep arguments the model
+                        # explicitly provided even when their value is null, and drop
+                        # only the ones it left out, so the function's own defaults
+                        # apply. Excluding null instead would strip a required nullable
+                        # parameter the model deliberately set to null, failing the
+                        # invocation on the missing argument (#5934).
                         parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(
-                            exclude_none=True
+                            exclude_unset=True
                         )
                 elif isinstance(arguments, BaseModel):
                     if (
@@ -665,7 +671,7 @@ class FunctionTool(SerializationMixin):
                         and not isinstance(arguments, self.input_model)
                     ):
                         raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
-                    parsed_arguments = arguments.model_dump(exclude_none=True)
+                    parsed_arguments = arguments.model_dump(exclude_unset=True)
                 else:
                     raise TypeError(
                         f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
@@ -1480,7 +1486,10 @@ async def _auto_invoke_function(
         runtime_kwargs["session"] = invocation_session
     try:
         if not cast(bool, getattr(tool, "_schema_supplied", False)) and tool.input_model is not None:
-            args = tool.input_model.model_validate(parsed_args).model_dump(exclude_none=True)
+            # exclude_unset (not exclude_none) so an argument the model explicitly set
+            # to null still reaches the function; see FunctionTool.invoke for the full
+            # rationale. This is the auto-calling path #5934 actually hits.
+            args = tool.input_model.model_validate(parsed_args).model_dump(exclude_unset=True)
         else:
             args = dict(parsed_args)
         args = _validate_arguments_against_schema(
@@ -2087,6 +2096,12 @@ def _collect_approval_responses(
     return fcc_todo
 
 
+def _is_approval_placeholder_result(content: Content) -> bool:
+    """Whether a function_result is the stand-in emitted while approval is pending."""
+    result = getattr(content, "result", None)
+    return isinstance(result, str) and "[APPROVAL_PENDING]" in result
+
+
 def _replace_approval_contents_with_results(
     messages: list[Message],
     fcc_todo: dict[str, Content],
@@ -2110,12 +2125,30 @@ def _replace_approval_contents_with_results(
     # Track which call_ids had their placeholders replaced
     placeholders_replaced: set[str] = set()
 
-    for msg in messages:
-        # First pass - collect existing function call IDs to avoid duplicates
-        existing_call_ids = {
-            content.call_id for content in msg.contents if content.type == "function_call" and content.call_id
-        }
+    # Collect *pending* function call IDs across all messages to avoid duplicates. The
+    # function call and its approval request are frequently carried in separate messages
+    # (e.g. when a hosting layer replays them as separate items on an approval round trip),
+    # so scoping this per-message would let the same call_id be restored twice and leave
+    # the copy without a result unanswered.
+    #
+    # Calls that already carry a real result are excluded: reusing a call_id for a later
+    # invocation is supported, and a completed pair must not suppress the fresh request —
+    # that would drop the new call and attach its result to the old one. Placeholder
+    # results still count as pending, since the call they answer is the one being restored.
+    answered_call_ids = {
+        content.call_id
+        for msg in messages
+        for content in msg.contents
+        if content.type == "function_result" and content.call_id and not _is_approval_placeholder_result(content)
+    }
+    existing_call_ids = {
+        content.call_id
+        for msg in messages
+        for content in msg.contents
+        if content.type == "function_call" and content.call_id and content.call_id not in answered_call_ids
+    }
 
+    for msg in messages:
         # Track approval requests that should be removed (duplicates)
         contents_to_remove: list[int] = []
 
@@ -2131,6 +2164,8 @@ def _replace_approval_contents_with_results(
                 elif content.function_call is not None:
                     # Put back the function call content only if it doesn't exist
                     msg.contents[content_idx] = content.function_call
+                    if content.function_call.call_id:
+                        existing_call_ids.add(content.function_call.call_id)
             elif content.type == "function_approval_response":
                 # Skip hosted tool approvals — they must pass through to the API unchanged
                 if _is_hosted_tool_approval(content):
@@ -2160,12 +2195,7 @@ def _replace_approval_contents_with_results(
                     msg.role = "tool"
             elif content.type == "function_result":
                 # Check if this is a placeholder result that should be replaced
-                if (
-                    hasattr(content, "result")
-                    and isinstance(content.result, str)
-                    and "[APPROVAL_PENDING]" in content.result
-                    and content.call_id in result_by_call_id
-                ):
+                if _is_approval_placeholder_result(content) and content.call_id in result_by_call_id:
                     # Replace placeholder with actual result
                     msg.contents[content_idx] = result_by_call_id[content.call_id]
                     placeholders_replaced.add(content.call_id)

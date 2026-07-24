@@ -796,7 +796,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
 
         # Execute the agent with custom parameters passed as kwargs
         messages = [Message(role="user", contents=["test message"])]
-        response = await agent.run(messages, options={"additional_function_arguments": {"custom_param": "test_value"}})  # type: ignore[call-overload, typeddict-unknown-key, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        response = await agent.run(messages, options={"additional_function_arguments": {"custom_param": "test_value"}})  # type: ignore[call-overload, typeddict-unknown-key, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[invalid-key, no-matching-overload]
 
         # Verify response
         assert response is not None
@@ -897,7 +897,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
                 "tenant_id": "from-kwargs",
             },
             options={  # type: ignore[typeddict-unknown-key]
-                "additional_function_arguments": {
+                "additional_function_arguments": {  # ty: ignore[invalid-key]
                     "user_id": "from-options",
                     "extra_key": "only-in-options",
                 }
@@ -2235,7 +2235,7 @@ class TestChatAgentChatMiddleware:
         messages = [Message(role="user", contents=["test message"])]
         response = await agent.run(  # type: ignore[call-overload, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
             messages,
-            options={"temperature": 0.7, "max_tokens": 100, "custom_param": "test_value"},  # type: ignore[typeddict-unknown-key]
+            options={"temperature": 0.7, "max_tokens": 100, "custom_param": "test_value"},  # type: ignore[typeddict-unknown-key]  # ty: ignore[invalid-key]
         )
 
         # Verify response

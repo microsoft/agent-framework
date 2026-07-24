@@ -33,6 +33,9 @@ def _serialize_available_interrupts(available_interrupts: Sequence[Any] | None) 
         return None
     serialized: list[dict[str, Any]] = []
     for interrupt in available_interrupts:
+        if isinstance(interrupt, Interrupt):
+            serialized.append(cast(dict[str, Any], interrupt.model_dump(by_alias=True, exclude_none=True)))
+            continue
         if isinstance(interrupt, Mapping) and "reason" not in interrupt:
             interrupt = dict(interrupt)
             interrupt_type = interrupt.pop("type", None)
@@ -48,6 +51,9 @@ def _serialize_available_interrupts(available_interrupts: Sequence[Any] | None) 
 
 def _serialize_resume_entry(entry: Any) -> dict[str, Any]:
     """Serialize one typed or legacy resume entry to canonical AG-UI JSON."""
+    if isinstance(entry, ResumeEntry):
+        return cast(dict[str, Any], entry.model_dump(by_alias=True, exclude_none=True))
+
     model_dump = getattr(entry, "model_dump", None)
     if callable(model_dump):
         entry = model_dump(by_alias=True, exclude_none=True)

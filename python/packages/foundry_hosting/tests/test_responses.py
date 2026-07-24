@@ -333,13 +333,19 @@ class TestNonStreaming:
         assert mcp_items[0]["output"] == "found 10 cats"
 
     async def test_reasoning_content(self) -> None:
+        reasoning_id = "rs_576d207b35d96b3200pkcXkMwXAij920Wcv7WhRXiMPiLdOA63"
         agent = _make_agent(
             response=AgentResponse(
                 messages=[
                     Message(
                         role="assistant",
                         contents=[
-                            Content.from_text_reasoning(text="Let me think..."),
+                            Content.from_text_reasoning(
+                                id=reasoning_id,
+                                text="Let me ",
+                                protected_data="encrypted-reasoning",
+                            ),
+                            Content.from_text_reasoning(id=reasoning_id, text="think..."),
                             Content.from_text("The answer is 42"),
                         ],
                     ),
@@ -356,6 +362,11 @@ class TestNonStreaming:
         types = [item["type"] for item in body["output"]]
         assert "reasoning" in types
         assert "message" in types
+        reasoning_items = [item for item in body["output"] if item["type"] == "reasoning"]
+        assert len(reasoning_items) == 1
+        assert reasoning_items[0]["id"] == reasoning_id
+        assert reasoning_items[0]["encrypted_content"] == "encrypted-reasoning"
+        assert [part["text"] for part in reasoning_items[0]["summary"]] == ["Let me ", "think..."]
 
     async def test_empty_response(self) -> None:
         agent = _make_agent(response=AgentResponse(messages=[]))
@@ -561,11 +572,26 @@ class TestStreaming:
         assert args_done[0]["data"]["arguments"] == '{"q": "x"}'
 
     async def test_reasoning_then_text_streaming(self) -> None:
+        reasoning_id = "rs_576d207b35d96b3200pkcXkMwXAij920Wcv7WhRXiMPiLdOA63"
         agent = _make_agent(
             stream_updates=[
                 # Reasoning deltas
-                AgentResponseUpdate(contents=[Content.from_text_reasoning(text="Let me ")], role="assistant"),
-                AgentResponseUpdate(contents=[Content.from_text_reasoning(text="think...")], role="assistant"),
+                AgentResponseUpdate(
+                    contents=[Content.from_text_reasoning(id=reasoning_id, text="Let me ")], role="assistant"
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text_reasoning(id=reasoning_id, text="think...")], role="assistant"
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_text_reasoning(
+                            id=reasoning_id,
+                            text="",
+                            protected_data="encrypted-reasoning",
+                        )
+                    ],
+                    role="assistant",
+                ),
                 # Text deltas
                 AgentResponseUpdate(contents=[Content.from_text("The answer ")], role="assistant"),
                 AgentResponseUpdate(contents=[Content.from_text("is 42")], role="assistant"),
@@ -589,6 +615,14 @@ class TestStreaming:
         text_done = [e for e in events if e["event"] == "response.output_text.done"]
         assert len(text_done) == 1
         assert text_done[0]["data"]["text"] == "The answer is 42"
+        reasoning_done = [
+            event
+            for event in events
+            if event["event"] == "response.output_item.done" and event["data"]["item"]["type"] == "reasoning"
+        ]
+        assert len(reasoning_done) == 1
+        assert reasoning_done[0]["data"]["item"]["id"] == reasoning_id
+        assert reasoning_done[0]["data"]["item"]["encrypted_content"] == "encrypted-reasoning"
 
     async def test_empty_streaming(self) -> None:
         agent = _make_agent(stream_updates=[])
@@ -809,6 +843,7 @@ class TestOutputItemToMessage:
         item = OutputItemReasoningItem({
             "type": "reasoning",
             "id": "r-1",
+            "encrypted_content": "encrypted-reasoning",
             "summary": [SummaryTextContent({"type": "summary_text", "text": "thinking hard"})],
         })
         msg = await _output_item_to_message(item)
@@ -817,6 +852,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "text_reasoning"
         assert msg.contents[0].id == "r-1"
         assert msg.contents[0].text == "thinking hard"
+        assert msg.contents[0].protected_data == "encrypted-reasoning"
 
     async def test_reasoning_no_summary(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemReasoningItem
@@ -1304,6 +1340,7 @@ class TestItemToMessage:
         item = ItemReasoningItem({
             "type": "reasoning",
             "id": "r-1",
+            "encrypted_content": "encrypted-reasoning",
             "summary": [SummaryTextContent({"type": "summary_text", "text": "thinking hard"})],
         })
         msg = await _item_to_message(item)
@@ -1313,6 +1350,7 @@ class TestItemToMessage:
         assert msg.contents[0].type == "text_reasoning"
         assert msg.contents[0].id == "r-1"
         assert msg.contents[0].text == "thinking hard"
+        assert msg.contents[0].protected_data == "encrypted-reasoning"
 
     async def test_reasoning_no_summary(self) -> None:
         from azure.ai.agentserver.responses.models import ItemReasoningItem

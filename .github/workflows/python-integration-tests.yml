@@ -244,6 +244,7 @@ jobs:
           packages/ollama/tests
           packages/tenki/tests
           packages/core/tests/core/test_mcp.py
+          packages/hosting-mcp/tests
           -m integration
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread

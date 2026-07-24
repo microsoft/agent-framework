@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from typing import Any, ClassVar, Generic, cast
 from uuid import uuid4
 
@@ -538,9 +539,13 @@ class RawGeminiChatClient(
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 validated = await self._validate_options(options)
                 model, contents, config = self._prepare_request(messages, validated)
-                async for chunk in await self._genai_client.aio.models.generate_content_stream(
+                generate_content_stream = cast(
+                    Callable[..., Awaitable[AsyncIterable[types.GenerateContentResponse]]],
+                    cast(Any, self._genai_client.aio.models).generate_content_stream,
+                )
+                async for chunk in await generate_content_stream(
                     model=model,
-                    contents=contents,  # pyright: ignore[reportArgumentType]
+                    contents=contents,
                     config=config,
                 ):
                     yield self._process_chunk(chunk)
@@ -663,7 +668,22 @@ class RawGeminiChatClient(
             A list of Gemini Part objects representing the message contents.
         """
         parts: list[types.Part] = []
+        pending_signature: bytes | None = None
         for content in message_contents:
+            if content.type == "text_reasoning":
+                # Gemini 3's thought_signature travels as base64 protected_data on reasoning content;
+                # hold it for the function call it precedes (reasoning is not sent back as a Part).
+                pending_signature = None
+                encoded_signature = content.protected_data
+                if isinstance(encoded_signature, str) and encoded_signature:
+                    try:
+                        pending_signature = base64.b64decode(encoded_signature, validate=True)
+                    except ValueError:
+                        logger.warning("Ignoring malformed thought_signature on reasoning content")
+                continue
+            # A signature applies only to a function call immediately following its reasoning content.
+            thought_signature = pending_signature
+            pending_signature = None
             match content.type:
                 case "text":
                     parts.append(types.Part(text=content.text or ""))
@@ -691,10 +711,15 @@ class RawGeminiChatClient(
                         name=content.name or "",
                         args=content.parse_arguments() or {},
                     )
+                    # Echo the signature from the preceding reasoning content, backfilling only when
+                    # the raw Part lacks one.
                     if isinstance(raw_part, types.Part) and raw_part.function_call is not None:
-                        parts.append(raw_part.model_copy(update={"function_call": function_call}, deep=True))
+                        replayed_part = raw_part.model_copy(update={"function_call": function_call}, deep=True)
+                        if replayed_part.thought_signature is None and thought_signature is not None:
+                            replayed_part.thought_signature = thought_signature
+                        parts.append(replayed_part)
                     else:
-                        parts.append(types.Part(function_call=function_call))
+                        parts.append(types.Part(function_call=function_call, thought_signature=thought_signature))
                 case "function_result":
                     raw_part = content.raw_representation
                     if isinstance(raw_part, types.Part) and raw_part.tool_response is not None:
@@ -1122,6 +1147,14 @@ class RawGeminiChatClient(
                 else:
                     call_id = self._generate_tool_call_id()
                     logger.debug("function_call missing id; generated fallback call_id=%r", call_id)
+                # Surface Gemini 3's thought_signature as reasoning content preceding the call so it
+                # survives when the call is later reconstructed without its raw Part.
+                if part.thought_signature is not None:
+                    contents.append(
+                        Content.from_text_reasoning(
+                            protected_data=base64.b64encode(part.thought_signature).decode("utf-8")
+                        )
+                    )
                 contents.append(
                     Content.from_function_call(
                         call_id=call_id,

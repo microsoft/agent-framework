@@ -1,10 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
+# pyright: reportPrivateUsage=false
 
 """Unit tests for FoundryToolbox."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock
 
@@ -18,7 +21,7 @@ from azure.ai.agentserver.core import (
 )
 
 from agent_framework_foundry_hosting import FoundryToolbox
-from agent_framework_foundry_hosting._toolbox import (  # pyright: ignore[reportPrivateUsage]
+from agent_framework_foundry_hosting._toolbox import (
     _FoundryToolboxSkillsSource,
     _resolve_toolbox_endpoint,
     _toolbox_name_from_endpoint,
@@ -51,6 +54,18 @@ class _FakeCredential:
         self.scopes: list[str] = []
 
     def get_token(self, *scopes: str, **kwargs: object) -> _FakeAccessToken:
+        self.scopes.extend(scopes)
+        return _FakeAccessToken(self._token)
+
+
+class _FakeAsyncCredential:
+    """Minimal stand-in for azure.core.credentials_async.AsyncTokenCredential."""
+
+    def __init__(self, token: str = "fake-token") -> None:
+        self._token = token
+        self.scopes: list[str] = []
+
+    async def get_token(self, *scopes: str, **kwargs: object) -> _FakeAccessToken:
         self.scopes.extend(scopes)
         return _FakeAccessToken(self._token)
 
@@ -104,36 +119,65 @@ def test_init_derives_name_and_defaults() -> None:
     assert toolbox.load_prompts_flag is False
 
 
-def test_auth_flow_injects_bearer_token() -> None:
+async def test_auth_flow_injects_bearer_token() -> None:
     cred = _FakeCredential("abc123")
     auth = _ToolboxAuth(cred, "https://ai.azure.com/.default")  # type: ignore
     request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
 
-    flow = auth.auth_flow(request)
-    prepared = next(flow)
+    prepared = await anext(auth.async_auth_flow(request))
 
     assert prepared.headers["Authorization"] == "Bearer abc123"
     assert cred.scopes == ["https://ai.azure.com/.default"]
 
 
-def test_auth_flow_forwards_call_id_when_present() -> None:
+async def test_auth_flow_injects_bearer_token_async_credential() -> None:
+    cred = _FakeAsyncCredential("async123")
+    auth = _ToolboxAuth(cred, "https://ai.azure.com/.default")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    prepared = await anext(auth.async_auth_flow(request))
+
+    assert prepared.headers["Authorization"] == "Bearer async123"
+    assert cred.scopes == ["https://ai.azure.com/.default"]
+
+
+def test_sync_auth_flow_injects_bearer_token() -> None:
+    cred = _FakeCredential("sync123")
+    auth = _ToolboxAuth(cred, "https://ai.azure.com/.default")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    prepared = next(auth.sync_auth_flow(request))
+
+    assert prepared.headers["Authorization"] == "Bearer sync123"
+    assert cred.scopes == ["https://ai.azure.com/.default"]
+
+
+def test_sync_auth_flow_rejects_async_credential() -> None:
+    auth = _ToolboxAuth(_FakeAsyncCredential(), "scope")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    with pytest.raises(RuntimeError, match="async credential"):
+        next(auth.sync_auth_flow(request))
+
+
+async def test_auth_flow_forwards_call_id_when_present() -> None:
     auth = _ToolboxAuth(_FakeCredential(), "scope")  # type: ignore
     request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
 
     token = set_request_context(FoundryAgentRequestContext(call_id="call-xyz"))
     try:
-        prepared = next(auth.auth_flow(request))
+        prepared = await anext(auth.async_auth_flow(request))
     finally:
         reset_request_context(token)
 
     assert prepared.headers["x-agent-foundry-call-id"] == "call-xyz"
 
 
-def test_auth_flow_omits_call_id_when_absent() -> None:
+async def test_auth_flow_omits_call_id_when_absent() -> None:
     auth = _ToolboxAuth(_FakeCredential(), "scope")  # type: ignore
     request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
 
-    prepared = next(auth.auth_flow(request))
+    prepared = await anext(auth.async_auth_flow(request))
 
     assert "x-agent-foundry-call-id" not in prepared.headers
 
@@ -143,9 +187,9 @@ async def test_close_closes_owned_http_client() -> None:
         _FakeCredential(),  # type: ignore
         url="https://h/toolboxes/tb/mcp",
     )
-    client = toolbox._httpx_client  # pyright: ignore[reportPrivateUsage]
+    client = toolbox._httpx_client
     assert client is not None
-    client.aclose = AsyncMock()  # type: ignore[method-assign]
+    client.aclose = AsyncMock()  # zuban: ignore
 
     await toolbox.close()
 
@@ -172,9 +216,9 @@ def test_as_skills_provider_requires_approval_by_default() -> None:
     )
     provider = toolbox.as_skills_provider()
     # By default every skill tool keeps its approval requirement.
-    assert provider._disable_load_skill_approval is False  # pyright: ignore[reportPrivateUsage]
-    assert provider._disable_read_skill_resource_approval is False  # pyright: ignore[reportPrivateUsage]
-    assert provider._disable_run_skill_script_approval is False  # pyright: ignore[reportPrivateUsage]
+    assert provider._disable_load_skill_approval is False
+    assert provider._disable_read_skill_resource_approval is False
+    assert provider._disable_run_skill_script_approval is False
 
 
 def test_as_skills_provider_forwards_approval_overrides() -> None:
@@ -189,9 +233,9 @@ def test_as_skills_provider_forwards_approval_overrides() -> None:
     )
     # Overrides flow through to the underlying SkillsProvider so an unattended
     # host (no AgentSession) can load skills without an approval round-trip.
-    assert provider._disable_load_skill_approval is True  # pyright: ignore[reportPrivateUsage]
-    assert provider._disable_read_skill_resource_approval is True  # pyright: ignore[reportPrivateUsage]
-    assert provider._disable_run_skill_script_approval is True  # pyright: ignore[reportPrivateUsage]
+    assert provider._disable_load_skill_approval is True
+    assert provider._disable_read_skill_resource_approval is True
+    assert provider._disable_run_skill_script_approval is True
 
 
 async def test_skills_source_requires_connection() -> None:
@@ -214,11 +258,11 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     sentinel_session = object()
     toolbox.session = sentinel_session  # type: ignore
 
-    captured: dict[str, object] = {}
+    captured: dict[str, Callable[[], object]] = {}
 
     class _StubSkillsSource:
-        def __init__(self, *, client: object) -> None:
-            captured["client"] = client
+        def __init__(self, *, session_provider: Callable[[], object]) -> None:
+            captured["session_provider"] = session_provider
 
         async def get_skills(self, context: SkillsSourceContext) -> list[str]:
             return ["skill-a"]
@@ -228,4 +272,164 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     result = await _FoundryToolboxSkillsSource(toolbox).get_skills(_source_context())
 
     assert result == ["skill-a"]
-    assert captured["client"] is sentinel_session
+    # The source hands MCPSkillsSource a provider (not a fixed session) that resolves
+    # the toolbox's current session, so it survives a reconnect that swaps it.
+    provider = captured["session_provider"]
+    assert provider() is sentinel_session
+    new_session = object()
+    toolbox.session = new_session  # type: ignore
+    assert provider() is new_session
+
+
+async def test_skills_source_requires_connection_via_provider() -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/tb/mcp",
+    )
+    toolbox.session = object()  # type: ignore
+    source = _FoundryToolboxSkillsSource(toolbox)
+    # Discovery captures the bound provider; a later reconnect gap (session is None)
+    # surfaces the same clear error when the provider is resolved.
+    toolbox.session = None
+    with pytest.raises(RuntimeError, match="not connected"):
+        source._require_session()
+
+
+class _FakeSkill:
+    """Minimal stand-in for a :class:`~agent_framework.Skill` for caching tests."""
+
+    def __init__(self, name: str) -> None:
+        self.frontmatter = SimpleNamespace(name=name)
+
+
+def _patch_counting_mcp_source(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Patch ``MCPSkillsSource`` with a stub that counts index reads.
+
+    Returns a single-element list whose value tracks how many times
+    ``get_skills`` (i.e. a ``skill://index.json`` read) has been invoked.
+    """
+    read_count = [0]
+
+    class _CountingSkillsSource:
+        def __init__(self, *, session_provider: object) -> None:
+            self._session_provider = session_provider
+
+        async def get_skills(self, context: SkillsSourceContext) -> list[_FakeSkill]:
+            read_count[0] += 1
+            return [_FakeSkill("skill-a")]
+
+    monkeypatch.setattr("agent_framework_foundry_hosting._toolbox.MCPSkillsSource", _CountingSkillsSource)
+    return read_count
+
+
+async def test_as_skills_provider_caches_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/tb/mcp",
+    )
+    toolbox.session = object()  # type: ignore
+    read_count = _patch_counting_mcp_source(monkeypatch)
+
+    provider = toolbox.as_skills_provider()
+    context = _source_context()
+    for _ in range(3):
+        await provider._source.get_skills(context)
+
+    # By default the toolbox index is read once and reused across agent runs.
+    assert read_count[0] == 1
+
+
+async def test_as_skills_provider_disable_caching_rereads_every_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/tb/mcp",
+    )
+    toolbox.session = object()  # type: ignore
+    read_count = _patch_counting_mcp_source(monkeypatch)
+
+    provider = toolbox.as_skills_provider(disable_caching=True)
+    context = _source_context()
+    for _ in range(3):
+        await provider._source.get_skills(context)
+
+    # With caching disabled the index is re-read on every agent run.
+    assert read_count[0] == 3
+
+
+async def test_as_skills_provider_cache_refresh_interval_rereads_after_staleness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/tb/mcp",
+    )
+    toolbox.session = object()  # type: ignore
+    read_count = _patch_counting_mcp_source(monkeypatch)
+
+    # A zero interval makes every cached result immediately stale, so each run
+    # re-reads the index -- proving cache_refresh_interval is wired through.
+    provider = toolbox.as_skills_provider(cache_refresh_interval=timedelta(0))
+    context = _source_context()
+    for _ in range(3):
+        await provider._source.get_skills(context)
+
+    assert read_count[0] == 3
+
+
+class TestFoundryToolboxReconnection:
+    async def test_close_preserves_credential_for_reconnection(self) -> None:
+        """After close(), get_mcp_client() should recreate an authenticated client."""
+        cred = _FakeCredential("reconnect-token")
+        toolbox = FoundryToolbox(
+            cred,  # type: ignore
+            url="https://h/toolboxes/recon/mcp",
+            timeout=60.0,
+        )
+
+        assert toolbox._credential is cred
+        assert toolbox._token_scope == "https://ai.azure.com/.default"
+        assert toolbox._timeout == 60.0
+
+        assert toolbox._httpx_client is not None
+        assert isinstance(toolbox._httpx_client.auth, _ToolboxAuth)
+        original_auth = toolbox._httpx_client.auth
+
+        client = toolbox._httpx_client
+        client.aclose = AsyncMock()  # zuban: ignore
+        await toolbox.close()
+
+        client.aclose.assert_awaited_once()
+        assert toolbox._httpx_client is None
+
+        assert toolbox._credential is cred
+        assert toolbox._timeout == 60.0
+
+        ctx_manager = toolbox.get_mcp_client()
+        assert toolbox._httpx_client is not None
+        assert isinstance(toolbox._httpx_client.auth, _ToolboxAuth)
+
+        new_auth = toolbox._httpx_client.auth
+        assert new_auth is not original_auth
+        assert new_auth._credential is cred
+
+        assert hasattr(ctx_manager, "__aenter__")
+        assert hasattr(ctx_manager, "__aexit__")
+
+        await toolbox.close()
+
+    async def test_close_idempotent_with_reconnection(self) -> None:
+        """Multiple close() calls don't break reconnection."""
+        cred = _FakeCredential()
+        toolbox = FoundryToolbox(
+            cred,  # type: ignore
+            url="https://h/toolboxes/idem/mcp",
+        )
+
+        await toolbox.close()
+        await toolbox.close()
+
+        toolbox.get_mcp_client()
+        assert toolbox._httpx_client is not None
+        assert isinstance(toolbox._httpx_client.auth, _ToolboxAuth)
+
+        await toolbox.close()
