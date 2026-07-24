@@ -17,6 +17,7 @@ Usage:
 
 import argparse
 import asyncio
+import logging
 import os
 import sys
 import time
@@ -28,6 +29,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from sample_validation.models import Report
 from sample_validation.report import save_report
 from sample_validation.workflow import ValidationConfig, create_validation_workflow
+
+logging.basicConfig(level=logging.INFO)
 
 
 def parse_arguments() -> argparse.Namespace:

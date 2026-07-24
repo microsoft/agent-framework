@@ -411,7 +411,12 @@ class CreateConcurrentValidationWorkflowExecutor(Executor):
                 id=agent_id,
                 name=agent_id,
                 instructions=AgentInstruction,
-                context_providers=[SkillsProvider.from_paths(skill_paths=str(SKILLS_DIR))],
+                context_providers=[SkillsProvider.from_paths(
+                    skill_paths=str(SKILLS_DIR),
+                    disable_load_skill_approval=True,
+                    disable_read_skill_resource_approval=True,
+                    disable_run_skill_script_approval=True,
+                )],
                 default_options={
                     "on_permission_request": prompt_permission,
                     "timeout": self.config.agent_timeout,
