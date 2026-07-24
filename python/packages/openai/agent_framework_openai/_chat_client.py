@@ -204,10 +204,6 @@ class OpenAIChatOptions(ChatOptions[ResponseFormatT], Generic[ResponseFormatT], 
     See: https://platform.openai.com/docs/api-reference/responses/create
     """
 
-    instructions: str
-    """Ephemeral per-request instructions that apply only to the current response.
-    This does not persist in the conversation state across turns."""
-
     # Responses API-specific parameters
 
     include: list[str]
@@ -1375,7 +1371,6 @@ class RawOpenAIChatClient(
             "logit_bias",  # not supported
             "seed",  # not supported
             "stop",  # not supported
-            # "instructions" removed: now passed natively to Responses API for ephemeral per-request steering
             "response_format",  # handled separately
             "conversation_id",  # handled separately
             "tool_choice",  # handled separately
@@ -1383,10 +1378,6 @@ class RawOpenAIChatClient(
         }
         run_options: dict[str, Any] = {k: v for k, v in options.items() if k not in exclude_keys and v is not None}
 
-        # messages
-        # Per-request "instructions" are no longer prepended as system messages.
-        # They are now passed natively to the Responses API via run_options (see exclude_keys above),
-        # enabling ephemeral per-request steering that does NOT persist across turns
 
         request_uses_service_side_storage = False
         for key in ("conversation_id", "previous_response_id", "conversation"):

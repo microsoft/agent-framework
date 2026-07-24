@@ -57,7 +57,7 @@ from openai.types.responses.response_text_delta_event import ResponseTextDeltaEv
 from pydantic import BaseModel
 from pytest import param
 
-from agent_framework_openai import OpenAIChatClient
+from agent_framework_openai import OpenAIChatClient, OpenAIChatOptions
 from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY, RawOpenAIChatClient
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
@@ -5430,7 +5430,7 @@ async def test_instructions_passed_natively_not_as_system_message(
     mock_response = _create_mock_responses_text_response(response_id="resp_456")
 
     with patch.object(client.client.responses, "create", return_value=mock_response) as mock_create:
-        options = {"instructions": "Reply in uppercase."}
+        options: OpenAIChatOptions = {"instructions": "Reply in uppercase."}
         if conversation_id:
             options["conversation_id"] = conversation_id
 
