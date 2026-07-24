@@ -67,7 +67,10 @@ Rules:
 """
 _FILE_HISTORY_ENCODED_SESSION_PREFIX = "~session-"
 HistoryMessageFilter = Callable[[Message], Message | None]
-_WORD_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{1,}", flags=re.IGNORECASE)
+# Match word-like tokens of >=2 characters. ``[^\W_]`` is a Unicode letter or
+# digit (excluding underscore), so CJK/Cyrillic/etc. text yields keywords too
+# instead of nothing -- otherwise non-English messages never match topic files.
+_WORD_PATTERN = re.compile(r"[^\W_][\w-]+")
 
 
 def _payload_preview(text: str, *, limit: int = 120) -> str:
