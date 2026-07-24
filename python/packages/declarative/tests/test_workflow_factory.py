@@ -3,9 +3,11 @@
 """Unit tests for WorkflowFactory."""
 
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 
+from agent_framework_declarative._feature_usage import FeatureIndex
 from agent_framework_declarative._workflows._errors import DeclarativeWorkflowError
 from agent_framework_declarative._workflows._factory import WorkflowFactory
 
@@ -65,6 +67,24 @@ actions:
 
         assert workflow is not None
         assert workflow.name == "minimal-workflow"
+
+    def test_valid_workflow_marks_declarative_workflow_used(self):
+        """Test that successful declarative workflow creation marks feature usage."""
+        factory = WorkflowFactory()
+
+        with patch("agent_framework_declarative._workflows._factory.mark_feature_used") as mark_feature_used:
+            factory.create_workflow_from_definition({
+                "name": "minimal-workflow",
+                "actions": [
+                    {
+                        "kind": "SetValue",
+                        "path": "Local.result",
+                        "value": "done",
+                    }
+                ],
+            })
+
+        mark_feature_used.assert_called_once_with(FeatureIndex.WORKFLOW)
 
 
 @_requires_powerfx

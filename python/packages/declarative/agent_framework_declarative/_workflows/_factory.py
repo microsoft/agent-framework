@@ -24,7 +24,9 @@ from agent_framework import (
     SupportsAgentRun,
     Workflow,
 )
+from agent_framework._telemetry import mark_feature_used
 
+from .._feature_usage import FeatureIndex
 from .._loader import AgentFactory
 from ._declarative_base import DeclarativeEnvConfig, discover_env_references
 from ._declarative_builder import DeclarativeWorkflowBuilder
@@ -471,6 +473,7 @@ class WorkflowFactory:
             len(graph_builder._executors),  # type: ignore[reportPrivateUsage]
         )
 
+        mark_feature_used(FeatureIndex.WORKFLOW)
         return workflow
 
     def _normalize_workflow_def(self, workflow_def: dict[str, Any]) -> dict[str, Any]:

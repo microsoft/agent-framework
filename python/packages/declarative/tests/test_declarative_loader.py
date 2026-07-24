@@ -492,6 +492,38 @@ class TestAgentFactoryCreateFromDict:
 
         assert agent is not None
 
+    def test_create_agent_from_dict_marks_declarative_agent_used(self):
+        """Test that successful declarative agent creation marks feature usage."""
+        from agent_framework_declarative import AgentFactory
+        from agent_framework_declarative._feature_usage import FeatureIndex
+
+        factory = AgentFactory(client=MagicMock())
+
+        with patch("agent_framework_declarative._loader.mark_feature_used") as mark_feature_used:
+            factory.create_agent_from_dict({
+                "kind": "Prompt",
+                "name": "TestAgent",
+                "instructions": "You are a helpful assistant.",
+            })
+
+        mark_feature_used.assert_called_once_with(FeatureIndex.AGENT)
+
+    async def test_create_agent_from_dict_async_marks_declarative_agent_used(self):
+        """Test that successful async declarative agent creation marks feature usage."""
+        from agent_framework_declarative import AgentFactory
+        from agent_framework_declarative._feature_usage import FeatureIndex
+
+        factory = AgentFactory(client=MagicMock())
+
+        with patch("agent_framework_declarative._loader.mark_feature_used") as mark_feature_used:
+            await factory.create_agent_from_dict_async({
+                "kind": "Prompt",
+                "name": "TestAgent",
+                "instructions": "You are a helpful assistant.",
+            })
+
+        mark_feature_used.assert_called_once_with(FeatureIndex.AGENT)
+
     def test_create_agent_from_dict_matches_yaml(self):
         """Test that create_agent_from_dict produces same result as create_agent_from_yaml."""
         from unittest.mock import MagicMock

@@ -19,9 +19,11 @@ from agent_framework._feature_stage import (
     ExperimentalFeature,
     experimental,
 )
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentException
 from dotenv import load_dotenv
 
+from ._feature_usage import FeatureIndex
 from ._models import (
     AnonymousConnection,
     ApiKeyConnection,
@@ -471,13 +473,15 @@ class AgentFactory:
         if output_schema := prompt_agent.outputSchema:
             chat_options["response_format"] = output_schema.to_json_schema()
         # Step 3: Create the agent instance
-        return Agent(
+        agent = Agent(
             client=client,
             name=prompt_agent.name,
             description=prompt_agent.description,
             instructions=prompt_agent.instructions,
             default_options=chat_options,  # type: ignore[arg-type]
         )
+        mark_feature_used(FeatureIndex.AGENT)
+        return agent
 
     async def create_agent_from_yaml_path_async(self, yaml_path: str | Path) -> Agent:
         """Async version: Create a Agent from a YAML file path.
@@ -582,13 +586,15 @@ class AgentFactory:
             chat_options["tools"] = tools
         if output_schema := prompt_agent.outputSchema:
             chat_options["response_format"] = output_schema.to_json_schema()
-        return Agent(
+        agent = Agent(
             client=client,
             name=prompt_agent.name,
             description=prompt_agent.description,
             instructions=prompt_agent.instructions,
             default_options=chat_options,  # type: ignore[arg-type]
         )
+        mark_feature_used(FeatureIndex.AGENT)
+        return agent
 
     async def _create_agent_with_provider(self, prompt_agent: PromptAgent, mapping: ProviderTypeMapping) -> Agent:
         """Create an Agent through a provider object that exposes ``create_agent``.
