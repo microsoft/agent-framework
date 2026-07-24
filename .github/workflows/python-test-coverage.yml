@@ -6,6 +6,9 @@ on:
     paths:
       - "python/packages/**"
       - "python/tests/unit/**"
+      - "python/scripts/workspace_poe_tasks.py"
+      - ".github/scripts/python_check_coverage.py"
+      - ".github/workflows/python-test-coverage.yml"
 env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
@@ -37,10 +40,10 @@ jobs:
         env:
           # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache
-      - name: Run all tests with coverage report
+      - name: Run aggregate tests with coverage report
         run: uv run poe test -A -C --cov-report=xml:python-coverage.xml -q --junitxml=pytest.xml
       - name: Check coverage threshold
-        run: python ${{ github.workspace }}/.github/workflows/python-check-coverage.py python-coverage.xml ${{ env.COVERAGE_THRESHOLD }}
+        run: python ${{ github.workspace }}/.github/scripts/python_check_coverage.py python-coverage.xml ${{ env.COVERAGE_THRESHOLD }}
       - name: Upload coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

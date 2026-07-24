@@ -23,6 +23,28 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
         // Arrange, Act & Assert
         Assert.Throws<DeclarativeModelException>(() => new InvokeAzureAgentExecutor(new InvokeAzureAgent(), new CapturingAgentProvider("text"), this.State));
 
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public async Task AutoSendDefaultsToTrueAndHonorsExplicitValueAsync(bool? autoSend, bool expectResponseEvents)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        CapturingAgentProvider provider = new("response");
+        InvokeAzureAgent model = this.CreateAutoSendModel(
+            nameof(AutoSendDefaultsToTrueAndHonorsExplicitValueAsync),
+            autoSend);
+
+        // Act
+        WorkflowEvent[] events =
+            await this.ExecuteAsync(new InvokeAzureAgentExecutor(model, provider, this.State), isDiscrete: false);
+
+        // Assert
+        Assert.Equal(expectResponseEvents ? 1 : 0, events.OfType<AgentResponseUpdateEvent>().Count());
+        Assert.Equal(expectResponseEvents ? 1 : 0, events.OfType<AgentResponseEvent>().Count());
+    }
+
     #region Input argument binding
 
     [Fact]
@@ -302,6 +324,30 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
                     ResponseObject = new InitializablePropertyPath(PropertyPath.TopicVariable(responseObjectVariable), isInitializer: false),
                 };
         }
+
+        return AssignParent<InvokeAzureAgent>(builder);
+    }
+
+    private InvokeAzureAgent CreateAutoSendModel(string displayName, bool? autoSend)
+    {
+        AzureAgentOutput.Builder outputBuilder = new();
+        if (autoSend.HasValue)
+        {
+            outputBuilder.AutoSend = new BoolExpression.Builder(BoolExpression.Literal(autoSend.Value));
+        }
+
+        InvokeAzureAgent.Builder builder =
+            new()
+            {
+                Id = this.CreateActionId(),
+                DisplayName = this.FormatDisplayName(displayName),
+                Agent =
+                    new AzureAgentUsage.Builder
+                    {
+                        Name = new StringExpression.Builder(StringExpression.Literal("BrainAutoSend")),
+                    },
+                Output = outputBuilder,
+            };
 
         return AssignParent<InvokeAzureAgent>(builder);
     }

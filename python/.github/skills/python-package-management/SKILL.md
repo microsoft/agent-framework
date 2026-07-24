@@ -45,9 +45,13 @@ uv lock --upgrade-package <dependency-name> && uv run poe install
 # Refresh exact development dependency-group pins, lockfile, and validation in one run
 uv run poe upgrade-dev-dependencies
 
-# First, run workspace-wide lower/upper compatibility gates
+# Release cuts: refresh uv.lock and probe changed packages at both bound extremes.
+# The release probe has a shared five-minute deadline.
+uv run poe validate-python-release --base-ref upstream/main
+
+# Exhaustive test+typing matrix (slow; use for deliberate dependency-range work or CI)
 uv run poe validate-dependency-bounds-test
-# Defaults to --package "*"; pass a package to scope test mode
+# Defaults to --package "*"; scope locally whenever possible.
 uv run poe validate-dependency-bounds-test --package core
 
 # Then expand bounds for one dependency in the target package
@@ -66,7 +70,16 @@ uv run poe add-dependency-and-validate-bounds --package core --dependency "<depe
 - Prerelease (`dev`/`a`/`b`/`rc`) and `<1.0` dependencies should use hard bounds with an explicit upper cap (avoid open-ended ranges).
 - For `<1.0` dependencies, prefer the broadest validated range the package can really support. That may be a patch line, a minor line, or multiple minor lines when checks/tests show the broader lane is compatible.
 - Prefer supporting multiple majors when practical; if APIs diverge across supported majors, use version-conditional imports/paths.
-- For dependency changes, run workspace-wide bound gates first, then `validate-dependency-bounds-project --mode both` for the target package/dependency to keep minimum and maximum constraints current. The same task can also drive repo-wide upper-bound automation by using `--package "*"` and omitting `--dependency`.
+- For release-only version, lifecycle, pin, and internal-floor edits, use `validate-python-release`. It refreshes
+  `uv.lock`, finds changed package metadata relative to the selected main ref, and runs the changed packages'
+  published runtime dependencies and non-development extras through lock-independent `lowest-direct` and `highest`
+  import probes on the minimum Python minor supported by each package's internal editable closure. The probes run
+  concurrently under one 300-second deadline; pass `--python` only when an explicit interpreter override is needed.
+- For deliberate external dependency-range changes, use
+  `validate-dependency-bounds-project --mode both` for the target package/dependency to find and validate the actual
+  minimum and maximum constraints. Scope the exhaustive `validate-dependency-bounds-test` matrix to affected
+  packages during local iteration; reserve the workspace-wide form for CI or an intentional full audit. The same
+  project task can drive repo-wide upper-bound automation by using `--package "*"` and omitting `--dependency`.
 - Prefer targeted lock updates with `uv lock --upgrade-package <dependency-name>` to reduce `uv.lock` merge conflicts.
 - Use `add-dependency-and-validate-bounds` for package-scoped dependency additions plus bound validation in one command.
 - Keep shared tooling and source/type-check support in the root or package `dev` group. Put package-specific test

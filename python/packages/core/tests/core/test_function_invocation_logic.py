@@ -2338,6 +2338,42 @@ def test_replace_approval_contents_with_results_uses_result_call_ids_without_pla
     ]
 
 
+def test_replace_approval_contents_with_results_allows_reused_call_id_after_completion() -> None:
+    """A completed call must not suppress a later approval request that reuses its id.
+
+    Re-approving the same ``(call_id, function)`` is supported behaviour. If the dedupe
+    matched every occurrence of the id, the fresh request would be dropped and its result
+    attached to the already-answered call, leaving one call with two results.
+    """
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    completed_call = Content.from_function_call(call_id="call_reused", name="run_skill_script", arguments="{}")
+    completed_result = Content.from_function_result(call_id="call_reused", result="first output")
+    _, request, response = _build_approved_tool_roundtrip(
+        call_id="call_reused", approval_id="approval_2", tool_name="run_skill_script"
+    )
+
+    messages = [
+        Message(role="assistant", contents=[completed_call]),
+        Message(role="tool", contents=[completed_result]),
+        Message(role="assistant", contents=[request]),
+        Message(role="user", contents=[response]),
+    ]
+
+    _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [Content.from_function_result(call_id="call_reused", result="second output")],
+    )
+
+    function_calls = [c for m in messages for c in m.contents if c.type == "function_call"]
+    assert [c.call_id for c in function_calls] == ["call_reused", "call_reused"]
+    results = [c for m in messages for c in m.contents if c.type == "function_result"]
+    assert [(c.call_id, c.result) for c in results] == [
+        ("call_reused", "first output"),
+        ("call_reused", "second output"),
+    ]
+
 def test_replace_approval_contents_with_results_uses_result_call_ids_for_placeholders() -> None:
     from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
 
@@ -3823,6 +3859,7 @@ async def test_terminate_loop_single_function_call(chat_client_base: SupportsCha
     assert response.messages[1].role == "tool"
     assert response.messages[1].contents[0].type == "function_result"
     assert response.messages[1].contents[0].result == "terminated by middleware"
+    assert response.messages[1].contents[0].additional_properties == {}
 
     # Verify the second response is still in the queue (wasn't consumed)
     assert len(chat_client_base.run_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
@@ -3891,6 +3928,11 @@ async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client
     assert response.messages[1].role == "tool"
     # Both function results should be present
     assert len(response.messages[1].contents) == 2
+    assert [result.result for result in response.messages[1].contents] == [
+        "Normal value1",
+        "terminated by middleware",
+    ]
+    assert all(result.additional_properties == {} for result in response.messages[1].contents)
 
     # Verify the second response is still in the queue (wasn't consumed)
     assert len(chat_client_base.run_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
@@ -3939,6 +3981,12 @@ async def test_terminate_loop_streaming_single_function_call(chat_client_base: S
     # Should have function call update and function result update
     # The loop should NOT have continued to call the LLM again
     assert len(updates) == 2
+    function_results = [
+        content for update in updates for content in update.contents if content.type == "function_result"
+    ]
+    assert len(function_results) == 1
+    assert function_results[0].result == "terminated by middleware"
+    assert function_results[0].additional_properties == {}
 
     # Verify the second streaming response is still in the queue (wasn't consumed)
     assert len(chat_client_base.streaming_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]

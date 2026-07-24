@@ -2241,7 +2241,7 @@ async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(chat_cli
     )
 
     # Run with explicitly passing None (same as not specifying)
-    await agent.run("Hello", options={"tool_choice": None})  # ty: ignore[no-matching-overload]  # type: ignore[typeddict-item]
+    await agent.run("Hello", options={"tool_choice": None})  # ty: ignore[invalid-argument-type, no-matching-overload]  # type: ignore[typeddict-item]
 
     # Verify the client received tool_choice="auto" from agent-level
     assert len(captured_options) >= 1

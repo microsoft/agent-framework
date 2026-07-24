@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
-# ruff: noqa: S404, S603
+# ruff:file-ignore[suspicious-subprocess-import, subprocess-without-shell-equals-true]
 
 """Unified dependency-bound validation entrypoint.
 
 Modes:
+- release: run fast lock-independent lower/upper import probes for changed release packages.
 - test: run workspace-wide compatibility gates at lower and upper resolutions.
 - lower: run lower-bound expansion for one package.
 - upper: run upper-bound expansion for one package.
@@ -28,6 +29,7 @@ from pathlib import Path
 import tomli
 from rich import print
 
+from scripts.dependencies._dependency_bounds_release_impl import run_release_mode
 from scripts.dependencies._dependency_bounds_runtime import (
     extend_command_with_runtime_tools,
     extend_command_with_task,
@@ -363,15 +365,16 @@ def main() -> None:
     """Parse arguments and run the requested dependency-bound mode."""
     parser = argparse.ArgumentParser(
         description=(
-            "Unified dependency-bound workflow. Use mode=test for workspace-wide lower+upper gates, "
+            "Unified dependency-bound workflow. Use mode=release for fast release sanity probes, "
+            "mode=test for the exhaustive workspace lower+upper matrix, "
             "or lower/upper/both for package-scoped or workspace-wide bound expansion."
         )
     )
     parser.add_argument(
         "--mode",
         required=True,
-        choices=("test", "lower", "upper", "both"),
-        help="Execution mode: test (global) or lower/upper/both (package-scoped).",
+        choices=("release", "test", "lower", "upper", "both"),
+        help="Execution mode: release/test gates or lower/upper/both bound expansion.",
     )
     parser.add_argument(
         "--package",
@@ -422,10 +425,48 @@ def main() -> None:
         default="scripts/dependencies/dependency-bounds-test-results.json",
         help="Output report path for test mode.",
     )
+    parser.add_argument(
+        "--base-ref",
+        default=None,
+        help="Git base used to discover changed package metadata in release mode (required unless --package is set).",
+    )
+    parser.add_argument(
+        "--python",
+        default=None,
+        help="Optional Python override for release probes (defaults to each package closure's requires-python floor).",
+    )
+    parser.add_argument(
+        "--release-timeout-seconds",
+        type=int,
+        default=300,
+        help="Shared wall-clock deadline for all release probes.",
+    )
+    parser.add_argument(
+        "--release-output-json",
+        default="scripts/dependencies/dependency-bounds-release-results.json",
+        help="Output report path for release mode.",
+    )
     args = parser.parse_args()
 
     workspace_root = Path(__file__).resolve().parents[2]
     normalized_package = None if args.package in {None, "", "*"} else args.package
+
+    if args.mode == "release":
+        base_ref = args.base_ref.strip() if args.base_ref else ""
+        python_override = args.python.strip() if args.python else None
+        if not base_ref and normalized_package is None:
+            parser.error("release mode requires --base-ref unless --package selects one package explicitly")
+        exit_code = run_release_mode(
+            workspace_root=workspace_root,
+            base_ref=base_ref or "HEAD",
+            package_filter=normalized_package,
+            parallelism=args.parallelism,
+            python_override=python_override,
+            deadline_seconds=args.release_timeout_seconds,
+            dry_run=args.dry_run,
+            output_json=(workspace_root / args.release_output_json).resolve(),
+        )
+        raise SystemExit(exit_code)
 
     if args.mode == "test":
         exit_code = _run_test_mode(

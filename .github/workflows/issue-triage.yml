@@ -33,6 +33,7 @@ env:
 jobs:
   team_check:
     runs-on: ubuntu-latest
+    environment: github-app-auth
     if: >-
       ${{
         github.event_name == 'workflow_dispatch'
@@ -68,9 +69,26 @@ jobs:
       - name: Checkout scripts
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            .github/actions/github-app-token
+            .github/scripts
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Get GitHub automation token
+        id: github-auth
+        uses: ./.github/actions/github-app-token
+        with:
+          mode: ${{ vars.GH_APP_AUTH_MODE }}
+          azure-client-id: ${{ secrets.GH_APP_AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.GH_APP_AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.GH_APP_AZURE_SUBSCRIPTION_ID }}
+          key-vault-name: ${{ secrets.GH_APP_KEY_VAULT_NAME }}
+          key-name: ${{ secrets.GH_APP_KEY_NAME }}
+          github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
+          repository: ${{ github.repository }}
+          fallback-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
 
       - name: Check issue author team membership
         if: ${{ github.event_name != 'workflow_dispatch' }}
@@ -80,7 +98,7 @@ jobs:
           TEAM_NAME: ${{ secrets.DEVELOPER_TEAM }}
           ISSUE_NUMBER: ${{ steps.issue.outputs.issue_number }}
         with:
-          github-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+          github-token: ${{ steps.github-auth.outputs.token }}
           script: |
             const checkTeamMembership = require('./.github/scripts/check_team_membership.js');
             const { author, isTeamMember } = await checkTeamMembership({
@@ -106,6 +124,10 @@ jobs:
         || needs.team_check.outputs.is_team_member == 'false'
       }}
     environment: integration
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
     timeout-minutes: 60
 
     steps:

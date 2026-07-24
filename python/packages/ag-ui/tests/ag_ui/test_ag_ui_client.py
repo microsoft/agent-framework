@@ -4,7 +4,7 @@
 
 import json
 from collections.abc import AsyncGenerator, Awaitable, MutableSequence
-from typing import Any
+from typing import Any, cast
 
 from ag_ui.core import Interrupt, ResumeEntry
 from agent_framework import (
@@ -225,7 +225,7 @@ class TestAGUIChatClient:
         stream = client.inner_get_response(messages=messages, stream=True, options=chat_options)
         assert isinstance(stream, ResponseStream)
         async for update in stream:
-            updates.append(update)
+            updates.append(cast(ChatResponseUpdate, update))
 
         assert len(updates) == 4
         assert updates[0].additional_properties is not None
@@ -468,7 +468,7 @@ class TestAGUIChatClient:
         stream = client.inner_get_response(messages=messages, stream=True, options={"tools": [my_tool]})
         assert isinstance(stream, ResponseStream)
         async for update in stream:
-            updates.append(update)
+            updates.append(cast(ChatResponseUpdate, update))
 
         # Find the function_call content - it should have agui_thread_id
         found = False
