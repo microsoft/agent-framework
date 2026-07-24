@@ -144,8 +144,9 @@ re-provisioning as described below. Each call runs `python3 -c
   expiring on an unscoped sandbox, or an external `tenki sandbox terminate`),
   the next call provisions a fresh sandbox.
   Filesystem and installed packages from the previous sandbox are **not** carried
-  over — snapshot the sandbox (via `extra_create_kwargs={"snapshot_id": ...}` on a
-  new tool) if you need to preserve state across a termination.
+  over. To start runs from a known state, seed sandboxes from a snapshot you
+  prepared beforehand with the Tenki CLI/SDK
+  (`extra_create_kwargs={"snapshot_id": ...}`).
 
 ### Provider vs standalone lifetime
 
