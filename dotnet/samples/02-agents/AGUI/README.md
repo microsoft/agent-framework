@@ -133,10 +133,8 @@ Demonstrates human-in-the-loop approval workflows for sensitive operations. This
 
 An AG-UI server that implements approval workflows. Demonstrates:
 
-- Wrapping tools with `ApprovalRequiredAIFunction`
-- Converting `FunctionApprovalRequestContent` to approval requests
-- Middleware pattern with `ServerFunctionApprovalServerAgent`
-- Complete function call capture and restoration
+- Wrapping a tool with `ApprovalRequiredAIFunction` so it requires approval before running
+- Mapping a plain agent with `MapAGUIServer`, which natively emits an approval interrupt when the model calls the approval-required tool and resumes the run once the client sends the decision back
 
 **Run the server:**
 
@@ -149,12 +147,10 @@ dotnet run --urls http://localhost:8888
 
 An interactive client that handles approval requests from the server. Demonstrates:
 
-- Using `ServerFunctionApprovalClientAgent` middleware
-- Detecting `FunctionApprovalRequestContent`
-- Displaying approval details to users
-- Prompting for approval/rejection
-- Sending approval responses with `FunctionApprovalResponseContent`
-- Resuming conversation after approval
+- Detecting `ToolApprovalRequestContent` in the streamed response
+- Displaying approval details to the user and prompting for approval or rejection
+- Sending the decision back as a `ToolApprovalResponseContent` created with `approvalRequest.CreateResponse(approved)`
+- Resuming the run so the server continues after the decision is received
 
 **Run the client:**
 
