@@ -29,7 +29,7 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 
 | # | Sample | Description |
 |---|--------|-------------|
-| 1 | [Basic](invocations/01_basic/) | A minimal agent demonstrating session state management via `agent_session_id` in URL params/response headers. |
+| 1 | [Basic](invocations/01_basic/) | A minimal agent demonstrating basic request/response using the invocations protocol. |
 | 2 | [Break Glass](invocations/02_break_glass/) | An agent demonstrating a "break glass" scenario where customizations of the API behaviors are needed, allowing for more direct control over how requests and responses are handled by the hosting layer. |
 
 ## Running the Agent Host Locally

@@ -3009,11 +3009,25 @@ class MCPStreamableHTTPTool(MCPTool):
                 ``streamable_http_client`` API will create and manage a default client.
                 To configure headers, timeouts, or other HTTP client settings, create
                 and pass your own ``asyncClient`` instance.
+                Security: when you attach sensitive headers (e.g. authentication tokens)
+                via a custom ``http_client``, you are responsible for enforcing the same
+                origin-scoped header policy that the built-in ``header_provider`` hook
+                applies. The framework only injects ``header_provider`` headers on requests
+                whose origin (scheme, host, port) matches the configured ``url``, so tokens
+                are not leaked to third-party origins on cross-origin redirects. A custom
+                client that sets headers unconditionally (e.g. via ``AsyncClient(headers=...)``
+                or ``follow_redirects=True`` without an origin check) can leak those headers
+                to other origins; scope them to the target origin yourself.
             header_provider: Optional callable that receives the runtime keyword arguments
                 (from ``FunctionInvocationContext.kwargs``) and returns a ``dict[str, str]``
                 of HTTP headers to inject into every outbound request to the MCP server.
                 Use this to forward per-request context (e.g. authentication tokens set in
                 agent middleware) without creating a separate ``httpx.AsyncClient``.
+                The framework attaches these headers only to requests whose origin (scheme,
+                host, port) matches the configured ``url``, so they are not leaked to other
+                origins on cross-origin redirects. If you instead supply sensitive headers
+                through a custom ``http_client``, you must enforce this same origin-scoped
+                policy yourself.
             task_options: Options for tools that advertise
                 ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
             additional_tool_argument_names: Extra argument names to forward to the MCP server in

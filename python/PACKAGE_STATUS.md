@@ -16,7 +16,7 @@ Status is grouped into these buckets:
 | --- | --- | --- |
 | `agent-framework` | `python/` | `released` |
 | `agent-framework-a2a` | `python/packages/a2a` | `beta` |
-| `agent-framework-ag-ui` | `python/packages/ag-ui` | `rc` |
+| `agent-framework-ag-ui` | `python/packages/ag-ui` | `released` |
 | `agent-framework-anthropic` | `python/packages/anthropic` | `beta` |
 | `agent-framework-azure-contentunderstanding` | `python/packages/azure-contentunderstanding` | `beta` |
 | `agent-framework-azure-ai-search` | `python/packages/azure-ai-search` | `beta` |
@@ -35,7 +35,7 @@ Status is grouped into these buckets:
 | `agent-framework-foundry-hosting` | `python/packages/foundry_hosting` | `beta` |
 | `agent-framework-foundry-local` | `python/packages/foundry_local` | `beta` |
 | `agent-framework-gemini` | `python/packages/gemini` | `beta` |
-| `agent-framework-github-copilot` | `python/packages/github_copilot` | `rc` |
+| `agent-framework-github-copilot` | `python/packages/github_copilot` | `released` |
 | `agent-framework-hosting` | `python/packages/hosting` | `alpha` |
 | `agent-framework-hosting-a2a` | `python/packages/hosting-a2a` | `alpha` |
 | `agent-framework-hosting-mcp` | `python/packages/hosting-mcp` | `alpha` |

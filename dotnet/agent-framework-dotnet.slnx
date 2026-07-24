@@ -29,6 +29,7 @@
     <Project Path="samples/02-agents/AgentProviders/azure/Agent_With_AzureOpenAIChatCompletion/Agent_With_AzureOpenAIChatCompletion.csproj" />
     <Project Path="samples/02-agents/AgentProviders/azure/Agent_With_AzureOpenAIResponses/Agent_With_AzureOpenAIResponses.csproj" />
     <Project Path="samples/02-agents/AgentProviders/custom/Agent_With_CustomImplementation/Agent_With_CustomImplementation.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/dapr/Agent_With_Dapr/Agent_With_Dapr.csproj" />
     <Project Path="samples/02-agents/AgentProviders/github-copilot/Agent_With_GitHubCopilot/Agent_With_GitHubCopilot.csproj" />
     <Project Path="samples/02-agents/AgentProviders/google-gemini/Agent_With_GoogleGemini/Agent_With_GoogleGemini.csproj" />
     <Project Path="samples/02-agents/AgentProviders/ollama/Agent_With_Ollama/Agent_With_Ollama.csproj" />
@@ -314,7 +315,19 @@
     <Project Path="samples/03-workflows/Evaluation/Evaluation_WorkflowEval/Evaluation_WorkflowEval.csproj" />
     <Project Path="samples/03-workflows/Evaluation/Evaluation_WorkflowExpectedOutputs/Evaluation_WorkflowExpectedOutputs.csproj" />
   </Folder>
-  <Folder Name="/Samples/04-hosting/">
+  <Folder Name="/Samples/04-hosting/" />
+  <Folder Name="/Samples/04-hosting/af-hosting/">
+    <File Path="samples/04-hosting/af-hosting/README.md" />
+  </Folder>
+  <Folder Name="/Samples/04-hosting/af-hosting/local_responses/">
+    <File Path="samples/04-hosting/af-hosting/local_responses/README.md" />
+    <Project Path="samples/04-hosting/af-hosting/local_responses/Server/Server.csproj" />
+    <Project Path="samples/04-hosting/af-hosting/local_responses/Client/Client.csproj" />
+  </Folder>
+  <Folder Name="/Samples/04-hosting/af-hosting/local_responses_workflow/">
+    <File Path="samples/04-hosting/af-hosting/local_responses_workflow/README.md" />
+    <Project Path="samples/04-hosting/af-hosting/local_responses_workflow/Server/Server.csproj" />
+    <Project Path="samples/04-hosting/af-hosting/local_responses_workflow/Client/Client.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/" />
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/invocations/" />
@@ -640,7 +653,9 @@
     <Project Path="src/Microsoft.Agents.AI.Workflows/Microsoft.Agents.AI.Workflows.csproj" />
     <Project Path="src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj" />
   </Folder>
-  <Folder Name="/Tests/" />
+  <Folder Name="/Tests/">
+    <Project Path="tests/Microsoft.Agents.AI.Hosting.OpenAI.IntegrationTests/Microsoft.Agents.AI.Hosting.OpenAI.IntegrationTests.csproj" />
+  </Folder>
   <Folder Name="/Tests/IntegrationTests/">
     <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj" />
     <Project Path="tests/AnthropicChatCompletion.IntegrationTests/AnthropicChatCompletion.IntegrationTests.csproj" />
