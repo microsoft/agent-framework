@@ -6062,9 +6062,9 @@ async def test_mcp_streamable_http_tool_header_provider_injects_on_ambient_reque
 async def test_mcp_streamable_http_tool_header_provider_ambient_request_tolerates_kwargs_provider():
     """A header_provider that requires per-call kwargs must not crash ambient requests.
 
-    Providers like the mcp_api_key_auth.py sample index runtime kwargs (e.g. kw["mcp_api_key"])
-    that are absent at connect time. The hook should swallow the error and proceed without
-    headers rather than failing the initialize handshake.
+    Providers that index runtime kwargs (e.g. kw["mcp_api_key"]) which are absent at connect
+    time raise KeyError. The hook should swallow that specific error and proceed without headers
+    rather than failing the initialize handshake.
     """
     import httpx
 
@@ -6138,11 +6138,12 @@ async def test_mcp_streamable_http_tool_header_provider_empty_active_call_skips_
             await tool._httpx_client.aclose()  # type: ignore[union-attr]
 
 
-async def test_mcp_streamable_http_tool_header_provider_ambient_error_warns_once(caplog):
-    """A kwargs-dependent provider must warn only once on repeated ambient requests.
+async def test_mcp_streamable_http_tool_header_provider_ambient_kwarg_error_is_benign(caplog):
+    """A kwargs-dependent provider that raises KeyError on ambient requests must not fail them.
 
-    Ambient requests (initialize/discovery plus recurring pings) each raise, so the full WARNING
-    with a traceback is emitted once per tool instance and subsequent occurrences drop to DEBUG.
+    Ambient requests (initialize/discovery plus recurring pings) call the provider with empty
+    kwargs, so a provider indexing a required per-call kwarg raises KeyError. That is tolerated:
+    the request proceeds without headers and only a DEBUG line is logged (no WARNING spam).
     """
     import logging
 
@@ -6162,13 +6163,14 @@ async def test_mcp_streamable_http_tool_header_provider_ambient_error_warns_once
             hooks = tool._httpx_client.event_hooks.get("request", [])
             assert len(hooks) == 1
 
-            with caplog.at_level(logging.WARNING, logger="agent_framework._mcp"):
+            with caplog.at_level(logging.DEBUG, logger="agent_framework._mcp"):
                 for _ in range(3):
-                    await hooks[0](httpx.Request("POST", "http://example.com/mcp"))
+                    request = httpx.Request("POST", "http://example.com/mcp")
+                    await hooks[0](request)
+                    assert "Authorization" not in request.headers
 
-            warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-            assert len(warnings) == 1, "expected exactly one WARNING across repeated ambient requests"
-            assert tool._ambient_header_warning_emitted is True
+            # The benign kwargs case must not escalate to WARNING/ERROR.
+            assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
     finally:
         if getattr(tool, "_httpx_client", None) is not None:
             await tool._httpx_client.aclose()  # type: ignore[union-attr]
