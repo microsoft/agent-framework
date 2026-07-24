@@ -2383,14 +2383,18 @@ async def _process_function_requests(
                         )
             _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
             executed_count = sum(1 for r in approved_function_results if r.type == "function_result")
+            has_user_input_request = any(
+                r.type in {"function_approval_request", "function_call"} or r.user_input_request
+                for r in approved_function_results
+            )
             # Continue to call chat client with updated messages (containing function results)
             # so it can generate the final response
             return {
                 "action": "return" if should_terminate else "continue",
                 "errors_in_a_row": errors_in_a_row,
                 "result_message": None,
-                "update_role": None,
-                "function_call_results": None,
+                "update_role": "assistant" if has_user_input_request else ("tool" if executed_count else None),
+                "function_call_results": approved_function_results or None,
                 "function_call_count": executed_count,
             }
 
@@ -2798,6 +2802,13 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 errors_in_a_row = approval_result.get("errors_in_a_row", errors_in_a_row)
                 total_function_calls += approval_result.get("function_call_count", 0)
                 budget_state["total_function_calls"] = total_function_calls
+                if role := approval_result.get("update_role"):
+                    # Stream the results of tools executed while resolving approvals,
+                    # mirroring the gate after the second _process_function_requests call.
+                    yield ChatResponseUpdate(
+                        contents=approval_result.get("function_call_results") or [],
+                        role=role,
+                    )
                 if max_function_calls is not None and total_function_calls >= max_function_calls:
                     logger.info(
                         "Maximum function calls reached (%d/%d). Stopping further function calls for this request.",
