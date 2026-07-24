@@ -140,7 +140,7 @@ An AG-UI server that implements approval workflows. Demonstrates:
 
 ```bash
 cd Step04_HumanInLoop/Server
-dotnet run --urls http://localhost:8888
+dotnet run --urls http://localhost:5100
 ```
 
 #### Client (`Step04_HumanInLoop/Client`)
