@@ -3138,27 +3138,30 @@ class MCPStreamableHTTPTool(MCPTool):
                         # Ambient request made outside call_tool (the initialize handshake,
                         # load_tools/load_prompts discovery, or background pings). Invoke the
                         # provider with empty kwargs so static providers can authenticate these
-                        # requests too; providers that require per-call kwargs raise here, so we
-                        # log and proceed unauthenticated (preserving prior behavior).
+                        # requests too. A provider that indexes required per-call kwargs raises
+                        # KeyError on the empty dict (e.g. the mcp_api_key_auth.py sample); that
+                        # specific case is tolerated so connect still succeeds. Any other error
+                        # is a genuine provider failure and is left to propagate, matching the
+                        # call_tool path which does not catch header_provider exceptions.
                         assert self._header_provider is not None  # nosec B101  # ruff:ignore[assert]
                         try:
                             headers = self._header_provider({})
-                        except Exception:
+                        except KeyError:
                             # A kwargs-dependent provider raises on every ambient request
                             # (initialize, discovery, and recurring pings); warn once per
                             # instance with a traceback and stay quiet at DEBUG afterwards.
                             if not self._ambient_header_warning_emitted:
                                 self._ambient_header_warning_emitted = True
                                 logger.warning(
-                                    "header_provider raised for MCP server %r on an ambient request; "
-                                    "proceeding without headers.",
+                                    "header_provider raised KeyError for MCP server %r on an ambient "
+                                    "request (missing per-call kwargs); proceeding without headers.",
                                     self.name,
                                     exc_info=True,
                                 )
                             else:
                                 logger.debug(
-                                    "header_provider raised again for MCP server %r on an ambient request; "
-                                    "proceeding without headers.",
+                                    "header_provider raised KeyError again for MCP server %r on an "
+                                    "ambient request; proceeding without headers.",
                                     self.name,
                                     exc_info=True,
                                 )

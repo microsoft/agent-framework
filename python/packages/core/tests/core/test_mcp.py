@@ -6174,6 +6174,38 @@ async def test_mcp_streamable_http_tool_header_provider_ambient_error_warns_once
             await tool._httpx_client.aclose()  # type: ignore[union-attr]
 
 
+async def test_mcp_streamable_http_tool_header_provider_ambient_non_keyerror_propagates():
+    """A genuine header_provider failure on an ambient request must surface, not be swallowed.
+
+    Only the missing-kwargs case (KeyError) is tolerated. Any other error - e.g. a token-refresh
+    failure or a provider bug - propagates so it is not silently converted into unauthenticated
+    traffic, matching the call_tool path which does not catch header_provider exceptions.
+    """
+    import httpx
+
+    class TokenRefreshError(RuntimeError):
+        pass
+
+    def failing_provider(kw: dict[str, Any]) -> dict[str, str]:
+        raise TokenRefreshError("token endpoint unreachable")
+
+    tool = MCPStreamableHTTPTool(name="test", url="http://example.com/mcp", header_provider=failing_provider)
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            with pytest.raises(TokenRefreshError):
+                await hooks[0](httpx.Request("POST", "http://example.com/mcp"))
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()  # type: ignore[union-attr]
+
+
 async def test_mcp_streamable_http_tool_header_provider_skips_cross_origin_redirect():
     """The request hook must not re-add caller headers after a cross-origin redirect."""
     import httpx
