@@ -6091,6 +6091,89 @@ async def test_mcp_streamable_http_tool_header_provider_ambient_request_tolerate
             await tool._httpx_client.aclose()  # type: ignore[union-attr]
 
 
+async def test_mcp_streamable_http_tool_header_provider_empty_active_call_skips_ambient_fallback():
+    """Regression test: an active call that yields no headers must not trigger the ambient fallback.
+
+    When header_provider legitimately returns {} for a real call_tool invocation, the empty dict
+    is a valid "set" value. The hook must treat it as set-but-empty (leave the request unchanged)
+    rather than as "unset", which would re-invoke header_provider({}) mid-call and inject headers
+    the caller deliberately omitted.
+    """
+    import httpx
+
+    from agent_framework._mcp import _mcp_call_headers
+
+    call_count = 0
+
+    def provider(kw: dict[str, Any]) -> dict[str, str]:
+        nonlocal call_count
+        call_count += 1
+        # Non-empty for ambient ({}), empty for the active call below.
+        return {} if kw.get("suppress") else {"Authorization": "******"}
+
+    tool = MCPStreamableHTTPTool(name="test", url="http://example.com/mcp", header_provider=provider)
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            # Simulate an active call whose provider returned {} (both ContextVar and snapshot set).
+            token = _mcp_call_headers.set({})
+            tool._active_call_headers = {}
+            try:
+                call_count = 0
+                request = httpx.Request("POST", "http://example.com/mcp")
+                await hooks[0](request)
+                assert "Authorization" not in request.headers
+                assert call_count == 0, "ambient fallback must not run during a set-but-empty call"
+            finally:
+                tool._active_call_headers = None
+                _mcp_call_headers.reset(token)
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()  # type: ignore[union-attr]
+
+
+async def test_mcp_streamable_http_tool_header_provider_ambient_error_warns_once(caplog):
+    """A kwargs-dependent provider must warn only once on repeated ambient requests.
+
+    Ambient requests (initialize/discovery plus recurring pings) each raise, so the full WARNING
+    with a traceback is emitted once per tool instance and subsequent occurrences drop to DEBUG.
+    """
+    import logging
+
+    import httpx
+
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda kw: {"Authorization": "Bearer " + kw["mcp_api_key"]},
+    )
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            with caplog.at_level(logging.WARNING, logger="agent_framework._mcp"):
+                for _ in range(3):
+                    await hooks[0](httpx.Request("POST", "http://example.com/mcp"))
+
+            warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+            assert len(warnings) == 1, "expected exactly one WARNING across repeated ambient requests"
+            assert tool._ambient_header_warning_emitted is True
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()  # type: ignore[union-attr]
+
+
 async def test_mcp_streamable_http_tool_header_provider_skips_cross_origin_redirect():
     """The request hook must not re-add caller headers after a cross-origin redirect."""
     import httpx

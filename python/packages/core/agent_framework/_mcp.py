@@ -3080,6 +3080,9 @@ class MCPStreamableHTTPTool(MCPTool):
         # otherwise overwrite each other's snapshot and attach the wrong per-call headers.
         self._active_call_headers: dict[str, str] | None = None
         self._call_headers_lock = asyncio.Lock()
+        # Guards the ambient-request warning (see get_mcp_client): a kwargs-dependent
+        # header_provider raises on every ambient request, so warn once then drop to DEBUG.
+        self._ambient_header_warning_emitted = False
 
     def _mcp_base_span_attributes(self) -> dict[str, Any]:
         attrs = super()._mcp_base_span_attributes()
@@ -3124,9 +3127,14 @@ class MCPStreamableHTTPTool(MCPTool):
                         return
                     # The transport may send this request from a task whose context was
                     # captured before call_tool set the ContextVar; fall back to the
-                    # instance-level snapshot of the active call's headers.
-                    headers = _mcp_call_headers.get({}) or self._active_call_headers
-                    if not headers:
+                    # instance-level snapshot of the active call's headers. Both are None
+                    # only when this is an ambient request outside call_tool; an active
+                    # call that legitimately produced no headers yields an empty dict and
+                    # must not trigger the ambient fallback below.
+                    headers = _mcp_call_headers.get(None)
+                    if headers is None:
+                        headers = self._active_call_headers
+                    if headers is None:
                         # Ambient request made outside call_tool (the initialize handshake,
                         # load_tools/load_prompts discovery, or background pings). Invoke the
                         # provider with empty kwargs so static providers can authenticate these
@@ -3136,14 +3144,26 @@ class MCPStreamableHTTPTool(MCPTool):
                         try:
                             headers = self._header_provider({})
                         except Exception:
-                            logger.warning(
-                                "header_provider raised for MCP server %r on an ambient request; "
-                                "proceeding without headers.",
-                                self.name,
-                                exc_info=True,
-                            )
+                            # A kwargs-dependent provider raises on every ambient request
+                            # (initialize, discovery, and recurring pings); warn once per
+                            # instance with a traceback and stay quiet at DEBUG afterwards.
+                            if not self._ambient_header_warning_emitted:
+                                self._ambient_header_warning_emitted = True
+                                logger.warning(
+                                    "header_provider raised for MCP server %r on an ambient request; "
+                                    "proceeding without headers.",
+                                    self.name,
+                                    exc_info=True,
+                                )
+                            else:
+                                logger.debug(
+                                    "header_provider raised again for MCP server %r on an ambient request; "
+                                    "proceeding without headers.",
+                                    self.name,
+                                    exc_info=True,
+                                )
                             headers = {}
-                    for key, value in (headers or {}).items():
+                    for key, value in headers.items():
                         request.headers[key] = value
 
                 self._inject_headers_hook = _inject_headers
