@@ -47,6 +47,8 @@ Before you begin, ensure you have the following prerequisites:
 |[Using compaction pipeline with an agent](./Agent_Step18_CompactionPipeline/)|This sample demonstrates how to use a compaction pipeline to efficiently limit the size of the conversation history for an agent.|
 |[In-function-loop checkpointing](./Agent_Step19_InFunctionLoopCheckpointing/)|This sample demonstrates how to persist chat history after each service call during a tool-calling loop, enabling crash recovery and mid-run observability.|
 |[Dynamic function tools](./Agent_Step20_DynamicFunctionTools/)|This sample demonstrates how to dynamically expand the set of function tools available to an agent during a function-calling loop using the ambient FunctionInvocationContext.|
+|[Shell tool with environment-aware prompt](./Agent_Step21_ShellWithEnvironment/)|This sample demonstrates using the shell tool in stateless and persistent modes paired with an AIContextProvider that injects environment-aware system prompt instructions.|
+|[Multi-model routing](./Agent_Step22_MultiModelRouting/)|This sample demonstrates how to back a single agent with multiple chat clients that use different models via RoutingChatClient, switching the active model at runtime.|
 
 ## Running the samples from the console
 
