@@ -8,12 +8,13 @@ This module provides ``RedisHistoryProvider``, built on the new
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from typing import Any, ClassVar
 
 import redis.asyncio as redis
 from agent_framework import Message
-from agent_framework._sessions import HistoryProvider
+from agent_framework._sessions import HistoryProvider, MessageIdentity, get_message_identity
 from redis.credentials import CredentialProvider
 
 
@@ -152,7 +153,19 @@ class RedisHistoryProvider(HistoryProvider):
             return
 
         key = self._redis_key(session_id)
-        serialized_messages = [self._serialize_json(msg) for msg in messages]
+        existing_message = await self.get_messages(session_id, state=state, **kwargs)
+        existing_identities: set[MessageIdentity] = {get_message_identity(m) for m in existing_message}
+        new_messages = []
+        for msg in messages:
+            identity = get_message_identity(msg)
+            if identity not in existing_identities:
+                existing_identities.add(identity)
+                new_messages.append(msg)
+
+        if not new_messages:
+            return
+
+        serialized_messages = [self._serialize_json(msg) for msg in new_messages]
 
         async with self._redis_client.pipeline(transaction=True) as pipe:
             for serialized in serialized_messages:
@@ -167,15 +180,11 @@ class RedisHistoryProvider(HistoryProvider):
     @staticmethod
     def _serialize_json(message: Message) -> str:
         """Serialize a Message to a JSON string for Redis storage."""
-        import json
-
         return json.dumps(message.to_dict())
 
     @staticmethod
     def _deserialize_json(data: str) -> dict[str, Any]:
         """Deserialize a JSON string from Redis to a dict."""
-        import json
-
         return json.loads(data)
 
     async def clear(self, session_id: str | None) -> None:

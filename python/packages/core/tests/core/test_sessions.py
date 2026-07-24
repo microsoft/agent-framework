@@ -6,7 +6,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -26,6 +26,9 @@ from agent_framework import (
 )
 from agent_framework._sessions import LOCAL_HISTORY_CONVERSATION_ID, is_local_history_conversation_id
 from agent_framework.exceptions import MiddlewareException
+
+if TYPE_CHECKING:
+    from agent_framework._agents import SupportsAgentRun
 
 # ---------------------------------------------------------------------------
 # SessionContext tests
@@ -669,6 +672,97 @@ class TestInMemoryHistoryProvider:
         ctx.extend_messages("custom-source", [Message(role="user", contents=["test"])])
         assert "custom-source" in ctx.context_messages
 
+    async def test_save_messages_deduplicates_identical_messages(self) -> None:
+        """Test that save_messages does not re-append messages already in the store."""
+        provider = InMemoryHistoryProvider()
+        state: dict[str, Any] = {}
+
+        msg1 = Message(role="user", contents=["hello"])
+        msg2 = Message(role="assistant", contents=["hi there"])
+
+        await provider.save_messages("s1", [msg1, msg2], state=state)
+        assert len(state["messages"]) == 2
+
+        await provider.save_messages("s1", [msg1, msg2], state=state)
+        assert len(state["messages"]) == 2
+
+    async def test_save_messages_only_appends_new_messages(self) -> None:
+        """Test that save_messages filters out old messages and only appends new ones"""
+        provider = InMemoryHistoryProvider()
+        state: dict[str, Any] = {}
+
+        msg1 = Message(role="user", contents=["hello"])
+        msg2 = Message(role="assistant", contents=["hi there"])
+        msg3 = Message(role="user", contents=["how are you?"])
+
+        await provider.save_messages("s1", [msg1, msg2], state=state)
+        assert len(state["messages"]) == 2
+
+        await provider.save_messages("s1", [msg1, msg2, msg3], state=state)
+        assert len(state["messages"]) == 3
+        assert state["messages"][2].text == "how are you?"
+
+    async def test_save_messages_different_roles_same_text_not_deduplicated(self) -> None:
+        """Test that messages with the same text but different roles are kept separate."""
+        provider = InMemoryHistoryProvider()
+        state: dict[str, Any] = {}
+
+        msg1 = Message(role="user", contents=["ping"])
+        msg2 = Message(role="assistant", contents=["ping"])
+
+        await provider.save_messages("s1", [msg1, msg2], state=state)
+        assert len(state["messages"]) == 2
+
+    async def test_save_messages_deduplication_with_none_state(self) -> None:
+        """Test that save_messages with None state does not raise."""
+        provider = InMemoryHistoryProvider()
+        msg = Message(role="user", contents=["hello"])
+        await provider.save_messages("s1", [msg], state=None)
+
+    async def test_full_loop_does_not_grow_superlinearly(self) -> None:
+        """Regression test: a multi-round looped run must not re-persist the whole
+        conversation on every round."""
+        from agent_framework import AgentResponse
+
+        provider = InMemoryHistoryProvider()
+        session = AgentSession()
+        provider_state = session.state.setdefault(provider.source_id, {})
+        ctx1 = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["turn 1"])])
+
+        await provider.before_run(
+            agent=cast("SupportsAgentRun", None),
+            session=session,
+            context=ctx1,
+            state=provider_state,
+        )
+        ctx1._response = AgentResponse(messages=[Message(role="assistant", contents=["reply 1"])])
+        await provider.after_run(
+            agent=cast("SupportsAgentRun", None),
+            session=session,
+            context=ctx1,
+            state=provider_state,
+        )
+
+        ctx2 = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["turn 2"])])
+        await provider.before_run(
+            agent=cast("SupportsAgentRun", None),
+            session=session,
+            context=ctx2,
+            state=provider_state,
+        )
+        ctx2._response = AgentResponse(messages=[Message(role="assistant", contents=["reply 2"])])
+        await provider.after_run(
+            agent=cast("SupportsAgentRun", None),
+            session=session,
+            context=ctx2,
+            state=provider_state,
+        )
+
+        stored = session.state[provider.source_id]["messages"]
+        assert len(stored) == 4
+        texts = [m.text for m in stored]
+        assert texts == ["turn 1", "reply 1", "turn 2", "reply 2"]
+
 
 class TestFileHistoryProvider:
     def test_is_marked_experimental(self) -> None:
@@ -882,3 +976,64 @@ class TestFileHistoryProvider:
         assert not overlap_detected
         loaded = await provider.get_messages(session_id)
         assert [message.text for message in loaded] == ["first", "second"]
+
+    async def test_save_messages_deduplicates_identical_messages(self, tmp_path: Path) -> None:
+        """Test that FileHistoryProvider does not re-append already persisted messages."""
+        provider = FileHistoryProvider(tmp_path)
+
+        msg1 = Message(role="user", contents=["hello"])
+        msg2 = Message(role="assistant", contents=["hi there"])
+
+        await provider.save_messages("s1", [msg1, msg2])
+        loaded = await provider.get_messages("s1")
+        assert len(loaded) == 2
+
+        await provider.save_messages("s1", [msg1, msg2])
+        loaded = await provider.get_messages("s1")
+        assert len(loaded) == 2
+
+    async def test_save_messages_only_appends_new_messages(self, tmp_path: Path) -> None:
+        """Test that FileHistoryProvider filters out old messages and only appends new ones"""
+        provider = FileHistoryProvider(tmp_path)
+
+        msg1 = Message(role="user", contents=["hello"])
+        msg2 = Message(role="assistant", contents=["hi there"])
+        msg3 = Message(role="user", contents=["how are you?"])
+
+        await provider.save_messages("s1", [msg1, msg2])
+        loaded = await provider.get_messages("s1")
+        assert len(loaded) == 2
+
+        await provider.save_messages("s1", [msg1, msg2, msg3])
+        loaded = await provider.get_messages("s1")
+        assert len(loaded) == 3
+        assert loaded[2].text == "how are you?"
+
+    async def test_save_messages_different_roles_same_text_not_deduplicated(self, tmp_path: Path) -> None:
+        """Test that messages with the same text but different roles are kept separate."""
+        provider = FileHistoryProvider(tmp_path)
+
+        msg1 = Message(role="user", contents=["ping"])
+        msg2 = Message(role="assistant", contents=["ping"])
+
+        await provider.save_messages("s1", [msg1, msg2])
+        loaded = await provider.get_messages("s1")
+        assert len(loaded) == 2
+
+    async def test_deduplication_file_integrity(self, tmp_path: Path) -> None:
+        """Test that deduplication writes the correct number of lines to the JSONL file."""
+        provider = FileHistoryProvider(tmp_path)
+
+        msg1 = Message(role="user", contents=["hello"])
+        msg2 = Message(role="assistant", contents=["hi there"])
+        msg3 = Message(role="user", contents=["follow-up"])
+
+        await provider.save_messages("s1", [msg1, msg2])
+
+        session_file = provider._session_file_path("s1")
+        raw_lines = (await asyncio.to_thread(session_file.read_text, encoding="utf-8")).splitlines()
+        assert len(raw_lines) == 2
+
+        await provider.save_messages("s1", [msg1, msg2, msg3])
+        raw_lines = (await asyncio.to_thread(session_file.read_text, encoding="utf-8")).splitlines()
+        assert len(raw_lines) == 3

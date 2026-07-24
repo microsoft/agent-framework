@@ -56,6 +56,7 @@ _MESSAGE_INJECTION_LOCK = threading.Lock()
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
 ServiceSessionId: TypeAlias = Mapping[str, Any]
+MessageIdentity: TypeAlias = tuple[str, ...]
 
 
 def _default_json_dumps(value: Any) -> str:
@@ -75,6 +76,26 @@ def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[s
             seen_origin_session_ids.add(origin_session_id)
             unique_origin_session_ids.append(origin_session_id)
     return unique_origin_session_ids
+
+
+def get_message_identity(message: Message) -> MessageIdentity:
+    """Return a stable identity for a message for deduplication.
+
+    Uses the message's ID if available, otherwise falls back to a hash of
+    its role and serialized contents to prevent duplicate persistence.
+    """
+    msg_id = getattr(message, "message_id", None)
+    if msg_id is None:
+        msg_id = getattr(message, "id", None)
+    if msg_id is not None:
+        return ("id", str(msg_id))
+
+    try:
+        contents_data = [c.to_dict() for c in message.contents] if message.contents else []
+        serialized = json.dumps(contents_data, sort_keys=True, ensure_ascii=False)
+        return ("content", str(message.role), serialized)
+    except Exception:
+        return ("content", str(message.role), str(message.contents))
 
 
 def _is_middleware_sequence(
@@ -1115,7 +1136,14 @@ class InMemoryHistoryProvider(HistoryProvider):
         if state is None:
             return
         existing = state.get("messages", [])
-        state["messages"] = [*existing, *messages]
+        existing_id = {id(m) for m in existing}
+        new_messages = []
+        for msg in messages:
+            if id(msg) not in existing_id:
+                existing_id.add(id(msg))
+                new_messages.append(msg)
+        if new_messages:
+            state["messages"] = [*existing, *new_messages]
 
 
 @experimental(feature_id=ExperimentalFeature.FILE_HISTORY)
@@ -1291,9 +1319,27 @@ class FileHistoryProvider(HistoryProvider):
         file_lock = self._session_write_lock(file_path)
 
         def _append_messages() -> None:
-            with file_lock, file_path.open("a", encoding="utf-8") as file_handle:
-                for message in messages:
-                    file_handle.write(f"{self._serialize_message(message)}\n")
+            with file_lock:
+                existing_identities: set[MessageIdentity] = set()
+                if file_path.exists():
+                    with file_path.open("r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                payload = self.loads(line)
+                                msg = Message.from_dict(dict(cast(Mapping[str, Any], payload)))
+                                existing_identities.add(get_message_identity(msg))
+                            except Exception:
+                                logger.debug("failed to parse history line for deduplication")
+                                continue
+                with file_path.open("a", encoding="utf-8") as file_handle:
+                    for message in messages:
+                        identity = get_message_identity(message)
+                        if identity not in existing_identities:
+                            existing_identities.add(identity)
+                            file_handle.write(f"{self._serialize_message(message)}\n")
 
         async with async_lock:
             await asyncio.to_thread(_append_messages)
