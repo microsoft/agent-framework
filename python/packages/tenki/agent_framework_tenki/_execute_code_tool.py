@@ -293,15 +293,22 @@ class TenkiExecuteCodeTool(FunctionTool):
         # explicit-arg-wins semantics above. ``TENKI_PROJECT_ID`` and
         # ``TENKI_WORKSPACE_ID`` are **not** read by the SDK — this module
         # owns them.
-        api_key = self._api_key if self._api_key is not None else os.environ.get("TENKI_API_KEY")
+        #
+        # Env vars set to the empty string are treated as unset (``or None``):
+        # CI systems expand unconfigured secrets/vars to "" (e.g. GitHub Actions
+        # ``${{ vars.TENKI_PROJECT_ID }}``), and forwarding ``project_id=""`` to
+        # the SDK fails in non-obvious ways.
+        api_key = self._api_key if self._api_key is not None else (os.environ.get("TENKI_API_KEY") or None)
         if api_key is not None:
             kwargs["auth_token"] = api_key
         if self._image is not None:
             kwargs["image"] = self._image
-        project_id = self._project_id if self._project_id is not None else os.environ.get("TENKI_PROJECT_ID")
+        project_id = self._project_id if self._project_id is not None else (os.environ.get("TENKI_PROJECT_ID") or None)
         if project_id is not None:
             kwargs["project_id"] = project_id
-        workspace_id = self._workspace_id if self._workspace_id is not None else os.environ.get("TENKI_WORKSPACE_ID")
+        workspace_id = (
+            self._workspace_id if self._workspace_id is not None else (os.environ.get("TENKI_WORKSPACE_ID") or None)
+        )
         if workspace_id is not None:
             kwargs["workspace_id"] = workspace_id
         if self._cpu_cores is not None:

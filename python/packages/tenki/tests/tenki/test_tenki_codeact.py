@@ -349,6 +349,21 @@ async def test_env_workspace_id_is_forwarded_when_unset(
     assert fake_sdk.create_calls[0]["workspace_id"] == "ws-from-env"
 
 
+async def test_empty_string_env_vars_are_treated_as_unset(
+    fake_sdk: _FakeSandboxFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CI systems expand unconfigured secrets/vars to "" — never forward those."""
+    monkeypatch.setenv("TENKI_API_KEY", "")
+    monkeypatch.setenv("TENKI_PROJECT_ID", "")
+    monkeypatch.setenv("TENKI_WORKSPACE_ID", "")
+    tool = TenkiExecuteCodeTool(sandbox_name="empty-env")
+    await _invoke(tool, "pass")
+    call = fake_sdk.create_calls[0]
+    assert "auth_token" not in call
+    assert "project_id" not in call
+    assert "workspace_id" not in call
+
+
 async def test_constructor_project_id_wins_over_env(
     fake_sdk: _FakeSandboxFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1350,7 +1365,9 @@ skip_if_tenki_integration_disabled = pytest.mark.skipif(
 @pytest.mark.flaky(reruns=2, reruns_delay=5)
 @skip_if_tenki_integration_disabled
 async def test_integration_execute_hello_world() -> None:
-    project_id = os.environ.get("TENKI_PROJECT_ID")
+    # "or None": CI expands an unconfigured ``vars.TENKI_PROJECT_ID`` to "", and an
+    # explicit empty-string constructor arg would win over the env fallback.
+    project_id = os.environ.get("TENKI_PROJECT_ID") or None
     async with TenkiExecuteCodeTool(
         sandbox_name=f"agent-framework-ci-{os.getpid()}",
         project_id=project_id,
@@ -1366,7 +1383,9 @@ async def test_integration_execute_hello_world() -> None:
 @skip_if_tenki_integration_disabled
 async def test_integration_filesystem_persists_across_calls() -> None:
     """Files written in one ``execute_code`` call are visible in the next."""
-    project_id = os.environ.get("TENKI_PROJECT_ID")
+    # "or None": CI expands an unconfigured ``vars.TENKI_PROJECT_ID`` to "", and an
+    # explicit empty-string constructor arg would win over the env fallback.
+    project_id = os.environ.get("TENKI_PROJECT_ID") or None
     async with TenkiExecuteCodeTool(
         sandbox_name=f"agent-framework-ci-fs-{os.getpid()}",
         project_id=project_id,
@@ -1385,7 +1404,9 @@ async def test_integration_filesystem_persists_across_calls() -> None:
 @skip_if_tenki_integration_disabled
 async def test_integration_failure_diagnostics_carry_signal_and_exit_code() -> None:
     """A killed subprocess must surface ``signal``/``exit_code`` in the error content."""
-    project_id = os.environ.get("TENKI_PROJECT_ID")
+    # "or None": CI expands an unconfigured ``vars.TENKI_PROJECT_ID`` to "", and an
+    # explicit empty-string constructor arg would win over the env fallback.
+    project_id = os.environ.get("TENKI_PROJECT_ID") or None
     async with TenkiExecuteCodeTool(
         sandbox_name=f"agent-framework-ci-fail-{os.getpid()}",
         project_id=project_id,
@@ -1412,7 +1433,9 @@ async def test_integration_close_removes_sandbox_from_workspace() -> None:
     """
     from tenki_sandbox import Client
 
-    project_id = os.environ.get("TENKI_PROJECT_ID")
+    # "or None": CI expands an unconfigured ``vars.TENKI_PROJECT_ID`` to "", and an
+    # explicit empty-string constructor arg would win over the env fallback.
+    project_id = os.environ.get("TENKI_PROJECT_ID") or None
     unique_name = f"agent-framework-ci-teardown-{os.getpid()}"
 
     async with TenkiExecuteCodeTool(
