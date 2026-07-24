@@ -67,6 +67,7 @@ from ._run_common import (
     _resume_contract_error,  # type: ignore
     _resolve_ui_payload,  # type: ignore
     _stringify_tool_result,  # type: ignore
+    _track_tool_call_segment,  # type: ignore
 )
 from ._snapshots import (
     _DEFAULT_STATE_INPUT_KEY,
@@ -1529,12 +1530,71 @@ def _merge_resolved_approval_results_into_snapshot(
     snapshot_messages[:] = merged_messages
 
 
+def _append_segmented_snapshot_messages(flow: FlowState, all_messages: list[dict[str, Any]]) -> None:
+    """Append this turn's messages in the order the model emitted them.
+
+    Segments tracked during streaming record whether text came before or after
+    tool calls (issue #7223); tool results still follow the tool-call message
+    they answer. Anything not covered by segment tracking falls back to the
+    legacy grouping so no content is dropped.
+    """
+    text_message_ids = {segment["id"] for segment in flow.snapshot_segments if segment["kind"] == "text"}
+    # A tool-only opening message (TextMessageStart with no text segment) lets
+    # the first tool-call message reuse the streamed message id, matching the
+    # legacy layout; every other tool message gets a fresh id.
+    tool_open_id = flow.message_id if flow.message_id and flow.message_id not in text_message_ids else None
+    emitted_call_ids: set[str] = set()
+
+    for segment in flow.snapshot_segments:
+        kind = segment["kind"]
+        if kind == "text":
+            if segment["text"]:
+                all_messages.append({"id": segment["id"], "role": "assistant", "content": segment["text"]})
+        elif kind == "tool_calls":
+            calls = [
+                flow.tool_calls_by_id[call_id] for call_id in segment["call_ids"] if call_id in flow.tool_calls_by_id
+            ]
+            if not calls:
+                continue
+            message_id = tool_open_id or generate_event_id()
+            tool_open_id = None
+            all_messages.append({"id": message_id, "role": "assistant", "tool_calls": [call.copy() for call in calls]})
+            # Only mark the calls we actually emitted; a stale segment id that
+            # never made it into tool_calls_by_id must stay eligible for the
+            # leftover path below rather than vanishing silently.
+            emitted_ids = {call["id"] for call in calls}
+            emitted_call_ids.update(emitted_ids)
+            all_messages.extend(result for result in flow.tool_results if result.get("toolCallId") in emitted_ids)
+        elif kind == "reasoning":
+            all_messages.extend(entry for entry in flow.reasoning_messages if entry.get("id") == segment["id"])
+
+    leftover_calls = [tc for tc in flow.pending_tool_calls if tc.get("id") not in emitted_call_ids]
+    if leftover_calls:
+        leftover_ids = {cid for call in leftover_calls if (cid := call.get("id")) is not None}
+        all_messages.append(
+            {
+                "id": tool_open_id or generate_event_id(),
+                "role": "assistant",
+                "tool_calls": [call.copy() for call in leftover_calls],
+            }
+        )
+        # Their results ride along too; without this they would be marked
+        # emitted above and then excluded from the final append below.
+        all_messages.extend(result for result in flow.tool_results if result.get("toolCallId") in leftover_ids)
+        emitted_call_ids.update(leftover_ids)
+    all_messages.extend(result for result in flow.tool_results if result.get("toolCallId") not in emitted_call_ids)
+
+
 def _build_messages_snapshot(
     flow: FlowState,
     snapshot_messages: list[dict[str, Any]],
 ) -> MessagesSnapshotEvent:
     """Build MessagesSnapshotEvent from current flow state."""
     all_messages = list(snapshot_messages)
+
+    if flow.snapshot_segments:
+        _append_segmented_snapshot_messages(flow, all_messages)
+        return MessagesSnapshotEvent(messages=all_messages)  # type: ignore[arg-type]
 
     # Add assistant message with tool calls only (no content)
     if flow.pending_tool_calls:
@@ -2239,6 +2299,7 @@ async def run_agent_stream(
                         flow.pending_tool_calls.append(confirm_entry)
                         flow.tool_calls_by_id[confirm_id] = confirm_entry
                         flow.tool_calls_ended.add(confirm_id)  # Mark as ended since we emit End event
+                        _track_tool_call_segment(flow, confirm_id)
                         flow.waiting_for_approval = True
                         flow.interrupts.append(
                             _approval_interrupt_for_function_call(
