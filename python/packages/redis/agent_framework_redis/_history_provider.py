@@ -14,7 +14,7 @@ from typing import Any, ClassVar
 
 import redis.asyncio as redis
 from agent_framework import Message
-from agent_framework._sessions import HistoryProvider, _get_message_identity
+from agent_framework._sessions import HistoryProvider, MessageIdentity, get_message_identity
 from redis.credentials import CredentialProvider
 
 
@@ -154,10 +154,10 @@ class RedisHistoryProvider(HistoryProvider):
 
         key = self._redis_key(session_id)
         existing_message = await self.get_messages(session_id, state=state, **kwargs)
-        existing_identities = {_get_message_identity(m) for m in existing_message}
+        existing_identities: set[MessageIdentity] = {get_message_identity(m) for m in existing_message}
         new_messages = []
         for msg in messages:
-            identity = _get_message_identity(msg)
+            identity = get_message_identity(msg)
             if identity not in existing_identities:
                 existing_identities.add(identity)
                 new_messages.append(msg)

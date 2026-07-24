@@ -6,7 +6,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -26,6 +26,9 @@ from agent_framework import (
 )
 from agent_framework._sessions import LOCAL_HISTORY_CONVERSATION_ID, is_local_history_conversation_id
 from agent_framework.exceptions import MiddlewareException
+
+if TYPE_CHECKING:
+    from agent_framework._agents import SupportsAgentRun
 
 # ---------------------------------------------------------------------------
 # SessionContext tests
@@ -724,16 +727,36 @@ class TestInMemoryHistoryProvider:
         provider = InMemoryHistoryProvider()
         session = AgentSession()
         provider_state = session.state.setdefault(provider.source_id, {})
-
         ctx1 = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["turn 1"])])
-        await provider.before_run(agent=None, session=session, context=ctx1, state=provider_state)  # type: ignore[arg-type]
+
+        await provider.before_run(
+            agent=cast("SupportsAgentRun", None),
+            session=session,
+            context=ctx1,
+            state=provider_state,
+        )
         ctx1._response = AgentResponse(messages=[Message(role="assistant", contents=["reply 1"])])
-        await provider.after_run(agent=None, session=session, context=ctx1, state=provider_state)  # type: ignore[arg-type]
+        await provider.after_run(
+            agent=cast("SupportsAgentRun", None),
+            session=session,
+            context=ctx1,
+            state=provider_state,
+        )
 
         ctx2 = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["turn 2"])])
-        await provider.before_run(agent=None, session=session, context=ctx2, state=provider_state)  # type: ignore[arg-type]
+        await provider.before_run(
+            agent=cast("SupportsAgentRun", None),
+            session=session,
+            context=ctx2,
+            state=provider_state,
+        )
         ctx2._response = AgentResponse(messages=[Message(role="assistant", contents=["reply 2"])])
-        await provider.after_run(agent=None, session=session, context=ctx2, state=provider_state)  # type: ignore[arg-type]
+        await provider.after_run(
+            agent=cast("SupportsAgentRun", None),
+            session=session,
+            context=ctx2,
+            state=provider_state,
+        )
 
         stored = session.state[provider.source_id]["messages"]
         assert len(stored) == 4
