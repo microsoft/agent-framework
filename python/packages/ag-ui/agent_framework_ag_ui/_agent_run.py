@@ -1434,9 +1434,6 @@ def _clean_resolved_approvals_from_snapshot(
                 )
                 result_by_call_id[str(content.call_id)] = result_text
 
-    if not result_by_call_id:
-        return
-
     for snap_msg in snapshot_messages:
         if normalize_agui_role(snap_msg.get("role", "")) != "tool":
             continue
@@ -1455,12 +1452,22 @@ def _clean_resolved_approvals_from_snapshot(
         # Find matching tool result by toolCallId
         tool_call_id = snap_msg.get("toolCallId") or snap_msg.get("tool_call_id") or ""
         replacement = result_by_call_id.get(str(tool_call_id))
-        if replacement is not None:
-            snap_msg["content"] = replacement
-            logger.info(
-                "Replaced approval payload in snapshot for tool_call_id=%s with actual result",
-                tool_call_id,
-            )
+        if replacement is None:
+            # For confirm_changes synthetic tool calls, tool_call_id is the confirm_id
+            # while result_by_call_id is keyed by the original tool call id.
+            if parsed.get("accepted"):
+                replacement = (
+                    "\n\n".join(result_by_call_id.values())
+                    if result_by_call_id
+                    else "Changes confirmed and applied successfully."
+                )
+            else:
+                replacement = "Changes declined."
+        snap_msg["content"] = replacement
+        logger.info(
+            "Replaced approval payload in snapshot for tool_call_id=%s with actual result",
+            tool_call_id,
+        )
 
 
 def _snapshot_tool_call_ids(message: Mapping[str, Any]) -> list[str]:
