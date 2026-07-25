@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterable, Awaitable, Sequence
 from typing import Any, Literal, TypedDict, overload
 
+import aiohttp
 from agent_framework import (
     AgentMiddlewareTypes,
     AgentResponse,
@@ -20,9 +21,38 @@ from agent_framework import (
 from agent_framework._settings import load_settings
 from agent_framework._types import AgentRunInputs
 from agent_framework.exceptions import AgentException
+from microsoft_agents.activity import Activity, ActivityTypes
 from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings, CopilotClient, PowerPlatformCloud
 
 from ._acquire_token import acquire_token
+
+
+async def _patched_post_request(
+    self: CopilotClient, url: str, data: dict[str, Any], headers: dict[str, Any]
+) -> AsyncIterable[Activity]:
+    async with aiohttp.ClientSession() as session, session.post(url, json=data, headers=headers) as response:
+        if response.status != 200:
+            raise aiohttp.ClientError(f"Error sending request: {response.status}")
+        event_type = None
+        buffer = b""
+        async for chunk in response.content.iter_any():
+            buffer += chunk
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                if line.startswith(b"event:"):
+                    event_type = line[6:].decode("utf-8").strip()
+                if line.startswith(b"data:") and event_type == "activity":
+                    activity_data = line[5:].decode("utf-8").strip()
+                    activity = Activity.model_validate_json(activity_data)
+
+                    if activity.type == ActivityTypes.message:
+                        self._current_conversation_id = activity.conversation.id  # pyright: ignore[reportPrivateUsage]
+
+                    yield activity
+
+
+# Monkeypatch CopilotClient to handle data lines larger than 512KB without LineTooLong errors.
+CopilotClient.post_request = _patched_post_request
 
 
 class CopilotStudioSettings(TypedDict, total=False):
