@@ -6,7 +6,10 @@ import pytest
 from aiohttp import web
 from microsoft_agents.activity import Activity
 from microsoft_agents.copilotstudio.client import ConnectionSettings, CopilotClient
-from agent_framework_copilotstudio import CopilotStudioAgent
+
+import agent_framework_copilotstudio  # noqa: F401
+
+# Side-effect import: applies CopilotClient.post_request monkeypatch.
 
 
 async def mock_server_handler(request: web.Request) -> web.StreamResponse:

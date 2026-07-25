@@ -32,7 +32,8 @@ async def _patched_post_request(
 ) -> AsyncIterable[Activity]:
     async with aiohttp.ClientSession() as session, session.post(url, json=data, headers=headers) as response:
         if response.status != 200:
-            raise aiohttp.ClientError(f"Error sending request: {response.status}")
+            detail = await response.text()
+            raise AgentException(f"Copilot Studio request to {url} failed ({response.status}): {detail}")
         event_type = None
         buffer = b""
         async for chunk in response.content.iter_any():
@@ -49,6 +50,18 @@ async def _patched_post_request(
                         self._current_conversation_id = activity.conversation.id  # pyright: ignore[reportPrivateUsage]
 
                     yield activity
+        if buffer:
+            line = buffer
+            if line.startswith(b"event:"):
+                event_type = line[6:].decode("utf-8").strip()
+            if line.startswith(b"data:") and event_type == "activity":
+                activity_data = line[5:].decode("utf-8").strip()
+                activity = Activity.model_validate_json(activity_data)
+
+                if activity.type == ActivityTypes.message:
+                    self._current_conversation_id = activity.conversation.id  # pyright: ignore[reportPrivateUsage]
+
+                yield activity
 
 
 # Monkeypatch CopilotClient to handle data lines larger than 512KB without LineTooLong errors.
