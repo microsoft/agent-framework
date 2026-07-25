@@ -5,21 +5,10 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
-using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.Extensions.AI;
 using OpenAI.Chat;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
-
-builder.Services.AddHttpLogging(logging =>
-{
-    logging.LoggingFields = HttpLoggingFields.RequestPropertiesAndHeaders | HttpLoggingFields.RequestBody
-        | HttpLoggingFields.ResponsePropertiesAndHeaders | HttpLoggingFields.ResponseBody;
-    logging.RequestBodyLogLimit = int.MaxValue;
-    logging.ResponseBodyLogLimit = int.MaxValue;
-});
-
-builder.Services.AddHttpClient().AddLogging();
 builder.Services.AddAGUIServer();
 
 // WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,
@@ -28,8 +17,6 @@ builder.Services.AddAGUIServer();
 // builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 
 WebApplication app = builder.Build();
-
-app.UseHttpLogging();
 
 string endpoint = builder.Configuration["AZURE_OPENAI_ENDPOINT"]
     ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
@@ -43,10 +30,12 @@ static string ApproveExpenseReport(string expenseReportId)
     return $"Expense report {expenseReportId} approved";
 }
 
-// Create approval-required tool
-#pragma warning disable MEAI001 // Type is for evaluation purposes only
-AITool[] tools = [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(ApproveExpenseReport))];
-#pragma warning restore MEAI001
+// Wrap the tool in ApprovalRequiredAIFunction so the run interrupts for approval before it executes.
+AITool[] tools =
+[
+    new ApprovalRequiredAIFunction(
+        AIFunctionFactory.Create(ApproveExpenseReport, name: "approve_expense_report"))
+];
 
 // Create base agent
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.

@@ -51,7 +51,7 @@ dotnet run --urls http://localhost:8888
 An interactive console client that connects to an AG-UI server. Demonstrates:
 
 - Creating an AG-UI client with `AGUIChatClient`
-- Managing conversation threads
+- Managing multi-turn conversations with an `AgentSession`
 - Streaming responses with `RunStreamingAsync`
 - Displaying colored console output for different content types
 - Supporting both interactive and automated modes
@@ -163,15 +163,15 @@ Try asking the agent to perform sensitive operations like "Approve expense repor
 
 ### Step05_StateManagement
 
-An AG-UI server and client that demonstrate state management with predictive updates.
+An AG-UI server and client that demonstrate shared state management.
 
 #### Server (`Step05_StateManagement/Server`)
 
 Demonstrates:
 
-- Defining state schemas using C# records
-- Using `SharedStateAgent` middleware for state management
-- Streaming predictive state updates with `AgentState` content
+- Exposing a `generate_recipe` tool that returns the complete recipe
+- Mapping the tool result to a `STATE_SNAPSHOT` event with `AGUIStreamOptions.MapResultAsStateSnapshot`
+- Reading the client's current recipe from `RunAgentInput.State`
 - Managing shared state between client and server
 - Using JSON serialization contexts for state types
 
@@ -206,7 +206,7 @@ dotnet run
 
 ### Client-Side
 
-1. `AGUIAgent` sends HTTP POST request to server
+1. `AGUIChatClient` sends HTTP POST request to server
 2. Server responds with SSE stream
 3. Client parses events into `AgentResponseUpdate` objects
 4. Updates are displayed based on content type
@@ -224,7 +224,7 @@ dotnet run
 
 `ConversationId` keeps request/response continuity. It is not proof that the caller owns that conversation. In multi-user deployments, authenticate each AG-UI request and authorize conversation access using your application's real boundary, such as the authenticated user, tenant, or workspace.
 
-If your ASP.NET Core host shares session storage across users, pair `MapAGUI` with an isolation strategy such as `UseClaimsBasedSessionIsolation(...)` so the storage key includes a principal-specific dimension instead of relying on the conversation identifier alone.
+If your ASP.NET Core host shares session storage across users, pair `MapAGUIServer` with an isolation strategy such as `UseClaimsBasedSessionIsolation(...)` so the storage key includes a principal-specific dimension instead of relying on the conversation identifier alone.
 
 ## Troubleshooting
 

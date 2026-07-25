@@ -11,7 +11,6 @@ using Microsoft.Extensions.Options;
 using OpenAI.Chat;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
-builder.Services.AddHttpClient().AddLogging();
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.TypeInfoResolverChain.Add(SampleJsonSerializerContext.Default));
 builder.Services.AddAGUIServer();

@@ -39,7 +39,6 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
     messages.Add(new ChatMessage(ChatRole.User, input));
     Console.WriteLine();
 
-#pragma warning disable MEAI001
     List<AIContent> approvalResponses = [];
 
     do
@@ -101,11 +100,10 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
         messages.AddRange(response.Messages);
         foreach (AIContent approvalResponse in approvalResponses)
         {
-            messages.Add(new ChatMessage(ChatRole.Tool, [approvalResponse]));
+            messages.Add(new ChatMessage(ChatRole.User, [approvalResponse]));
         }
     }
     while (approvalResponses.Count > 0);
-#pragma warning restore MEAI001
 
     Console.WriteLine("\n");
     Console.ForegroundColor = ConsoleColor.White;
@@ -113,7 +111,6 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
     Console.ResetColor();
 }
 
-#pragma warning disable MEAI001
 static void DisplayApprovalRequest(ToolApprovalRequestContent approvalRequest, FunctionCallContent fcc)
 {
     Console.ForegroundColor = ConsoleColor.Yellow;
@@ -135,4 +132,3 @@ static void DisplayApprovalRequest(ToolApprovalRequestContent approvalRequest, F
     Console.WriteLine("============================================================");
     Console.ResetColor();
 }
-#pragma warning restore MEAI001
