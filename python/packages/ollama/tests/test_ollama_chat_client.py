@@ -810,3 +810,52 @@ class TestParallelToolCallUniqueness:
         assert formatted[0].tool_name == "search:advanced", (
             f"Expected bare name 'search:advanced', got '{formatted[0].tool_name}'"
         )
+
+
+def test_prepare_options_excludes_unsupported_chat_options() -> None:
+    """Verify that unsupported ChatOptions fields are excluded from Ollama run_options even when non-None."""
+    client = OllamaChatClient(host="http://localhost:12345", model="test-model")
+    messages = [Message(role="user", contents=["hello"])]
+    options = {
+        "allow_multiple_tool_calls": False,
+        "user": "test-user-id",
+        "store": True,
+        "logit_bias": {"101": 1.5},
+        "metadata": {"session": "123"},
+        "tool_choice": "auto",
+        "instructions": "Be helpful.",
+    }
+
+    prepared = client._prepare_options(messages, options)
+
+    for unsupported_key in [
+        "allow_multiple_tool_calls",
+        "user",
+        "store",
+        "logit_bias",
+        "metadata",
+        "tool_choice",
+        "instructions",
+    ]:
+        assert unsupported_key not in prepared, f"Key {unsupported_key} should be excluded from run_options"
+
+
+@pytest.mark.asyncio
+async def test_get_response_with_unsupported_options(mock_chat_completion_response: OllamaChatResponse) -> None:
+    """Verify that get_response succeeds when options include unsupported fields."""
+    mock_client = MagicMock(spec=AsyncClient)
+    mock_client._client = MagicMock()
+    mock_client._client.base_url = "http://localhost:12345"
+    mock_client.chat = AsyncMock(return_value=mock_chat_completion_response)
+
+    client = OllamaChatClient(client=mock_client, model="test-model")
+    messages = [Message(role="user", contents=["hello"])]
+    options = {"allow_multiple_tool_calls": False, "user": "test-user"}
+
+    res = await client.get_response(messages=messages, options=options)
+    assert res is not None
+
+    mock_client.chat.assert_called_once()
+    _, kwargs = mock_client.chat.call_args
+    assert "allow_multiple_tool_calls" not in kwargs
+    assert "user" not in kwargs
