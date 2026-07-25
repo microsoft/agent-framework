@@ -105,10 +105,10 @@ from azure.ai.agentserver.responses.models import (
     TextContent,
 )
 from azure.ai.agentserver.responses.streaming._builders import (
+    OutputItemBuilder,
     OutputItemFunctionCallBuilder,
     OutputItemMcpCallBuilder,
     OutputItemMessageBuilder,
-    OutputItemReasoningItemBuilder,
     ReasoningSummaryPartBuilder,
     TextContentBuilder,
 )
@@ -334,7 +334,7 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
         # The error message is structured with the following format:
         # "tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {"errors":[{"name": ..."
         # where the second part is a JSON string that can be deserialized into an object with the following shape:
-        # ruff: disable[ERA001]
+        # ruff: disable[commented-out-code]
         # {
         #   "errors" : [
         #       {
@@ -347,7 +347,7 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
         #       }
         #   ]
         # }
-        # ruff: enable[ERA001]
+        # ruff: enable[commented-out-code]
         try:
             consent_errors: list[ConsentError] = []
             error_message_start = inner_exception.error.message.find("{")
@@ -860,8 +860,9 @@ class _OutputItemTracker:
         # Builder state — only one is active at a time
         self._message_item: OutputItemMessageBuilder | None = None
         self._text_content: TextContentBuilder | None = None
-        self._reasoning_item: OutputItemReasoningItemBuilder | None = None
+        self._reasoning_item: OutputItemBuilder | None = None
         self._summary_part: ReasoningSummaryPartBuilder | None = None
+        self._reasoning_encrypted_content: str | None = None
         self._fc_builder: OutputItemFunctionCallBuilder | None = None
         self._mcp_builder: OutputItemMcpCallBuilder | None = None
         self.needs_async = False
@@ -881,12 +882,15 @@ class _OutputItemTracker:
                 yield self._text_content.emit_delta(content.text)
 
         elif content.type == "text_reasoning":
-            if self._active_type != "text_reasoning":
+            if self._active_type != "text_reasoning" or (content.id is not None and content.id != self._active_id):
                 yield from self._close()
-                yield from self._open_reasoning()
-            self._accumulated.append(content.text or "")
-            if self._summary_part is not None:
-                yield self._summary_part.emit_text_delta(content.text or "")
+                yield from self._open_reasoning(content)
+            if encrypted_content := _reasoning_encrypted_content(content):
+                self._reasoning_encrypted_content = encrypted_content
+            if content.text:
+                self._accumulated.append(content.text)
+                if self._summary_part is not None:
+                    yield self._summary_part.emit_text_delta(content.text)
 
         elif content.type == "function_call" and content.call_id is not None:
             if self._active_type != "function_call" or self._active_id != content.call_id:
@@ -943,12 +947,28 @@ class _OutputItemTracker:
         yield self._message_item.emit_added()
         yield self._text_content.emit_added()
 
-    def _open_reasoning(self) -> Generator[ResponseStreamEvent]:
-        self._reasoning_item = self._stream.add_output_item_reasoning_item()
-        self._summary_part = self._reasoning_item.add_summary_part()
+    def _open_reasoning(self, content: Content) -> Generator[ResponseStreamEvent]:
+        item_id = content.id
+        if not item_id or not IdGenerator.is_valid(item_id)[0]:
+            item_id = IdGenerator.new_id("rs")
+        self._reasoning_item = self._stream.add_output_item(item_id)
+        self._summary_part = ReasoningSummaryPartBuilder(
+            self._stream,
+            self._reasoning_item.output_index,
+            0,
+            item_id,
+        )
+        self._reasoning_encrypted_content = _reasoning_encrypted_content(content)
         self._active_type = "text_reasoning"
-        self._active_id = None
-        yield self._reasoning_item.emit_added()
+        self._active_id = item_id
+        yield self._reasoning_item.emit_added(
+            _reasoning_output_item(
+                item_id=item_id,
+                summary_texts=[],
+                encrypted_content=None,
+                status="in_progress",
+            )
+        )
         yield self._summary_part.emit_added()
 
     def _open_function_call(self, content: Content) -> Generator[ResponseStreamEvent]:
@@ -983,9 +1003,17 @@ class _OutputItemTracker:
         elif self._active_type == "text_reasoning" and self._summary_part and self._reasoning_item:
             yield self._summary_part.emit_text_done(accumulated)
             yield self._summary_part.emit_done()
-            yield self._reasoning_item.emit_done()
+            yield self._reasoning_item.emit_done(
+                _reasoning_output_item(
+                    item_id=self._reasoning_item.item_id,
+                    summary_texts=[accumulated],
+                    encrypted_content=self._reasoning_encrypted_content,
+                    status="completed",
+                )
+            )
             self._summary_part = None
             self._reasoning_item = None
+            self._reasoning_encrypted_content = None
 
         elif self._active_type == "function_call" and self._fc_builder:
             yield self._fc_builder.emit_arguments_done(accumulated)
@@ -1064,6 +1092,21 @@ async def _items_to_messages(
     return messages
 
 
+def _reasoning_item_to_contents(reasoning: ItemReasoningItem | OutputItemReasoningItem) -> list[Content]:
+    """Convert a hosted reasoning item without losing its stateless replay metadata."""
+    encrypted_content = getattr(reasoning, "encrypted_content", None)
+    if reasoning.summary:
+        return [
+            Content.from_text_reasoning(
+                id=reasoning.id,
+                text=summary.text,
+                protected_data=encrypted_content if index == 0 else None,
+            )
+            for index, summary in enumerate(reasoning.summary)
+        ]
+    return [Content.from_text_reasoning(id=reasoning.id, protected_data=encrypted_content)]
+
+
 async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | None = None) -> Message:
     """Converts an Item to a Message.
 
@@ -1113,13 +1156,7 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
 
     if item.type == "reasoning":
         reasoning = cast(ItemReasoningItem, item)
-        reason_contents: list[Content] = []
-        if reasoning.summary:
-            for summary in reasoning.summary:
-                reason_contents.append(Content.from_text_reasoning(id=reasoning.id, text=summary.text))
-        else:
-            reason_contents.append(Content.from_text_reasoning(id=reasoning.id))
-        return Message(role="assistant", contents=reason_contents)
+        return Message(role="assistant", contents=_reasoning_item_to_contents(reasoning))
 
     if item.type == "mcp_call":
         mcp = cast(ItemMcpToolCall, item)
@@ -1404,13 +1441,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
 
     if item.type == "reasoning":
         reasoning = cast(OutputItemReasoningItem, item)
-        contents: list[Content] = []
-        if reasoning.summary:
-            for summary in reasoning.summary:
-                contents.append(Content.from_text_reasoning(id=reasoning.id, text=summary.text))
-        else:
-            contents.append(Content.from_text_reasoning(id=reasoning.id))
-        return Message(role="assistant", contents=contents)
+        return Message(role="assistant", contents=_reasoning_item_to_contents(reasoning))
 
     if item.type == "mcp_call":
         mcp = cast(OutputItemMcpToolCall, item)
@@ -1768,6 +1799,68 @@ def _arguments_to_str(arguments: Any | None) -> str:
     return json.dumps(arguments, default=_argument_json_default)
 
 
+def _reasoning_encrypted_content(content: Content) -> str | None:
+    """Return the opaque reasoning payload used for stateless replay."""
+    encrypted_content = content.protected_data or content.additional_properties.get("encrypted_content")
+    return encrypted_content if isinstance(encrypted_content, str) else None
+
+
+def _reasoning_output_item(
+    *,
+    item_id: str,
+    summary_texts: Sequence[str],
+    encrypted_content: str | None,
+    status: Literal["in_progress", "completed"],
+) -> OutputItemReasoningItem:
+    """Build a hosted reasoning item while retaining provider replay metadata."""
+    return OutputItemReasoningItem({
+        "type": "reasoning",
+        "id": item_id,
+        "summary": [{"type": "summary_text", "text": text} for text in summary_texts],
+        "encrypted_content": encrypted_content,
+        "status": status,
+    })
+
+
+def _emit_reasoning_output(
+    stream: ResponseEventStream,
+    contents: Sequence[Content],
+) -> Generator[ResponseStreamEvent]:
+    """Emit one reasoning output item for contents sharing a provider reasoning ID."""
+    first = contents[0]
+    item_id = first.id
+    if not item_id or not IdGenerator.is_valid(item_id)[0]:
+        item_id = IdGenerator.new_id("rs")
+    summary_texts = [content.text or "" for content in contents]
+    encrypted_content = next(
+        (value for content in contents if (value := _reasoning_encrypted_content(content))),
+        None,
+    )
+    builder = stream.add_output_item(item_id)
+    yield builder.emit_added(
+        _reasoning_output_item(
+            item_id=item_id,
+            summary_texts=[],
+            encrypted_content=None,
+            status="in_progress",
+        )
+    )
+    for summary_index, summary_text in enumerate(summary_texts):
+        summary_part = ReasoningSummaryPartBuilder(stream, builder.output_index, summary_index, item_id)
+        yield summary_part.emit_added()
+        yield summary_part.emit_text_delta(summary_text)
+        yield summary_part.emit_text_done(summary_text)
+        yield summary_part.emit_done()
+    yield builder.emit_done(
+        _reasoning_output_item(
+            item_id=item_id,
+            summary_texts=summary_texts,
+            encrypted_content=encrypted_content,
+            status="completed",
+        )
+    )
+
+
 async def _to_outputs(
     stream: ResponseEventStream,
     content: Content,
@@ -1791,7 +1884,7 @@ async def _to_outputs(
         async for event in stream.aoutput_item_message(content.text):
             yield event
     elif content.type == "text_reasoning":
-        async for event in stream.aoutput_item_reasoning_item(content.text or ""):
+        for event in _emit_reasoning_output(stream, [content]):
             yield event
     elif content.type == "function_call":
         async for event in stream.aoutput_item_function_call(
@@ -1943,10 +2036,20 @@ async def _to_outputs_for_messages(
       call/result content are encountered, or
     - standard output items for all other content types.
     """
+    pending_reasoning: list[Content] = []
     pending_mcp_call: Content | None = None
 
     for message in messages:
         for content in message.contents:
+            if pending_reasoning:
+                reasoning_id = pending_reasoning[0].id
+                if content.type == "text_reasoning" and reasoning_id is not None and content.id == reasoning_id:
+                    pending_reasoning.append(content)
+                    continue
+                for event in _emit_reasoning_output(stream, pending_reasoning):
+                    yield event
+                pending_reasoning.clear()
+
             if pending_mcp_call is not None:
                 if content.type == "mcp_server_tool_result" and content.call_id == pending_mcp_call.call_id:
                     for event in _emit_completed_mcp_call(
@@ -1963,12 +2066,20 @@ async def _to_outputs_for_messages(
                     yield event
                 pending_mcp_call = None
 
+            if content.type == "text_reasoning":
+                pending_reasoning.append(content)
+                continue
+
             if content.type == "mcp_server_tool_call" and content.call_id:
                 pending_mcp_call = content
                 continue
 
             async for event in _to_outputs(stream, content, approval_storage=approval_storage):
                 yield event
+
+    if pending_reasoning:
+        for event in _emit_reasoning_output(stream, pending_reasoning):
+            yield event
 
     if pending_mcp_call is not None:
         async for event in _to_outputs(stream, pending_mcp_call, approval_storage=approval_storage):

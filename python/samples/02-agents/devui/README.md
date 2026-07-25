@@ -88,6 +88,9 @@ workflow_name/
 | ------ | -------------------- | -------------------- |
 | [**agent_weather/**](agent_weather/) | A richer Foundry-backed weather agent that shows chat middleware, function middleware, tool calling, and an approval-required tool alongside auto-approved tools. | `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, plus Azure CLI auth via `az login` |
 | [**agent_foundry/**](agent_foundry/) | A minimal Foundry-backed weather agent with current weather and forecast tools. Use this when you want the smallest possible directory-discovered agent sample. | `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, plus Azure CLI auth via `az login` |
+| [**agent_content_understanding/**](agent_content_understanding/) | Upload and analyze documents, images, audio, and video with Azure Content Understanding. | `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, `AZURE_CONTENTUNDERSTANDING_ENDPOINT`, plus Azure CLI auth via `az login` |
+| [**agent_content_understanding_file_search_azure_openai/**](agent_content_understanding_file_search_azure_openai/) | Combine Azure Content Understanding extraction with Azure OpenAI vector-store file search. | `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, `AZURE_CONTENTUNDERSTANDING_ENDPOINT`, plus Azure CLI auth via `az login` |
+| [**agent_content_understanding_file_search_foundry/**](agent_content_understanding_file_search_foundry/) | Combine Azure Content Understanding extraction with Foundry vector-store file search. | `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, `AZURE_CONTENTUNDERSTANDING_ENDPOINT`, plus Azure CLI auth via `az login` |
 
 ### Workflows
 

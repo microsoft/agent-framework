@@ -35,6 +35,14 @@ agents, as this is a preview feature in Foundry.
 """
 
 
+def get_hosted_session_agents(project_client: AIProjectClient) -> Any:
+    """Return the hosted-session operations for azure-ai-projects 2.2 or 2.3."""
+    session_agents = cast(Any, project_client.agents)
+    if hasattr(session_agents, "create_session"):
+        return session_agents
+    return cast(Any, project_client.beta.agents)
+
+
 async def create_hosted_agent_session(
     *,
     agent: FoundryAgent,
@@ -62,7 +70,7 @@ async def create_hosted_agent_session(
         resolved_agent_version = latest_version
 
     create_session_kwargs["version_indicator"] = VersionRefIndicator(agent_version=resolved_agent_version)
-    service_session = await project_client.beta.agents.create_session(**create_session_kwargs)
+    service_session = await get_hosted_session_agents(project_client).create_session(**create_session_kwargs)
     agent_session_id = getattr(service_session, "agent_session_id", None)
     if not isinstance(agent_session_id, str) or not agent_session_id:
         raise ValueError("Hosted agent session creation did not return a non-empty agent_session_id.")
@@ -125,7 +133,7 @@ async def main() -> None:
                     print(chunk.text, end="", flush=True)
         finally:
             if isinstance(session.service_session_id, str):
-                await project_client.beta.agents.delete_session(
+                await get_hosted_session_agents(project_client).delete_session(
                     agent_name=agent_name,
                     session_id=session.service_session_id,
                     isolation_key=isolation_key,

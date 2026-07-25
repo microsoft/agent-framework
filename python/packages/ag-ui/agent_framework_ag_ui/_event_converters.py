@@ -246,7 +246,6 @@ class AGUIEventConverter:
 
         return ChatResponseUpdate(
             role="assistant",
-            finish_reason="content_filter",
             contents=[
                 Content.from_error(
                     message=error_message,

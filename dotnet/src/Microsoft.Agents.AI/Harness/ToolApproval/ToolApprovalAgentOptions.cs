@@ -2,18 +2,14 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Options for configuring the <see cref="ToolApprovalAgent"/> middleware.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public class ToolApprovalAgentOptions
 {
     /// <summary>
@@ -31,8 +27,9 @@ public class ToolApprovalAgentOptions
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Each function receives a <see cref="FunctionCallContent"/> representing the tool call that requires approval
-    /// and returns a <see cref="ValueTask{Boolean}"/> that resolves to <see langword="true"/> to auto-approve
+    /// Each function receives a <see cref="ToolAutoApprovalRuleContext"/> describing the tool call that requires
+    /// approval (via <see cref="ToolAutoApprovalRuleContext.FunctionCallContent"/>) along with the surrounding run
+    /// context, and returns a <see cref="ValueTask{Boolean}"/> that resolves to <see langword="true"/> to auto-approve
     /// the call, or <see langword="false"/> to continue evaluating the next rule.
     /// </para>
     /// <para>
@@ -48,5 +45,5 @@ public class ToolApprovalAgentOptions
     /// otherwise that tool will be auto-approved without a human prompt, bypassing the approval boundary.
     /// </para>
     /// </remarks>
-    public IEnumerable<Func<FunctionCallContent, ValueTask<bool>>>? AutoApprovalRules { get; set; }
+    public IEnumerable<Func<ToolAutoApprovalRuleContext, ValueTask<bool>>>? AutoApprovalRules { get; set; }
 }

@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 
@@ -58,4 +59,29 @@ public sealed class CheckpointManager : ICheckpointManager
 
     ValueTask<IEnumerable<CheckpointInfo>> ICheckpointManager.RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent)
         => this._impl.RetrieveIndexAsync(sessionId, withParent);
+
+    /// <summary>
+    /// Retrieves the most recently committed checkpoint for the specified session, or <see langword="null"/>
+    /// when the session has no checkpoints.
+    /// </summary>
+    /// <param name="sessionId">The session identifier whose latest checkpoint should be retrieved.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
+    /// <returns>
+    /// The latest <see cref="CheckpointInfo"/> for <paramref name="sessionId"/>, or <see langword="null"/> when no
+    /// checkpoint has been committed for that session.
+    /// </returns>
+    public async ValueTask<CheckpointInfo?> GetLatestCheckpointAsync(string sessionId, CancellationToken cancellationToken = default)
+    {
+        // ICheckpointStore.RetrieveIndexAsync is contractually required to return checkpoints in commit order
+        // (oldest first, most recently committed last), so the last enumerated entry is the latest checkpoint.
+        IEnumerable<CheckpointInfo> index = await this._impl.RetrieveIndexAsync(sessionId, withParent: null).ConfigureAwait(false);
+
+        CheckpointInfo? latest = null;
+        foreach (CheckpointInfo info in index)
+        {
+            latest = info;
+        }
+
+        return latest;
+    }
 }

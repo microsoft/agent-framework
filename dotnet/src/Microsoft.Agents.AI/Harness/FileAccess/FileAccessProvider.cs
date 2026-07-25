@@ -184,13 +184,13 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// </para>
     /// <para>
     /// <b>Security note:</b> because matching is by tool name only, any other registered tool that
-    /// shares one of these names — for example a configurable-name tool such as the Harness shell
-    /// tool (<c>HarnessAgentOptions.ShellToolName</c>) that was assigned the same name — will also be auto-approved, bypassing the
+    /// shares one of these names — for example a configurable-name tool that was assigned the same
+    /// name — will also be auto-approved, bypassing the
     /// human approval boundary. Ensure no other tool collides with these reserved names.
     /// </para>
     /// </remarks>
-    public static Func<FunctionCallContent, ValueTask<bool>> ReadOnlyToolsAutoApprovalRule { get; } =
-        functionCall => new ValueTask<bool>(s_readOnlyToolNames.Contains(functionCall.Name));
+    public static Func<ToolAutoApprovalRuleContext, ValueTask<bool>> ReadOnlyToolsAutoApprovalRule { get; } =
+        context => new ValueTask<bool>(s_readOnlyToolNames.Contains(context.FunctionCallContent.Name));
 
     /// <summary>
     /// Gets an auto-approval rule that approves all file access tools, including the tools that modify the
@@ -221,13 +221,13 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// </para>
     /// <para>
     /// <b>Security note:</b> because matching is by tool name only, any other registered tool that
-    /// shares one of these names — for example a configurable-name tool such as the Harness shell
-    /// tool (<c>HarnessAgentOptions.ShellToolName</c>) that was assigned the same name — will also be auto-approved, bypassing the
+    /// shares one of these names — for example a configurable-name tool that was assigned the same
+    /// name — will also be auto-approved, bypassing the
     /// human approval boundary. Ensure no other tool collides with these reserved names.
     /// </para>
     /// </remarks>
-    public static Func<FunctionCallContent, ValueTask<bool>> AllToolsAutoApprovalRule { get; } =
-        functionCall => new ValueTask<bool>(s_allToolNames.Contains(functionCall.Name));
+    public static Func<ToolAutoApprovalRuleContext, ValueTask<bool>> AllToolsAutoApprovalRule { get; } =
+        context => new ValueTask<bool>(s_allToolNames.Contains(context.FunctionCallContent.Name));
 
     /// <inheritdoc />
     public override IReadOnlyList<string> StateKeys => [];

@@ -22,8 +22,11 @@ Usage:
 """
 
 import time
+import uuid
 
 import pytest
+
+from agent_framework_azurefunctions import WorkflowHitlContext
 
 # Module-level markers - applied to all tests in this file
 pytestmark = [
@@ -144,6 +147,52 @@ class TestSubworkflowHITL:
         final_status = self.helper.wait_for_orchestration(data["statusQueryGetUri"])
         assert final_status["runtimeStatus"] == "Completed"
         assert "REJECTED" in str(final_status.get("output")).upper()
+
+    def test_nested_notify_respond_url_matches_helper(self) -> None:
+        """The URL the nested NotifyExecutor builds equals the server's qualified respondUrl.
+
+        Proves the address-propagation path end-to-end: the inner ``notify`` executor
+        (running in the child orchestration) builds a respond URL from the propagated
+        root instance + ``review_sub~0~`` prefix, given only the inner bare request id,
+        and that URL is byte-for-byte the qualified ``respondUrl`` the top-level status
+        endpoint exposes -- and POSTing to it resumes the nested run.
+        """
+        data = self._start({
+            "content_id": "article-200",
+            "title": "Tide Pool Ecology",
+            "body": "Intertidal zones host a surprising diversity of resilient marine life.",
+        })
+        instance_id = data["instanceId"]
+
+        status = self._wait_for_hitl_request(instance_id)
+        pending = status.get("pendingHumanInputRequests", [])
+        assert len(pending) == 1
+        qualified_id = pending[0]["requestId"]
+
+        # The qualified id is ``review_sub~0~{bare}``; request_info generates the bare
+        # inner id internally as a uuid4 when the review gate does not pass one.
+        prefix = f"{SUBWORKFLOW_NODE_ID}~0~"
+        assert qualified_id.startswith(prefix), qualified_id
+        bare_id = qualified_id[len(prefix) :]
+        uuid.UUID(bare_id)  # raises if the inner id is not a valid uuid4
+
+        # Rebuild the URL exactly as the nested NotifyExecutor does: the root instance
+        # and root workflow name, the propagated path prefix, and only the bare id.
+        hitl = WorkflowHitlContext(
+            instance_id=instance_id,
+            workflow_name=WORKFLOW_NAME,
+            base_url_override=self.base_url,
+            request_path_prefix=prefix,
+        )
+        helper_url = hitl.build_respond_url(bare_id)
+        assert helper_url == pending[0]["respondUrl"]
+
+        # Responding via the helper-built URL resumes the nested run to completion.
+        approve = self.helper.post_json(helper_url, {"approved": True, "reviewer_notes": "ok"})
+        assert approve.status_code == 200
+        final_status = self.helper.wait_for_orchestration(data["statusQueryGetUri"])
+        assert final_status["runtimeStatus"] == "Completed"
+        assert "APPROVED" in str(final_status.get("output")).upper()
 
 
 if __name__ == "__main__":

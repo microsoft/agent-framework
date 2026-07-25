@@ -151,6 +151,42 @@ def test_hitl_response_handler_receives_typed_original_request() -> None:
     handler.assert_awaited_once()
 
 
+class TestExecuteWorkflowActivityHostMetadata:
+    """Orchestration metadata is surfaced to executors via the runner context."""
+
+    def test_host_context_surfaced_on_runner_context(self) -> None:
+        """``host_context`` in the activity input is exposed as ``runner_context.host_metadata``."""
+        captured: dict[str, Any] = {}
+
+        async def capture(message: Any, source_executor_ids: Any, state: Any, runner_context: Any) -> None:
+            captured["metadata"] = runner_context.host_metadata
+            state.commit()
+
+        executor = _make_executor("test-exec", capture)
+        input_data = json.dumps({
+            "message": "test",
+            "shared_state_snapshot": {},
+            "source_executor_ids": [SOURCE_ORCHESTRATOR],
+            "host_context": {"instance_id": "abc123", "workflow_name": "content_moderation"},
+        })
+        json.loads(execute_workflow_activity(executor, input_data))
+
+        assert captured["metadata"] == {"instance_id": "abc123", "workflow_name": "content_moderation"}
+
+    def test_absent_host_context_yields_none(self) -> None:
+        """When the input omits ``host_context``, ``host_metadata`` is ``None`` (in-process parity)."""
+        captured: dict[str, Any] = {}
+
+        async def capture(message: Any, source_executor_ids: Any, state: Any, runner_context: Any) -> None:
+            captured["metadata"] = runner_context.host_metadata
+            state.commit()
+
+        executor = _make_executor("test-exec", capture)
+        _run(executor, {})
+
+        assert captured["metadata"] is None
+
+
 if __name__ == "__main__":
     import pytest
 
