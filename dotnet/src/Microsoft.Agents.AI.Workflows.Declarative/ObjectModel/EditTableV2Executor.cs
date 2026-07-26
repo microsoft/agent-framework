@@ -33,7 +33,7 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
             EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(addItemValue);
             RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), expressionResult.Value.ToFormula());
             await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
-            await this.AssignAsync(this.Model.ItemsVariable, newRecord, context).ConfigureAwait(false);
+            await this.AssignAsync(this.Model.ItemsVariable, tableValue, context).ConfigureAwait(false);
         }
         else if (changeType is ClearItemsOperation)
         {

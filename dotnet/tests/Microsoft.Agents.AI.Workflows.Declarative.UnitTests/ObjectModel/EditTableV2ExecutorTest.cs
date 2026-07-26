@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.ObjectModel;
@@ -144,7 +145,7 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         this.State.Set("TestTable", tableValue);
 
         // Arrange, Act, Assert
-        await this.ExecuteTestAsync<RecordValue>(
+        await this.ExecuteTestAsync<TableValue>(
             displayName: nameof(AddItemOperationWithSingleFieldRecordAsync),
             variableName: "TestTable",
             changeType: this.CreateAddItemOperation(new RecordDataValue.Builder
@@ -154,8 +155,8 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
                     ["Name"] = new StringDataValue("John")
                 }
             }.Build()),
-            verifyAction: (variableName, recordValue) =>
-                Assert.Equal("John", recordValue.GetField("Name").ToObject())
+            verifyAction: (variableName, resultTable) =>
+                Assert.Equal("John", Assert.Single(resultTable.Rows).Value.GetField("Name").ToObject())
             );
     }
 
@@ -168,13 +169,44 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         this.State.Set("TestTable", tableValue);
 
         // Act & Assert
-        await this.ExecuteTestAsync<RecordValue>(
+        await this.ExecuteTestAsync<TableValue>(
             displayName: nameof(AddItemOperationWithScalarValueAsync),
             variableName: "TestTable",
             changeType: this.CreateAddItemOperation(new StringDataValue("TestValue")),
-            verifyAction: (variableName, recordValue) =>
-                Assert.Equal("TestValue", recordValue.GetField("Value").ToObject())
+            verifyAction: (variableName, resultTable) =>
+                Assert.Equal("TestValue", Assert.Single(resultTable.Rows).Value.GetField("Value").ToObject())
             );
+    }
+
+    [Fact]
+    public async Task ConsecutiveAddItemOperationsPreserveTableAsync()
+    {
+        // Arrange
+        RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
+        RecordValue initialRecord = FormulaValue.NewRecordFromFields(
+            recordType,
+            new NamedValue("Value", FormulaValue.New("Initial")));
+        this.State.Set("TestTable", FormulaValue.NewTable(recordType, initialRecord));
+
+        EditTableV2 firstAdd = this.CreateModel(
+            nameof(ConsecutiveAddItemOperationsPreserveTableAsync),
+            "TestTable",
+            this.CreateAddItemOperation(new StringDataValue("First")));
+        EditTableV2 secondAdd = this.CreateModel(
+            nameof(ConsecutiveAddItemOperationsPreserveTableAsync),
+            "TestTable",
+            this.CreateAddItemOperation(new StringDataValue("Second")));
+
+        // Act
+        await this.ExecuteAsync(new EditTableV2Executor(firstAdd, this.State));
+        await this.ExecuteAsync(new EditTableV2Executor(secondAdd, this.State));
+
+        // Assert
+        TableValue resultTable = Assert.IsAssignableFrom<TableValue>(this.State.Get("TestTable"));
+        string[] values = resultTable.Rows
+            .Select(row => Assert.IsType<StringValue>(row.Value.GetField("Value")).Value)
+            .ToArray();
+        Assert.Equal(["Initial", "First", "Second"], values);
     }
 
     [Fact]
