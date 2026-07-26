@@ -2125,28 +2125,16 @@ def _replace_approval_contents_with_results(
     # Track which call_ids had their placeholders replaced
     placeholders_replaced: set[str] = set()
 
-    # Collect *pending* function call IDs across all messages to avoid duplicates. The
-    # function call and its approval request are frequently carried in separate messages
-    # (e.g. when a hosting layer replays them as separate items on an approval round trip),
-    # so scoping this per-message would let the same call_id be restored twice and leave
-    # the copy without a result unanswered.
-    #
-    # Calls that already carry a real result are excluded: reusing a call_id for a later
-    # invocation is supported, and a completed pair must not suppress the fresh request —
-    # that would drop the new call and attach its result to the old one. Placeholder
-    # results still count as pending, since the call they answer is the one being restored.
-    answered_call_ids = {
-        content.call_id
-        for msg in messages
-        for content in msg.contents
-        if content.type == "function_result" and content.call_id and not _is_approval_placeholder_result(content)
-    }
-    existing_call_ids = {
-        content.call_id
-        for msg in messages
-        for content in msg.contents
-        if content.type == "function_call" and content.call_id and content.call_id not in answered_call_ids
-    }
+    # Collect pending function calls in message order. A call_id can be reused after a
+    # result, so independently collecting all calls and all results loses whether a later
+    # call is still pending. Approval requests may be replayed beside that later call.
+    existing_call_ids: set[str] = set()
+    for msg in messages:
+        for content in msg.contents:
+            if content.type == "function_call" and content.call_id:
+                existing_call_ids.add(content.call_id)
+            elif content.type == "function_result" and content.call_id and not _is_approval_placeholder_result(content):
+                existing_call_ids.discard(content.call_id)
 
     for msg in messages:
         # Track approval requests that should be removed (duplicates)
