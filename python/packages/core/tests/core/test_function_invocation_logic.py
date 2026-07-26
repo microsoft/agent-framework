@@ -96,6 +96,43 @@ def _force_blank_tool_choice_none_fallback(
     chat_client_base._get_streaming_response = _get_streaming_response
 
 
+def _force_function_call_tool_choice_none_stream(
+    chat_client_base: Any,
+    *,
+    call_id: str,
+    name: str,
+    arguments: str,
+) -> None:
+    original_get_streaming_response = chat_client_base._get_streaming_response
+
+    def _get_streaming_response(
+        *,
+        messages: Sequence[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if options.get("tool_choice") != "none":
+            return original_get_streaming_response(messages=messages, options=options, **kwargs)
+
+        updates = (
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id=call_id, name=name, arguments=arguments)],
+                role="assistant",
+            ),
+        )
+
+        async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            for update in updates:
+                yield update
+
+        def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            return ChatResponse.from_updates(updates, output_format_type=options.get("response_format"))
+
+        return ResponseStream(_stream(), finalizer=_finalize)
+
+    chat_client_base._get_streaming_response = _get_streaming_response
+
+
 async def test_base_client_with_function_calling(chat_client_base: SupportsChatGetResponse):
     exec_counter = 0
 
@@ -2374,6 +2411,7 @@ def test_replace_approval_contents_with_results_allows_reused_call_id_after_comp
         ("call_reused", "second output"),
     ]
 
+
 def test_replace_approval_contents_with_results_uses_result_call_ids_for_placeholders() -> None:
     from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
 
@@ -3280,6 +3318,59 @@ async def test_streaming_max_function_calls_blank_final_fallback_synthesizes_upd
         updates.append(update)
 
     assert exec_counter == 1
+    assert updates[-1].role == "assistant"
+    assert updates[-1].text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
+
+
+@pytest.mark.parametrize("max_iterations", [10])
+async def test_streaming_max_function_calls_drops_post_limit_function_call_update(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Function calls streamed after max_function_calls is reached should not be forwarded."""
+    _force_function_call_tool_choice_none_stream(
+        chat_client_base,
+        call_id="call_2",
+        name="lookup",
+        arguments='{"key": "b"}',
+    )
+    exec_counter = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Value for {key}"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    updates = []
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]
+        [Message(role="user", contents=["look up key"])],
+        options={"tool_choice": "auto", "tools": [lookup_func]},
+        stream=True,
+    ):
+        updates.append(update)
+
+    function_call_ids = {
+        content.call_id for update in updates for content in update.contents if content.type == "function_call"
+    }
+    function_result_ids = {
+        content.call_id for update in updates for content in update.contents if content.type == "function_result"
+    }
+
+    assert exec_counter == 1
+    assert "call_1" in function_call_ids
+    assert "call_1" in function_result_ids
+    assert "call_2" not in function_call_ids
+    assert "call_2" not in function_result_ids
     assert updates[-1].role == "assistant"
     assert updates[-1].text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
 

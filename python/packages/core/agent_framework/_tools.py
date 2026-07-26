@@ -1923,7 +1923,14 @@ def _response_has_visible_content(response: ChatResponse[Any]) -> bool:
     return False
 
 
+def _drop_function_call_contents_from_response(response: ChatResponse[Any]) -> None:
+    for message in response.messages:
+        if any(content.type == "function_call" for content in message.contents):
+            message.contents = [content for content in message.contents if content.type != "function_call"]
+
+
 def _ensure_function_invocation_limit_fallback_response(response: ChatResponse[Any]) -> ChatResponse[Any]:
+    _drop_function_call_contents_from_response(response)
     if _response_has_visible_content(response):
         return response
 
@@ -1946,6 +1953,14 @@ def _function_invocation_limit_fallback_update() -> ChatResponseUpdate:
         role="assistant",
         finish_reason="stop",
     )
+
+
+def _drop_function_call_contents_from_update(update: ChatResponseUpdate) -> ChatResponseUpdate | None:
+    if not any(content.type == "function_call" for content in update.contents):
+        return update
+
+    update.contents = [content for content in update.contents if content.type != "function_call"]
+    return update if update.contents else None
 
 
 def _extract_tools(
@@ -2823,20 +2838,31 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 await inner_stream
                 # Collect result hooks from the inner stream to run later
                 stream_result_hooks[:] = _get_result_hooks_from_stream(inner_stream)
+                dropping_post_limit_function_calls = (
+                    mutable_options.get("tool_choice") == "none"
+                    and max_function_calls is not None
+                    and total_function_calls >= max_function_calls
+                )
 
                 # Yield updates from the inner stream, letting it collect them
                 async for update in inner_stream:
+                    if dropping_post_limit_function_calls:
+                        update = _drop_function_call_contents_from_update(update)
+                        if update is None:
+                            continue
                     yield update
 
                 # Get the finalized response from the inner stream
                 # This triggers the inner stream's finalizer and result hooks
                 response = await inner_stream.get_final_response()
-                response_had_visible_content = _response_has_visible_content(response)
                 function_call_limit_reached = (
                     mutable_options.get("tool_choice") == "none"
                     and max_function_calls is not None
                     and total_function_calls >= max_function_calls
                 )
+                if function_call_limit_reached:
+                    _drop_function_call_contents_from_response(response)
+                response_had_visible_content = _response_has_visible_content(response)
                 if function_call_limit_reached:
                     response = _ensure_function_invocation_limit_fallback_response(response)
                 _update_continuation_state(
