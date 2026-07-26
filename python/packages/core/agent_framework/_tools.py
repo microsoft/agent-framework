@@ -1960,7 +1960,24 @@ def _drop_function_call_contents_from_update(update: ChatResponseUpdate) -> Chat
         return update
 
     update.contents = [content for content in update.contents if content.type != "function_call"]
-    return update if update.contents else None
+    if update.contents or _update_has_meaningful_metadata(update):
+        return update
+    return None
+
+
+def _update_has_meaningful_metadata(update: ChatResponseUpdate) -> bool:
+    return any((
+        update.author_name is not None,
+        update.response_id is not None,
+        update.message_id is not None,
+        update.conversation_id is not None,
+        update.model is not None,
+        update.created_at is not None,
+        update.finish_reason is not None,
+        update.continuation_token is not None,
+        bool(update.additional_properties),
+        update.raw_representation is not None,
+    ))
 
 
 def _extract_tools(

@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -102,6 +102,8 @@ def _force_function_call_tool_choice_none_stream(
     call_id: str,
     name: str,
     arguments: str,
+    additional_properties: dict[str, Any] | None = None,
+    finish_reason: Literal["stop", "length", "tool_calls", "content_filter"] | None = None,
 ) -> None:
     original_get_streaming_response = chat_client_base._get_streaming_response
 
@@ -118,6 +120,8 @@ def _force_function_call_tool_choice_none_stream(
             ChatResponseUpdate(
                 contents=[Content.from_function_call(call_id=call_id, name=name, arguments=arguments)],
                 role="assistant",
+                additional_properties=additional_properties,
+                finish_reason=finish_reason,
             ),
         )
 
@@ -3373,6 +3377,56 @@ async def test_streaming_max_function_calls_drops_post_limit_function_call_updat
     assert "call_2" not in function_result_ids
     assert updates[-1].role == "assistant"
     assert updates[-1].text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
+
+
+@pytest.mark.parametrize("max_iterations", [10])
+async def test_streaming_max_function_calls_preserves_post_limit_update_metadata(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Post-limit function call chunks should retain metadata after call content is stripped."""
+    _force_function_call_tool_choice_none_stream(
+        chat_client_base,
+        call_id="call_2",
+        name="lookup",
+        arguments='{"key": "b"}',
+        additional_properties={"provider_metadata": "keep"},
+        finish_reason="stop",
+    )
+    exec_counter = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Value for {key}"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    updates = []
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]
+        [Message(role="user", contents=["look up key"])],
+        options={"tool_choice": "auto", "tools": [lookup_func]},
+        stream=True,
+    ):
+        updates.append(update)
+
+    metadata_updates = [
+        update
+        for update in updates
+        if update.additional_properties == {"provider_metadata": "keep"} and update.finish_reason == "stop"
+    ]
+
+    assert exec_counter == 1
+    assert len(metadata_updates) == 1
+    assert metadata_updates[0].contents == []
 
 
 async def test_streaming_function_invocation_config_enabled_false(chat_client_base: SupportsChatGetResponse):
