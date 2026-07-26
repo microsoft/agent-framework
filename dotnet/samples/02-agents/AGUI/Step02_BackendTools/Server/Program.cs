@@ -74,6 +74,7 @@ AITool[] tools =
 [
     AIFunctionFactory.Create(
         SearchRestaurants,
+        name: "search_restaurants",
         serializerOptions: jsonOptions.SerializerOptions)
 ];
 
