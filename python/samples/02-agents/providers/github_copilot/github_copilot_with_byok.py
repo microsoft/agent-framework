@@ -9,10 +9,10 @@ such as vLLM/LiteLLM/Ollama) instead of the default GitHub Copilot backend, usin
 SDK's BYOK support.
 
 Set the following environment variables before running:
-    BYOK_BASE_URL - Base URL of your OpenAI-compatible endpoint.
-    BYOK_API_KEY  - API key for that endpoint.
-    BYOK_MODEL_ID - Model name to request (e.g. "gpt-4o"). Defaults to "gpt-4o".
-
+    BYOK_PROVIDER_TYPE - Provider type ("openai", "azure", "anthropic"). Defaults to "openai".
+    BYOK_BASE_URL      - Base URL of your provider endpoint.
+    BYOK_API_KEY       - API key for that endpoint.
+    BYOK_MODEL_ID      - Model name to request (e.g. "gpt-4o"). Defaults to "gpt-4o".
 SECURITY NOTE: BYOK uses static credentials (no automatic token refresh) and usage is tracked
 by your provider rather than GitHub. Keep API keys out of source control; load them from
 environment variables or a secret store, as shown here.
