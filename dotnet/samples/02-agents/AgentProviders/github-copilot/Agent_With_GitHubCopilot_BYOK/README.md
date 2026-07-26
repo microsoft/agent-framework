@@ -4,8 +4,7 @@ Before you begin, ensure you have the following prerequisites:
 
 - .NET 10 SDK or later
 - GitHub Copilot CLI installed and available in your PATH (or provide a custom path)
-- An OpenAI-compatible endpoint and API key (OpenAI, Azure OpenAI, Anthropic, or a compatible
-  service such as vLLM, LiteLLM, or Ollama)
+- An OpenAI-compatible endpoint and API key (OpenAI, Azure OpenAI, or a compatible service such as vLLM, LiteLLM, or Ollama)
 
 ## Setting up GitHub Copilot CLI
 
