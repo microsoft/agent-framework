@@ -278,12 +278,12 @@ class TestResponsesHostServerInit:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
-        monkeypatch.setenv("HOME", str(tmp_path))
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
 
-        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        with patch.object(Path, "home", return_value=tmp_path):
+            server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
 
         session_store = server._session_store  # pyright: ignore[reportPrivateUsage]
         assert isinstance(session_store, FoundrySessionStore)
