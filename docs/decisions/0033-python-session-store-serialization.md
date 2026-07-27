@@ -204,12 +204,16 @@ storage-agnostic and passes keys through unchanged; each store implementation ow
 normalization. Protocol-specific hosts such as Foundry may still derive their own stable storage key before calling the
 store.
 
-Foundry Hosting exposes an experimental `FoundrySessionStore` as its default
-`ResponsesHostServer` store. It currently subclasses `FileSessionStore` and
-derives the on-disk user partition directly from
-`azure.ai.agentserver.core.get_request_context()`. The Foundry-specific type is
-the host configuration seam; its implementation may later move from files to a
-Foundry storage API without changing the generic core store contract.
+Foundry Hosting exposes an experimental `FoundrySessionStore`, which is the
+default `ResponsesHostServer` store when hosted; local hosting defaults to the
+in-memory `SessionStore`. `FoundrySessionStore` currently subclasses
+`FileSessionStore`, stores snapshots under
+`/.sessions/<user-id>/<session-id>.json`, and derives the validated platform
+IDs from `azure.ai.agentserver.core.get_request_context()`. Callers can
+explicitly override either default through `session_store=`. The
+Foundry-specific type is the host configuration seam; its implementation may
+later move from files to a Foundry storage API without changing the generic
+core store contract.
 
 ### Decision 2: Use msgspec codecs plus an explicit dynamic registry
 

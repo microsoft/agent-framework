@@ -4,11 +4,11 @@ This package provides the integration of Agent Framework agents and workflows wi
 
 `ResponsesHostServer` persists the Agent Framework `AgentSession` used by regular
 agents in addition to the Responses provider's message history. By default it
-uses the experimental `FoundrySessionStore` under `$HOME/.checkpoints/sessions`
-when hosted and `{cwd}/.checkpoints/sessions` locally. The store is partitioned
-by the Agent Server request context's platform user key and the Responses
-conversation partition. Pass `session_store=` to use another `SessionStore`
-implementation.
+uses the experimental `FoundrySessionStore` under `/.sessions` when hosted and
+an in-memory `SessionStore` locally. Hosted snapshots are partitioned by the
+Agent Server request context's platform user ID, and their filenames come from
+its platform session ID. Pass `session_store=` to explicitly override either
+default.
 
 Workflow agents continue to use their existing checkpoint storage layout.
 
@@ -16,16 +16,14 @@ Workflow agents continue to use their existing checkpoint storage layout.
 
 `FoundrySessionStore` currently subclasses core's `FileSessionStore`. It reads
 the active request through `azure.ai.agentserver.core.get_request_context()` and
-hashes the platform `user_id` (the same `x-agent-user-id` value exposed as
-`ResponseContext.platform_context.user_id_key`) before selecting an on-disk
-directory. This makes the user partition path-safe and avoids persisting the raw
-platform identity.
+validates the platform `user_id` (the same `x-agent-user-id` value exposed as
+`ResponseContext.platform_context.user_id_key`) before selecting its on-disk
+directory.
 
-Regular-agent session snapshots use a hashed platform user directory:
+Regular-agent session snapshots use the platform user and session IDs:
 
 ```text
-.checkpoints/
-  sessions/user-<fingerprint>/<conversation-id>.json
+/.sessions/<user-id>/<session-id>.json
 ```
 
 Workflow checkpoints and function approvals preserve the existing Foundry
@@ -41,7 +39,9 @@ function approvals remain in memory.
 
 Hosted requests require container protocol `2.0.0`. The v2-only request
 `call_id` is checked before session, checkpoint, or approval storage is used,
-and a missing platform user ID fails closed. Local requests may remain unscoped.
+and a missing platform user ID fails closed. Regular agents also require the
+platform session ID used for their snapshot filename. Local requests may remain
+unscoped.
 
 The Foundry-specific store type intentionally hides the current filesystem
 implementation from `ResponsesHostServer` setup. A future version may move

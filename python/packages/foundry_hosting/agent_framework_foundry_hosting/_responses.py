@@ -124,8 +124,8 @@ from typing_extensions import Any
 
 from ._feature_usage import FeatureIndex
 from ._request_context import (
-    _request_user_fingerprint,  # pyright: ignore[reportPrivateUsage]
     _validate_foundry_request_context,  # pyright: ignore[reportPrivateUsage]
+    _validate_path_segment,  # pyright: ignore[reportPrivateUsage]
 )
 from ._session_store import FoundrySessionStore
 
@@ -136,10 +136,6 @@ _CURRENT_RESPONSE_ID_BODY_LENGTH = 50
 _CURRENT_RESPONSE_ID_PARTITION_LENGTH = 18
 _LEGACY_RESPONSE_ID_BODY_LENGTH = 48
 _LEGACY_RESPONSE_ID_PARTITION_LENGTH = 16
-_HOSTED_SESSION_DATA_DIRECTORY_ENVIRONMENT_VARIABLE = "HOME"
-_DEFAULT_HOSTED_SESSION_DATA_DIRECTORY = "/home/session"
-_CHECKPOINT_DIRECTORY_NAME = ".checkpoints"
-_SESSION_DIRECTORY_NAME = "sessions"
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
 
 
@@ -237,70 +233,6 @@ class FileBasedFunctionApprovalStorage:
         return await asyncio.to_thread(self._load_sync, approval_request_id)
 
 
-def _validate_path_segment(segment: str, *, kind: Literal["context id", "user id"]) -> None:
-    """Validate that ``segment`` is a single safe path component (CWE-22).
-
-    ``segment`` originates from caller-controlled fields (such as
-    ``previous_response_id``), server-generated fields (``conversation_id`` /
-    ``response_id``), or the platform-injected per-user partition key
-    (``x-agent-user-id``). In every case it must be treated as an untrusted
-    single path segment: path separators, drive letters, parent references and
-    similar would otherwise let the resulting directory escape the configured
-    storage root.
-
-    We deliberately do not URL-decode the value here: the hosting layer never
-    decodes these ids before joining them, so forms such as ``%2e%2e`` are
-    accepted as literal directory names. Do NOT add decoding here without
-    re-validating after the decode -- decode-then-join is exactly the pattern
-    that reintroduces traversal. We also do not attempt to "sanitize" by
-    stripping characters because that can introduce collisions between distinct
-    ids.
-    """
-    if not isinstance(segment, str) or not segment:
-        raise RuntimeError(f"Invalid {kind}: must be a non-empty string.")
-    # Reject any value that is not a single safe path component. This covers
-    # POSIX/Windows separators, NUL bytes, drive letters, and all-dot segments
-    # (``.``, ``..``, ``...``, ...).
-    if (
-        "/" in segment
-        or "\\" in segment
-        or "\x00" in segment
-        # All-dot segments (``.``, ``..``, ``...``, ...) reduce to "" after stripping dots.
-        or segment.strip(".") == ""
-        or os.path.isabs(segment)
-        or os.path.splitdrive(segment)[0]
-    ):
-        raise RuntimeError(f"Invalid {kind}: {segment!r}")
-
-
-def _is_usable_hosted_home_directory(home_directory: str | None) -> bool:
-    """Return whether ``home_directory`` can safely contain hosted durable state."""
-    if home_directory is None or not home_directory.strip():
-        return False
-    try:
-        resolved = Path(home_directory).expanduser().resolve()
-    except (OSError, RuntimeError):
-        return False
-    return resolved != Path(resolved.anchor)
-
-
-def _resolve_durable_storage_root(
-    *,
-    is_hosted: bool,
-    home_directory: str | None,
-    current_directory: str,
-) -> Path:
-    """Resolve the root for regular-agent Foundry session snapshots."""
-    if is_hosted:
-        if home_directory is not None and _is_usable_hosted_home_directory(home_directory):
-            base_directory = Path(home_directory).expanduser()
-        else:
-            base_directory = Path(_DEFAULT_HOSTED_SESSION_DATA_DIRECTORY)
-    else:
-        base_directory = Path(current_directory)
-    return (base_directory / _CHECKPOINT_DIRECTORY_NAME).resolve()
-
-
 def _response_id_partition(response_id: str | None) -> str | None:
     """Extract the stable Responses SDK partition from an item/response ID."""
     if response_id is None or not response_id.strip():
@@ -344,8 +276,8 @@ def _custom_session_store_key(
     key: dict[str, str] = {"object": object_id}
     if agent.name:
         key["agent"] = agent.name
-    if user_fingerprint := _request_user_fingerprint():
-        key["user"] = user_fingerprint
+    if user_id := get_request_context().user_id:
+        key["user"] = user_id
     canonical_key = json.dumps(key, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     return f"foundry_{hashlib.sha256(canonical_key.encode('utf-8')).hexdigest()}"
 
@@ -506,6 +438,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     # TODO(@taochen): Allow a different checkpoint storage that stores checkpoints externally
     CHECKPOINT_STORAGE_PATH = "/.checkpoints"
     FUNCTION_APPROVAL_STORAGE_PATH = "/.function_approvals/approval_requests.json"
+    SESSION_STORAGE_PATH = "/.sessions"
 
     @staticmethod
     def _resolve_checkpoint_root(is_hosted: bool) -> str:
@@ -544,10 +477,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             prefix: The URL prefix for the server.
             options: Optional server options.
             store: Optional response store.
-            session_store: Optional Agent Framework session store. Defaults to
-                a :class:`FoundrySessionStore` under the Foundry
-                durable storage root. A caller-supplied file store must already
-                be a ``FoundrySessionStore``.
+            session_store: Optional Agent Framework session store override.
+                Defaults to a :class:`FoundrySessionStore` under ``/.sessions``
+                when hosted and an in-memory :class:`SessionStore` locally.
             **kwargs: Additional keyword arguments.
 
         Note:
@@ -574,11 +506,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 provider.source_id,
             )
 
-        self._storage_root = _resolve_durable_storage_root(
-            is_hosted=self.config.is_hosted,
-            home_directory=os.getenv(_HOSTED_SESSION_DATA_DIRECTORY_ENVIRONMENT_VARIABLE),
-            current_directory=os.getcwd(),
-        )
         self._is_workflow_agent = False
         self._checkpoint_storage_path = None
         if isinstance(agent, WorkflowAgent):
@@ -611,9 +538,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         self._agent: SupportsAgentRun = agent
         if not self._is_workflow_agent and session_store is None:
-            session_store = FoundrySessionStore(self._storage_root / _SESSION_DIRECTORY_NAME)
-        elif isinstance(session_store, FileSessionStore) and not isinstance(session_store, FoundrySessionStore):
-            raise ValueError("ResponsesHostServer requires FoundrySessionStore for file-backed session storage.")
+            session_store = FoundrySessionStore(self.SESSION_STORAGE_PATH) if self.config.is_hosted else SessionStore()
         self._session_store = session_store
         self._approval_storage: ApprovalStorage = (
             FileBasedFunctionApprovalStorage(self.FUNCTION_APPROVAL_STORAGE_PATH)
@@ -679,7 +604,18 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response."""
-        _validate_foundry_request_context(get_request_context(), is_hosted=self.config.is_hosted)
+        request_context = get_request_context()
+        _validate_foundry_request_context(request_context, is_hosted=self.config.is_hosted)
+        if (
+            self.config.is_hosted
+            and not self._is_workflow_agent
+            and isinstance(self._session_store, FoundrySessionStore)
+            and not request_context.session_id
+        ):
+            raise RuntimeError(
+                "The hosted environment is missing the platform session ID in the request context. "
+                "Please ensure that the request is associated with a valid Foundry session."
+            )
 
         if self._is_workflow_agent:
             # Workflow agents are handled differently because they require checkpoint restoration
@@ -719,14 +655,21 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             request_session_store = self._session_store
             if request_session_store is None:
                 raise RuntimeError("Session storage is not configured for a regular agent.")
-            session_store_key = (
-                object_id
-                if isinstance(request_session_store, FoundrySessionStore)
-                else _custom_session_store_key(self._agent, object_id)
-            )
+            if isinstance(request_session_store, FoundrySessionStore) and self.config.is_hosted:
+                session_id = get_request_context().session_id
+                if session_id is None:  # Guarded by _handle_response.
+                    raise RuntimeError("The hosted request context is missing its platform session ID.")
+                session_store_key = session_id
+            else:
+                session_id = object_id
+                session_store_key = (
+                    session_id
+                    if isinstance(request_session_store, FoundrySessionStore)
+                    else _custom_session_store_key(self._agent, object_id)
+                )
             session = await request_session_store.get(session_store_key)
             if session is None:
-                session = self._agent.create_session(session_id=object_id)
+                session = self._agent.create_session(session_id=session_id)
 
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)

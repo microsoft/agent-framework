@@ -13,9 +13,10 @@ from ._request_context import _request_user_directory_segment  # pyright: ignore
 
 @experimental(feature_id=ExperimentalFeature.SESSION_STORE)
 class FoundrySessionStore(FileSessionStore):
-    """File-backed session store isolated by the active Foundry request user.
+    """File-backed session store partitioned by the active Foundry request user.
 
     This implementation currently persists through :class:`FileSessionStore`.
+    Each request's validated platform user ID is used as a child directory.
     The Foundry-specific type leaves room to use a platform storage API later
     without changing :class:`ResponsesHostServer` configuration.
     """
@@ -30,6 +31,6 @@ class FoundrySessionStore(FileSessionStore):
         super().__init__(storage_path, serialization_format=serialization_format)
 
     def get_session_directory(self) -> Path:
-        """Return the active request user's session directory."""
+        """Return the active request user's validated session directory."""
         directory_segment = _request_user_directory_segment()
         return self.storage_path / directory_segment if directory_segment else self.storage_path

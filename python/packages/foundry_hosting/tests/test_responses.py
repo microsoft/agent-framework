@@ -11,7 +11,6 @@ the registered _handle_create handler.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import uuid
@@ -77,7 +76,6 @@ from agent_framework_foundry_hosting._responses import (
     _custom_session_store_key,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
-    _resolve_durable_storage_root,  # pyright: ignore[reportPrivateUsage]
     _resolve_session_conversation_key,  # pyright: ignore[reportPrivateUsage]
     _response_id_partition,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
@@ -266,17 +264,32 @@ class TestResponsesHostServerInit:
         assert history_sentinel.store_inputs is False
         assert history_sentinel.store_outputs is False
 
-    def test_init_uses_foundry_session_store_by_default(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.chdir(tmp_path)
+    def test_init_uses_in_memory_session_store_by_default_locally(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
         server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
-        assert isinstance(server._session_store, FoundrySessionStore)  # pyright: ignore[reportPrivateUsage]
+        session_store = server._session_store  # pyright: ignore[reportPrivateUsage]
+        assert type(session_store) is SessionStore
+
+    def test_init_uses_foundry_session_store_by_default_when_hosted(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
+        session_storage_path = tmp_path / ".sessions"
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+
+        with patch.object(ResponsesHostServer, "SESSION_STORAGE_PATH", str(session_storage_path)):
+            server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+
+        session_store = server._session_store  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(session_store, FoundrySessionStore)
+        assert session_store.storage_path == session_storage_path
+        assert server.SESSION_STORAGE_PATH == "/.sessions"
 
     def test_init_rejects_history_provider_with_load_messages(self) -> None:
 
@@ -304,17 +317,25 @@ class TestResponsesHostServerInit:
         with pytest.raises(RuntimeError, match="history provider"):
             ResponsesHostServer(agent)
 
-    def test_init_rejects_unscoped_file_session_store(self, tmp_path: Path) -> None:
+    def test_init_accepts_explicit_file_session_store_override(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
+        session_store = FileSessionStore(tmp_path)
 
-        with pytest.raises(ValueError, match="FoundrySessionStore"):
-            ResponsesHostServer(
-                agent,
-                store=InMemoryResponseProvider(),
-                session_store=FileSessionStore(tmp_path),
-            )
+        server = ResponsesHostServer(
+            agent,
+            store=InMemoryResponseProvider(),
+            session_store=session_store,
+        )
+
+        assert server._session_store is session_store  # pyright: ignore[reportPrivateUsage]
+        assert server.config.is_hosted
 
     async def test_hosted_request_requires_user_partition_key(self) -> None:
         agent = _make_agent(
@@ -353,6 +374,36 @@ class TestResponsesHostServerInit:
                 context,
                 asyncio.Event(),
             )
+
+    async def test_hosted_foundry_store_requires_platform_session_id(self, tmp_path: Path) -> None:
+        server = _make_server(_make_agent(), session_store=FoundrySessionStore(tmp_path))
+        request = CreateResponse(model="m", input="hi")
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+
+        with (
+            patch.object(server.config, "is_hosted", True),
+            _request_context(call_id="call-1", user_id="user-1"),
+            pytest.raises(RuntimeError, match="platform session ID"),
+        ):
+            await server._handle_response(  # pyright: ignore[reportPrivateUsage]
+                request,
+                context,
+                asyncio.Event(),
+            )
+
+    async def test_hosted_explicit_store_does_not_require_platform_session_id(self) -> None:
+        server = _make_server(_make_agent(), session_store=SessionStore())
+        request = CreateResponse(model="m", input="hi")
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+
+        with patch.object(server.config, "is_hosted", True), _request_context(call_id="call-1", user_id="user-1"):
+            handler = await server._handle_response(  # pyright: ignore[reportPrivateUsage]
+                request,
+                context,
+                asyncio.Event(),
+            )
+
+        assert handler is not None
 
 
 # endregion
@@ -438,38 +489,9 @@ class TestSessionPersistenceHelpers:
         assert _conversation_object_id("conversation-1") == "conversation-1"
         assert _conversation_object_id("conversation/unsafe").startswith("conversation_")
 
-    def test_durable_storage_root_matches_hosted_and_local_layouts(self, tmp_path: Path) -> None:
-        home = tmp_path / "home"
-        current = tmp_path / "work"
-
-        assert (
-            _resolve_durable_storage_root(
-                is_hosted=False,
-                home_directory=str(home),
-                current_directory=str(current),
-            )
-            == (current / ".checkpoints").resolve()
-        )
-        assert (
-            _resolve_durable_storage_root(
-                is_hosted=True,
-                home_directory=str(home),
-                current_directory=str(current),
-            )
-            == (home / ".checkpoints").resolve()
-        )
-        assert (
-            _resolve_durable_storage_root(
-                is_hosted=True,
-                home_directory="/",
-                current_directory=str(current),
-            )
-            == Path("/home/session/.checkpoints").resolve()
-        )
-
 
 class TestAgentSessionPersistence:
-    async def test_file_store_uses_per_user_child_directory_and_preserves_format(self, tmp_path: Path) -> None:
+    async def test_file_store_uses_raw_user_directory_and_preserves_format(self, tmp_path: Path) -> None:
         template = FoundrySessionStore(tmp_path, serialization_format="msgpack")
         server = _make_server(_make_agent(), session_store=template)
 
@@ -483,14 +505,12 @@ class TestAgentSessionPersistence:
         with _request_context(user_id="user-B"):
             await store.set("conversation-1", AgentSession(session_id="conversation-1"))
 
-        user_a_directory = f"user-{hashlib.sha256(b'user-A').hexdigest()}"
-        user_b_directory = f"user-{hashlib.sha256(b'user-B').hexdigest()}"
-        assert (tmp_path / user_a_directory / "conversation-1.msgpack").is_file()
-        assert (tmp_path / user_b_directory / "conversation-1.msgpack").is_file()
+        assert (tmp_path / "user-A" / "conversation-1.msgpack").is_file()
+        assert (tmp_path / "user-B" / "conversation-1.msgpack").is_file()
 
     async def test_scoped_file_store_reuses_base_filename_safety(self, tmp_path: Path) -> None:
         store = FoundrySessionStore(tmp_path)
-        user_directory = tmp_path / f"user-{hashlib.sha256(b'user-A').hexdigest()}"
+        user_directory = tmp_path / "user-A"
 
         with _request_context(user_id="user-A"):
             await store.set("CON", AgentSession(session_id="conversation-1"))
@@ -500,7 +520,7 @@ class TestAgentSessionPersistence:
 
     async def test_scoped_file_store_rejects_symlinked_session_leaf(self, tmp_path: Path) -> None:
         store = FoundrySessionStore(tmp_path)
-        user_directory = tmp_path / f"user-{hashlib.sha256(b'user-A').hexdigest()}"
+        user_directory = tmp_path / "user-A"
         user_directory.mkdir()
         outside_file = tmp_path / "outside.json"
         outside_file.write_text("outside", encoding="utf-8")
@@ -514,7 +534,7 @@ class TestAgentSessionPersistence:
 
     async def test_scoped_file_store_rejects_symlinked_isolation_directory(self, tmp_path: Path) -> None:
         store = FoundrySessionStore(tmp_path)
-        user_directory = f"user-{hashlib.sha256(b'user-A').hexdigest()}"
+        user_directory = "user-A"
         outside_directory = tmp_path.parent / f"{tmp_path.name}-outside"
         outside_directory.mkdir()
         try:
@@ -525,11 +545,58 @@ class TestAgentSessionPersistence:
         with _request_context(user_id="user-A"), pytest.raises(ValueError, match="Session directory escaped"):
             await store.get("conversation-1")
 
+    @pytest.mark.parametrize("user_id", ["../../escape", "/tmp/escape", "user/subdirectory", "user\\subdirectory"])
+    async def test_file_store_rejects_unsafe_user_directory(self, tmp_path: Path, user_id: str) -> None:
+        store = FoundrySessionStore(tmp_path)
+
+        with _request_context(user_id=user_id), pytest.raises(RuntimeError, match="Invalid user id"):
+            await store.set("conversation-1", AgentSession(session_id="conversation-1"))
+
     async def test_local_file_store_without_user_uses_root_directory(self, tmp_path: Path) -> None:
         store = FoundrySessionStore(tmp_path)
         with _request_context():
             await store.set("conversation-1", AgentSession(session_id="conversation-1"))
         assert (tmp_path / "conversation-1.json").is_file()
+
+    async def test_hosted_file_store_persists_by_platform_user_and_session_ids(self, tmp_path: Path) -> None:
+        seen_counts: list[int] = []
+
+        async def run_with_state(*args: Any, **kwargs: Any) -> AgentResponse:
+            session = kwargs["session"]
+            assert isinstance(session, AgentSession)
+            count = int(session.state.get("turn_count", 0)) + 1
+            session.state["turn_count"] = count
+            seen_counts.append(count)
+            return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(f"turn {count}")])])
+
+        agent = _make_agent()
+        agent.run = AsyncMock(side_effect=run_with_state)
+        server = _make_server(agent, session_store=FoundrySessionStore(tmp_path))
+
+        with (
+            patch.object(server.config, "is_hosted", True),
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+            _request_context(call_id="call-1", user_id="user-1", session_id="session-1"),
+        ):
+            first_stream = await server._handle_response(  # pyright: ignore[reportPrivateUsage]
+                CreateResponse(model="m", input="hi"),
+                ResponseContext(response_id="response-1", conversation_id="conversation-1", mode_flags=MagicMock()),
+                asyncio.Event(),
+            )
+            first_events = [event async for event in first_stream]
+            second_stream = await server._handle_response(  # pyright: ignore[reportPrivateUsage]
+                CreateResponse(model="m", input="again"),
+                ResponseContext(response_id="response-2", conversation_id="conversation-2", mode_flags=MagicMock()),
+                asyncio.Event(),
+            )
+            second_events = [event async for event in second_stream]
+
+        assert any(getattr(event, "type", None) == "response.completed" for event in first_events)
+        assert any(getattr(event, "type", None) == "response.completed" for event in second_events)
+        assert seen_counts == [1, 2]
+        assert (tmp_path / "user-1" / "session-1.json").is_file()
+        agent.create_session.assert_called_once_with(session_id="session-1")
 
     async def test_previous_response_chain_restores_session_state(self) -> None:
         seen_counts: list[int] = []
