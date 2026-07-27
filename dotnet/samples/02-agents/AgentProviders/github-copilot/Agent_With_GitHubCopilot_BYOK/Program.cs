@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to configure a GitHub Copilot agent with BYOK (Bring Your Own Key),
-// routing requests through your own OpenAI-compatible endpoint instead of the GitHub Copilot backend.
+// routing requests through your own endpoint (OpenAI, Azure OpenAI, Anthropic, or an
+// OpenAI-compatible service such as vLLM/LiteLLM/Ollama) instead of the GitHub Copilot backend.
 //
 // SECURITY NOTE: BYOK uses static credentials (no automatic token refresh) and usage is tracked
 // by your provider rather than GitHub. Keep API keys out of source control; load them from
@@ -10,6 +11,7 @@
 using GitHub.Copilot;
 using Microsoft.Agents.AI;
 
+string providerType = Environment.GetEnvironmentVariable("BYOK_PROVIDER_TYPE") ?? "openai";
 string baseUrl = Environment.GetEnvironmentVariable("BYOK_BASE_URL")
     ?? throw new InvalidOperationException("The BYOK_BASE_URL environment variable is not set.");
 string apiKey = Environment.GetEnvironmentVariable("BYOK_API_KEY")
@@ -21,14 +23,15 @@ await using CopilotClient copilotClient = new();
 await copilotClient.StartAsync();
 
 // Provider routes the session through a custom endpoint instead of the GitHub Copilot backend.
-// WireApi "completions" is the broadly compatible choice; use "responses" for providers that
-// support the OpenAI Responses API. BYOK also requires Model to be set at the session level.
+// Type is "openai", "azure", or "anthropic". WireApi "completions" is the broadly compatible
+// choice; use "responses" for providers that support the OpenAI Responses API. BYOK also
+// requires Model to be set at the session level.
 SessionConfig sessionConfig = new()
 {
     Model = modelId,
     Provider = new ProviderConfig
     {
-        Type = "openai",
+        Type = providerType,
         WireApi = "completions",
         BaseUrl = baseUrl,
         ApiKey = apiKey,

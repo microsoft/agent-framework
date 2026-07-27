@@ -841,7 +841,7 @@ internal static class AgentsSamples
             Name = "Agent_With_GitHubCopilot_BYOK",
             ProjectPath = "samples/02-agents/AgentProviders/github-copilot/Agent_With_GitHubCopilot_BYOK",
             RequiredEnvironmentVariables = ["BYOK_BASE_URL", "BYOK_API_KEY"],
-            OptionalEnvironmentVariables = ["BYOK_MODEL_ID"],
+            OptionalEnvironmentVariables = ["BYOK_PROVIDER_TYPE", "BYOK_MODEL_ID"],
             ExpectedOutputDescription =
             [
                 "The output should contain a user prompt and a response about the benefits of BYOK.",

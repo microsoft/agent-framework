@@ -1,10 +1,18 @@
+# About BYOK (Bring Your Own Key)
+
+BYOK lets you route model requests through your own API keys and infrastructure instead of the
+GitHub Copilot backend — useful for enterprise deployments, custom hosting, or direct billing
+arrangements. See [GitHub's BYOK documentation](https://docs.github.com/en/copilot/how-tos/copilot-sdk/auth/byok)
+for the full list of supported providers and configuration options.
+
 # Prerequisites
 
 Before you begin, ensure you have the following prerequisites:
 
 - .NET 10 SDK or later
 - GitHub Copilot CLI installed and available in your PATH (or provide a custom path)
-- An OpenAI-compatible endpoint and API key (OpenAI, Azure OpenAI, or a compatible service such as vLLM, LiteLLM, or Ollama)
+- An OpenAI, Azure OpenAI, Anthropic, or OpenAI-compatible endpoint and API key (e.g. vLLM,
+  LiteLLM, or Ollama)
 
 ## Setting up GitHub Copilot CLI
 
@@ -16,7 +24,8 @@ https://github.com/github/copilot-sdk
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `BYOK_BASE_URL` | Base URL of your OpenAI-compatible endpoint | *(required)* |
+| `BYOK_PROVIDER_TYPE` | Provider type (`openai`, `azure`, `anthropic`) | `openai` |
+| `BYOK_BASE_URL` | Base URL of your provider endpoint | *(required)* |
 | `BYOK_API_KEY` | API key for that endpoint | *(required)* |
 | `BYOK_MODEL_ID` | Model name to request (e.g. "gpt-4o") | `gpt-4o` |
 
@@ -34,12 +43,7 @@ The sample will:
 3. Send a message to the agent
 4. Stream the response
 
-## About BYOK (Bring Your Own Key)
-
-BYOK lets you route model requests through your own API keys and infrastructure instead of the
-GitHub Copilot backend — useful for enterprise deployments, custom hosting, or direct billing
-arrangements. See [GitHub's BYOK documentation](https://docs.github.com/en/copilot/how-tos/copilot-sdk/auth/byok)
-for the full list of supported providers and configuration options.
+## Advanced Usage
 
 ```csharp
 using GitHub.Copilot;
@@ -55,10 +59,10 @@ SessionConfig sessionConfig = new()
     Provider = new ProviderConfig
     {
         Type = "azure", // or "openai", "anthropic"
-        WireApi = "completions",
+        WireApi = "completions", // or "responses"
         BaseUrl = "https://api.example.com/v1",
         ApiKey = "your-api-key",
-        ModelId = "your-model-id",
+        ModelId = "your-model-id", // "deployment-name"
     },
 };
 
