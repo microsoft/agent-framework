@@ -124,7 +124,6 @@ from typing_extensions import Any
 
 from ._feature_usage import FeatureIndex
 from ._request_context import (
-    _request_user_directory_segment,  # pyright: ignore[reportPrivateUsage]
     _request_user_fingerprint,  # pyright: ignore[reportPrivateUsage]
     _validate_foundry_request_context,  # pyright: ignore[reportPrivateUsage]
 )
@@ -141,9 +140,6 @@ _HOSTED_SESSION_DATA_DIRECTORY_ENVIRONMENT_VARIABLE = "HOME"
 _DEFAULT_HOSTED_SESSION_DATA_DIRECTORY = "/home/session"
 _CHECKPOINT_DIRECTORY_NAME = ".checkpoints"
 _SESSION_DIRECTORY_NAME = "sessions"
-_WORKFLOW_CHECKPOINT_DIRECTORY_NAME = "checkpoints"
-_FUNCTION_APPROVAL_DIRECTORY_NAME = "function-approvals"
-_FUNCTION_APPROVAL_FILE_NAME = "approval_requests.json"
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
 
 
@@ -241,14 +237,16 @@ class FileBasedFunctionApprovalStorage:
         return await asyncio.to_thread(self._load_sync, approval_request_id)
 
 
-def _validate_path_segment(segment: str, *, kind: Literal["context id"]) -> None:
+def _validate_path_segment(segment: str, *, kind: Literal["context id", "user id"]) -> None:
     """Validate that ``segment`` is a single safe path component (CWE-22).
 
     ``segment`` originates from caller-controlled fields (such as
-    ``previous_response_id``) or server-generated fields (``conversation_id`` /
-    ``response_id``). It must be treated as an untrusted single path segment:
-    path separators, drive letters, parent references and similar would
-    otherwise let the resulting directory escape the configured storage root.
+    ``previous_response_id``), server-generated fields (``conversation_id`` /
+    ``response_id``), or the platform-injected per-user partition key
+    (``x-agent-user-id``). In every case it must be treated as an untrusted
+    single path segment: path separators, drive letters, parent references and
+    similar would otherwise let the resulting directory escape the configured
+    storage root.
 
     We deliberately do not URL-decode the value here: the hosting layer never
     decodes these ids before joining them, so forms such as ``%2e%2e`` are
@@ -292,7 +290,7 @@ def _resolve_durable_storage_root(
     home_directory: str | None,
     current_directory: str,
 ) -> Path:
-    """Resolve the shared root for Foundry session snapshots and workflow checkpoints."""
+    """Resolve the root for regular-agent Foundry session snapshots."""
     if is_hosted:
         if home_directory is not None and _is_usable_hosted_home_directory(home_directory):
             base_directory = Path(home_directory).expanduser()
@@ -364,21 +362,34 @@ def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
 
 
 def _checkpoint_storage_for_context(
-    root: str | Path,
+    root: str,
     context_id: str,
+    *,
+    user_id: str | None = None,
 ) -> FileCheckpointStorage:
     """Build a ``FileCheckpointStorage`` for ``context_id`` rooted under ``root``.
 
-    Scoped requests use ``<root>/user-<fingerprint>/<context_id>``. Local
-    unscoped requests use ``<root>/<context_id>``.
+    When the platform supplies a per-user partition key (``user_id``, from the
+    ``x-agent-user-id`` header on container protocol v2), the per-conversation
+    checkpoint directory is nested under it: ``<root>/<user_id>/<context_id>``.
+    This isolates each tenant's workflow state so one user can never restore or
+    observe another user's checkpoint, even with a guessed or forged
+    ``context_id``. An absent (``None``) or empty ``user_id`` -- local
+    development or protocol v1 -- falls back to the unscoped
+    ``<root>/<context_id>`` layout.
+
+    Both ``context_id`` and ``user_id`` are validated as single safe path
+    segments, and each resolved directory is verified to stay under its parent
+    before any directory is created on disk (CWE-22).
     """
     _validate_path_segment(context_id, kind="context id")
 
     base_path = Path(root).resolve()
-    if user_directory := _request_user_directory_segment():
-        user_path = (base_path / user_directory).resolve()
+    if user_id:
+        _validate_path_segment(user_id, kind="user id")
+        user_path = (base_path / user_id).resolve()
         if not user_path.is_relative_to(base_path):
-            raise RuntimeError(f"Invalid Foundry user directory: {user_directory!r}")
+            raise RuntimeError(f"Invalid user id: {user_id!r}")
         base_path = user_path
 
     storage_path = (base_path / context_id).resolve()
@@ -392,16 +403,23 @@ def _checkpoint_storage_for_context(
     )
 
 
-def _approval_storage_path(
-    root: str | Path,
-) -> str:
-    """Return the approval file path for the active request user."""
-    base_path = Path(root).resolve()
-    if user_directory := _request_user_directory_segment():
-        base_path = (base_path / user_directory).resolve()
-        if not base_path.is_relative_to(Path(root).resolve()):
-            raise RuntimeError(f"Invalid Foundry user directory: {user_directory!r}")
-    return str(base_path / _FUNCTION_APPROVAL_FILE_NAME)
+def _approval_storage_path_for_user(base_path: str, user_id: str) -> str:
+    """Return the per-user approval storage file path under the base directory.
+
+    Inserts the validated ``user_id`` as a directory segment between the base
+    directory and the file name (``<dir>/<user_id>/<file>``), mirroring the
+    per-user checkpoint partitioning so one tenant can never read another
+    tenant's saved approval requests. The user id is validated as a single safe
+    path segment and the resulting directory is verified to stay under the base
+    directory before use (CWE-22).
+    """
+    _validate_path_segment(user_id, kind="user id")
+    directory, filename = os.path.split(base_path)
+    base_dir = Path(directory or ".").resolve()
+    user_dir = (base_dir / user_id).resolve()
+    if not user_dir.is_relative_to(base_dir):
+        raise RuntimeError(f"Invalid user id: {user_id!r}")
+    return str(user_dir / filename)
 
 
 # endregion Approval Storage
@@ -597,10 +615,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         elif isinstance(session_store, FileSessionStore) and not isinstance(session_store, FoundrySessionStore):
             raise ValueError("ResponsesHostServer requires FoundrySessionStore for file-backed session storage.")
         self._session_store = session_store
-        self._approval_storage: ApprovalStorage = InMemoryFunctionApprovalStorage()
-        self._approval_storage_root = self._storage_root / _FUNCTION_APPROVAL_DIRECTORY_NAME
-        # Per-user hosted approval stores share a process-local lock per user.
-        # Local development keeps the single in-memory store.
+        self._approval_storage: ApprovalStorage = (
+            FileBasedFunctionApprovalStorage(self.FUNCTION_APPROVAL_STORAGE_PATH)
+            if self.config.is_hosted
+            else InMemoryFunctionApprovalStorage()
+        )
         self._approval_storages_by_user: dict[str, ApprovalStorage] = {}
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
@@ -642,13 +661,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
     def _approval_storage_for_request(self) -> ApprovalStorage:
         """Return the hosted approval store for the active request user."""
-        user_fingerprint = _request_user_fingerprint()
-        if not self.config.is_hosted or user_fingerprint is None:
+        user_id = get_request_context().user_id
+        if not self.config.is_hosted or not user_id:
             return self._approval_storage
-        storage = self._approval_storages_by_user.get(user_fingerprint)
+        storage = self._approval_storages_by_user.get(user_id)
         if storage is None:
-            storage = FileBasedFunctionApprovalStorage(_approval_storage_path(self._approval_storage_root))
-            self._approval_storages_by_user[user_fingerprint] = storage
+            storage = FileBasedFunctionApprovalStorage(
+                _approval_storage_path_for_user(self.FUNCTION_APPROVAL_STORAGE_PATH, user_id)
+            )
+            self._approval_storages_by_user[user_id] = storage
         return storage
 
     async def _handle_response(
@@ -858,12 +879,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # on every turn we restore the latest checkpoint and feed the new
             # input back into the start executor as a continuation rather than
             # a fresh run.
+            user_id = get_request_context().user_id
             latest_checkpoint_id: str | None = None
             restore_storage: FileCheckpointStorage | None = None
             if context_id is not None:
                 restore_storage = _checkpoint_storage_for_context(
                     self._checkpoint_storage_path,
                     context_id,
+                    user_id=user_id,
                 )
                 latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
                 if latest_checkpoint is not None:
@@ -881,6 +904,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             write_storage = _checkpoint_storage_for_context(
                 self._checkpoint_storage_path,
                 write_context_id,
+                user_id=user_id,
             )
 
             # Multi-turn pattern: when we have a prior checkpoint, restore it

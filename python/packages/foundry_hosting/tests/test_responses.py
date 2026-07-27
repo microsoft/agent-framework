@@ -3699,46 +3699,58 @@ class TestCheckpointContextPathValidation:
         assert storage.storage_path.parent == root.resolve()
         assert storage.storage_path.name == "%2e%2e"
 
-    def test_request_user_scopes_storage_under_user_partition(self, tmp_path: Any) -> None:
+    def test_user_id_scopes_storage_under_user_partition(self, tmp_path: Any) -> None:
+        """A per-user partition key nests the context dir under ``<root>/<user_id>``."""
         helper = self._helper()
         root = tmp_path / "root"
         root.mkdir()
-        with _request_context(user_id="user-A"):
-            storage = helper(str(root), "resp_abc123")
-        user_directory = f"user-{hashlib.sha256(b'user-A').hexdigest()}"
+        storage = helper(str(root), "resp_abc123", user_id="user-A")
         assert storage.storage_path.is_dir()
-        assert storage.storage_path == (root / user_directory / "resp_abc123").resolve()
+        assert storage.storage_path == (root / "user-A" / "resp_abc123").resolve()
 
-    def test_absent_request_user_uses_unscoped_layout(self, tmp_path: Any) -> None:
+    @pytest.mark.parametrize("absent_user_id", [None, ""])
+    def test_absent_user_id_uses_unscoped_layout(self, tmp_path: Any, absent_user_id: str | None) -> None:
+        """``None``/empty user id (local dev or protocol v1) falls back to the unscoped layout."""
         helper = self._helper()
         root = tmp_path / "root"
         root.mkdir()
-        with _request_context():
-            storage = helper(str(root), "resp_abc123")
+        storage = helper(str(root), "resp_abc123", user_id=absent_user_id)
         assert storage.storage_path == (root / "resp_abc123").resolve()
 
-    def test_distinct_request_users_get_isolated_storage(self, tmp_path: Any) -> None:
+    def test_distinct_users_get_isolated_storage(self, tmp_path: Any) -> None:
+        """Two users sharing a context id must not resolve to the same directory."""
         helper = self._helper()
         root = tmp_path / "root"
         root.mkdir()
-        with _request_context(user_id="user-A"):
-            a = helper(str(root), "shared_context")
-        with _request_context(user_id="user-B"):
-            b = helper(str(root), "shared_context")
-        user_a_directory = root / f"user-{hashlib.sha256(b'user-A').hexdigest()}"
-        user_b_directory = root / f"user-{hashlib.sha256(b'user-B').hexdigest()}"
+        a = helper(str(root), "shared_context", user_id="user-A")
+        b = helper(str(root), "shared_context", user_id="user-B")
         assert a.storage_path != b.storage_path
-        assert a.storage_path.is_relative_to(user_a_directory.resolve())
-        assert b.storage_path.is_relative_to(user_b_directory.resolve())
+        assert a.storage_path.is_relative_to((root / "user-A").resolve())
+        assert b.storage_path.is_relative_to((root / "user-B").resolve())
 
-    def test_unsafe_request_user_is_hashed_before_path_join(self, tmp_path: Any) -> None:
+    @pytest.mark.parametrize(
+        "bad_user_id",
+        [
+            "../../escape",
+            "..",
+            ".",
+            "/tmp/escape",
+            "C:\\temp\\escape",
+            "user/../../escape",
+            "with\x00null",
+            "a/b",
+        ],
+    )
+    def test_malicious_user_id_is_rejected(self, tmp_path: Any, bad_user_id: str) -> None:
         helper = self._helper()
         root = tmp_path / "root"
         root.mkdir()
-        with _request_context(user_id="../../escape"):
-            storage = helper(str(root), "resp_abc123")
-        expected_directory = root / f"user-{hashlib.sha256(b'../../escape').hexdigest()}"
-        assert storage.storage_path == (expected_directory / "resp_abc123").resolve()
+        before = sorted(p.name for p in tmp_path.iterdir())
+        with pytest.raises(RuntimeError):
+            helper(str(root), "resp_abc123", user_id=bad_user_id)
+        after = sorted(p.name for p in tmp_path.iterdir())
+        assert before == after, f"Unexpected filesystem artifacts created for user id {bad_user_id!r}"
+        assert list(root.iterdir()) == []
 
     @pytest.mark.parametrize(
         "context_field,bad_id",
@@ -3908,44 +3920,55 @@ class TestCheckpointContextPathValidation:
 
 
 class TestApprovalStoragePathValidation:
-    """Path containment and per-user scoping tests for approval storage."""
+    """Path-traversal and per-user scoping tests for function approval storage.
+
+    Mirrors the checkpoint validation: the per-user approval directory is
+    derived by joining the platform-injected ``x-agent-user-id`` partition key
+    under the base approval directory, and the user id must be a single safe
+    path segment (CWE-22).
+    """
 
     @staticmethod
     def _helper() -> Callable[..., str]:
         from agent_framework_foundry_hosting._responses import (  # pyright: ignore[reportPrivateUsage]
-            _approval_storage_path,
+            _approval_storage_path_for_user,
         )
 
-        return _approval_storage_path
+        return _approval_storage_path_for_user
 
-    def test_request_user_scopes_path_under_base_directory(self, tmp_path: Any) -> None:
+    def test_user_id_scopes_path_under_base_directory(self, tmp_path: Any) -> None:
         from pathlib import Path
 
         helper = self._helper()
-        base = tmp_path / "approvals"
-        with _request_context(user_id="user-A"):
-            scoped = Path(helper(str(base)))
-        user_directory = f"user-{hashlib.sha256(b'user-A').hexdigest()}"
-        assert scoped.name == "approval_requests.json"
-        assert scoped.parent.name == user_directory
+        base = tmp_path / "approvals" / "requests.json"
+        scoped = Path(helper(str(base), "user-A"))
+        assert scoped.name == "requests.json"
+        assert scoped.parent.name == "user-A"
         assert scoped.parent.parent == (tmp_path / "approvals").resolve()
 
-    def test_distinct_request_users_get_isolated_paths(self, tmp_path: Any) -> None:
+    def test_distinct_users_get_isolated_paths(self, tmp_path: Any) -> None:
         helper = self._helper()
-        base = tmp_path / "approvals"
-        with _request_context(user_id="user-A"):
-            path_a = helper(str(base))
-        with _request_context(user_id="user-B"):
-            path_b = helper(str(base))
-        assert path_a != path_b
+        base = tmp_path / "approvals" / "requests.json"
+        assert helper(str(base), "user-A") != helper(str(base), "user-B")
 
-    def test_unsafe_request_user_is_hashed_before_path_join(self, tmp_path: Any) -> None:
+    @pytest.mark.parametrize(
+        "bad_user_id",
+        [
+            "../../escape",
+            "..",
+            ".",
+            "/tmp/escape",
+            "C:\\temp\\escape",
+            "user/../../escape",
+            "with\x00null",
+            "a/b",
+        ],
+    )
+    def test_malicious_user_id_is_rejected(self, tmp_path: Any, bad_user_id: str) -> None:
         helper = self._helper()
-        base = tmp_path / "approvals"
-        with _request_context(user_id="../../escape"):
-            path = Path(helper(str(base)))
-        expected_directory = base / f"user-{hashlib.sha256(b'../../escape').hexdigest()}"
-        assert path == (expected_directory / "approval_requests.json").resolve()
+        base = tmp_path / "approvals" / "requests.json"
+        with pytest.raises(RuntimeError):
+            helper(str(base), bad_user_id)
 
 
 # region Agent lifecycle (lazy entry & OAuth consent surfacing)

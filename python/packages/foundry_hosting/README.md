@@ -10,8 +10,7 @@ by the Agent Server request context's platform user key and the Responses
 conversation partition. Pass `session_store=` to use another `SessionStore`
 implementation.
 
-Workflow agents continue to use checkpoint storage; their checkpoints share the
-same `$HOME/.checkpoints` or local `.checkpoints` root.
+Workflow agents continue to use their existing checkpoint storage layout.
 
 ## Foundry session isolation
 
@@ -22,14 +21,23 @@ hashes the platform `user_id` (the same `x-agent-user-id` value exposed as
 directory. This makes the user partition path-safe and avoids persisting the raw
 platform identity.
 
-File-backed state is partitioned under the validated identity:
+Regular-agent session snapshots use a hashed platform user directory:
 
 ```text
 .checkpoints/
   sessions/user-<fingerprint>/<conversation-id>.json
-  checkpoints/user-<fingerprint>/<context-id>/
-  function-approvals/user-<fingerprint>/approval_requests.json
 ```
+
+Workflow checkpoints and function approvals preserve the existing Foundry
+Hosting layout. Hosted paths insert the validated raw platform user ID:
+
+```text
+/.checkpoints/<user-id>/<context-id>/
+/.function_approvals/<user-id>/approval_requests.json
+```
+
+Local workflow checkpoints use `{cwd}/.checkpoints/<context-id>/`, and local
+function approvals remain in memory.
 
 Hosted requests require container protocol `2.0.0`. The v2-only request
 `call_id` is checked before session, checkpoint, or approval storage is used,
