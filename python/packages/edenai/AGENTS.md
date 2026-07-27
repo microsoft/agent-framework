@@ -11,10 +11,11 @@ Integration with Eden AI, a gateway to many model providers behind one OpenAI co
 ## Usage
 
 ```python
+from agent_framework import Message
 from agent_framework.edenai import EdenAIChatClient
 
 client = EdenAIChatClient(model="openai/gpt-4o-mini")
-response = await client.get_response("Hello")
+response = await client.get_response([Message(role="user", contents=["Hello"])])
 ```
 
 ## Import Path
