@@ -33,16 +33,11 @@ def _get_foundry_request_context(  # pyright: ignore[reportUnusedFunction]
     return context
 
 
-def _request_user_id_key() -> str | None:
-    """Return the platform user partition key for the active request."""
-    # FoundryAgentRequestContext.user_id is populated from the same
-    # x-agent-user-id value exposed as ResponseContext.platform_context.user_id_key.
-    return get_request_context().user_id
-
-
 def _request_user_fingerprint() -> str | None:
     """Return a stable opaque fingerprint for the active request user."""
-    user_id_key = _request_user_id_key()
+    # FoundryAgentRequestContext.user_id is populated from the same
+    # x-agent-user-id value exposed as ResponseContext.platform_context.user_id_key.
+    user_id_key = get_request_context().user_id
     return hashlib.sha256(user_id_key.encode("utf-8")).hexdigest() if user_id_key else None
 
 
