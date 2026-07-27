@@ -33,6 +33,7 @@ from agent_framework import (
 )
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
+from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import (
     ResponseContext,
     ResponseEventStream,
@@ -124,9 +125,9 @@ from typing_extensions import Any
 from ._feature_usage import FeatureIndex
 from ._session_store import (
     FoundrySessionStore,
-    _get_foundry_request_context,  # pyright: ignore[reportPrivateUsage]
     _request_user_directory_segment,  # pyright: ignore[reportPrivateUsage]
     _request_user_fingerprint,  # pyright: ignore[reportPrivateUsage]
+    _validate_foundry_request_context,  # pyright: ignore[reportPrivateUsage]
 )
 
 logger = logging.getLogger(__name__)
@@ -657,7 +658,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response."""
-        _get_foundry_request_context(is_hosted=self.config.is_hosted)
+        _validate_foundry_request_context(get_request_context(), is_hosted=self.config.is_hosted)
 
         if self._is_workflow_agent:
             # Workflow agents are handled differently because they require checkpoint restoration

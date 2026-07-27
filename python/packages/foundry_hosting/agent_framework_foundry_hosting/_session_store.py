@@ -17,12 +17,12 @@ _PROTOCOL_V2_REQUIRED_MESSAGE = (
 )
 
 
-def _get_foundry_request_context(  # pyright: ignore[reportUnusedFunction]
+def _validate_foundry_request_context(  # pyright: ignore[reportUnusedFunction]
+    context: FoundryAgentRequestContext,
     *,
     is_hosted: bool,
-) -> FoundryAgentRequestContext:
-    """Return the current request context and validate hosted v2 identity."""
-    context = get_request_context()
+) -> None:
+    """Validate that a hosted request contains protocol-v2 user identity."""
     if is_hosted and context.call_id is None:
         raise RuntimeError(_PROTOCOL_V2_REQUIRED_MESSAGE)
     if is_hosted and not context.user_id:
@@ -30,7 +30,6 @@ def _get_foundry_request_context(  # pyright: ignore[reportUnusedFunction]
             "The hosted environment is missing the platform user ID in the request context. "
             "Please ensure that the request is coming from a valid Foundry platform service."
         )
-    return context
 
 
 def _request_user_fingerprint() -> str | None:
