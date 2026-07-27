@@ -43,6 +43,9 @@ Run the commands below from the `python/` directory.
 - `_dependency_bounds_runtime.py`
   - Shared helper used by the validators to build isolated `uv run` commands.
   - Reattaches the repo-wide toolchain (`ruff`, `pyright`, `pytest`, `poethepoet`, and related helpers) inside temporary environments so package tasks behave the same way they do in the workspace.
+  - Resolves internal editable packages from the target's enabled groups and extras, following only base transitive
+    dependencies and explicitly requested extras so aggregate surfaces such as `core[all]` do not leak into unrelated
+    package probes.
 
 
 ## Common entrypoints
