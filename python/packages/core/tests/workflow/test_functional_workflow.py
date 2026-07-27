@@ -257,6 +257,43 @@ class TestHITL:
         assert outputs == ["Final: Looks great!"]
         assert result2.get_final_state() == WorkflowRunState.IDLE
 
+    async def test_fresh_message_while_pending_requests_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A fresh message while request_info events are pending is allowed but logs a warning."""
+
+        @workflow
+        async def review_wf(doc: str, ctx: RunContext) -> str:
+            feedback = await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")
+            return f"Final: {feedback}"
+
+        result1 = await review_wf.run("my doc")
+        assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+
+        # Starting fresh input while a request is pending does not abandon it, but advances
+        # workflow state so a later response may apply to a moved-on workflow -> warn (but proceed).
+        with caplog.at_level(logging.WARNING):
+            await review_wf.run("another doc")
+
+        assert "request_info event(s) are still pending" in caplog.text
+        assert "a fresh message" in caplog.text
+
+    async def test_responses_while_pending_requests_does_not_warn(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Delivering responses is the normal completion path and must not warn."""
+
+        @workflow
+        async def review_wf(doc: str, ctx: RunContext) -> str:
+            feedback = await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")
+            return f"Final: {feedback}"
+
+        result1 = await review_wf.run("my doc")
+        assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            result2 = await review_wf.run(responses={"req1": "Looks great!"})
+
+        assert result2.get_final_state() == WorkflowRunState.IDLE
+        assert "still pending" not in caplog.text
+
     async def test_untyped_ctx_parameter(self):
         """ctx is injected by parameter name even without a RunContext annotation."""
 

@@ -2,6 +2,7 @@
 
 # ruff: noqa: E402
 
+import base64
 import inspect
 import os
 import unittest.mock
@@ -37,7 +38,7 @@ from copilot.session_events import (
 )
 from copilot.tools import ToolInvocation, ToolResult
 
-from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
+from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions, RawGitHubCopilotAgent
 
 
 def copilot_options(options: GitHubCopilotOptions) -> GitHubCopilotOptions:
@@ -3351,10 +3352,131 @@ class TestGitHubCopilotAgentContextProviders:
         assert "load_skill" in tool_names
 
 
+class TestGitHubCopilotAttachments:
+    """Tests for forwarding inline binary message content as Copilot attachments."""
+
+    async def test_data_content_forwarded_as_blob_attachment(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Non-streaming: DataContent is sent to the SDK as an inline blob attachment."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+        image_bytes = b"\x89PNG\r\n\x1a\n-fake-image"
+        message = Message(
+            role="user",
+            contents=[
+                Content.from_text("Describe this image"),
+                Content.from_data(data=image_bytes, media_type="image/png"),
+            ],
+        )
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.run(message)
+
+        attachments = mock_session.send_and_wait.call_args.kwargs["attachments"]
+        assert attachments is not None
+        assert len(attachments) == 1
+        assert attachments[0]["type"] == "blob"
+        assert attachments[0]["mimeType"] == "image/png"
+        assert base64.b64decode(attachments[0]["data"]) == image_bytes
+
+    async def test_data_content_forwarded_as_blob_attachment_streaming(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Streaming: DataContent is sent to the SDK as an inline blob attachment."""
+
+        def mock_on(handler: Any) -> Any:
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+        image_bytes = b"\x89PNG\r\n\x1a\n-fake-image"
+        message = Message(
+            role="user",
+            contents=[
+                Content.from_text("Describe this image"),
+                Content.from_data(data=image_bytes, media_type="image/png"),
+            ],
+        )
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        async for _ in agent.run(message, stream=True):
+            pass
+
+        attachments = mock_session.send.call_args.kwargs["attachments"]
+        assert attachments is not None
+        assert len(attachments) == 1
+        assert attachments[0]["type"] == "blob"
+        assert attachments[0]["mimeType"] == "image/png"
+        assert base64.b64decode(attachments[0]["data"]) == image_bytes
+
+    async def test_text_only_message_sends_no_attachments(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """A text-only message results in no attachments being forwarded."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.run("Just text, no attachments")
+
+        assert mock_session.send_and_wait.call_args.kwargs["attachments"] is None
+
+    def test_prepare_attachments_skips_data_without_media_type(self) -> None:
+        """Data content lacking a media type is dropped rather than sent without a MIME type."""
+        content = Content.from_data(data=b"payload", media_type="application/octet-stream")
+        content.media_type = None
+        message = Message(role="user", contents=[content])
+
+        attachments = GitHubCopilotAgent._prepare_attachments_for_copilot([message])
+
+        assert attachments is None
+
+    async def test_non_base64_data_uri_is_skipped_not_raised(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """A non-base64 ``data:`` URI is skipped by the send path instead of failing the request.
+
+        Uses ``RawGitHubCopilotAgent`` (no telemetry layer) to isolate the provider's own
+        attachment handling. The telemetry layer in ``GitHubCopilotAgent`` independently
+        serializes message content and would trip a separate core limitation on this
+        contrived input, which is unrelated to attachment forwarding.
+        """
+        mock_session.send_and_wait.return_value = assistant_message_event
+        # ``Content.from_uri`` classifies this as type="data" but it is not base64-encoded,
+        # so extracting its bytes raises ContentError internally.
+        non_base64 = Content.from_uri("data:text/plain,hello")
+        assert non_base64.type == "data"
+        message = Message(role="user", contents=[Content.from_text("hi"), non_base64])
+
+        agent = RawGitHubCopilotAgent(client=mock_client)
+        # Should complete without raising.
+        await agent.run(message)
+
+        assert mock_session.send_and_wait.call_args.kwargs["attachments"] is None
+
+    def test_prepare_attachments_skips_non_base64_data_uri(self) -> None:
+        """The helper drops a non-base64 ``data:`` URI rather than raising ContentError."""
+        message = Message(role="user", contents=[Content.from_uri("data:text/plain,hello")])
+
+        attachments = GitHubCopilotAgent._prepare_attachments_for_copilot([message])
+
+        assert attachments is None
+
+
 # ---------------------------------------------------------------------------
 # Integration tests — require COPILOT_GITHUB_TOKEN env var
 # ---------------------------------------------------------------------------
-
 skip_if_copilot_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("COPILOT_GITHUB_TOKEN", "") == "",
     reason="No COPILOT_GITHUB_TOKEN provided; skipping integration tests.",

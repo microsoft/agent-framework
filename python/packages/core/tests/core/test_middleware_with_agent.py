@@ -2302,3 +2302,54 @@ class TestChatAgentChatMiddleware:
 #     response = await agent.run("test message")
 #     assert response is not None
 #     assert execution_order == ["before", "after"]
+
+
+class TestCallableClassMiddlewareErrorHandling:
+    """Tests for exception handling when using callable class instances as middleware."""
+
+    def test_callable_class_middleware_insufficient_params_raises_middleware_exception(self) -> None:
+        """Test that callable class instance with insufficient params raises MiddlewareException."""
+
+        class InsufficientParamsMiddleware:
+            async def __call__(self, ctx: Any) -> None:
+                pass
+
+        client = MockBaseChatClient()
+        insufficient_middleware: list[Any] = [InsufficientParamsMiddleware()]
+        with pytest.raises(MiddlewareException) as exc_info:
+            Agent(client=client, middleware=insufficient_middleware)
+
+        assert "InsufficientParamsMiddleware" in str(exc_info.value)
+        assert "must have at least 2 parameters" in str(exc_info.value)
+
+    def test_callable_class_middleware_type_mismatch_raises_middleware_exception(self) -> None:
+        """Test that callable class instance with decorator/annotation mismatch raises MiddlewareException."""
+
+        class MismatchedCallableMiddleware:
+            _middleware_type = MiddlewareType.AGENT
+
+            async def __call__(self, context: FunctionInvocationContext, call_next: Any) -> None:
+                await call_next()
+
+        client = MockBaseChatClient()
+        mismatched_middleware: list[Any] = [MismatchedCallableMiddleware()]
+        with pytest.raises(MiddlewareException) as exc_info:
+            Agent(client=client, middleware=mismatched_middleware)
+
+        assert "MismatchedCallableMiddleware" in str(exc_info.value)
+        assert "MiddlewareTypes type mismatch" in str(exc_info.value)
+
+    def test_callable_class_middleware_undetermined_type_raises_middleware_exception(self) -> None:
+        """Test that a callable class instance without annotations or decorator raises MiddlewareException."""
+
+        class UndeterminedCallableMiddleware:
+            async def __call__(self, arg1: Any, arg2: Any) -> None:
+                pass
+
+        client = MockBaseChatClient()
+        undetermined_middleware: list[Any] = [UndeterminedCallableMiddleware()]
+        with pytest.raises(MiddlewareException) as exc_info:
+            Agent(client=client, middleware=undetermined_middleware)
+
+        assert "UndeterminedCallableMiddleware" in str(exc_info.value)
+        assert "Cannot determine middleware type" in str(exc_info.value)
