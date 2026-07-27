@@ -230,9 +230,9 @@ async def test_fan_out():
     # and executor_completed (type='executor_completed')
     # executor_b will also emit an output event (type='output')
     # Each superstep will emit a started event (type='started') and status event (type='status')
-    # This workflow will converge in 2 supersteps because executor_c will send one more message
-    # after executor_b completes
-    assert len(events) == 11
+    # Superstep 1 runs the start executor (executor_a) on the seeded input; the workflow then
+    # takes two more supersteps because executor_c sends one more message after executor_b completes.
+    assert len(events) == 13
 
     assert events.get_final_state() == WorkflowRunState.IDLE
     outputs = events.get_outputs()
@@ -255,8 +255,9 @@ async def test_fan_out_multiple_completed_events():
     # and executor_completed (type='executor_completed')
     # executor_b and executor_c will also emit an output event (type='output')
     # Each superstep will emit a started event (type='started') and status event (type='status')
-    # This workflow will converge in 1 superstep because executor_a and executor_b will not send further messages
-    assert len(events) == 10
+    # Superstep 1 runs the start executor (executor_a) on the seeded input; superstep 2 runs
+    # executor_b and executor_c, after which the workflow converges.
+    assert len(events) == 12
 
     # Multiple outputs are expected from both executors
     outputs = events.get_outputs()
@@ -283,7 +284,9 @@ async def test_fan_in():
     # and executor_completed (type='executor_completed')
     # aggregator will also emit an output event (type='output')
     # Each superstep will emit a started event (type='started') and status event (type='status')
-    assert len(events) == 13
+    # Superstep 1 runs the start executor (executor_a) on the seeded input, superstep 2 runs the
+    # fan-out targets, and superstep 3 runs the aggregator.
+    assert len(events) == 15
 
     assert events.get_final_state() == WorkflowRunState.IDLE
     outputs = events.get_outputs()

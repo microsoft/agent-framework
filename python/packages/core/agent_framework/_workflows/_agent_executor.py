@@ -2,6 +2,7 @@
 
 import logging
 import sys
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal, cast
@@ -14,7 +15,7 @@ from .._agents import SupportsAgentRun
 from .._sessions import AgentSession
 from .._types import AgentResponse, AgentResponseUpdate, Message, ResponseStream
 from ._agent_utils import resolve_agent_id
-from ._const import GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
+from ._const import GLOBAL_KWARGS_KEY, INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY
 from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
 from ._request_info_mixin import response_handler
@@ -251,7 +252,7 @@ class AgentExecutor(Executor):
             executor, use ``AgentExecutorResponse.with_text(...)`` so that the message type
             stays ``AgentExecutorResponse`` and ``from_response`` is called instead.
         """
-        if not self._cache and ctx.source_executor_ids != ["Workflow"]:
+        if not self._cache and ctx.source_executor_ids != [INTERNAL_SOURCE_ID(self.id)]:
             logger.warning(
                 "AgentExecutor '%s': from_str handler invoked with an empty cache. "
                 "If you are chaining from an AgentExecutor, the upstream custom executor may be "
@@ -366,7 +367,17 @@ class AgentExecutor(Executor):
         self._pending_responses_to_agent = pending_responses_payload or []
 
     def reset(self) -> None:
-        """Reset the internal cache of the executor."""
+        """Reset the internal cache of the executor.
+
+        .. deprecated::
+            ``AgentExecutor.reset`` is deprecated and will be removed in a future
+            version. It is unused within the framework and has no replacement.
+        """
+        warnings.warn(
+            "`AgentExecutor.reset` is deprecated and will be removed in a future version.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         logger.debug("AgentExecutor %s: Resetting cache", self.id)
         self._cache.clear()
 

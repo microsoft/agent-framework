@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import functools
 import hashlib
 import json
@@ -20,8 +21,8 @@ from .._sessions import ContextProvider
 from .._types import ResponseStream
 from ..exceptions import WorkflowException
 from ..observability import OtelAttr, capture_exception, create_workflow_span
-from ._checkpoint import CheckpointStorage
-from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
+from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
+from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY
 from ._edge import (
     EdgeGroup,
     FanOutEdgeGroup,
@@ -35,7 +36,7 @@ from ._events import (
 from ._executor import Executor
 from ._model_utils import DictConvertible
 from ._runner import RunnerImpl
-from ._runner_context import RunnerContext
+from ._runner_context import RunnerContext, WorkflowMessage
 from ._state import State
 from ._typing_utils import is_instance_of, try_coerce_to_type
 from ._validation import ValidationTypeEnum, WorkflowValidationError
@@ -370,6 +371,11 @@ class Workflow(DictConvertible):
         # so a subsequent ``run()`` is allowed.
         self._active_run: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
 
+        # Deep-copied, in-memory snapshot of the workflow's pristine state, captured
+        # lazily before the first run's executors run. Held so the instance can be
+        # reset back to this state via ``reset()`` and reused for another run.
+        self._initial_checkpoint: WorkflowCheckpoint | None = None
+
     @property
     def status(self) -> WorkflowRunState:
         """Return the current run-level status of this workflow instance.
@@ -654,15 +660,18 @@ class Workflow(DictConvertible):
 
         # Handle initial message
         elif message is not None:
-            executor = self.get_start_executor()
-            await executor.execute(
-                message,
-                [self.__class__.__name__],
-                self._runner.state,
-                self._runner.context,
-                trace_contexts=None,
-                source_span_ids=None,
+            # Seed the initial input through the start executor's internal self-edge.
+            start_id = self.start_executor_id
+            await self._runner.context.send_message(
+                WorkflowMessage(
+                    data=message,
+                    source_id=INTERNAL_SOURCE_ID(start_id),
+                    target_id=start_id,
+                )
             )
+            # Record the entry checkpoint (iteration 0) capturing the seeded input before any
+            # executor runs. The runner only checkpoints after each superstep.
+            await self._runner.create_checkpoint_if_enabled()
 
     @overload
     def run(
@@ -810,6 +819,10 @@ class Workflow(DictConvertible):
             self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
 
         try:
+            # Capture the pristine initial checkpoint once, before any executor runs,
+            # so this instance can later be reset back to this state via ``reset()``.
+            await self._capture_initial_checkpoint_if_needed()
+
             # Async validation: a fresh-message run is only allowed when the
             # runner context has fully drained from any prior run. If it still
             # has in-flight executor messages, the prior run didn't complete -
@@ -1019,6 +1032,12 @@ class Workflow(DictConvertible):
             for request_id, response in coerced_responses.items()
         ])
 
+        # Record a response-entry checkpoint capturing the delivered responses in-flight, before the
+        # runner processes them in the next superstep. This mirrors the initial-message entry
+        # checkpoint so a human-in-the-loop continuation is fully replayable: resuming from this
+        # checkpoint re-delivers the responses and replays the superstep that consumes them.
+        await self._runner.create_checkpoint_if_enabled()
+
     def _get_executor_by_id(self, executor_id: str) -> Executor:
         """Get an executor by its ID.
 
@@ -1220,3 +1239,45 @@ class Workflow(DictConvertible):
         """
         existing_stream = self._active_run() if self._active_run is not None else None
         return existing_stream is not None
+
+    async def _capture_initial_checkpoint_if_needed(self) -> None:
+        """Capture a pristine in-memory checkpoint on the first run.
+
+        The snapshot is taken before any executor runs, so it represents the
+        workflow's initial state. It is deep-copied so later state mutations
+        cannot corrupt the stored snapshot, which keeps ``reset()`` repeatable.
+        """
+        if self._initial_checkpoint is not None:
+            return
+        checkpoint = await self._runner.build_checkpoint()
+        self._initial_checkpoint = copy.deepcopy(checkpoint)
+
+    async def reset(self) -> None:
+        """Reset this workflow instance back to its initial state for reuse.
+
+        Restores the shared state, in-flight messages, pending request info events,
+        executor checkpoint state, and iteration counter to the snapshot captured
+        before this instance's first run. This lets a single ``Workflow`` instance be
+        reused for multiple independent runs instead of building a new one each time.
+
+        Only state captured by the checkpointing mechanism is rewound: the shared
+        workflow state and each executor's ``on_checkpoint_save()`` state. Executor
+        instance attributes that are not surfaced through
+        ``on_checkpoint_save()``/``on_checkpoint_restore()`` are not rewound.
+
+        Calling ``reset()`` before the instance has ever run is a no-op, since the
+        instance is already in its initial state.
+
+        Raises:
+            WorkflowException: If a run is currently active on this instance.
+        """
+        if self._is_run_active():
+            raise WorkflowException("Cannot reset the workflow while a run is active on the same instance.")
+        if self._initial_checkpoint is None:
+            # Never run; the instance is already in its initial state.
+            logger.warning("Reset called on a workflow instance that has never run; no state to restore.")
+            return
+        # Deep-copy on restore too, so the applied state never aliases the stored
+        # snapshot and subsequent resets remain repeatable.
+        await self._runner.restore_checkpoint(copy.deepcopy(self._initial_checkpoint))
+        self._status = WorkflowRunState.IDLE
