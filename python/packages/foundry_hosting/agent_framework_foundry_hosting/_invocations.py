@@ -2,13 +2,13 @@
 
 from agent_framework import AgentSession, SupportsAgentRun
 from agent_framework._telemetry import mark_feature_used
-from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from typing_extensions import Any, AsyncGenerator
 
 from ._feature_usage import FeatureIndex
+from ._session_store import _get_foundry_request_context  # pyright: ignore[reportPrivateUsage]
 
 
 class InvocationsHostServer(InvocationAgentServerHost):
@@ -53,15 +53,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
         Exceptions:
             RuntimeError: If the context doesn't contain the expected IDs.
         """
-        context = get_request_context()
-
-        # Fail fast if the service is on protocol v1.0.0
-        if self.config.is_hosted and context.call_id is None:
-            raise RuntimeError(
-                "The hosted environment is running on protocol 1.0.0, but the agent requires protocol 2.0.0. "
-                "Please upgrade your agent protocol to 2.0.0 in `agent.manifest.yaml` or `agent.yaml`, or "
-                "downgrade the `agent-framework-foundry-hosting` package to `1.0.0a260625` or before to use 1.0.0."
-            )
+        context = _get_foundry_request_context(is_hosted=self.config.is_hosted)
 
         if self.config.is_hosted:
             if not context.session_id or not context.user_id:

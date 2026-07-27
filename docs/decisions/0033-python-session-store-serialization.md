@@ -204,6 +204,13 @@ storage-agnostic and passes keys through unchanged; each store implementation ow
 normalization. Protocol-specific hosts such as Foundry may still derive their own stable storage key before calling the
 store.
 
+Foundry Hosting exposes an experimental `FoundrySessionStore` as its default
+`ResponsesHostServer` store. It currently subclasses `FileSessionStore` and
+derives the on-disk user partition directly from
+`azure.ai.agentserver.core.get_request_context()`. The Foundry-specific type is
+the host configuration seam; its implementation may later move from files to a
+Foundry storage API without changing the generic core store contract.
+
 ### Decision 2: Use msgspec codecs plus an explicit dynamic registry
 
 Chosen option: **msgspec codecs plus an explicit dynamic registry**.

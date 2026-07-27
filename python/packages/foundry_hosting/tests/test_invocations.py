@@ -183,7 +183,7 @@ class TestPartitionKey:
         server.config.is_hosted = True
         with (
             _request_context(call_id="call-1", session_id="sess-1"),
-            pytest.raises(RuntimeError, match="missing session_id or user_id"),
+            pytest.raises(RuntimeError, match="missing the platform user ID"),
         ):
             server._partition_key()  # pyright: ignore[reportPrivateUsage]
 

@@ -4,7 +4,7 @@ import importlib.metadata
 
 from ._invocations import InvocationsHostServer
 from ._responses import ResponsesHostServer
-from ._session_isolation import IsolationKeyScopedFileSessionStore, ResponsesSessionIsolationKeyResolver
+from ._session_store import FoundrySessionStore
 from ._toolbox import FoundryToolbox
 
 try:
@@ -13,9 +13,8 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 
 __all__ = [
+    "FoundrySessionStore",
     "FoundryToolbox",
     "InvocationsHostServer",
-    "IsolationKeyScopedFileSessionStore",
     "ResponsesHostServer",
-    "ResponsesSessionIsolationKeyResolver",
 ]

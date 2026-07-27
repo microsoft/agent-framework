@@ -11,10 +11,12 @@ the registered _handle_create handler.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, overload
@@ -31,6 +33,7 @@ from agent_framework import (
     BaseChatClient,
     ChatResponse,
     Content,
+    ExperimentalFeature,
     FileCheckpointStorage,
     FileSessionStore,
     HistoryProvider,
@@ -49,20 +52,23 @@ from agent_framework import (
     WorkflowMessage,
     executor,
 )
-from azure.ai.agentserver.responses import InMemoryResponseProvider, PlatformContext, ResponseContext
+from azure.ai.agentserver.core import (
+    FoundryAgentRequestContext,
+    reset_request_context,
+    set_request_context,
+)
+from azure.ai.agentserver.responses import InMemoryResponseProvider, ResponseContext
 from azure.ai.agentserver.responses.models import CreateResponse
 from mcp import McpError
 from mcp.types import ErrorData
 from typing_extensions import Any
 
 from agent_framework_foundry_hosting import (
-    IsolationKeyScopedFileSessionStore,
+    FoundrySessionStore,
     ResponsesHostServer,
-    ResponsesSessionIsolationKeyResolver,
 )
 from agent_framework_foundry_hosting._responses import (
     _AZURE_RESPONSES_MESSAGE_ROLE_TYPE,  # pyright: ignore[reportPrivateUsage]
-    _SESSION_ISOLATION_STATE_KEY,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
     ConsentError,
     FileBasedFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
@@ -74,12 +80,7 @@ from agent_framework_foundry_hosting._responses import (
     _resolve_durable_storage_root,  # pyright: ignore[reportPrivateUsage]
     _resolve_session_conversation_key,  # pyright: ignore[reportPrivateUsage]
     _response_id_partition,  # pyright: ignore[reportPrivateUsage]
-    _stamp_or_validate_session_isolation,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
-)
-from agent_framework_foundry_hosting._session_isolation import (  # pyright: ignore[reportPrivateUsage]
-    ResolvedSessionIsolation,
-    resolve_session_isolation,
 )
 
 
@@ -96,6 +97,21 @@ def _make_function_approval_request_content(
         call_id, name, arguments=arguments, additional_properties={"server_label": server_label}
     )
     return Content.from_function_approval_request(request_id, function_call)
+
+
+@contextmanager
+def _request_context(
+    *,
+    call_id: str | None = None,
+    user_id: str | None = None,
+    session_id: str | None = None,
+) -> Iterator[None]:
+    """Install a Foundry request context for the duration of the block."""
+    token = set_request_context(FoundryAgentRequestContext(call_id=call_id, user_id=user_id, session_id=session_id))
+    try:
+        yield
+    finally:
+        reset_request_context(token)
 
 
 # region Helpers
@@ -250,6 +266,18 @@ class TestResponsesHostServerInit:
         assert history_sentinel.store_inputs is False
         assert history_sentinel.store_outputs is False
 
+    def test_init_uses_foundry_session_store_by_default(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        assert isinstance(server._session_store, FoundrySessionStore)  # pyright: ignore[reportPrivateUsage]
+
     def test_init_rejects_history_provider_with_load_messages(self) -> None:
 
         class _LoadMessagesHistoryProvider(HistoryProvider):
@@ -281,7 +309,7 @@ class TestResponsesHostServerInit:
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
 
-        with pytest.raises(ValueError, match="IsolationKeyScopedFileSessionStore"):
+        with pytest.raises(ValueError, match="FoundrySessionStore"):
             ResponsesHostServer(
                 agent,
                 store=InMemoryResponseProvider(),
@@ -297,12 +325,12 @@ class TestResponsesHostServerInit:
         context = ResponseContext(
             response_id="caresp_aaaaaaaaaaaaaaaa00" + "1" * 32,
             mode_flags=MagicMock(),
-            platform_context=PlatformContext(call_id="call-1"),
         )
 
         with (
             patch.object(server.config, "is_hosted", True),
-            pytest.raises(RuntimeError, match="did not resolve"),
+            _request_context(call_id="call-1"),
+            pytest.raises(RuntimeError, match="platform user ID"),
         ):
             await server._handle_response(  # pyright: ignore[reportPrivateUsage]
                 request,
@@ -310,32 +338,21 @@ class TestResponsesHostServerInit:
                 asyncio.Event(),
             )
 
-    async def test_custom_isolation_resolver_is_called_once_per_request(self) -> None:
-        calls = 0
-
-        async def resolver(request: CreateResponse, context: ResponseContext) -> str:
-            nonlocal calls
-            calls += 1
-            assert request.model == "m"
-            assert context.response_id == "response-1"
-            return "user-1"
-
-        server = _make_server(_make_agent(), session_isolation_key_resolver=resolver)
+    async def test_hosted_request_requires_protocol_v2(self) -> None:
+        server = _make_server(_make_agent())
         request = CreateResponse(model="m", input="hi")
         context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
-        expected = MagicMock()
 
-        with patch.object(server, "_handle_inner_agent", return_value=expected) as handler:
-            result = await server._handle_response(  # pyright: ignore[reportPrivateUsage]
+        with (
+            patch.object(server.config, "is_hosted", True),
+            _request_context(user_id="user-1"),
+            pytest.raises(RuntimeError, match="protocol 2.0.0"),
+        ):
+            await server._handle_response(  # pyright: ignore[reportPrivateUsage]
                 request,
                 context,
                 asyncio.Event(),
             )
-
-        assert result is expected
-        assert calls == 1
-        isolation = handler.call_args.args[2]
-        assert isolation.directory_segment == "user-user-1"
 
 
 # endregion
@@ -345,93 +362,11 @@ class TestResponsesHostServerInit:
 
 
 class TestSessionPersistenceHelpers:
-    def test_resolver_type_alias_is_public(self) -> None:
-        def resolver(request: CreateResponse, context: ResponseContext) -> str | None:
-            del request
-            return context.platform_context.user_id_key
-
-        typed_resolver: ResponsesSessionIsolationKeyResolver = resolver
-        assert callable(typed_resolver)
-
-    async def test_sync_and_async_isolation_resolvers(self) -> None:
-        request = CreateResponse(model="m", input="hi")
-        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
-
-        sync_isolation = await resolve_session_isolation(
-            lambda request, context: "user-1",
-            request,
-            context,
-            is_hosted=True,
-        )
-
-        async def async_resolver(request: CreateResponse, context: ResponseContext) -> str:
-            del request, context
-            return "user-2"
-
-        async_isolation = await resolve_session_isolation(
-            async_resolver,
-            request,
-            context,
-            is_hosted=True,
-        )
-
-        assert sync_isolation.directory_segment == "user-user-1"
-        assert async_isolation.directory_segment == "user-user-2"
-        assert sync_isolation.fingerprint != async_isolation.fingerprint
-
-    async def test_local_missing_isolation_key_is_unscoped(self) -> None:
-        request = CreateResponse(model="m", input="hi")
-        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
-
-        isolation = await resolve_session_isolation(
-            lambda request, context: None,
-            request,
-            context,
-            is_hosted=False,
-        )
-
-        assert isolation == ResolvedSessionIsolation(None, None, None)
-
-    async def test_contextvar_backed_resolvers_do_not_cross_contaminate(self) -> None:
-        from contextvars import ContextVar
-
-        current_user: ContextVar[str | None] = ContextVar("current_user", default=None)
-        request = CreateResponse(model="m", input="hi")
-        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
-
-        def resolver(request: CreateResponse, context: ResponseContext) -> str | None:
-            del request, context
-            return current_user.get()
-
-        async def resolve_for(user_id: str) -> ResolvedSessionIsolation:
-            token = current_user.set(user_id)
-            try:
-                await asyncio.sleep(0)
-                return await resolve_session_isolation(resolver, request, context, is_hosted=True)
-            finally:
-                current_user.reset(token)
-
-        first, second = await asyncio.gather(resolve_for("user-1"), resolve_for("user-2"))
-
-        assert first.key == "user-1"
-        assert second.key == "user-2"
-        assert first.fingerprint != second.fingerprint
-
-    @pytest.mark.parametrize(
-        "key",
-        [".", "..", "../escape", "user/name", r"user\name", "user:name", "line\nbreak", "trailing."],
-    )
-    async def test_invalid_isolation_key_is_rejected(self, key: str) -> None:
-        request = CreateResponse(model="m", input="hi")
-        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
-
-        with pytest.raises(ValueError, match="isolation key"):
-            await resolve_session_isolation(
-                lambda request, context: key,
-                request,
-                context,
-                is_hosted=True,
-            )
+    def test_foundry_session_store_is_public_and_experimental(self) -> None:
+        assert FoundrySessionStore.__feature_stage__ == "experimental"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert FoundrySessionStore.__feature_id__ == ExperimentalFeature.SESSION_STORE.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert FoundrySessionStore.__doc__ is not None
+        assert ".. warning:: Experimental" in FoundrySessionStore.__doc__
 
     def test_response_id_partition_supports_current_legacy_and_raw_ids(self) -> None:
         current_partition = "a" * 18
@@ -480,23 +415,24 @@ class TestSessionPersistenceHelpers:
             == response_partition
         )
 
-    def test_custom_store_key_partitions_by_agent_and_isolation(self) -> None:
+    def test_custom_store_key_partitions_by_agent_and_request_user(self) -> None:
         agent = _make_agent()
         other_agent = _make_agent()
         other_agent.name = "Other Agent"
-        isolation_a = ResolvedSessionIsolation("user-a", "user-user-a", "a" * 64)
-        isolation_b = ResolvedSessionIsolation("user-b", "user-user-b", "b" * 64)
 
-        key_a = _custom_session_store_key(agent, "conversation-1", isolation=isolation_a)
-        key_b = _custom_session_store_key(agent, "conversation-1", isolation=isolation_b)
-        key_other_agent = _custom_session_store_key(other_agent, "conversation-1", isolation=isolation_a)
+        with _request_context(user_id="user-a"):
+            key_a = _custom_session_store_key(agent, "conversation-1")
+            key_other_agent = _custom_session_store_key(other_agent, "conversation-1")
+            repeated_key_a = _custom_session_store_key(agent, "conversation-1")
+        with _request_context(user_id="user-b"):
+            key_b = _custom_session_store_key(agent, "conversation-1")
 
         assert key_a != key_b
         assert key_a != key_other_agent
         assert key_a.startswith("foundry_")
         assert len(key_a) == len("foundry_") + 64
         assert all(character.isascii() and (character.isalnum() or character in "-_") for character in key_a)
-        assert key_a == _custom_session_store_key(agent, "conversation-1", isolation=isolation_a)
+        assert key_a == repeated_key_a
 
     def test_conversation_object_id_preserves_safe_values_and_hashes_unsafe_values(self) -> None:
         assert _conversation_object_id("conversation-1") == "conversation-1"
@@ -534,38 +470,37 @@ class TestSessionPersistenceHelpers:
 
 class TestAgentSessionPersistence:
     async def test_file_store_uses_per_user_child_directory_and_preserves_format(self, tmp_path: Path) -> None:
-        template = IsolationKeyScopedFileSessionStore(tmp_path, serialization_format="msgpack")
+        template = FoundrySessionStore(tmp_path, serialization_format="msgpack")
         server = _make_server(_make_agent(), session_store=template)
-        isolation_a = ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64)
-        isolation_b = ResolvedSessionIsolation("user-B", "user-user-B", "b" * 64)
 
         store = server._session_store  # pyright: ignore[reportPrivateUsage]
-        assert isinstance(store, IsolationKeyScopedFileSessionStore)
+        assert isinstance(store, FoundrySessionStore)
         assert store.storage_path == tmp_path
         assert store.serialization_format == "msgpack"
 
-        with store.use_isolation(isolation_a):
+        with _request_context(user_id="user-A"):
             await store.set("conversation-1", AgentSession(session_id="conversation-1"))
-        with store.use_isolation(isolation_b):
+        with _request_context(user_id="user-B"):
             await store.set("conversation-1", AgentSession(session_id="conversation-1"))
 
-        assert (tmp_path / "user-user-A" / "conversation-1.msgpack").is_file()
-        assert (tmp_path / "user-user-B" / "conversation-1.msgpack").is_file()
+        user_a_directory = f"user-{hashlib.sha256(b'user-A').hexdigest()}"
+        user_b_directory = f"user-{hashlib.sha256(b'user-B').hexdigest()}"
+        assert (tmp_path / user_a_directory / "conversation-1.msgpack").is_file()
+        assert (tmp_path / user_b_directory / "conversation-1.msgpack").is_file()
 
     async def test_scoped_file_store_reuses_base_filename_safety(self, tmp_path: Path) -> None:
-        store = IsolationKeyScopedFileSessionStore(tmp_path)
-        isolation = ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64)
+        store = FoundrySessionStore(tmp_path)
+        user_directory = tmp_path / f"user-{hashlib.sha256(b'user-A').hexdigest()}"
 
-        with store.use_isolation(isolation):
+        with _request_context(user_id="user-A"):
             await store.set("CON", AgentSession(session_id="conversation-1"))
 
-        assert not (tmp_path / "user-user-A" / "CON.json").exists()
-        assert len(list((tmp_path / "user-user-A").glob("~session-*.json"))) == 1
+        assert not (user_directory / "CON.json").exists()
+        assert len(list(user_directory.glob("~session-*.json"))) == 1
 
     async def test_scoped_file_store_rejects_symlinked_session_leaf(self, tmp_path: Path) -> None:
-        store = IsolationKeyScopedFileSessionStore(tmp_path)
-        isolation = ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64)
-        user_directory = tmp_path / "user-user-A"
+        store = FoundrySessionStore(tmp_path)
+        user_directory = tmp_path / f"user-{hashlib.sha256(b'user-A').hexdigest()}"
         user_directory.mkdir()
         outside_file = tmp_path / "outside.json"
         outside_file.write_text("outside", encoding="utf-8")
@@ -574,40 +509,27 @@ class TestAgentSessionPersistence:
         except OSError as exc:
             pytest.skip(f"Symlinks are not available: {exc}")
 
-        with store.use_isolation(isolation), pytest.raises(ValueError, match="escaped storage directory"):
+        with _request_context(user_id="user-A"), pytest.raises(ValueError, match="escaped storage directory"):
             await store.get("conversation-1")
 
     async def test_scoped_file_store_rejects_symlinked_isolation_directory(self, tmp_path: Path) -> None:
-        store = IsolationKeyScopedFileSessionStore(tmp_path)
-        isolation = ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64)
+        store = FoundrySessionStore(tmp_path)
+        user_directory = f"user-{hashlib.sha256(b'user-A').hexdigest()}"
         outside_directory = tmp_path.parent / f"{tmp_path.name}-outside"
         outside_directory.mkdir()
         try:
-            (tmp_path / "user-user-A").symlink_to(outside_directory, target_is_directory=True)
+            (tmp_path / user_directory).symlink_to(outside_directory, target_is_directory=True)
         except OSError as exc:
             pytest.skip(f"Symlinks are not available: {exc}")
 
-        with store.use_isolation(isolation), pytest.raises(ValueError, match="Session directory escaped"):
+        with _request_context(user_id="user-A"), pytest.raises(ValueError, match="Session directory escaped"):
             await store.get("conversation-1")
 
-    async def test_scoped_file_store_rejects_traversal_directory_segment(self, tmp_path: Path) -> None:
-        store = IsolationKeyScopedFileSessionStore(tmp_path)
-        bypassed_resolver = ResolvedSessionIsolation("user-A", "../../Users", "a" * 64)
-
-        with store.use_isolation(bypassed_resolver), pytest.raises(ValueError, match="Session directory escaped"):
-            await store.get("conversation-1")
-
-    def test_session_isolation_stamp_rejects_mismatch(self) -> None:
-        session = AgentSession(session_id="conversation-1")
-        isolation_a = ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64)
-        isolation_b = ResolvedSessionIsolation("user-B", "user-user-B", "b" * 64)
-
-        _stamp_or_validate_session_isolation(session, isolation_a)
-        assert session.state[_SESSION_ISOLATION_STATE_KEY] == "a" * 64
-        assert "user-A" not in session.state.values()
-
-        with pytest.raises(RuntimeError, match="identity context mismatch"):
-            _stamp_or_validate_session_isolation(session, isolation_b)
+    async def test_local_file_store_without_user_uses_root_directory(self, tmp_path: Path) -> None:
+        store = FoundrySessionStore(tmp_path)
+        with _request_context():
+            await store.set("conversation-1", AgentSession(session_id="conversation-1"))
+        assert (tmp_path / "conversation-1.json").is_file()
 
     async def test_previous_response_chain_restores_session_state(self) -> None:
         seen_counts: list[int] = []
@@ -655,7 +577,6 @@ class TestAgentSessionPersistence:
             _custom_session_store_key(
                 agent,
                 _conversation_object_id(conversation_key),
-                isolation=ResolvedSessionIsolation(None, None, None),
             )
         )
         assert stored is not None
@@ -684,14 +605,14 @@ class TestAgentSessionPersistence:
         first_server = ResponsesHostServer(
             make_agent(),
             store=response_store,
-            session_store=IsolationKeyScopedFileSessionStore(tmp_path),
+            session_store=FoundrySessionStore(tmp_path),
         )
         first = await _post(first_server)
 
         second_server = ResponsesHostServer(
             make_agent(),
             store=response_store,
-            session_store=IsolationKeyScopedFileSessionStore(tmp_path),
+            session_store=FoundrySessionStore(tmp_path),
         )
         second = await _post(second_server, previous_response_id=first.json()["id"])
 
@@ -702,7 +623,7 @@ class TestAgentSessionPersistence:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("recovered")])])
         )
-        server = _make_server(agent, session_store=IsolationKeyScopedFileSessionStore(tmp_path))
+        server = _make_server(agent, session_store=FoundrySessionStore(tmp_path))
         corrupt_file = tmp_path / "conversation-1.json"
         corrupt_file.write_text("{not-json", encoding="utf-8")
 
@@ -744,7 +665,6 @@ class TestAgentSessionPersistence:
             _custom_session_store_key(
                 agent,
                 _conversation_object_id(conversation_key),
-                isolation=ResolvedSessionIsolation(None, None, None),
             )
         )
 
@@ -773,7 +693,6 @@ class TestAgentSessionPersistence:
             _custom_session_store_key(
                 agent,
                 _conversation_object_id(conversation_key),
-                isolation=ResolvedSessionIsolation(None, None, None),
             )
         )
 
@@ -3780,54 +3699,46 @@ class TestCheckpointContextPathValidation:
         assert storage.storage_path.parent == root.resolve()
         assert storage.storage_path.name == "%2e%2e"
 
-    def test_isolation_scopes_storage_under_user_partition(self, tmp_path: Any) -> None:
+    def test_request_user_scopes_storage_under_user_partition(self, tmp_path: Any) -> None:
         helper = self._helper()
         root = tmp_path / "root"
         root.mkdir()
-        isolation = ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64)
-        storage = helper(str(root), "resp_abc123", isolation=isolation)
+        with _request_context(user_id="user-A"):
+            storage = helper(str(root), "resp_abc123")
+        user_directory = f"user-{hashlib.sha256(b'user-A').hexdigest()}"
         assert storage.storage_path.is_dir()
-        assert storage.storage_path == (root / "user-user-A" / "resp_abc123").resolve()
+        assert storage.storage_path == (root / user_directory / "resp_abc123").resolve()
 
-    def test_absent_isolation_uses_unscoped_layout(self, tmp_path: Any) -> None:
+    def test_absent_request_user_uses_unscoped_layout(self, tmp_path: Any) -> None:
         helper = self._helper()
         root = tmp_path / "root"
         root.mkdir()
-        storage = helper(str(root), "resp_abc123", isolation=ResolvedSessionIsolation(None, None, None))
+        with _request_context():
+            storage = helper(str(root), "resp_abc123")
         assert storage.storage_path == (root / "resp_abc123").resolve()
 
-    def test_distinct_isolation_keys_get_isolated_storage(self, tmp_path: Any) -> None:
+    def test_distinct_request_users_get_isolated_storage(self, tmp_path: Any) -> None:
         helper = self._helper()
         root = tmp_path / "root"
         root.mkdir()
-        a = helper(
-            str(root),
-            "shared_context",
-            isolation=ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64),
-        )
-        b = helper(
-            str(root),
-            "shared_context",
-            isolation=ResolvedSessionIsolation("user-B", "user-user-B", "b" * 64),
-        )
+        with _request_context(user_id="user-A"):
+            a = helper(str(root), "shared_context")
+        with _request_context(user_id="user-B"):
+            b = helper(str(root), "shared_context")
+        user_a_directory = root / f"user-{hashlib.sha256(b'user-A').hexdigest()}"
+        user_b_directory = root / f"user-{hashlib.sha256(b'user-B').hexdigest()}"
         assert a.storage_path != b.storage_path
-        assert a.storage_path.is_relative_to((root / "user-user-A").resolve())
-        assert b.storage_path.is_relative_to((root / "user-user-B").resolve())
+        assert a.storage_path.is_relative_to(user_a_directory.resolve())
+        assert b.storage_path.is_relative_to(user_b_directory.resolve())
 
-    def test_malicious_isolation_directory_is_rejected(self, tmp_path: Any) -> None:
+    def test_unsafe_request_user_is_hashed_before_path_join(self, tmp_path: Any) -> None:
         helper = self._helper()
         root = tmp_path / "root"
         root.mkdir()
-        before = sorted(p.name for p in tmp_path.iterdir())
-        with pytest.raises(RuntimeError):
-            helper(
-                str(root),
-                "resp_abc123",
-                isolation=ResolvedSessionIsolation("bad", "../../escape", "a" * 64),
-            )
-        after = sorted(p.name for p in tmp_path.iterdir())
-        assert before == after
-        assert list(root.iterdir()) == []
+        with _request_context(user_id="../../escape"):
+            storage = helper(str(root), "resp_abc123")
+        expected_directory = root / f"user-{hashlib.sha256(b'../../escape').hexdigest()}"
+        assert storage.storage_path == (expected_directory / "resp_abc123").resolve()
 
     @pytest.mark.parametrize(
         "context_field,bad_id",
@@ -4007,36 +3918,34 @@ class TestApprovalStoragePathValidation:
 
         return _approval_storage_path
 
-    def test_isolation_scopes_path_under_base_directory(self, tmp_path: Any) -> None:
+    def test_request_user_scopes_path_under_base_directory(self, tmp_path: Any) -> None:
         from pathlib import Path
 
         helper = self._helper()
         base = tmp_path / "approvals"
-        isolation = ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64)
-        scoped = Path(helper(str(base), isolation))
+        with _request_context(user_id="user-A"):
+            scoped = Path(helper(str(base)))
+        user_directory = f"user-{hashlib.sha256(b'user-A').hexdigest()}"
         assert scoped.name == "approval_requests.json"
-        assert scoped.parent.name == "user-user-A"
+        assert scoped.parent.name == user_directory
         assert scoped.parent.parent == (tmp_path / "approvals").resolve()
 
-    def test_distinct_isolation_keys_get_isolated_paths(self, tmp_path: Any) -> None:
+    def test_distinct_request_users_get_isolated_paths(self, tmp_path: Any) -> None:
         helper = self._helper()
         base = tmp_path / "approvals"
-        assert helper(
-            str(base),
-            ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64),
-        ) != helper(
-            str(base),
-            ResolvedSessionIsolation("user-B", "user-user-B", "b" * 64),
-        )
+        with _request_context(user_id="user-A"):
+            path_a = helper(str(base))
+        with _request_context(user_id="user-B"):
+            path_b = helper(str(base))
+        assert path_a != path_b
 
-    def test_malicious_isolation_directory_is_rejected(self, tmp_path: Any) -> None:
+    def test_unsafe_request_user_is_hashed_before_path_join(self, tmp_path: Any) -> None:
         helper = self._helper()
         base = tmp_path / "approvals"
-        with pytest.raises(RuntimeError):
-            helper(
-                str(base),
-                ResolvedSessionIsolation("bad", "../../escape", "a" * 64),
-            )
+        with _request_context(user_id="../../escape"):
+            path = Path(helper(str(base)))
+        expected_directory = base / f"user-{hashlib.sha256(b'../../escape').hexdigest()}"
+        assert path == (expected_directory / "approval_requests.json").resolve()
 
 
 # region Agent lifecycle (lazy entry & OAuth consent surfacing)
