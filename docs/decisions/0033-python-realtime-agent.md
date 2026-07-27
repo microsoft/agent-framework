@@ -1,7 +1,7 @@
 ---
 status: proposed
 contact: eavanvalkenburg
-date: 2026-06-30
+date: 2026-07-27
 deciders: eavanvalkenburg
 consulted:
 informed:
@@ -33,11 +33,34 @@ capability differences.
 Related prior decisions and designs:
 
 - The .NET realtime ADR proposes a `RealtimeAgent` over `IRealtimeClient` as a subclass of `AIAgent`, with an
-  `AgentConversation` full-duplex surface.
+  `AgentConversation` full-duplex surface. Python uses the name `RealtimeConversation` to avoid confusion with
+  `AgentSession`.
 - Python does not have a direct `AIAgent` equivalent. The compatibility target for half-duplex scenarios is the
   structural `SupportsAgentRun` protocol.
 - Semantic Kernel ADR 0065 chooses an event-centered realtime client model and explicitly avoids owning microphone and
   speaker device handling in the runtime.
+
+### Terminology
+
+- **Realtime interaction**: A live exchange where input and output can overlap in time. This is different from a normal
+  request/response chat call, even when the output is streamed.
+- **Direct realtime model**: A provider-native live model session that accepts audio/text input and emits audio, text,
+  transcripts, tool calls, and control events over one bidirectional connection.
+- **Sandwich pipeline**: A composed STT -> agent -> TTS flow where speech-to-text produces text for an agent and
+  text-to-speech renders the agent output back to audio.
+- **Speech-to-text (STT)**: A component that turns incoming audio into text or transcript events.
+- **Text-to-speech (TTS)**: A component that turns outgoing text into audio.
+- **Barge-in / interruption**: User input that interrupts active model or TTS output, usually requiring local or hosted
+  playback to stop and provider-side output to be cancelled or truncated.
+- **Turn detection / VAD**: Voice activity detection that decides when the user started or stopped speaking and whether a
+  model response should be created automatically.
+- **Control event**: A non-content signal such as session created, response created/done, speech started/stopped,
+  cancellation, rate-limit update, or error.
+- **Half-duplex**: Request/response-style use where the caller sends one turn and receives one bounded response.
+- **Full-duplex**: Live bidirectional use where the caller can send input while receiving output and lifecycle events from
+  the same open interaction.
+- **Durable session state**: Serializable state used to continue future calls. It must not hold live sockets, receive
+  tasks, platform audio resources, or other live realtime objects.
 
 ## Decision Drivers
 
@@ -99,10 +122,10 @@ The selected architecture has these layers.
 
 ### Agent-level live conversation
 
-Introduce an experimental `AgentConversation` as the Agent Framework live full-duplex surface. It is an async context
+Introduce an experimental `RealtimeConversation` as the Agent Framework live full-duplex surface. It is an async context
 manager / async disposable object, not an `AgentSession`.
 
-`AgentConversation` owns a live exchange and exposes operations for:
+`RealtimeConversation` owns a live exchange and exposes operations for:
 
 - sending user text/messages;
 - sending text, audio content, or explicit realtime events;
@@ -114,14 +137,14 @@ manager / async disposable object, not an `AgentSession`.
 The exact method names are implementation details, but the type must make lifecycle clear: callers must close it or use
 `async with`.
 
-`AgentConversation` is also the convenience boundary. It may accept `Message`, `Content`, strings, and audio helper
+`RealtimeConversation` is also the convenience boundary. It may accept `Message`, `Content`, strings, and audio helper
 inputs and translate them into provider-level realtime events. Provider sessions should not own these agent-level
 conveniences.
 
 Illustrative shape:
 
 ```python
-class AgentConversation:
+class RealtimeConversation:
     """Live full-duplex conversation owned by a RealtimeAgent."""
 
     @property
@@ -145,7 +168,7 @@ class AgentConversation:
         """Close the live conversation and release provider resources."""
         ...
 
-    async def __aenter__(self) -> "AgentConversation":
+    async def __aenter__(self) -> "RealtimeConversation":
         """Start the live provider session and receive loop."""
         ...
 
@@ -154,9 +177,9 @@ class AgentConversation:
         ...
 ```
 
-`AgentConversation` has these responsibilities:
+`RealtimeConversation` has these responsibilities:
 
-- **Own the single receive loop**. The provider session is single-reader. `AgentConversation` is the only component that
+- **Own the single receive loop**. The provider session is single-reader. `RealtimeConversation` is the only component that
   calls `RealtimeClientSessionProtocol.receive(...)`.
 - **Project events to updates**. It maps each provider `RealtimeEvent` to one `AgentResponseUpdate` and exposes only
   agent-level updates to callers.
@@ -168,19 +191,59 @@ class AgentConversation:
 - **Preserve session state**. Durable continuation values discovered during the live conversation are copied back to the
   associated `RealtimeAgentSession` / `AgentSession` when they are future-call continuation state.
 
-`AgentConversation` should not:
+`RealtimeConversation` should not:
 
 - expose provider `RealtimeEvent` as its primary output stream;
 - own platform microphone/speaker drivers;
 - be serializable or stored in `AgentSession`;
 - run a second tool loop for sandwich pipelines when the inner `SupportsAgentRun` already owns tool invocation.
 
+The output stream should not be inverted to stream `RealtimeEvent` values with optional `AgentResponseUpdate` or `Content`
+inside them. `RealtimeEvent` is the provider/session boundary. `AgentResponseUpdate` is the agent-facing stream item. If
+callers iterate a `RealtimeConversation`, they should receive the same kind of update they receive from
+`Agent/RealtimeAgent.run(..., stream=True)`, not a lower-level provider event envelope.
+
+Keeping `RealtimeEvent` below the agent layer matters because:
+
+- middleware, telemetry, workflows, and agent consumers already understand `AgentResponseUpdate`;
+- `RealtimeEvent` contains provider or pipeline protocol details that are useful for mapping and diagnostics but should
+  not be the primary application programming model;
+- putting `AgentResponseUpdate` inside `RealtimeEvent` would make the lower-level provider event depend on the higher
+  agent layer, reversing the dependency direction;
+- `RealtimeEvent.raw_representation` already provides the escape hatch for callers that need the raw provider event;
+- the same `RealtimeEvent` model is used for outbound commands, which are not agent output updates.
+
+The projection direction is therefore one-way:
+
+```text
+provider SDK event -> RealtimeEvent -> AgentResponseUpdate -> AgentResponse (for half-duplex finalization)
+```
+
+Content-free realtime events are still visible to callers. They are projected to `AgentResponseUpdate` with a
+`Content.from_realtime_event(...)` item:
+
+```text
+RealtimeEvent(
+    event_type="lifecycle",
+    content=None,
+    service_event_type="input_audio_buffer.speech_started",
+)
+    -> AgentResponseUpdate(
+        contents=[Content.from_realtime_event(...)],
+        raw_representation=<the RealtimeEvent>,
+    )
+```
+
+This keeps the user-facing stream uniform: callers always receive `AgentResponseUpdate`. For normal payloads the update
+contains text/audio/function/error content. For control-only signals the update contains realtime-event content. Callers
+that care about provider details can inspect the realtime-event content metadata or the update's `raw_representation`.
+
 Continuous conversation and scoped response requests are different:
 
 - `conversation.updates` is the open-ended full-duplex update stream. It may run until the conversation is closed and
   does not necessarily have a final `AgentResponse`.
 - `async for update in conversation` is shorthand for iterating `conversation.updates`.
-- The minimal `AgentConversation` shape does not need a `request_response()` method. Use
+- The minimal `RealtimeConversation` shape does not need a `request_response()` method. Use
   `conversation.send(RealtimeEvent(...))` for explicit provider response commands such as response creation when the
   provider requires them.
 - `RealtimeAgent.run(..., stream=True)` owns the bounded response/`ResponseStream` projection for half-duplex scenarios.
@@ -199,11 +262,11 @@ Entering and exiting the async context should be deterministic:
 
 ### Audio I/O and hosted media bridges
 
-`AgentConversation` should start with one send path: text, messages, content, audio content, and explicit realtime events
+`RealtimeConversation` should start with one send path: text, messages, content, audio content, and explicit realtime events
 are sent through `conversation.send(...)`. Audio is emitted as `AgentResponseUpdate` content.
 
 The framework should define small provider-neutral audio bridge shapes, for example an audio frame type and source/sink
-protocols, so callers can connect microphone/speaker helpers or hosted media streams to `AgentConversation`. Concrete
+protocols, so callers can connect microphone/speaker helpers or hosted media streams to `RealtimeConversation`. Concrete
 device drivers and ACS-specific web apps should remain samples or optional integrations, but users should not have to
 drop below the agent/conversation API to build the common loops:
 
@@ -234,20 +297,22 @@ Add `RawRealtimeAgent` / `RealtimeAgent` over this client/session shape:
 - `run(..., stream=False)` opens an ephemeral realtime session, sends one turn, drains until the terminal response event,
   and returns `AgentResponse`;
 - `run(..., stream=True)` does the same but yields `AgentResponseUpdate` values through `ResponseStream`;
-- `start_conversation(...)` returns `AgentConversation` for full-duplex live use.
+- `start_conversation(...)` returns `RealtimeConversation` for full-duplex live use.
 
 `RealtimeAgent` must satisfy `SupportsAgentRun` so it can participate in half-duplex agent scenarios, including
-workflows, delegation, and any utility that accepts agent-like objects. It does not need to be a subclass of `Agent`;
-shared behavior should come from `BaseAgent`, middleware/telemetry layers, and the structural protocol.
+workflows, delegation, and any utility that accepts agent-like objects. It does not need to be a subclass of `Agent`.
+Shared behavior should come from `BaseAgent`, the structural protocol, and middleware/telemetry concepts that are
+compatible with the realtime `run(...)` shape.
 
-The implementation should mirror the existing Raw/Layered pattern without inheriting the chat-specific `RawAgent`:
+The implementation should mirror the existing Raw/Layered pattern without inheriting the chat-specific `RawAgent`.
+The exact layered class names are implementation details, but the dependency direction should be:
 
 ```python
 class RawRealtimeAgent(BaseAgent):
     ...
 
 
-class RealtimeAgent(AgentMiddlewareLayer, AgentTelemetryLayer, RawRealtimeAgent):
+class RealtimeAgent(<agent middleware layer>, <agent telemetry layer>, RawRealtimeAgent):
     ...
 ```
 
@@ -256,9 +321,13 @@ it assumes `SupportsChatGetResponse`, chat options, chat response parsing, and t
 would make realtime inherit request/response chat assumptions that the realtime protocol is explicitly trying to avoid.
 
 `BaseAgent` is the right base because it provides identity, context provider storage, middleware storage, session
-factories, tool-as-agent support, and provider hooks without imposing a chat-client transport. The full `RealtimeAgent`
-then gets agent middleware and telemetry by layering `AgentMiddlewareLayer` and `AgentTelemetryLayer` over
-`RawRealtimeAgent`, just as `Agent` layers them over `RawAgent`.
+factories, tool-as-agent support, and provider hooks without imposing a chat-client transport.
+
+The existing `AgentMiddlewareLayer` and `AgentTelemetryLayer` should be reused only where their current `run(...)`
+contract fits realtime. Current `AgentMiddlewareLayer` is shaped around the chat `Agent.run(...)` signature, including
+chat options, tool forwarding, compaction, tokenizer, and chat/function middleware forwarding. If `RawRealtimeAgent.run`
+does not intentionally support that same compatible shape, the realtime implementation should factor out the reusable
+middleware/telemetry pieces or add small realtime-specific adapter layers rather than inheriting chat assumptions.
 
 OpenAI realtime is the first provider implementation and belongs in `agent-framework-openai`, for example as
 `RawOpenAIRealtimeClient` / `OpenAIRealtimeClient`. Core must not take an OpenAI SDK dependency.
@@ -266,7 +335,7 @@ OpenAI realtime is the first provider implementation and belongs in `agent-frame
 ### Sandwich STT-agent-TTS path
 
 Add `RealtimePipeline` for sandwich setups. It composes a speech-to-text component, an inner `SupportsAgentRun`, and a
-text-to-speech component behind the same `AgentConversation` surface. This also requires adding provider-neutral STT and
+text-to-speech component behind the same `RealtimeConversation` surface. This also requires adding provider-neutral STT and
 TTS abstractions that are small enough to support both local samples and hosted media integrations.
 
 This is a staged part of the architecture. The direct realtime model path should land first. `RealtimePipeline`, STT, and
@@ -275,13 +344,24 @@ shape. Otherwise the ADR records the intended architecture and defers the concre
 
 The sandwich implementation should:
 
-- accept live audio input through `AgentConversation`;
+- accept live audio input through `RealtimeConversation`;
 - stream or batch audio into the speech-to-text abstraction;
 - feed recognized text into the inner agent;
 - stream the inner agent's text updates into the text-to-speech abstraction;
 - emit synthesized audio as `Content.from_data(..., media_type="audio/...")`;
 - surface STT/TTS/pipeline lifecycle events as realtime control-event content;
 - use the inner agent's normal function invocation behavior instead of creating a second outer tool loop by default.
+
+Tool handling in `RealtimePipeline` should be deliberately boring:
+
+- tools are configured on the inner `SupportsAgentRun` agent, not on `RealtimePipeline`;
+- recognized text from STT is passed to the inner agent through its normal `run(...)` / streaming path;
+- function calls, approvals, progressive tool exposure, middleware, and tool errors are handled by the inner agent exactly
+  as they are for normal text interactions;
+- the pipeline observes the inner agent's streamed `AgentResponseUpdate` values and forwards text content to TTS;
+- the pipeline emits synthesized audio and pipeline lifecycle events, but it does not inspect or execute tool calls itself;
+- if a future scenario needs realtime-model-style tool handling outside the inner agent, that should be a separate
+  decision, not an implicit responsibility of `RealtimePipeline`.
 
 Concrete provider implementations can live in provider packages or samples, but the provider-neutral STT/TTS protocol
 shape and `RealtimePipeline` class are part of the architecture.
@@ -311,7 +391,7 @@ available, inner-agent response start/end, TTS audio start/end, interruption, ca
 
 ### Session and identity
 
-`AgentConversation` is live runtime state. `AgentSession` is durable serialized state. Do not store sockets, tasks, audio
+`RealtimeConversation` is live runtime state. `AgentSession` is durable serialized state. Do not store sockets, tasks, audio
 streams, or provider session objects in `AgentSession`.
 
 Add a `RealtimeAgentSession` only for durable state and compatibility checks. It can carry service-owned continuation
@@ -322,7 +402,7 @@ by lifecycle:
 - single response/event identity -> response/update/event metadata;
 - unfinished work resume -> continuation tokens if needed later;
 - per-run correlation -> run/telemetry context, not `AgentSession`;
-- live socket state -> `AgentConversation`, never `AgentSession`.
+- live socket state -> `RealtimeConversation`, never `AgentSession`.
 
 Direct realtime model sessions and sandwich pipeline sessions are not interchangeable. Implementations should detect
 obviously incompatible session state before making remote calls when practical.
@@ -382,7 +462,7 @@ ADR now but can land after the direct-model skeleton unless a first STT/TTS prov
   the same implementation.
 - Good, because direct provider code remains outside core.
 - Good, because function invocation reuses existing tested behavior instead of inventing a parallel tool loop.
-- Good, because `AgentSession` remains durable state and `AgentConversation` owns live resources.
+- Good, because `AgentSession` remains durable state and `RealtimeConversation` owns live resources.
 - Neutral, because the shared surface must be carefully documented to avoid hiding capability differences.
 - Bad, because the design introduces new live-resource lifecycle concerns that existing chat agents do not have.
 - Bad, because sandwich pipelines require more cancellation and backpressure plumbing than direct realtime model sessions.
@@ -455,7 +535,7 @@ samples.
 This proposal keeps those lessons but maps them into Agent Framework's agent model:
 
 - **Client versus agent**: Semantic Kernel exposes a realtime client surface directly. Agent Framework should expose a
-  `RealtimeAgent` and `AgentConversation`, with provider clients below that surface, so realtime composes with agent
+  `RealtimeAgent` and `RealtimeConversation`, with provider clients below that surface, so realtime composes with agent
   middleware, sessions, workflows, handoffs, telemetry, and tools.
 - **Event shape**: Semantic Kernel returns `RealtimeEvent` subclasses directly. Agent Framework should surface
   `AgentResponseUpdate` values whose `contents` are normal `Content` items where possible, plus a small
@@ -466,9 +546,9 @@ This proposal keeps those lessons but maps them into Agent Framework's agent mod
   agents.
 - **Direct and sandwich setups**: Semantic Kernel ADR 0065 focuses on direct realtime API clients. Agent Framework should
   explicitly support both direct realtime models and STT -> agent -> TTS sandwich pipelines behind the same
-  `AgentConversation` surface, while documenting that their latency, interruption, and continuation semantics differ.
+  `RealtimeConversation` surface, while documenting that their latency, interruption, and continuation semantics differ.
 - **Session lifetime**: Semantic Kernel's realtime client owns realtime session operations. Agent Framework should keep
-  live sockets/tasks in `AgentConversation` and keep `AgentSession` for durable, serializable continuation state only.
+  live sockets/tasks in `RealtimeConversation` and keep `AgentSession` for durable, serializable continuation state only.
 - **Audio path**: Semantic Kernel exposes `audio_output_callback` so audio can be forwarded before normal event handling
   for smoother playback. Agent Framework should start with audio as normal conversation updates and small
   source/sink-style bridge helpers. A dedicated low-latency audio callback can be added later if the normal update path
@@ -603,17 +683,17 @@ async with client(settings=settings, create_response=True, kernel=kernel):
 
 ```python
 from agent_framework import Content
-from agent_framework.realtime import AgentConversation
+from agent_framework.realtime import RealtimeConversation
 
 
-async def from_realtime_to_acs(content: Content) -> None:
+async def from_realtime_to_acs(websocket: WebSocket, content: Content) -> None:
     await websocket.send(json.dumps({
         "kind": "AudioData",
         "audioData": {"data": content.data},
     }))
 
 
-async def from_acs_to_realtime(conversation: AgentConversation) -> None:
+async def from_acs_to_realtime(websocket: WebSocket, conversation: RealtimeConversation) -> None:
     while True:
         data = json.loads(await websocket.receive())
         if data["kind"] == "AudioData":
@@ -622,19 +702,22 @@ async def from_acs_to_realtime(conversation: AgentConversation) -> None:
             )
 
 
-async def handle_agent_updates(conversation: AgentConversation) -> None:
+async def handle_agent_updates(websocket: WebSocket, conversation: RealtimeConversation) -> None:
     async for update in conversation:
         for content in update.contents:
             if content.has_top_level_media_type("audio"):
-                await from_realtime_to_acs(content)
+                await from_realtime_to_acs(websocket, content)
             elif content.type == "realtime_event" and content.service_event_type == "input_audio_buffer.speech_started":
                 await websocket.send(json.dumps({"Kind": "StopAudio", "AudioData": None, "StopAudio": {}}))
 
 
-async with agent.start_conversation() as conversation:
-    receive_task = asyncio.create_task(handle_agent_updates(conversation))
-    await from_acs_to_realtime(conversation)
-    receive_task.cancel()
+@app.websocket("/ws")
+async def ws() -> None:
+    websocket = current_websocket()
+    async with agent.start_conversation() as conversation:
+        receive_task = asyncio.create_task(handle_agent_updates(websocket, conversation))
+        await from_acs_to_realtime(websocket, conversation)
+        receive_task.cancel()
 ```
 
 ### Rejected option shape: extending `Agent`
@@ -660,7 +743,7 @@ async with agent.start_conversation() as conversation:
 ## Appendix: Proposed Python realtime client protocol
 
 The direct realtime model path should use a small provider-neutral protocol. The agent owns mapping between this protocol
-and `AgentConversation` / `AgentResponseUpdate`; provider packages own mapping between the protocol and provider SDK
+and `RealtimeConversation` / `AgentResponseUpdate`; provider packages own mapping between the protocol and provider SDK
 objects.
 
 Illustrative protocol shape:
@@ -741,8 +824,8 @@ class RealtimeClientProtocol(Protocol):
 Notes:
 
 - `RealtimeAgent` may expose a higher-level `start_conversation(...)` method that accepts agent run options and returns
-  `AgentConversation`; provider clients expose `start_session(...)`.
-- `AgentConversation`, not `RealtimeClientSessionProtocol`, owns convenience inputs such as strings, `Message`, `Content`,
+  `RealtimeConversation`; provider clients expose `start_session(...)`.
+- `RealtimeConversation`, not `RealtimeClientSessionProtocol`, owns convenience inputs such as strings, `Message`, `Content`,
   local audio helpers, and hosted media bridge helpers. It translates them into provider-level `RealtimeEvent` values.
 - `RealtimeClientSessionProtocol.receive(...)` intentionally returns a plain `AsyncIterable[RealtimeEvent]`, not
   `ResponseStream`, because it is the provider-level live event feed and has no provider-neutral final response.
@@ -750,9 +833,9 @@ Notes:
   - `RealtimeAgent.run(..., stream=True)` returns `ResponseStream[AgentResponseUpdate, AgentResponse]`.
   - A continuously open conversation may expose an async stream of updates without requiring callers to finalize it into
     one response.
-  - A scoped `AgentConversation` response helper can return `ResponseStream[AgentResponseUpdate, AgentResponse]` later if
+  - A scoped `RealtimeConversation` response helper can return `ResponseStream[AgentResponseUpdate, AgentResponse]` later if
     the API proves necessary.
-- `receive(...)` is single-reader. `AgentConversation` should own that read loop and project provider events into
+- `receive(...)` is single-reader. `RealtimeConversation` should own that read loop and project provider events into
   agent-level updates.
 - `RealtimeSessionOptions` should likely be a `TypedDict` in implementation, not a concrete mapping subclass. The shape
   above is illustrative.
@@ -769,7 +852,7 @@ only for live-session events. These types have different jobs:
 | `Content` | One semantic payload item. | Reusable across chat, agent, realtime, and tool flows. | text delta, audio bytes, function call, function result, error, usage, realtime control event content. | Yes, except `raw_representation`. |
 | `Message` | A role-authored collection of content items. | Conversation/history unit for half-duplex runs and seeded context. | user text message, assistant response message, tool result message. | Yes, except `raw_representation`. |
 | `RealtimeEvent` | One live realtime protocol/pipeline signal. | Live session send/receive unit. | `response.created`, `response.audio.delta`, `input_audio_buffer.speech_started`, pipeline transcript-ready event. | Mostly yes; raw provider object excluded. |
-| `AgentResponseUpdate` | One caller-facing streamed agent update. | Output stream item from `run(..., stream=True)` or `AgentConversation`. | audio update, transcript update, function-call update, VAD event update. | Yes, except `raw_representation`. |
+| `AgentResponseUpdate` | One caller-facing streamed agent update. | Output stream item from `run(..., stream=True)` or `RealtimeConversation`. | audio update, transcript update, function-call update, VAD event update. | Yes, except `raw_representation`. |
 
 ### `Content`
 
@@ -1014,17 +1097,17 @@ model, and keeps `RealtimeEvent` focused on live protocol/pipeline events that m
 | --- | --- | --- |
 | Client role | `IRealtimeClient` creates `IRealtimeClientSession` instances. | `RealtimeClientProtocol.start_session(...)` creates `RealtimeClientSessionProtocol` instances. |
 | Session lifetime | `IRealtimeClientSession` is `IAsyncDisposable`. | `RealtimeClientSessionProtocol` is an async context manager with `close()`. |
-| Send operation | `SendAsync(RealtimeClientMessage, ...)`. | `send(RealtimeEvent)`. `Message` / `Content` conveniences live on `AgentConversation`. |
-| Receive operation | `GetStreamingResponseAsync(...)` yields `RealtimeServerMessage`; single-reader constraint is called out. | `receive(...)` yields `RealtimeEvent`; single-reader constraint is explicit and normally owned by `AgentConversation`. |
+| Send operation | `SendAsync(RealtimeClientMessage, ...)`. | `send(RealtimeEvent)`. `Message` / `Content` conveniences live on `RealtimeConversation`. |
+| Receive operation | `GetStreamingResponseAsync(...)` yields `RealtimeServerMessage`; single-reader constraint is called out. | `receive(...)` yields `RealtimeEvent`; single-reader constraint is explicit and normally owned by `RealtimeConversation`. |
 | Options | `RealtimeSessionOptions` configures voice, VAD, formats, tools, and provider settings. | `RealtimeSessionOptions` carries the same conceptual fields using Python `TypedDict`/mapping conventions and provider extension fields. |
 | Audio | MEAI events can carry audio; .NET ADR projects audio to `DataContent` at agent level. | Audio flows as normal `Content.from_data(...)` payloads on `RealtimeEvent`; a callback can be added later if needed. |
 | Break-glass access | `GetService(...)` and raw representations expose MEAI/provider SDK objects. | `raw_representation` exposes provider SDK objects on events/updates. |
-| Agent projection | .NET `RealtimeAgent : AIAgent` wraps `IRealtimeClient`; `AgentConversation` is agent-level. | Python has no `AIAgent`; `RealtimeAgent` wraps `RealtimeClientProtocol`, exposes `AgentConversation`, and must satisfy `SupportsAgentRun` for half-duplex compatibility. |
+| Agent projection | .NET `RealtimeAgent : AIAgent` wraps `IRealtimeClient`; `RealtimeConversation` is agent-level. | Python has no `AIAgent`; `RealtimeAgent` wraps `RealtimeClientProtocol`, exposes `RealtimeConversation`, and must satisfy `SupportsAgentRun` for half-duplex compatibility. |
 | Function invocation | .NET expects reuse of `RealtimeClientBuilder` middleware, including function invocation. | Python should reuse/extract the existing `FunctionInvocationLayer` executor for direct realtime tool calls. |
-| Sandwich pipeline | Not the main `IRealtimeClient` focus in the .NET ADR. | Explicitly included through `RealtimePipeline(STT, SupportsAgentRun, TTS)` using the same `AgentConversation` surface. |
+| Sandwich pipeline | Not the main `IRealtimeClient` focus in the .NET ADR. | Explicitly included through `RealtimePipeline(STT, SupportsAgentRun, TTS)` using the same `RealtimeConversation` surface. |
 
 The proposed Python protocol intentionally stays close to .NET in the client/session split, live async lifetime,
-single-reader receive stream, options concept, raw-representation escape hatch, and agent-level `AgentConversation`
+single-reader receive stream, options concept, raw-representation escape hatch, and agent-level `RealtimeConversation`
 projection. It
 differs where Python needs a more idiomatic or practical shape:
 
