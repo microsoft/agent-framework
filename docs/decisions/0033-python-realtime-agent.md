@@ -7,7 +7,7 @@ consulted:
 informed:
 ---
 
-# Python realtime agents for direct realtime models and STT-agent-TTS pipelines
+# Python realtime agents for direct realtime models
 
 ## Context and Problem Statement
 
@@ -16,13 +16,13 @@ Python Agent Framework has mature request/response agent and chat-client abstrac
 `AgentResponseUpdate`, `Content`, `ResponseStream`, middleware, tools, telemetry, and history providers. It does not
 yet have a realtime agent surface for live audio/text interaction.
 
-Realtime agent work needs to cover two related but different architectures:
+Realtime agent work needs to account for two related but different architectures:
 
-1. **Direct realtime model**: one model/provider session accepts audio/text input and emits audio, text/transcripts,
-   function calls, and control events over a live bidirectional connection. OpenAI Realtime-style APIs are the first
-   target.
-2. **Sandwich setup**: speech-to-text (STT) converts live audio into text, a normal Agent Framework agent reasons and
-   calls tools over that text, and text-to-speech (TTS) renders the agent output back to audio.
+1. **Direct realtime model (phase 1)**: one model/provider session accepts audio/text input and emits audio,
+   text/transcripts, function calls, and control events over a live bidirectional connection. OpenAI Realtime-style APIs
+   are the first target.
+2. **Sandwich setup (phase 2)**: speech-to-text (STT) converts live audio into text, a normal Agent Framework agent
+   reasons and calls tools over that text, and text-to-speech (TTS) renders the agent output back to audio.
 
 Both can look like "a voice agent" to a caller, but they do not have the same semantics. Direct realtime models may own
 server-side VAD, barge-in, session continuation, and tool-call timing. Sandwich pipelines have three independently
@@ -67,7 +67,7 @@ Related prior decisions and designs:
 - **Agent composition**: realtime agents should still compose with existing agent middleware, telemetry, context
   providers, workflows, and handoffs where possible.
 - **Direct and sandwich coverage**: the architecture should handle both direct realtime model sessions and
-  STT-agent-TTS pipelines.
+  STT-agent-TTS pipelines in a later phase.
 - **Different semantics stay visible**: a shared surface must not imply identical latency, interruption, continuation,
   or tool-call behavior across direct and sandwich implementations.
 - **Full-duplex fidelity**: live send and receive must both be possible without flattening realtime into a simple
@@ -101,13 +101,13 @@ Add `RawRealtimeAgent` / `RealtimeAgent` as first-class agent types for realtime
 their constructor and methods can be explicit about live realtime behavior.
 Illustrative direct-model and sandwich setup snippets are in the appendix.
 
-- Good, because it covers both architecture families without forking the user-facing concept.
+- Good, because it covers the direct realtime model first without forking the future sandwich pipeline concept.
 - Good, because the public type advertises that this agent owns live realtime session behavior.
 - Good, because `Agent` can remain focused on chat-style request/response clients.
 - Good, because `start_conversation(...)` and realtime-specific options do not have to be grafted onto every `Agent`.
 - Good, because it keeps live resource lifetime explicit.
 - Good, because direct providers can preserve provider events while sandwich pipelines can surface pipeline events.
-- Good, because it allows OpenAI direct realtime first without blocking the sandwich architecture.
+- Good, because it allows OpenAI direct realtime first and leaves sandwich architecture for phase 2.
 - Neutral, because users must learn when to use `Agent` versus `RealtimeAgent`.
 - Bad, because the common abstraction has to be narrow and carefully policed; otherwise it becomes a leaky lowest-common
   denominator.
@@ -134,8 +134,8 @@ Illustrative direct-model and sandwich setup snippets are in the appendix.
 ## Decision Outcome
 
 Chosen option: **Option 1: Add `RealtimeAgent` as the realtime-specific agent type**, because it keeps the live realtime
-lifecycle explicit while still giving callers one realtime concept for both direct realtime model sessions and sandwich
-pipelines.
+lifecycle explicit while establishing the phase 1 surface for direct realtime model sessions. The same surface should be
+able to host a sandwich STT -> agent -> TTS pipeline later, but that is phase 2.
 
 Direct realtime model setup should look like this:
 
@@ -152,7 +152,7 @@ async with agent.start_conversation() as conversation:
         ...
 ```
 
-For sandwich setups, use a concrete `RealtimePipeline` class that composes speech-to-text, an inner
+In phase 2, sandwich setups should use a concrete `RealtimePipeline` class that composes speech-to-text, an inner
 `SupportsAgentRun`, and text-to-speech. The constructor order should follow the audio-to-audio flow:
 
 ```python
@@ -166,8 +166,8 @@ agent = RealtimeAgent(client=pipeline)
 ```
 
 This requires adding provider-neutral speech-to-text and text-to-speech abstractions in addition to the
-`RealtimePipeline` class itself. Those abstractions are part of the architecture, but they should be implemented after
-the direct realtime model path unless a concrete STT/TTS provider or sample is selected for the first slice.
+`RealtimePipeline` class itself. Those abstractions are explicitly **not phase 1** unless a concrete STT/TTS provider or
+sample is selected to validate them with the first implementation.
 
 Comparison with Semantic Kernel Python realtime and canonical code shapes are included in the appendices so the main
 decision stays readable while still making the proposed API concrete.
@@ -386,15 +386,16 @@ middleware/telemetry pieces or add small realtime-specific adapter layers rather
 OpenAI realtime is the first provider implementation and belongs in `agent-framework-openai`, for example as
 `RawOpenAIRealtimeClient` / `OpenAIRealtimeClient`. Core must not take an OpenAI SDK dependency.
 
-### Sandwich STT-agent-TTS path
+### Phase 2: Sandwich STT-agent-TTS path
 
-Add `RealtimePipeline` for sandwich setups. It composes a speech-to-text component, an inner `SupportsAgentRun`, and a
-text-to-speech component behind the same `RealtimeConversation` surface. This also requires adding provider-neutral STT and
-TTS abstractions that are small enough to support both local samples and hosted media integrations.
+Add `RealtimePipeline` in phase 2 for sandwich setups. It composes a speech-to-text component, an inner
+`SupportsAgentRun`, and a text-to-speech component behind the same `RealtimeConversation` surface. This also requires
+adding provider-neutral STT and TTS abstractions that are small enough to support both local samples and hosted media
+integrations.
 
-This is a staged part of the architecture. The direct realtime model path should land first. `RealtimePipeline`, STT, and
-TTS abstractions should land in the first implementation only if there is a concrete provider or sample validating their
-shape. Otherwise the ADR records the intended architecture and defers the concrete API.
+The direct realtime model path should land first. `RealtimePipeline`, STT, and TTS abstractions should land only after a
+concrete provider or sample validates their shape. Otherwise this ADR records the intended phase 2 architecture and
+defers the concrete API.
 
 The sandwich implementation should:
 
@@ -497,14 +498,14 @@ inner agent, optionally synthesizes audio, emits updates, and closes live resour
 ### Provider scope
 
 The first concrete provider should be OpenAI direct realtime in `agent-framework-openai`. Gemini Live or another
-protocol-different provider is useful later as a portability proof. Sandwich implementations should be designed in the
-ADR now but can land after the direct-model skeleton unless a first STT/TTS provider is selected.
+protocol-different provider is useful later as a portability proof. Sandwich implementations are phase 2 and should land
+after the direct-model skeleton unless a first STT/TTS provider is deliberately selected to validate that shape.
 
 ### Deferred decisions
 
 - Warm connection reuse for half-duplex `run(...)`.
 - WebRTC/browser-oriented transport APIs.
-- Concrete `RealtimePipeline`, STT, and TTS implementations if no first-slice provider or sample validates their shape.
+- Concrete `RealtimePipeline`, STT, and TTS implementations.
 - Built-in microphone and speaker handlers.
 - Dedicated realtime middleware separate from existing agent/function middleware.
 - Final public STT and TTS protocol names.
@@ -512,8 +513,8 @@ ADR now but can land after the direct-model skeleton unless a first STT/TTS prov
 ### Consequences
 
 - Good, because callers get one Agent Framework live conversation concept for realtime use.
-- Good, because direct realtime providers and sandwich pipelines can share event/output handling without pretending to be
-  the same implementation.
+- Good, because direct realtime providers can establish the event/output handling before phase 2 sandwich pipelines reuse
+  it.
 - Good, because direct provider code remains outside core.
 - Good, because function invocation reuses existing tested behavior instead of inventing a parallel tool loop.
 - Good, because `AgentSession` remains durable state and `RealtimeConversation` owns live resources.
@@ -534,7 +535,7 @@ Validation should happen in stages:
    tool behavior.
 5. Realtime tool tests validate direct function call -> function result / approval / user-input flows through the shared
    executor.
-6. Sandwich tests, once a first implementation exists, validate STT -> agent -> TTS event flow, cancellation, and TTS
+6. Phase 2 sandwich tests, once a first implementation exists, validate STT -> agent -> TTS event flow, cancellation, and TTS
    output mapping.
 7. OpenAI provider tests validate event mappers with fake SDK payloads. Live integration tests can be added later and
    marked `flaky` and `integration` with environment-based skips.
@@ -560,7 +561,7 @@ This proposal keeps those lessons but maps them into Agent Framework's agent mod
   declaration-only tools, progressive tools, user-input requests, and tool error shaping stay consistent with chat
   agents.
 - **Direct and sandwich setups**: Semantic Kernel ADR 0065 focuses on direct realtime API clients. Agent Framework should
-  explicitly support both direct realtime models and STT -> agent -> TTS sandwich pipelines behind the same
+  implement direct realtime first and reserve STT -> agent -> TTS sandwich pipelines for phase 2 behind the same
   `RealtimeConversation` surface, while documenting that their latency, interruption, and continuation semantics differ.
 - **Session lifetime**: Semantic Kernel's realtime client owns realtime session operations. Agent Framework should keep
   live sockets/tasks in `RealtimeConversation` and keep `AgentSession` for durable, serializable continuation state only.
@@ -649,7 +650,7 @@ async with (
             print(update.text, end="")
 ```
 
-### Proposed Agent Framework sandwich shape
+### Proposed Agent Framework phase 2 sandwich shape
 
 ```python
 from agent_framework import Agent
@@ -1119,7 +1120,7 @@ model, and keeps `RealtimeEvent` focused on live protocol/pipeline events that m
 | Break-glass access | `GetService(...)` and raw representations expose MEAI/provider SDK objects. | `raw_representation` exposes provider SDK objects on events/updates. |
 | Agent projection | .NET `RealtimeAgent : AIAgent` wraps `IRealtimeClient`; `RealtimeConversation` is agent-level. | Python has no `AIAgent`; `RealtimeAgent` wraps `RealtimeClientProtocol`, exposes `RealtimeConversation`, and must satisfy `SupportsAgentRun` for half-duplex compatibility. |
 | Function invocation | .NET expects reuse of `RealtimeClientBuilder` middleware, including function invocation. | Python should reuse/extract the existing `FunctionInvocationLayer` executor for direct realtime tool calls. |
-| Sandwich pipeline | Not the main `IRealtimeClient` focus in the .NET ADR. | Explicitly included through `RealtimePipeline(STT, SupportsAgentRun, TTS)` using the same `RealtimeConversation` surface. |
+| Sandwich pipeline | Not the main `IRealtimeClient` focus in the .NET ADR. | Phase 2 through `RealtimePipeline(STT, SupportsAgentRun, TTS)` using the same `RealtimeConversation` surface. |
 
 The proposed Python protocol intentionally stays close to .NET in the client/session split, live async lifetime,
 single-reader receive stream, options concept, raw-representation escape hatch, and agent-level `RealtimeConversation`
@@ -1129,8 +1130,8 @@ differs where Python needs a more idiomatic or practical shape:
 - Python uses structural `Protocol` types instead of C# interfaces.
 - Python uses async context managers instead of `IAsyncDisposable`.
 - Python includes `Message`/`Content` send conveniences to reduce boilerplate in samples and hosting bridges.
-- Python includes `RealtimePipeline` as a first-class sandwich composition target, while .NET's ADR focuses on direct
-  realtime clients.
+- Python reserves `RealtimePipeline` as a phase 2 sandwich composition target, while .NET's ADR focuses on direct realtime
+  clients.
 
 ## More Information
 
