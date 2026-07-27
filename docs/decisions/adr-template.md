@@ -30,27 +30,6 @@ You may want to articulate the problem in form of a question and add links to co
 - {title of option 3}
 - … <!-- numbers of options can vary -->
 
-## Decision Outcome
-
-Chosen option: "{title of option 1}", because
-{justification. e.g., only option, which meets k.o. criterion decision driver | which resolves force {force} | … | comes out best (see below)}.
-
-<!-- This is an optional element. Feel free to remove. -->
-
-### Consequences
-
-- Good, because {positive consequence, e.g., improvement of one or more desired qualities, …}
-- Bad, because {negative consequence, e.g., compromising one or more desired qualities, …}
-- … <!-- numbers of consequences can vary -->
-
-<!-- This is an optional element. Feel free to remove. -->
-
-## Validation
-
-{describe how the implementation of/compliance with the ADR is validated. E.g., by a review or an ArchUnit test}
-
-<!-- This is an optional element. Feel free to remove. -->
-
 ## Pros and Cons of the Options
 
 ### {title of option 1}
@@ -75,6 +54,25 @@ Chosen option: "{title of option 1}", because
 - Neutral, because {argument c}
 - Bad, because {argument d}
 - …
+
+## Decision Outcome
+
+Chosen option: "{title of option 1}", because
+{justification. e.g., only option, which meets k.o. criterion decision driver | which resolves force {force} | … | comes out best (see above)}.
+
+<!-- This is an optional element. Feel free to remove. -->
+
+### Consequences
+
+- Good, because {positive consequence, e.g., improvement of one or more desired qualities, …}
+- Bad, because {negative consequence, e.g., compromising one or more desired qualities, …}
+- … <!-- numbers of consequences can vary -->
+
+<!-- This is an optional element. Feel free to remove. -->
+
+## Validation
+
+{describe how the implementation of/compliance with the ADR is validated. E.g., by a review or an ArchUnit test}
 
 <!-- This is an optional element. Feel free to remove. -->
 

@@ -92,11 +92,65 @@ Related prior decisions and designs:
 - **Option 1: Add `RealtimeAgent` as the realtime-specific agent type**
 - **Option 2: Extend `Agent` to also be the realtime agent type**
 
+## Pros and Cons of the Options
+
+### Option 1: Add `RealtimeAgent` as the realtime-specific agent type
+
+Add `RawRealtimeAgent` / `RealtimeAgent` as first-class agent types for realtime. They should satisfy
+`SupportsAgentRun` for half-duplex compatibility and reuse the same base/middleware/telemetry stack where practical, but
+their constructor and methods can be explicit about live realtime behavior.
+Illustrative direct-model and sandwich setup snippets are in the appendix.
+
+- Good, because it covers both architecture families without forking the user-facing concept.
+- Good, because the public type advertises that this agent owns live realtime session behavior.
+- Good, because `Agent` can remain focused on chat-style request/response clients.
+- Good, because `start_conversation(...)` and realtime-specific options do not have to be grafted onto every `Agent`.
+- Good, because it keeps live resource lifetime explicit.
+- Good, because direct providers can preserve provider events while sandwich pipelines can surface pipeline events.
+- Good, because it allows OpenAI direct realtime first without blocking the sandwich architecture.
+- Neutral, because users must learn when to use `Agent` versus `RealtimeAgent`.
+- Bad, because the common abstraction has to be narrow and carefully policed; otherwise it becomes a leaky lowest-common
+  denominator.
+- Bad, because framework integrations that special-case the concrete `Agent` type may need to generalize to the agent
+  protocol/base class.
+
+### Option 2: Extend `Agent` to also be the realtime agent type
+
+Reuse `Agent` as the only public agent type. `Agent` would accept either a chat client, a direct realtime client, or a
+sandwich realtime pipeline, and would grow realtime-specific APIs such as `start_conversation(...)`.
+Illustrative direct-model and sandwich setup snippets are in the appendix.
+
+- Good, because users have one public agent type to learn.
+- Good, because existing `Agent(...)` samples and mental model remain the starting point.
+- Neutral, because `Agent` would need to accept multiple client protocols with different lifecycle semantics.
+- Bad, because it overloads the meaning of `client=`: chat clients are request/response, realtime clients own live
+  full-duplex sessions, and sandwich pipelines are composed systems.
+- Bad, because `Agent` would need realtime-only APIs such as `start_conversation(...)` even when used with normal chat
+  clients.
+- Bad, because type checking and overloads become harder: `Agent[ChatOptions]` and realtime options have different
+  execution shapes.
+- Bad, because live resource lifetime is easier to miss when hidden behind the existing chat-agent constructor.
+
 ## Decision Outcome
 
 Chosen option: **Option 1: Add `RealtimeAgent` as the realtime-specific agent type**, because it keeps the live realtime
 lifecycle explicit while still giving callers one realtime concept for both direct realtime model sessions and sandwich
 pipelines.
+
+Direct realtime model setup should look like this:
+
+```python
+agent = RealtimeAgent(
+    client=OpenAIRealtimeClient(model="gpt-4o-realtime-preview", voice="alloy"),
+    instructions="You are a helpful voice assistant.",
+    tools=[get_weather],
+)
+
+async with agent.start_conversation() as conversation:
+    await conversation.send("Hi there, I'm based in Amsterdam.")
+    async for update in conversation:
+        ...
+```
 
 For sandwich setups, use a concrete `RealtimePipeline` class that composes speech-to-text, an inner
 `SupportsAgentRun`, and text-to-speech. The constructor order should follow the audio-to-audio flow:
@@ -484,45 +538,6 @@ Validation should happen in stages:
    output mapping.
 7. OpenAI provider tests validate event mappers with fake SDK payloads. Live integration tests can be added later and
    marked `flaky` and `integration` with environment-based skips.
-
-## Pros and Cons of the Options
-
-### Option 1: Add `RealtimeAgent` as the realtime-specific agent type
-
-Add `RawRealtimeAgent` / `RealtimeAgent` as first-class agent types for realtime. They should satisfy
-`SupportsAgentRun` for half-duplex compatibility and reuse the same base/middleware/telemetry stack where practical, but
-their constructor and methods can be explicit about live realtime behavior.
-Illustrative direct-model and sandwich setup snippets are in the appendix.
-
-- Good, because it covers both architecture families without forking the user-facing concept.
-- Good, because the public type advertises that this agent owns live realtime session behavior.
-- Good, because `Agent` can remain focused on chat-style request/response clients.
-- Good, because `start_conversation(...)` and realtime-specific options do not have to be grafted onto every `Agent`.
-- Good, because it keeps live resource lifetime explicit.
-- Good, because direct providers can preserve provider events while sandwich pipelines can surface pipeline events.
-- Good, because it allows OpenAI direct realtime first without blocking the sandwich architecture.
-- Neutral, because users must learn when to use `Agent` versus `RealtimeAgent`.
-- Bad, because the common abstraction has to be narrow and carefully policed; otherwise it becomes a leaky lowest-common
-  denominator.
-- Bad, because framework integrations that special-case the concrete `Agent` type may need to generalize to the agent
-  protocol/base class.
-
-### Option 2: Extend `Agent` to also be the realtime agent type
-
-Reuse `Agent` as the only public agent type. `Agent` would accept either a chat client, a direct realtime client, or a
-sandwich realtime pipeline, and would grow realtime-specific APIs such as `start_conversation(...)`.
-Illustrative direct-model and sandwich setup snippets are in the appendix.
-
-- Good, because users have one public agent type to learn.
-- Good, because existing `Agent(...)` samples and mental model remain the starting point.
-- Neutral, because `Agent` would need to accept multiple client protocols with different lifecycle semantics.
-- Bad, because it overloads the meaning of `client=`: chat clients are request/response, realtime clients own live
-  full-duplex sessions, and sandwich pipelines are composed systems.
-- Bad, because `Agent` would need realtime-only APIs such as `start_conversation(...)` even when used with normal chat
-  clients.
-- Bad, because type checking and overloads become harder: `Agent[ChatOptions]` and realtime options have different
-  execution shapes.
-- Bad, because live resource lifetime is easier to miss when hidden behind the existing chat-agent constructor.
 
 ## Appendix: Comparison with Semantic Kernel Python realtime
 
