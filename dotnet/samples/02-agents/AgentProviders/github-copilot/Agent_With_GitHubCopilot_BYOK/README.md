@@ -58,7 +58,7 @@ SessionConfig sessionConfig = new()
         WireApi = "completions",
         BaseUrl = "https://api.example.com/v1",
         ApiKey = "your-api-key",
-        ModelId = "gpt-4o",
+        ModelId = "your-model-id",
     },
 };
 
