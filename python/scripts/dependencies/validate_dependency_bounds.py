@@ -26,7 +26,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-import tomli
 from packaging.utils import canonicalize_name
 from rich import print
 
