@@ -54,7 +54,7 @@ SessionConfig sessionConfig = new()
     Model = "gpt-4o",
     Provider = new ProviderConfig
     {
-        Type = "openai",
+        Type = "azure", // or "openai", "anthropic"
         WireApi = "completions",
         BaseUrl = "https://api.example.com/v1",
         ApiKey = "your-api-key",
