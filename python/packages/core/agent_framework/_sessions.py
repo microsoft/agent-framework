@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import logging
 import math
 import os
@@ -90,6 +91,12 @@ _WINDOWS_RESERVED_FILE_STEMS: frozenset[str] = frozenset({
     "LPT7",
     "LPT8",
     "LPT9",
+    "COM¹",
+    "COM²",
+    "COM³",
+    "LPT¹",
+    "LPT²",
+    "LPT³",
 })
 
 
@@ -103,20 +110,37 @@ _MSGPACK_FILE_EXTENSION = ".msgpack"
 
 
 def _default_json_dumps(value: Any) -> bytes:
+    if _contains_non_finite_float(value):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return _DEFAULT_JSON_ENCODER.encode(value)
 
 
 def _default_json_loads(value: str | bytes) -> Any:
-    return _DEFAULT_JSON_DECODER.decode(value)
+    try:
+        return _DEFAULT_JSON_DECODER.decode(value)
+    except msgspec.DecodeError:
+        return json.loads(value)
+
+
+def _contains_non_finite_float(value: Any) -> bool:
+    """Return whether a nested JSON-compatible value contains NaN or infinity."""
+    if isinstance(value, float):
+        return not math.isfinite(value)
+    if isinstance(value, Mapping):
+        return any(_contains_non_finite_float(item) for item in cast(Mapping[Any, Any], value).values())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_non_finite_float(item) for item in cast(Sequence[Any], value))
+    return False
 
 
 def _is_literal_session_file_stem_safe(session_id: str) -> bool:
     """Return whether a session ID can be used directly as a filename stem."""
+    windows_stem = session_id.split(".", maxsplit=1)[0].upper()
     if (
         not session_id
         or session_id.startswith(".")
         or session_id.endswith((" ", "."))
-        or session_id.upper() in _WINDOWS_RESERVED_FILE_STEMS
+        or windows_stem in _WINDOWS_RESERVED_FILE_STEMS
     ):
         return False
     if any(ord(character) < 32 for character in session_id):
@@ -298,8 +322,19 @@ def register_state_type(
     _STATE_CLASS_REGISTRY[cls] = registration
 
 
+def _warn_implicit_pydantic_registration(value_type: type[Any]) -> None:
+    """Warn that an unregistered Pydantic state type uses legacy registration."""
+    warnings.warn(
+        f"Implicit registration of Pydantic AgentSession state type {value_type.__name__!r} is deprecated and will "
+        "be removed in a future version. Call register_state_type() at module import time. Cold-start deserialization "
+        "is not guaranteed without explicit registration.",
+        DeprecationWarning,
+        stacklevel=4,
+    )
+
+
 def _serialize_value(value: Any, *, path: str) -> Any:
-    """Serialize one session-state value through the explicit type registry."""
+    """Serialize one session-state value through the shared compatibility path."""
     value_type = cast(type[Any], type(value))
     registration = _STATE_CLASS_REGISTRY.get(value_type)
     if registration is not None:
@@ -315,8 +350,14 @@ def _serialize_value(value: Any, *, path: str) -> Any:
         }
         serialized["type"] = registration.type_id
         return serialized
-    if isinstance(value, float) and not math.isfinite(value):
-        raise ValueError(f"Session state value at {path} must be a finite float.")
+    if callable(getattr(value, "to_dict", None)):
+        payload = value.to_dict()
+        if not isinstance(payload, Mapping):
+            raise TypeError(f"{value_type.__name__}.to_dict() must return a mapping.")
+        return {
+            str(key): _serialize_value(item, path=f"{path}.{key}")
+            for key, item in cast(Mapping[Any, Any], payload).items()
+        }
     if value_type in _STATE_SCALAR_TYPES:
         return value
     if isinstance(value, list):
@@ -330,34 +371,69 @@ def _serialize_value(value: Any, *, path: str) -> Any:
             str(key): _serialize_value(item, path=f"{path}.{key}")
             for key, item in cast(Mapping[Any, Any], value).items()
         }
-    raise TypeError(
-        f"Session state value at {path} has unregistered type {type(value).__name__!r}; "
-        "call register_state_type() before persisting the session."
-    )
+
+    from pydantic import BaseModel
+
+    if isinstance(value, BaseModel):
+        # Temporary compatibility fallback for unregistered Pydantic models;
+        # remove this branch together with implicit auto-registration.
+        _warn_implicit_pydantic_registration(value_type)
+        type_id = _resolve_state_type_id(value_type, None)
+        register_state_type(value_type, type_id=type_id)
+        return _serialize_value(value, path=path)
+    return value
 
 
-def _deserialize_value(value: Any) -> Any:
+def _deserialize_value(value: Any, *, path: str) -> Any:
     """Deserialize a single value, restoring registered types."""
     if isinstance(value, list):
-        return [_deserialize_value(item) for item in cast(list[Any], value)]
+        return [_deserialize_value(item, path=f"{path}[{index}]") for index, item in enumerate(cast(list[Any], value))]
     if isinstance(value, Mapping):
         raw_mapping = {str(key): item for key, item in cast(Mapping[Any, Any], value).items()}
         if "type" in raw_mapping:
             registration = _STATE_TYPE_REGISTRY.get(str(raw_mapping["type"]))
             if registration is not None:
-                return registration.decoder(raw_mapping)
-        return {key: _deserialize_value(item) for key, item in raw_mapping.items()}
+                try:
+                    return registration.decoder(raw_mapping)
+                except Exception as exc:
+                    # Registered decoders are application extension points. Any
+                    # ordinary failure means this payload cannot be restored by
+                    # the active registration and should enter store recovery.
+                    raise ValueError(
+                        f"Failed to deserialize registered state type {registration.type_id!r} at {path}."
+                    ) from exc
+        return {key: _deserialize_value(item, path=f"{path}.{key}") for key, item in raw_mapping.items()}
     return value
 
 
 def _serialize_state(state: dict[str, Any]) -> dict[str, Any]:
-    """Deep-serialize a state dict, converting SerializationProtocol objects to dicts."""
+    """Deep-serialize a state dict using the established AgentSession contract."""
     return {key: _serialize_value(value, path=f"state.{key}") for key, value in state.items()}
+
+
+def _validate_durable_state_value(value: Any, *, path: str) -> None:
+    """Validate that serialized state can round-trip through the durable codecs."""
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"Session state value at {path} must be a finite float.")
+    if type(value) in _STATE_SCALAR_TYPES:
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(cast(list[Any], value)):
+            _validate_durable_state_value(item, path=f"{path}[{index}]")
+        return
+    if isinstance(value, Mapping):
+        for key, item in cast(Mapping[Any, Any], value).items():
+            _validate_durable_state_value(item, path=f"{path}.{key}")
+        return
+    raise TypeError(
+        f"Session state value at {path} has unsupported serialized type {type(value).__name__!r}; "
+        "call register_state_type() with a codec that returns JSON-compatible values."
+    )
 
 
 def _deserialize_state(state: dict[str, Any]) -> dict[str, Any]:
     """Deep-deserialize a state dict, restoring SerializationProtocol objects."""
-    return {k: _deserialize_value(v) for k, v in state.items()}
+    return {key: _deserialize_value(value, path=f"state.{key}") for key, value in state.items()}
 
 
 class _SessionStatePayload:
@@ -369,8 +445,10 @@ class _SessionStatePayload:
         self.value = value
 
     def serialize(self) -> dict[str, Any]:
-        """Serialize the wrapped state through the explicit registry."""
-        return _serialize_state(self.value)
+        """Serialize and validate the wrapped state for durable storage."""
+        serialized = _serialize_state(self.value)
+        _validate_durable_state_value(serialized, path="state")
+        return serialized
 
 
 class _SessionSnapshot(msgspec.Struct):
@@ -380,6 +458,7 @@ class _SessionSnapshot(msgspec.Struct):
     session_id: str
     service_session_id: str | dict[str, Any] | None
     state: _SessionStatePayload
+    version: Literal["1.0"] = "1.0"
 
 
 def _session_snapshot_enc_hook(value: Any) -> Any:
@@ -1332,9 +1411,11 @@ class AgentSession:
     def to_dict(self) -> dict[str, Any]:
         """Serialize session to a plain dict for storage/transfer.
 
-        Custom values in ``state`` must be registered with
-        :func:`register_state_type`. Built-in JSON scalar, list, tuple, and
-        mapping values are serialized recursively.
+        Registered custom values use their configured codecs. Unregistered
+        values defining ``to_dict`` retain the established dictionary behavior.
+        Unregistered Pydantic models are still auto-registered temporarily but
+        emit ``DeprecationWarning`` because cold-start restoration requires
+        explicit module-level registration.
         """
         return {
             "type": "session",
@@ -1374,13 +1455,10 @@ class SessionStore:
     durable storage, or distributed coordination should provide another
     implementation with the same async methods.
 
-    Session-store IDs are limited to 128 characters containing only ASCII
-    letters, digits, ``-``, and ``_``. This restricted shape is defense in
-    depth for storage backends; custom implementations must still use
+    Session IDs are opaque non-empty strings. Custom implementations are
+    responsible for applying any backend-specific key restrictions and must use
     parameterized queries and their backend's normal key-handling protections.
     """
-
-    MAX_SESSION_ID_LENGTH: ClassVar[int] = 128
 
     def __init__(self) -> None:
         """Create an empty session store."""
@@ -1394,15 +1472,10 @@ class SessionStore:
             session_id: Session-store ID to validate.
 
         Raises:
-            ValueError: If the ID is empty or contains characters other than
-                ASCII letters, digits, ``-``, and ``_``.
+            ValueError: If the ID is not a non-empty string.
         """
         if not isinstance(session_id, str) or not session_id:
             raise ValueError("session_id must be a non-empty string")
-        if len(session_id) > SessionStore.MAX_SESSION_ID_LENGTH:
-            raise ValueError(f"session_id must be at most {SessionStore.MAX_SESSION_ID_LENGTH} characters")
-        if not all(character.isascii() and (character.isalnum() or character in "-_") for character in session_id):
-            raise ValueError("session_id must contain only ASCII letters, digits, '-' and '_'")
 
     async def get(self, session_id: str) -> AgentSession | None:
         """Return a copy of the stored session, or ``None`` when absent.
@@ -1414,7 +1487,7 @@ class SessionStore:
             An independent copy of the stored session, or ``None``.
 
         Raises:
-            ValueError: If ``session_id`` is empty or contains unsupported characters.
+            ValueError: If ``session_id`` is empty.
         """
         SessionStore.validate_session_id(session_id)
         session = self._sessions.get(session_id)
@@ -1428,7 +1501,7 @@ class SessionStore:
             session: The session to store.
 
         Raises:
-            ValueError: If ``session_id`` is empty or contains unsupported characters.
+            ValueError: If ``session_id`` is empty.
         """
         SessionStore.validate_session_id(session_id)
         self._sessions[session_id] = session
@@ -1440,7 +1513,7 @@ class SessionStore:
             session_id: Opaque caller-selected session ID.
 
         Raises:
-            ValueError: If ``session_id`` is empty or contains unsupported characters.
+            ValueError: If ``session_id`` is empty.
         """
         SessionStore.validate_session_id(session_id)
         self._sessions.pop(session_id, None)
@@ -1467,13 +1540,18 @@ class FileSessionStore(SessionStore):
         Treat ``storage_path`` as trusted application storage, not as a secret
         store. Restricted store keys and resolved-path validation help prevent
         path traversal via ``session_id``, but they do not encrypt file contents
-        or coordinate concurrent updates across tasks, processes, or hosts.
-        Atomic replacement prevents partial writes, while concurrent writers
-        still use last-writer-wins semantics. Use OS-level file permissions,
-        trusted directories, and carefully review what session state is allowed
-        to be persisted.
+        or coordinate concurrent updates across processes or hosts. Process-local
+        operations are serialized per file, and atomic replacement prevents
+        partial writes; cross-process writers still use last-writer-wins
+        semantics. Use OS-level file permissions, trusted directories, and
+        carefully review what session state is allowed to be persisted.
     """
 
+    MAX_SESSION_ID_LENGTH: ClassVar[int] = 128
+    _FILE_LOCK_STRIPE_COUNT: ClassVar[int] = 64
+    _FILE_OPERATION_LOCKS: ClassVar[tuple[threading.Lock, ...]] = tuple(
+        threading.Lock() for _ in range(_FILE_LOCK_STRIPE_COUNT)
+    )
     _ENCODED_SESSION_PREFIX: ClassVar[str] = "~session-"
 
     def __init__(
@@ -1512,28 +1590,46 @@ class FileSessionStore(SessionStore):
     async def get(self, session_id: str) -> AgentSession | None:
         """Load a session snapshot, or return ``None`` when it does not exist."""
         file_path = self._session_file_path(session_id)
+        file_lock = self._session_file_lock(file_path)
 
         def _read() -> AgentSession | None:
-            try:
-                serialized = file_path.read_bytes()
-            except FileNotFoundError:
-                return None
-            try:
-                snapshot = self._decoder.decode(serialized)
-                session = AgentSession(
-                    session_id=snapshot.session_id,
-                    service_session_id=snapshot.service_session_id,
-                )
-                session.state = snapshot.state.value
-                return session
-            except (msgspec.DecodeError, TypeError, ValueError) as exc:
-                raise ValueError(f"Failed to deserialize session from '{file_path}'.") from exc
+            with file_lock:
+                try:
+                    serialized = file_path.read_bytes()
+                except FileNotFoundError:
+                    return None
+                try:
+                    snapshot = self._decoder.decode(serialized)
+                    session = AgentSession(
+                        session_id=snapshot.session_id,
+                        service_session_id=snapshot.service_session_id,
+                    )
+                    session.state = snapshot.state.value
+                    return session
+                except (msgspec.DecodeError, TypeError, ValueError) as exc:
+                    try:
+                        quarantine_path = self._quarantine_corrupt_snapshot(file_path, serialized)
+                    except OSError as quarantine_error:
+                        raise ValueError(
+                            f"Failed to deserialize session from '{file_path}', and the corrupt snapshot "
+                            "could not be quarantined."
+                        ) from quarantine_error
+                    if quarantine_path is None:
+                        raise ValueError(
+                            f"Failed to deserialize session from '{file_path}'. "
+                            "The snapshot changed while being read; retry."
+                        ) from exc
+                    raise ValueError(
+                        f"Failed to deserialize session from '{file_path}'. The corrupt snapshot was quarantined to "
+                        f"'{quarantine_path}'; retry to create a new session."
+                    ) from exc
 
         return await asyncio.to_thread(_read)
 
     async def set(self, session_id: str, session: AgentSession) -> None:
         """Persist a session snapshot atomically."""
         file_path = self._session_file_path(session_id)
+        file_lock = self._session_file_lock(file_path)
         if type(session) is not AgentSession:
             raise TypeError(
                 "FileSessionStore supports AgentSession instances only; "
@@ -1552,26 +1648,81 @@ class FileSessionStore(SessionStore):
         serialized = self._encoder.encode(snapshot)
 
         def _write() -> None:
-            temp_path = file_path.with_name(f".{file_path.name}.{uuid.uuid4().hex}.tmp")
-            try:
-                temp_path.write_bytes(serialized)
-                os.replace(temp_path, file_path)
-            finally:
-                temp_path.unlink(missing_ok=True)
+            with file_lock:
+                temp_path = file_path.with_name(f".{file_path.name}.{uuid.uuid4().hex}.tmp")
+                try:
+                    temp_path.write_bytes(serialized)
+                    os.replace(temp_path, file_path)
+                finally:
+                    temp_path.unlink(missing_ok=True)
 
         await asyncio.to_thread(_write)
 
     async def delete(self, session_id: str) -> None:
         """Delete a persisted session snapshot, if present."""
         file_path = self._session_file_path(session_id)
-        await asyncio.to_thread(file_path.unlink, missing_ok=True)
+        file_lock = self._session_file_lock(file_path)
+
+        def _delete() -> None:
+            with file_lock:
+                file_path.unlink(missing_ok=True)
+
+        await asyncio.to_thread(_delete)
+
+    @staticmethod
+    def validate_session_id(session_id: str) -> None:
+        """Validate an ID for use as a built-in file-store key.
+
+        Args:
+            session_id: Session-store ID to validate.
+
+        Raises:
+            ValueError: If the ID is empty, too long, or contains characters
+                other than ASCII letters, digits, ``-``, and ``_``.
+        """
+        SessionStore.validate_session_id(session_id)
+        if len(session_id) > FileSessionStore.MAX_SESSION_ID_LENGTH:
+            raise ValueError(f"session_id must be at most {FileSessionStore.MAX_SESSION_ID_LENGTH} characters")
+        if not all(character.isascii() and (character.isalnum() or character in "-_") for character in session_id):
+            raise ValueError("session_id must contain only ASCII letters, digits, '-' and '_'")
+
+    def get_session_directory(self) -> Path:
+        """Return the directory used for the current file-store operation.
+
+        Subclasses may override this hook to scope operations to a child
+        directory. Filename encoding and containment checks remain owned by the
+        base implementation.
+        """
+        return self._storage_root
+
+    @staticmethod
+    def _quarantine_corrupt_snapshot(file_path: Path, serialized: bytes) -> Path | None:
+        """Move an unchanged corrupt snapshot aside so a retry can recover."""
+        try:
+            current_serialized = file_path.read_bytes()
+        except FileNotFoundError:
+            return None
+        if current_serialized != serialized:
+            return None
+        quarantine_path = file_path.with_name(f".{file_path.name}.{uuid.uuid4().hex}.corrupt")
+        os.replace(file_path, quarantine_path)
+        return quarantine_path
+
+    @classmethod
+    def _session_file_lock(cls, file_path: Path) -> threading.Lock:
+        """Return the process-local operation lock for a session file."""
+        return cls._FILE_OPERATION_LOCKS[hash(file_path) % cls._FILE_LOCK_STRIPE_COUNT]
 
     def _session_file_path(self, session_id: str) -> Path:
         """Resolve the contained snapshot path for ``session_id``."""
-        SessionStore.validate_session_id(session_id)
+        self.validate_session_id(session_id)
+        session_directory = self.get_session_directory().resolve()
+        if not session_directory.is_relative_to(self._storage_root):
+            raise ValueError(f"Session directory escaped storage directory: '{session_directory}'.")
+        session_directory.mkdir(parents=True, exist_ok=True)
         file_stem = _session_file_stem(session_id, encoded_prefix=self._ENCODED_SESSION_PREFIX)
-        file_path = (self._storage_root / f"{file_stem}{self._file_extension}").resolve()
-        if not file_path.is_relative_to(self._storage_root):
+        file_path = (session_directory / f"{file_stem}{self._file_extension}").resolve()
+        if not file_path.is_relative_to(session_directory):
             raise ValueError(f"Session path escaped storage directory: {session_id!r}")
         return file_path
 

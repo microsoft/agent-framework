@@ -336,7 +336,7 @@ def _resolve_session_conversation_key(request: CreateResponse, context: Response
 def _conversation_object_id(conversation_key: str) -> str:
     """Return a restricted store/file ID derived from the Responses conversation object."""
     try:
-        SessionStore.validate_session_id(conversation_key)
+        FileSessionStore.validate_session_id(conversation_key)
     except ValueError:
         return f"conversation_{hashlib.sha256(conversation_key.encode('utf-8')).hexdigest()}"
     return conversation_key

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeAlias
 
-from agent_framework import FileSessionStore, SessionStore
+from agent_framework import FileSessionStore
 from azure.ai.agentserver.responses import ResponseContext
 from azure.ai.agentserver.responses.models import CreateResponse
 
@@ -59,17 +59,12 @@ class IsolationKeyScopedFileSessionStore(FileSessionStore):
         finally:
             self._current_directory.reset(token)
 
-    def _session_file_path(self, session_id: str) -> Path:
-        """Resolve the session file beneath the currently bound user directory."""
-        SessionStore.validate_session_id(session_id)
-        storage_root = self.storage_path.resolve()
+    def get_session_directory(self) -> Path:
+        """Return the currently bound user directory."""
         directory_segment = self._current_directory.get()
-        if directory_segment is not None:
-            storage_root = (storage_root / directory_segment).resolve()
-            if not storage_root.is_relative_to(self.storage_path.resolve()):
-                raise ValueError(f"Session isolation path escaped storage directory: {directory_segment!r}")
-            storage_root.mkdir(parents=True, exist_ok=True)
-        return storage_root / f"{session_id}{self._file_extension}"
+        if directory_segment is None:
+            return self.storage_path
+        return self.storage_path / directory_segment
 
 
 def platform_session_isolation_key_resolver(

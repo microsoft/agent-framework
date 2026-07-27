@@ -200,12 +200,37 @@ class TestAgentState:
         assert len(agent.created_sessions) == 1
 
     @pytest.mark.parametrize("session_id", ["two words", "tenant/user", "tenant:conversation", "' OR 1=1 --"])
-    async def test_get_or_create_session_rejects_invalid_store_id(self, session_id: str) -> None:
+    async def test_get_or_create_session_passes_opaque_id_to_store(self, session_id: str) -> None:
+        class _RecordingSessionStore(SessionStore):
+            def __init__(self) -> None:
+                super().__init__()
+                self.keys: list[str] = []
+
+            async def get(self, session_id: str) -> AgentSession | None:
+                self.keys.append(session_id)
+                return await super().get(session_id)
+
+            async def set(self, session_id: str, session: AgentSession) -> None:
+                self.keys.append(session_id)
+                await super().set(session_id, session)
+
+        agent = _FakeAgent()
+        store = _RecordingSessionStore()
+        state = AgentState(agent, session_store=store)
+
+        session = await state.get_or_create_session(session_id)
+
+        assert session.session_id == session_id
+        assert len(agent.created_sessions) == 1
+        assert len(set(store.keys)) == 1
+        assert store.keys[0] == session_id
+
+    async def test_get_or_create_session_rejects_empty_id(self) -> None:
         agent = _FakeAgent()
         state = AgentState(agent)
 
-        with pytest.raises(ValueError, match="ASCII letters"):
-            await state.get_or_create_session(session_id)
+        with pytest.raises(ValueError, match="non-empty"):
+            await state.get_or_create_session("")
 
         assert agent.created_sessions == []
 

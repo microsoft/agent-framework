@@ -164,14 +164,12 @@ class AgentState(Generic[AgentT]):
         """Return the session for ``session_id``, creating and storing one if missing.
 
         Args:
-            session_id: App-selected session ID containing only ASCII letters,
-                digits, ``-``, and ``_``.
+            session_id: Opaque app-selected session ID.
 
         Returns:
             An independent working copy of the stored or newly created
             ``AgentSession``.
         """
-        SessionStore.validate_session_id(session_id)
         session_lock = self._session_locks.setdefault(session_id, asyncio.Lock())
         async with session_lock:
             session = await self._session_store.get(session_id)
@@ -186,11 +184,9 @@ class AgentState(Generic[AgentT]):
         """Store ``session`` under ``session_id`` in this state's session store.
 
         Args:
-            session_id: App-selected session ID containing only ASCII letters,
-                digits, ``-``, and ``_``.
+            session_id: Opaque app-selected session ID.
             session: Session to store.
         """
-        SessionStore.validate_session_id(session_id)
         await self._session_store.set(session_id, session)
 
 

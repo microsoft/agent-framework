@@ -152,6 +152,13 @@ pre-msgspec `FileHistoryProvider` design; those hooks remain only as a deprecate
 A benchmark using a large `AgentSession` with 2,000 `Message` objects stored through
 `InMemoryHistoryProvider`, nested standard dictionaries, registered custom classes, and registered Pydantic models
 measured the complete `AgentSession.to_dict()` / codec / `AgentSession.from_dict()` path.
+The reproducible harness is
+[`python/scripts/session_serialization_benchmark.py`](../../python/scripts/session_serialization_benchmark.py):
+
+```bash
+cd python
+uv run --with orjson python scripts/session_serialization_benchmark.py
+```
 
 | Codec | File size | Encode median (ms) | Decode median (ms) | Round-trip median (ms) | Disk round-trip median (ms) |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -169,7 +176,9 @@ MessagePack reduced file size to 92.2% of JSON (about 7.8% smaller) and produced
 round-trip medians. Its in-memory round-trip median was effectively tied with msgspec JSON. This supports offering it
 as a nice-to-have, but it is not required to justify choosing msgspec for JSON.
 
-These results are workload- and machine-dependent, but they validate the architectural choice:
+These results are workload- and machine-dependent. The small differences between optimized JSON implementations are
+not the basis for the architectural choice. The benchmark instead confirms that the typed design does not impose a
+material regression for this representative payload:
 
 - use msgspec JSON as the readable default;
 - optionally offer msgspec MessagePack when storage size or disk latency matters;
@@ -189,9 +198,11 @@ implementations.
 `InMemorySessionStore`, protocol, or ABC is introduced. `agent-framework-hosting` consumes the core type and no longer
 owns or re-exports `SessionStore` (this will be a breaking change in the `hosting` package).
 
-Session-store keys use one restricted contract suitable for the built-in file implementation: at most 128 ASCII
-letters, digits, `-`, and `_`. Logical `AgentSession.session_id` values outside a store are not globally constrained by
-this file-oriented key contract.
+`SessionStore` accepts opaque non-empty keys so custom backends can use their native key contracts. The built-in
+`FileSessionStore` restricts direct file keys to at most 128 ASCII letters, digits, `-`, and `_`. `AgentState` remains
+storage-agnostic and passes keys through unchanged; each store implementation owns backend-specific validation or
+normalization. Protocol-specific hosts such as Foundry may still derive their own stable storage key before calling the
+store.
 
 ### Decision 2: Use msgspec codecs plus an explicit dynamic registry
 
@@ -203,28 +214,57 @@ JSON is the required and default format. Because msgspec can reuse the same type
 dictionary is wrapped in one custom field; its encode/decode hooks recursively translate explicitly registered types
 to and from the existing tagged mappings in either format.
 
-The dependency floor is `msgspec>=0.20.0` because core supports Python 3.14 and msgspec added Python 3.14 support in
-version 0.20.0.
+The dependency range is `msgspec>=0.20.0,<0.22`: version 0.20.0 added Python 3.14 support, and the upper bound limits
+core to the tested 0.20/0.21 minor lines.
+
+Three dependency placements were considered:
+
+1. Make msgspec a standard core dependency.
+2. Make msgspec optional in core but standard in Foundry hosting.
+3. Make msgspec optional in both packages.
+
+Option 3 moves installation failures to application developers even though durable session persistence is required for
+the primary `ResponsesHostServer` API to preserve Agent Framework state. Option 2 removes that burden from Foundry
+hosting but makes core's shared `_sessions` module and public types conditionally defined or lazily imported without
+removing msgspec from the default Foundry installation. Option 1 is therefore selected: msgspec is a standard core
+dependency, giving both core file providers and Foundry hosting one predictable implementation path.
+
+Core already depends on the native `pydantic-core` extension, so native-wheel availability is not a new packaging
+constraint. The msgspec project is also actively tracking upcoming Python support; its merged
+[`Add 3.15-dev to CI` PR](https://github.com/msgspec/msgspec/pull/1037) exercises Python 3.15 development builds. This gives confidence that they will add support for new python version quickly.
 
 The public `AgentSession` remains a normal framework class. The msgspec Struct is an internal persistence DTO rather
-than the inheritance base for runtime sessions. A targeted comparison against the dictionary-based msgspec path found
-that the internal Struct improved JSON encode latency by about 9% and JSON round-trip latency by about 4%, without
-changing file size.
+than the inheritance base for runtime sessions. The Struct gives persistence one typed encode/decode operation, validates
+the snapshot envelope, and carries an explicit payload version. The benchmark's small timing spread was not used to
+choose the Struct.
 
-`register_state_type` requires explicit registration, supports stable type IDs and optional codecs, rejects collisions,
-and provides defaults for `to_dict` / `from_dict` classes and explicitly registered Pydantic models. Unknown persisted
-type IDs remain raw dictionaries for compatibility.
+`register_state_type` supports stable type IDs and optional codecs, rejects collisions, and provides defaults for
+`to_dict` / `from_dict` classes and Pydantic models. One recursive serializer is shared by `AgentSession.to_dict()` and
+the durable codecs. The established implicit Pydantic registration behavior remains temporarily for compatibility, but
+now emits `DeprecationWarning` instructing applications to register the model at module import time. Same-process
+round-trips continue to work; cold-start deserialization is not guaranteed without explicit registration. Unknown
+persisted type IDs remain raw dictionaries.
 
 `FileHistoryProvider` also adds msgspec JSON as its default JSON Lines codec. It supports the same explicit
 `serialization_format="msgpack"` choice using length-prefixed append-only MessagePack records. Its existing `dumps` /
 `loads` extension points remain temporarily for JSON compatibility, emit `DeprecationWarning` when supplied, and do
-not apply to MessagePack. New code uses the built-in msgspec codecs.
+not apply to MessagePack. New code uses the built-in codecs. The default JSON reader falls back to the standard library
+for legacy JSON Lines containing `NaN` or infinity, and writes those non-finite values with the standard library so
+existing history semantics are preserved.
 
 ## Follow-up Work
 
 Audit the remaining file-backed stores to determine whether they benefit from the same typed msgspec treatment and
 optional JSON / MessagePack formats. `FileCheckpointStorage` is the first candidate because it persists large,
-structured workflow state and currently uses JSON plus custom checkpoint value encoding.
+structured workflow state and currently uses JSON plus custom checkpoint value encoding. Its existing
+`WorkflowCheckpoint.version` field already provides a payload-shape discriminator.
+
+Checkpoint migration should be reader-first. A compatibility release can detect the codec from the first byte, widen
+the two `glob("*.json")` readers to discover future formats, and continue writing only JSON. A later release can add
+opt-in MessagePack writes while retaining JSON as the default. The payload `version` should describe the checkpoint
+shape rather than the codec, which is discoverable from the bytes. MessagePack should not become the default while
+mixed-version fleets may share one checkpoint directory: older readers silently ignore non-JSON files and could resume
+from no checkpoint instead of surfacing an incompatibility.
 
 `MemoryContextProvider` is another candidate because its file-backed path combines `MemoryFileStore` state with
 transcript files and still exposes `history_dumps` / `history_loads` passthroughs to the deprecated

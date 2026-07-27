@@ -21,14 +21,15 @@ checkpointing should use the existing `CheckpointStorage` abstraction directly;
 if an app needs per-session resume, keep a small app-owned cursor such as
 `session_id -> checkpoint_id`.
 
-Session-store IDs are limited to 128 characters containing ASCII letters,
-digits, `-`, and `_`. This keeps protocol-derived IDs safe to pass through
-common storage backends, but it does not replace parameterized queries or
-backend-specific validation in custom stores.
+`SessionStore` accepts opaque non-empty IDs so custom database and Redis
+implementations can use their native key contracts. `FileSessionStore` limits
+its direct keys to 128 ASCII letters, digits, `-`, and `_`. `AgentState` passes
+the app-selected ID to the configured store unchanged; each store implementation
+owns any validation or normalization required by its backend. This does not
+replace parameterized queries or backend-specific validation in custom stores.
 
-`FileSessionStore` uses msgspec JSON. Custom objects placed in
-`AgentSession.state` must be registered explicitly before the session is saved
-or restored:
+`FileSessionStore` uses msgspec JSON. Register custom objects placed in
+`AgentSession.state` explicitly before sessions are saved or restored:
 
 ```python
 from agent_framework import register_state_type
@@ -46,7 +47,9 @@ Classes with `to_dict()` / `from_dict()` methods and explicitly registered
 Pydantic models receive default codecs. Other classes can provide `encoder=`
 and `decoder=` callbacks. Keep registration at module level so importing the
 module prepares cold-start session restoration before its context provider is
-instantiated.
+instantiated. Unregistered Pydantic models still use legacy same-process
+auto-registration for now, but emit `DeprecationWarning`; cold-start
+deserialization is not guaranteed on that path.
 
 JSON is the default file format. Use MessagePack for a compact binary file:
 

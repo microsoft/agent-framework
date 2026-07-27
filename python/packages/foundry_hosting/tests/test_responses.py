@@ -417,7 +417,10 @@ class TestSessionPersistenceHelpers:
         assert second.key == "user-2"
         assert first.fingerprint != second.fingerprint
 
-    @pytest.mark.parametrize("key", ["../escape", "user/name", "user:name", "trailing."])
+    @pytest.mark.parametrize(
+        "key",
+        [".", "..", "../escape", "user/name", r"user\name", "user:name", "line\nbreak", "trailing."],
+    )
     async def test_invalid_isolation_key_is_rejected(self, key: str) -> None:
         request = CreateResponse(model="m", input="hi")
         context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
@@ -549,6 +552,51 @@ class TestAgentSessionPersistence:
         assert (tmp_path / "user-user-A" / "conversation-1.msgpack").is_file()
         assert (tmp_path / "user-user-B" / "conversation-1.msgpack").is_file()
 
+    async def test_scoped_file_store_reuses_base_filename_safety(self, tmp_path: Path) -> None:
+        store = IsolationKeyScopedFileSessionStore(tmp_path)
+        isolation = ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64)
+
+        with store.use_isolation(isolation):
+            await store.set("CON", AgentSession(session_id="conversation-1"))
+
+        assert not (tmp_path / "user-user-A" / "CON.json").exists()
+        assert len(list((tmp_path / "user-user-A").glob("~session-*.json"))) == 1
+
+    async def test_scoped_file_store_rejects_symlinked_session_leaf(self, tmp_path: Path) -> None:
+        store = IsolationKeyScopedFileSessionStore(tmp_path)
+        isolation = ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64)
+        user_directory = tmp_path / "user-user-A"
+        user_directory.mkdir()
+        outside_file = tmp_path / "outside.json"
+        outside_file.write_text("outside", encoding="utf-8")
+        try:
+            (user_directory / "conversation-1.json").symlink_to(outside_file)
+        except OSError as exc:
+            pytest.skip(f"Symlinks are not available: {exc}")
+
+        with store.use_isolation(isolation), pytest.raises(ValueError, match="escaped storage directory"):
+            await store.get("conversation-1")
+
+    async def test_scoped_file_store_rejects_symlinked_isolation_directory(self, tmp_path: Path) -> None:
+        store = IsolationKeyScopedFileSessionStore(tmp_path)
+        isolation = ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64)
+        outside_directory = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside_directory.mkdir()
+        try:
+            (tmp_path / "user-user-A").symlink_to(outside_directory, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"Symlinks are not available: {exc}")
+
+        with store.use_isolation(isolation), pytest.raises(ValueError, match="Session directory escaped"):
+            await store.get("conversation-1")
+
+    async def test_scoped_file_store_rejects_traversal_directory_segment(self, tmp_path: Path) -> None:
+        store = IsolationKeyScopedFileSessionStore(tmp_path)
+        bypassed_resolver = ResolvedSessionIsolation("user-A", "../../Users", "a" * 64)
+
+        with store.use_isolation(bypassed_resolver), pytest.raises(ValueError, match="Session directory escaped"):
+            await store.get("conversation-1")
+
     def test_session_isolation_stamp_rejects_mismatch(self) -> None:
         session = AgentSession(session_id="conversation-1")
         isolation_a = ResolvedSessionIsolation("user-A", "user-user-A", "a" * 64)
@@ -649,6 +697,26 @@ class TestAgentSessionPersistence:
 
         assert second.status_code == 200
         assert seen_counts == [1, 2]
+
+    async def test_corrupt_file_session_fails_once_and_retry_starts_clean(self, tmp_path: Path) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("recovered")])])
+        )
+        server = _make_server(agent, session_store=IsolationKeyScopedFileSessionStore(tmp_path))
+        corrupt_file = tmp_path / "conversation-1.json"
+        corrupt_file.write_text("{not-json", encoding="utf-8")
+
+        first = await _post(server, conversation_id="conversation-1")
+
+        assert first.json()["status"] == "failed"
+        assert not corrupt_file.exists()
+        quarantined_files = await asyncio.to_thread(lambda: list(tmp_path.glob(".*.corrupt")))
+        assert len(quarantined_files) == 1
+
+        second = await _post(server, conversation_id="conversation-1")
+
+        assert second.json()["status"] == "completed"
+        agent.create_session.assert_called_once_with(session_id="conversation-1")
 
     async def test_streaming_run_saves_final_session_state(self) -> None:
         store = SessionStore()
