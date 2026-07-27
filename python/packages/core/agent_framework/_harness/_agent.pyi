@@ -22,6 +22,7 @@ from ._tool_approval import ToolApprovalRuleCallback
 
 DEFAULT_HARNESS_INSTRUCTIONS: str
 HARNESS_AGENT_PROVIDER_NAME: str
+_SHELL_TOOLING_FEATURE_ID: str
 
 OptionsCoT = TypeVar(
     "OptionsCoT",

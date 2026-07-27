@@ -111,7 +111,8 @@ def add_agent_framework_fastapi_endpoint(
         snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence is opt-in and requires an
             explicit Snapshot Scope resolver.
         snapshot_scope_resolver: Optional resolver for the application-defined Snapshot Scope. Required whenever
-            a snapshot store is configured because an AG-UI Thread id is not an authorization boundary.
+            a snapshot store is configured because an AG-UI Thread id is not an authorization boundary. Also scopes
+            in-memory workflow_factory instances when provided without a snapshot store.
         keepalive_seconds: Endpoint SSE keepalive interval in seconds. Defaults to 15. Positive values emit fixed
             SSE comments while the stream is open. None disables keepalive and preserves the non-keepalive response
             path. Keepalive comments are transport traffic and do not change AG-UI events.
@@ -150,15 +151,13 @@ def add_agent_framework_fastapi_endpoint(
         """
         try:
             input_data = request_body.model_dump(exclude_none=True)
-            snapshot_persistence_active = False
+            snapshot_persistence_active = _get_snapshot_store(protocol_runner) is not None
             if snapshot_scope_resolver is not None:
                 snapshot_scope = snapshot_scope_resolver(request_body)
                 if isawaitable(snapshot_scope):
                     snapshot_scope = await snapshot_scope
                 input_data[_APPROVAL_SCOPE_INPUT_KEY] = snapshot_scope
-                if _get_snapshot_store(protocol_runner) is not None:
-                    input_data[_SNAPSHOT_SCOPE_INPUT_KEY] = snapshot_scope
-                    snapshot_persistence_active = True
+                input_data[_SNAPSHOT_SCOPE_INPUT_KEY] = snapshot_scope
             if default_state:
                 if snapshot_persistence_active:
                     # Defer default application to the runner so defaults only fill keys

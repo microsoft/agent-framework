@@ -6,8 +6,10 @@ concepts of **Agent Framework** one step at a time.
 ## Prerequisites
 
 ```bash
-pip install agent-framework
+pip install agent-framework-foundry
 ```
+
+Sample 08 additionally requires `agent-framework-azurefunctions --pre`.
 
 Set the required environment variables:
 

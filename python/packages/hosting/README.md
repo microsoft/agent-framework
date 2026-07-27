@@ -9,10 +9,12 @@ This package keeps Agent Framework state separate from web-framework concerns:
 - `WorkflowState` — resolves a workflow target, including direct `Workflow`
   instances, workflow factories, `WorkflowBuilder`, and orchestration builders.
 
-`SessionStore` is plain storage: `get`/`set`/`delete` by an app-selected id,
-nothing more. It does not know how to create a new value for an id it hasn't
-seen before — use `AgentState.get_or_create_session(...)` for that, since only
-the state object has both the store and the resolved target. Workflow
+`SessionStore` provides `get`/`set`/`delete` by an app-selected id. Each
+successful `get` returns an independent copy, so a run works from a snapshot
+instead of mutating an older continuation point in place. The store does not
+know how to create a new value for an id it hasn't seen before — use
+`AgentState.get_or_create_session(...)` for that, since only the state object
+has both the store and the resolved target. Workflow
 checkpointing should use the existing `CheckpointStorage` abstraction directly;
 if an app needs per-session resume, keep a small app-owned cursor such as
 `session_id -> checkpoint_id`.
@@ -53,6 +55,14 @@ result = await (await state.get_target()).run("Hello", session=session)
 await state.set_session(response_id, session)
 ```
 
+This response-keyed pattern supports simultaneous branches: callers may read
+the same `previous_response_id`, receive independent working copies, and store
+each result under a different new response id. A stable `conversation_id` is
+different: explicitly write the completed session back under that same id to
+advance its mutable head, and ensure only one caller advances it at a time.
+`AgentState` does not provide that application-level locking or optimistic
+concurrency control.
+
 Targets can be direct instances, synchronous factories, asynchronous factories,
 or awaitables:
 
@@ -72,6 +82,10 @@ storage = InMemoryCheckpointStorage()
 result = await (await state.get_target()).run("Hello", checkpoint_storage=storage)
 latest = await storage.get_latest(workflow_name=(await state.get_target()).name)
 ```
+
+A `Workflow` instance allows only one active run. Hosts that need simultaneous
+workflow runs should pass a factory or builder and set `cache_target=False` so
+each request receives a fresh workflow instance.
 
 `WorkflowState` also accepts an unbuilt workflow builder directly:
 

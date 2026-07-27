@@ -40,6 +40,7 @@ from fastapi.params import Depends
 from fastapi.testclient import TestClient
 
 from agent_framework_ag_ui import (
+    AGUIRequest,
     AGUIThreadSnapshot,
     InMemoryAGUIThreadSnapshotStore,
     add_agent_framework_fastapi_endpoint,
@@ -3151,7 +3152,7 @@ async def test_endpoint_error_handling(build_chat_client):
     client = TestClient(app)
 
     # Send invalid JSON to trigger parsing error before streaming
-    response = client.post("/failing", data=b"invalid json", headers={"content-type": "application/json"})  # type: ignore
+    response = client.post("/failing", content=b"invalid json", headers={"content-type": "application/json"})
 
     # Pydantic validation now returns 422 for invalid request body
     assert response.status_code == 422
@@ -5160,3 +5161,75 @@ def test_workflow_factory_cache_is_scoped_by_snapshot_scope():
 
     runner.clear_thread_workflow("thread-1")
     assert runner._resolve_workflow("thread-1", "tenant-b") is not workflow_b
+
+
+async def test_workflow_factory_cache_is_scoped_by_resolver_without_snapshot_store():
+    """Snapshot Scope resolver scopes live workflow_factory instances even without snapshot persistence."""
+
+    @executor(id="responder")
+    async def responder(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
+        del message
+        await ctx.yield_output("Workflow response")
+
+    created_workflows: list[Any] = []
+
+    def factory(thread_id: str) -> Any:
+        del thread_id
+        workflow = WorkflowBuilder(start_executor=responder).build()
+        created_workflows.append(workflow)
+        return workflow
+
+    def resolve_scope(request: AGUIRequest) -> str:
+        forwarded_props = request.forwarded_props
+        assert forwarded_props is not None
+        tenant = forwarded_props["tenant"]
+        assert isinstance(tenant, str)
+        return tenant
+
+    app = FastAPI()
+    runner = AgentFrameworkWorkflow(workflow_factory=factory)
+    add_agent_framework_fastapi_endpoint(
+        app,
+        runner,
+        path="/workflow",
+        snapshot_scope_resolver=resolve_scope,
+    )
+    client = TestClient(app)
+
+    response_a = client.post(
+        "/workflow",
+        json={
+            "thread_id": "thread-1",
+            "messages": [{"role": "user", "content": "Hello tenant A"}],
+            "forwardedProps": {"tenant": "tenant-a"},
+        },
+    )
+    response_b = client.post(
+        "/workflow",
+        json={
+            "thread_id": "thread-1",
+            "messages": [{"role": "user", "content": "Hello tenant B"}],
+            "forwardedProps": {"tenant": "tenant-b"},
+        },
+    )
+    response_a_again = client.post(
+        "/workflow",
+        json={
+            "thread_id": "thread-1",
+            "messages": [{"role": "user", "content": "Hello tenant A again"}],
+            "forwardedProps": {"tenant": "tenant-a"},
+        },
+    )
+
+    assert response_a.status_code == 200
+    assert response_b.status_code == 200
+    assert response_a_again.status_code == 200
+    assert len(created_workflows) == 2
+    assert (
+        runner._resolve_workflow("thread-1", "tenant-a")  # pyright: ignore[reportPrivateUsage]
+        is created_workflows[0]
+    )
+    assert (
+        runner._resolve_workflow("thread-1", "tenant-b")  # pyright: ignore[reportPrivateUsage]
+        is created_workflows[1]
+    )

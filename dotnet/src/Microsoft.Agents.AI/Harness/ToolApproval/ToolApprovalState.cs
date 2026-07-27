@@ -47,4 +47,19 @@ internal sealed class ToolApprovalState
     /// </remarks>
     [JsonPropertyName("queuedApprovalRequests")]
     public List<ToolApprovalRequestContent> QueuedApprovalRequests { get; set; } = new();
+
+    /// <summary>
+    /// Gets or sets the model-originated approval requests that the harness has surfaced to the caller
+    /// and is awaiting a response for, keyed by request id.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Used to bind inbound <see cref="ToolApprovalResponseContent"/> to a request the harness actually surfaced.
+    /// A response is honored only when its request id matches a surfaced request, and a matched response has its tool
+    /// call rebound to the surfaced request's tool call, so an approved call matches exactly what was surfaced for
+    /// approval. Entries are consumed once their response is collected.
+    /// </para>
+    /// </remarks>
+    [JsonPropertyName("surfacedApprovalRequests")]
+    public Dictionary<string, ToolApprovalRequestContent> SurfacedApprovalRequests { get; set; } = new();
 }

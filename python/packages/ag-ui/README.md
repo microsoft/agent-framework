@@ -335,7 +335,10 @@ A frontend can then hydrate the latest stored snapshot for the scoped thread:
 
 Endpoint configuration requires `snapshot_scope_resolver` whenever a snapshot store is configured, including when
 the store is already set on a pre-wrapped `AgentFrameworkAgent` or `AgentFrameworkWorkflow`. The resolver returns
-the application-defined Snapshot Scope used with the AG-UI Thread id as the storage key.
+the application-defined Snapshot Scope used with the AG-UI Thread id as the storage key. When using
+`AgentFrameworkWorkflow(workflow_factory=...)`, the same resolver also scopes the in-memory workflow cache even
+without a snapshot store; provide it in multi-user deployments so two users who submit the same `threadId` do not
+share a live `Workflow` instance.
 
 For hosted agents, request Shared State is also available through `AgentSession.state` during that run, whether or
 not snapshot persistence is configured. Request values are untrusted per-run context: they overlay ordinary restored
