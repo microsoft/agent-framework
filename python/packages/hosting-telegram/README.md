@@ -26,8 +26,8 @@ long-running service. Your app remains fully responsible for:
 
 - `telegram_chat_id(update)` -- the chat id an update belongs to.
 - `telegram_session_id(update, bot_id=...)` -- a bot-scoped `AgentState`
-  session id. Private chats use `telegram_<bot_id>_user_<user_id>`; other chats
-  use `telegram_<bot_id>_chat_<chat_id>`.
+  session id. Private chats use `telegram:<bot_id>:<user_id>`; other chats use
+  `telegram:<bot_id>:<chat_id>`.
 - `telegram_command(update)` -- a leading slash command, with `/name@bot args`
   normalized to `/name args`. Returns `None` if there is none.
 - `telegram_callback_query_id(update)` -- a callback query's id, so you can

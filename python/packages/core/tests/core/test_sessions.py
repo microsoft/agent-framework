@@ -873,6 +873,18 @@ class TestSessionStore:
         assert reread is not None
         assert reread.state["nested"]["values"] == ["original"]
 
+    async def test_set_stores_independent_snapshot(self) -> None:
+        store = SessionStore()
+        session = AgentSession(session_id="session-1")
+        session.state["nested"] = {"values": ["original"]}
+
+        await store.set("session-1", session)
+        session.state["nested"]["values"].append("changed")
+
+        stored = await store.get("session-1")
+        assert stored is not None
+        assert stored.state["nested"]["values"] == ["original"]
+
     async def test_set_replaces_existing_entry(self) -> None:
         store = SessionStore()
         await store.set("session-1", AgentSession(session_id="first"))

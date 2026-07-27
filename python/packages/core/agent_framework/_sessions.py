@@ -1504,7 +1504,7 @@ class SessionStore:
             ValueError: If ``session_id`` is empty.
         """
         SessionStore.validate_session_id(session_id)
-        self._sessions[session_id] = session
+        self._sessions[session_id] = copy.deepcopy(session)
 
     async def delete(self, session_id: str) -> None:
         """Delete the stored session, if present.
