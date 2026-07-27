@@ -592,7 +592,12 @@ def _build_internal_graph(workspace_root: Path, package_map: dict[str, Path]) ->
             data = tomli.load(f)
         project = data.get("project", {}) or {}
         dependencies: list[str] = list(project.get("dependencies", []) or [])
-        for values in (project.get("optional-dependencies", {}) or {}).values():
+        for extra_name, values in (project.get("optional-dependencies", {}) or {}).items():
+            # Package plans intentionally do not enable aggregate `all` extras. Following
+            # their internal dependencies here would pull unrelated workspace packages into
+            # an otherwise package-scoped probe and create false version conflicts.
+            if extra_name == "all":
+                continue
             dependencies.extend([value for value in (values or []) if isinstance(value, str)])
         for values in (data.get("dependency-groups", {}) or {}).values():
             dependencies.extend([value for value in (values or []) if isinstance(value, str)])
@@ -795,10 +800,14 @@ def _run_tasks(
 ) -> tuple[bool, str | None]:
     # Every probe runs inside a fresh isolated uv environment. Clearing VIRTUAL_ENV avoids
     # leaking the caller's active environment into the subprocess and keeps validation from
-    # mutating the repo's active `.venv`.
+    # mutating the repo's active `.venv`. Selecting the package is also required: `--isolated`
+    # isolates the environment, but uv would otherwise install every member of the parent workspace.
     env = dict(os.environ)
     env["UV_PRERELEASE"] = "allow"
     env.pop("VIRTUAL_ENV", None)
+    project_config = tomli.loads((project_dir / "pyproject.toml").read_text())
+    project_name = str(project_config["project"]["name"])
+
     for task_name in tasks:
         command = [
             "uv",
@@ -807,6 +816,8 @@ def _run_tasks(
             str(project_dir),
             "run",
             "--isolated",
+            "--package",
+            project_name,
             "--resolution",
             resolution,
             "--prerelease",
