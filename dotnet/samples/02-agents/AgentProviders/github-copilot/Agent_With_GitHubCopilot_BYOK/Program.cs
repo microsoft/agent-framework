@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to configure a GitHub Copilot agent with BYOK (Bring Your Own Key),
 // routing requests through your own endpoint (OpenAI, Azure OpenAI, Anthropic, or an
