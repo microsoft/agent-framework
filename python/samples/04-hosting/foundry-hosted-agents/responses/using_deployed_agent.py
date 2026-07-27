@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from typing import cast
 
 from agent_framework import AgentSession
 from agent_framework.foundry import FoundryAgent
@@ -62,7 +63,7 @@ async def delete_hosted_agent_session(
     """Delete a hosted-agent service session."""
     await project_client.agents.delete_session(
         agent_name,
-        session.session_id,
+        cast(str, session.service_session_id),
     )
 
 

@@ -25,8 +25,9 @@ ignorePatterns:
   # whole domain rather than just /download.
   - pattern: "https:\/\/dotnet.microsoft.com"
   - pattern: "https://github.com/Rel1cx/eslint-react"
+  - pattern: "SKILL.md"
 # excludedDirs:
-  # Folders which include links to localhost, since it's not ignored with regular expressions
+# Folders which include links to localhost, since it's not ignored with regular expressions
 baseUrl: https://github.com/microsoft/agent-framework/
 aliveStatusCodes:
   - 200

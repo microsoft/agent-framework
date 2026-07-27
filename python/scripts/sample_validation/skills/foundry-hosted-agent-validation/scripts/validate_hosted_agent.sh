@@ -178,6 +178,7 @@ command -v lsof >/dev/null 2>&1 || command -v fuser >/dev/null 2>&1 || \
 [ -d "$SAMPLE_DIR" ] || die "sample dir not found: $SAMPLE_DIR"
 [ -f "$SAMPLE_DIR/main.py" ] || die "no main.py in sample dir: $SAMPLE_DIR"
 [ -f "$SAMPLE_DIR/agent.yaml" ] || die "no agent.yaml in sample dir: $SAMPLE_DIR"
+[ -f "$SAMPLE_DIR/agent.manifest.yaml" ] || die "no agent.manifest.yaml in sample dir: $SAMPLE_DIR"
 [ -n "$MODEL" ] || die "model deployment name required (--model or AZURE_AI_MODEL_DEPLOYMENT_NAME)"
 
 # derive agent name + protocol from agent.yaml

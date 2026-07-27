@@ -101,6 +101,9 @@ def sample_files(sample: SampleInfo) -> list[Path]:
 
     For a single-file sample this is just that file. For a directory sample
     (``main.py``/``app.py`` entrypoint) it is every ``.py`` file in the tree.
+
+    Note: we only consider source code files, not data files, nor deployment
+    artifacts (Dockerfile, requirements.txt, etc.) for now.
     """
     path = sample.path
     if path.is_dir():
