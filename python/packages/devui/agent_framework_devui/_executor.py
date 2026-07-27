@@ -376,6 +376,17 @@ class AgentFrameworkExecutor:
                 if session:
                     run_kwargs["session"] = session
 
+                # Forward request-scoped function_invocation_kwargs so tools can read them
+                # via FunctionInvocationContext. Accept them in extra_body (same channel as
+                # response_id/checkpoint_id) or as a top-level field (model_extra).
+                fik = None
+                if request.extra_body:
+                    fik = request.extra_body.get("function_invocation_kwargs")
+                if fik is None and request.model_extra:
+                    fik = request.model_extra.get("function_invocation_kwargs")
+                if isinstance(fik, dict):
+                    run_kwargs["function_invocation_kwargs"] = fik
+
                 stream = cast(Any, agent.run(user_message, **run_kwargs))
                 async for update in stream:
                     for trace_event in trace_collector.get_pending_events():

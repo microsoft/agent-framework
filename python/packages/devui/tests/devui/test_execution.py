@@ -596,6 +596,56 @@ async def test_executor_handles_streaming_agent():
     assert "Processed: hello" in text_events[0].delta
 
 
+@pytest.mark.parametrize(
+    "request_extras",
+    [
+        {"extra_body": {"function_invocation_kwargs": {"tenantId": "abc123"}}},  # documented channel
+        {"function_invocation_kwargs": {"tenantId": "abc123"}},  # top-level (model_extra), as issue #7344 tried
+    ],
+)
+async def test_agent_execution_forwards_function_invocation_kwargs(request_extras):
+    """DevUI forwards request function_invocation_kwargs into agent.run() (issue #7344)."""
+    from agent_framework import AgentResponseUpdate, AgentSession, Content
+
+    captured: dict[str, Any] = {}
+
+    class RecordingAgent:
+        """Agent that records the kwargs its run() is called with."""
+
+        id = "kwargs_test"
+        name = "Kwargs Test Agent"
+        description = "Records run() kwargs"
+
+        def run(self, messages=None, *, stream=False, session=None, **kwargs):
+            captured.update(kwargs)
+            return self._stream_impl(messages)
+
+        async def _stream_impl(self, messages):
+            yield AgentResponseUpdate(contents=[Content.from_text(text="ok")], role="assistant")
+
+        def create_session(self, **kwargs):
+            return AgentSession()
+
+    discovery = EntityDiscovery(None)
+    executor = AgentFrameworkExecutor(discovery, MessageMapper())
+
+    agent = RecordingAgent()
+    entity_info = await discovery.create_entity_info_from_object(agent, source="test")
+    discovery.register_entity(entity_info.id, entity_info, agent)
+
+    request = AgentFrameworkRequest(
+        metadata={"entity_id": entity_info.id},
+        input="hello",
+        stream=True,
+        **request_extras,
+    )
+
+    async for _event in executor.execute_streaming(request):
+        pass
+
+    assert captured.get("function_invocation_kwargs") == {"tenantId": "abc123"}
+
+
 # =============================================================================
 # Full Pipeline Tests for SequentialBuilder
 # =============================================================================
