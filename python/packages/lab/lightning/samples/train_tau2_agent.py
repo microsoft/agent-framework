@@ -57,7 +57,7 @@ def _load_dataset() -> tuple[Dataset[SerializedTask], Dataset[SerializedTask]]:
     dataset = [{"id": task["id"], "data": json.dumps(task)} for task in dataset]
 
     # Deterministic train/val split (25/25) for reproducible experiments
-    random_state = random.Random(42)  # noqa: S311
+    random_state = random.Random(42)  # ruff:ignore[suspicious-non-cryptographic-random-usage]
     indices = list(range(len(dataset)))
     random_state.shuffle(indices)
     train_indices = indices[: int(len(dataset) * 0.5)]
@@ -129,7 +129,7 @@ class Tau2Agent(LitAgent):
         evaluation = runner.evaluate(task_obj, conversation, runner.termination_reason)
 
         # Return the evaluation score
-        return evaluation  # noqa: RET504
+        return evaluation  # ruff:ignore[unnecessary-assign]
 
 
 def main():

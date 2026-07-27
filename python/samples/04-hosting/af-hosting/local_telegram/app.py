@@ -1,12 +1,10 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "agent-framework-core",
 #     "agent-framework-foundry",
 #     "agent-framework-hosting",
 #     "agent-framework-hosting-telegram",
 #     "aiogram>=3.29.1,<4",
-#     "azure-identity",
 #     "fastapi>=0.115.0,<0.138.1",
 #     "hypercorn>=0.17",
 # ]

@@ -35,6 +35,7 @@ from agent_framework import (
     included_token_count,
 )
 from agent_framework._compaction import (
+    _serialize_message,
     append_compaction_message,
     extend_compaction_messages,
 )
@@ -347,12 +348,12 @@ async def test_truncation_strategy_compacts_when_token_limit_exceeded() -> None:
     tokenizer = CharacterEstimatorTokenizer()
     messages = [
         Message(role="system", contents=["you are helpful"]),
-        Message(role="user", contents=["u1 " * 200]),
-        Message(role="assistant", contents=["a1 " * 200]),
+        Message(role="user", contents=["u1 " * 5]),
+        Message(role="assistant", contents=["a1 " * 5]),
     ]
     strategy = TruncationStrategy(
         max_n=80,
-        compact_to=40,
+        compact_to=70,
         tokenizer=tokenizer,
         preserve_system=True,
     )
@@ -363,7 +364,23 @@ async def test_truncation_strategy_compacts_when_token_limit_exceeded() -> None:
     assert changed is True
     projected = included_messages(messages)
     assert projected[0].role == "system"
-    assert included_token_count(messages) <= 40
+    assert included_token_count(messages) <= 70
+
+
+async def test_truncation_strategy_keeps_latest_group_when_it_exceeds_target() -> None:
+    tokenizer = CharacterEstimatorTokenizer()
+    messages = [Message(role="user", contents=["latest " * 200])]
+    strategy = TruncationStrategy(
+        max_n=20,
+        compact_to=10,
+        tokenizer=tokenizer,
+    )
+    annotate_message_groups(messages, tokenizer=tokenizer)
+
+    changed = await strategy(messages)
+
+    assert changed is False
+    assert included_messages(messages) == messages
 
 
 def test_truncation_strategy_validates_token_targets() -> None:
@@ -538,11 +555,11 @@ async def test_summarization_strategy_returns_false_when_summary_is_empty(
 async def test_token_budget_composed_strategy_meets_budget_or_falls_back() -> None:
     messages = [
         Message(role="system", contents=["system"]),
-        Message(role="user", contents=["user " * 200]),
-        Message(role="assistant", contents=["assistant " * 200]),
+        Message(role="user", contents=["user " * 10]),
+        Message(role="assistant", contents=["assistant " * 2]),
     ]
     strategy = TokenBudgetComposedStrategy(
-        token_budget=20,
+        token_budget=70,
         tokenizer=CharacterEstimatorTokenizer(),
         strategies=[SlidingWindowStrategy(keep_last_groups=1)],
     )
@@ -550,7 +567,39 @@ async def test_token_budget_composed_strategy_meets_budget_or_falls_back() -> No
     changed = await strategy(messages)
 
     assert changed is True
-    assert included_token_count(messages) <= 20
+    assert included_token_count(messages) <= 70
+
+
+async def test_token_budget_composed_strategy_keeps_latest_group_when_all_groups_exceed_budget() -> None:
+    messages = [
+        Message(role="system", contents=["system " * 100]),
+        Message(role="user", contents=["latest " * 100]),
+    ]
+    strategy = TokenBudgetComposedStrategy(
+        token_budget=1,
+        tokenizer=CharacterEstimatorTokenizer(),
+        strategies=[],
+    )
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    projected = included_messages(messages)
+    assert projected == [messages[-1]]
+
+
+async def test_token_budget_composed_strategy_keeps_last_system_group_when_no_user_group_exists() -> None:
+    messages = [Message(role="system", contents=["system " * 100])]
+    strategy = TokenBudgetComposedStrategy(
+        token_budget=1,
+        tokenizer=CharacterEstimatorTokenizer(),
+        strategies=[],
+    )
+
+    changed = await strategy(messages)
+
+    assert changed is False
+    assert included_messages(messages) == messages
 
 
 class _ExcludeOldestNonSystem:
@@ -1293,3 +1342,19 @@ def test_context_window_strategy_validates_thresholds() -> None:
             tool_eviction_threshold=0.8,
             truncation_threshold=0.5,
         )
+
+
+def test_serialize_message_preserves_non_ascii_for_token_count() -> None:
+    """Non-ASCII text is token-counted as the characters the model sees, not as
+    inflated ``\\uXXXX`` escapes, so the token estimate isn't skewed (#7022)."""
+    text = "こんにちは、元気ですか"
+    message = Message(role="user", contents=[text])
+    tokenizer = CharacterEstimatorTokenizer()
+
+    serialized = _serialize_message(message)
+    # the same payload as it would serialize with ensure_ascii=True
+    escaped = serialized.encode("ascii", "backslashreplace").decode("ascii")
+
+    assert text in serialized
+    assert "\\u3053" not in serialized
+    assert tokenizer.count_tokens(serialized) < tokenizer.count_tokens(escaped)

@@ -271,6 +271,7 @@ class _CodeValidator(ast.NodeVisitor):
         self._allowed_builtins = allowed_builtins if allowed_builtins is not None else ALLOWED_BUILTINS
         self._blocked_builtins = blocked_builtins if blocked_builtins is not None else BLOCKED_BUILTINS
         self._allowed_os_attrs = allowed_os_attrs if allowed_os_attrs is not None else ALLOWED_OS_ATTRS
+        self._os_aliases: set[str] = {"os"}
 
     def validate(self, code: str) -> None:
         """Validate code and raise CodeValidationError if it violates policy."""
@@ -280,6 +281,7 @@ class _CodeValidator(ast.NodeVisitor):
             raise CodeValidationError(f"Syntax error in generated code: {exc}") from exc
 
         self._errors = []
+        self._os_aliases = {"os"}
         self.visit(tree)
 
         if self._errors:
@@ -303,6 +305,10 @@ class _CodeValidator(ast.NodeVisitor):
                 self._errors.append(f"Import of '{alias_node.name}' is not allowed (blocked: {module_name})")
             elif module_name not in self._allowed_imports:
                 self._errors.append(f"Import of '{alias_node.name}' is not allowed (not in allow-list)")
+            if alias_node.name == "os":
+                self._os_aliases.add(alias_node.asname or "os")
+            elif alias_node.name.startswith("os.") and alias_node.asname is None:
+                self._os_aliases.add("os")
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
@@ -323,6 +329,32 @@ class _CodeValidator(ast.NodeVisitor):
                 if alias_node.name not in self._allowed_os_attrs:
                     self._errors.append(f"Import from 'os' of '{alias_node.name}' is not allowed")
         self.generic_visit(node)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        """Track re-bindings of the ``os`` module."""
+        for target in node.targets:
+            self._track_os_alias_targets(target, node.value)
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        """Track annotated re-bindings of the ``os`` module."""
+        if (
+            isinstance(node.value, ast.Name)
+            and node.value.id in self._os_aliases
+            and isinstance(node.target, ast.Name)
+        ):
+            self._os_aliases.add(node.target.id)
+        self.generic_visit(node)
+
+    def _track_os_alias_targets(self, target: ast.AST, value: ast.AST) -> None:
+        if isinstance(target, ast.Starred):
+            target = target.value
+
+        if isinstance(target, ast.Name) and isinstance(value, ast.Name) and value.id in self._os_aliases:
+            self._os_aliases.add(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List)):
+            for target_item, value_item in zip(target.elts, value.elts):
+                self._track_os_alias_targets(target_item, value_item)
 
     def visit_Call(self, node: ast.Call) -> None:
         """Validate function calls.
@@ -357,7 +389,7 @@ class _CodeValidator(ast.NodeVisitor):
         # Enforce the `os` attribute allow-list. Anything outside `ALLOWED_OS_ATTRS`
         # (file I/O, process control, mutating helpers, etc.) is rejected so the
         # validator matches the documented `os.environ` / `os.path`-only contract.
-        if isinstance(node.value, ast.Name) and node.value.id == "os" and node.attr not in self._allowed_os_attrs:
+        if isinstance(node.value, ast.Name) and node.value.id in self._os_aliases and node.attr not in self._allowed_os_attrs:
             self._errors.append(f"Access to os.{node.attr} is not allowed")
 
         # Block access to certain dangerous attributes

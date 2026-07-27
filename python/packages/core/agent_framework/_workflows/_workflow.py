@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-# ruff: noqa: RUF070, RUF100
+# ruff:file-ignore[unnecessary-assign-before-yield]
 from __future__ import annotations
 
 import asyncio
@@ -173,7 +173,7 @@ class WorkflowRunResult(list[WorkflowEvent]):
 class OutputDesignation:
     """Immutable rule for labeling executor yields as terminal, intermediate, or hidden outputs.
 
-    ``outputs`` is ``None`` in omitted-selection compatibility mode (every yield is terminal). In explicit mode,
+    ``outputs`` is ``None`` in the default all-output mode (every yield is terminal). In explicit mode,
     ``outputs`` and ``intermediates`` are disjoint executor ID sets; unlisted executor
     yields are hidden from caller-facing output/intermediate events.
     Package-internal value type owned by ``Workflow``; not exported from ``agent_framework``.
@@ -305,9 +305,8 @@ class Workflow(DictConvertible):
                 better observability and management.
             description: Optional description of what the workflow does. If the workflow is built using
                 WorkflowBuilder, this will be the description of the builder.
-            output_from: List of executor IDs designated as workflow outputs, or
-                ``None`` for omitted-selection compatibility behavior when ``intermediate_output_from`` is also
-                ``None``.
+            output_from: List of executor IDs designated as workflow outputs, or ``None`` for the default
+                all-output behavior when ``intermediate_output_from`` is also ``None``.
             intermediate_output_from: List of executor IDs designated as intermediate outputs.
                 In explicit designation mode, unlisted executor yields are hidden from
                 caller-facing output/intermediate events.
@@ -334,7 +333,7 @@ class Workflow(DictConvertible):
         self.graph_signature = self._compute_graph_signature()
         self.graph_signature_hash = self._hash_graph_signature(self.graph_signature)
 
-        # Single value type encodes omitted-selection compatibility vs explicit output-designation policy.
+        # Single value type encodes default all-output vs explicit output-designation policy.
         output_designation_ids = (
             frozenset(output_from)
             if output_from is not None
@@ -433,8 +432,8 @@ class Workflow(DictConvertible):
     def get_output_executors(self) -> list[Executor]:
         """Get the list of output executors in the workflow.
 
-        In omitted-selection compatibility mode (no explicit ``output_from``), returns every
-        executor in the workflow. In explicit mode, returns only the designated output executors.
+        In the default all-output mode, returns every executor in the workflow. In explicit mode,
+        returns only the designated output executors.
         """
         designated = self._output_designation.outputs
         if designated is None:
@@ -524,11 +523,11 @@ class Workflow(DictConvertible):
                 # Emit explicit start/status events to the stream
                 with _framework_event_origin():
                     started = WorkflowEvent.started()
-                yield started  # noqa: RUF070
+                yield started
                 self._status = WorkflowRunState.IN_PROGRESS
                 with _framework_event_origin():
                     in_progress = WorkflowEvent.status(self._status)
-                yield in_progress  # noqa: RUF070
+                yield in_progress
 
                 # Per-run reset for fresh-message runs only. We deliberately
                 # do NOT clear shared workflow state or the runner context's
@@ -583,7 +582,7 @@ class Workflow(DictConvertible):
                         self._status = WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
                         with _framework_event_origin():
                             pending_status = WorkflowEvent.status(self._status)
-                        yield pending_status  # noqa: RUF070
+                        yield pending_status
                 # Workflow runs until idle - emit final status based on whether requests are pending
                 if saw_request:
                     self._status = WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
@@ -606,11 +605,11 @@ class Workflow(DictConvertible):
                 details = WorkflowErrorDetails.from_exception(exc)
                 with _framework_event_origin():
                     failed_event = WorkflowEvent.failed(details)
-                yield failed_event  # noqa: RUF070
+                yield failed_event
                 self._status = WorkflowRunState.FAILED
                 with _framework_event_origin():
                     failed_status = WorkflowEvent.status(WorkflowRunState.FAILED)
-                yield failed_status  # noqa: RUF070
+                yield failed_status
                 span.add_event(
                     name=OtelAttr.WORKFLOW_ERROR,
                     attributes={
@@ -815,10 +814,9 @@ class Workflow(DictConvertible):
             # runner context has fully drained from any prior run. If it still
             # has in-flight executor messages, the prior run didn't complete -
             # the caller must either resume from a checkpoint or wait for the
-            # prior run to drain. (Pending request_info events are intentionally
-            # NOT blocked here: a follow-up run with message=... is the normal
-            # way to deliver a response to those pending requests, e.g. via
-            # WorkflowAgent._process_pending_requests.)
+            # prior run to drain. Pending request_info events are intentionally
+            # NOT blocked here (they are answered via a follow-up ``responses=...``
+            # run); the warning below surfaces the abandon/overwrite cases instead.
             # NOTE: _validate_run_params already enforces that ``message`` is
             # mutually exclusive with both ``checkpoint_id`` and ``responses``,
             # so we don't need to re-check those here.
@@ -830,6 +828,33 @@ class Workflow(DictConvertible):
                     "Workflows that need to recover from a mid-run failure must use "
                     "checkpointing; there is no in-process recovery path."
                 )
+
+            # Warn (but don't block) when a fresh message or a checkpoint restore begins while the
+            # workflow still has pending request_info events from an unfinished request/response
+            # cycle. A fresh ``message`` does NOT drop those pending requests - they remain pending and
+            # can still be answered later - but the new run advances executor and shared state, so when
+            # a response for an earlier request eventually arrives the workflow may have moved on,
+            # yielding inconsistent results. A ``checkpoint_id`` restore instead replaces the context's
+            # pending requests with the checkpoint's state. Delivering ``responses`` is the normal way to
+            # answer pending requests and is intentionally not warned. Mirrors the WorkflowExecutor
+            # warning for overlapping sub-workflow executions.
+            if message is not None or checkpoint_id is not None:
+                pending_request_info_events = await self._runner.context.get_pending_request_info_events()
+                if pending_request_info_events:
+                    logger.warning(
+                        "Workflow %s received %s while %d request_info event(s) are still pending from an "
+                        "unfinished request/response cycle; %s. Deliver responses (responses=...) to complete "
+                        "the pending cycle before starting new input.",
+                        self.id,
+                        "a fresh message" if message is not None else "a checkpoint restore",
+                        len(pending_request_info_events),
+                        (
+                            "those requests remain pending, but this run advances executor and shared state, "
+                            "so a response that arrives later may apply to a workflow that has moved on"
+                            if message is not None
+                            else "those pending requests will be overwritten by the checkpoint's state"
+                        ),
+                    )
 
             initial_executor_fn = self._resolve_execution_mode(message, responses, checkpoint_id, checkpoint_storage)
 

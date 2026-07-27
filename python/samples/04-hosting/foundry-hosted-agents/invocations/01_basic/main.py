@@ -3,8 +3,7 @@
 import os
 
 from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient
-from agent_framework_foundry_hosting import InvocationsHostServer
+from agent_framework.foundry import FoundryChatClient, InvocationsHostServer
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
