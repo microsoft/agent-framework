@@ -105,3 +105,39 @@ async def test_reset_while_run_active_raises() -> None:
         # Drain the stream so the run finalizes cleanly.
         async for _ in stream:
             pass
+
+
+async def test_reset_starts_a_fresh_checkpoint_lineage() -> None:
+    """After reset(), the next run's checkpoints begin a fresh lineage with no dangling parent.
+
+    The pristine snapshot restored by reset() is an in-memory checkpoint that was never
+    persisted, so post-reset checkpoints must not chain to its (storage-absent) id.
+    """
+    from agent_framework import InMemoryCheckpointStorage
+
+    storage = InMemoryCheckpointStorage()
+    counter = CounterExecutor()
+    wf: Workflow = WorkflowBuilder(start_executor=counter, checkpoint_storage=storage).build()
+
+    await wf.run(0)
+    first_run_ids = {cp.checkpoint_id for cp in await storage.list_checkpoints(workflow_name=wf.name)}
+
+    await wf.reset()
+    await wf.run(0)
+
+    all_checkpoints = await storage.list_checkpoints(workflow_name=wf.name)
+    new_checkpoints = [cp for cp in all_checkpoints if cp.checkpoint_id not in first_run_ids]
+    assert new_checkpoints, "The post-reset run must create new checkpoints"
+
+    # The post-reset entry checkpoint begins a fresh lineage (no parent) ...
+    entry = min(new_checkpoints, key=lambda cp: cp.iteration_count)
+    assert entry.previous_checkpoint_id is None, (
+        "The post-reset entry checkpoint must start a new lineage, not chain to the in-memory reset snapshot"
+    )
+
+    # ... and no post-reset checkpoint references a parent that is absent from storage.
+    all_ids = {cp.checkpoint_id for cp in all_checkpoints}
+    for cp in new_checkpoints:
+        assert cp.previous_checkpoint_id is None or cp.previous_checkpoint_id in all_ids, (
+            "Post-reset checkpoint chains to a parent that does not exist in storage (dangling lineage)"
+        )

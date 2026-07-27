@@ -1275,9 +1275,14 @@ class Workflow(DictConvertible):
             raise WorkflowException("Cannot reset the workflow while a run is active on the same instance.")
         if self._initial_checkpoint is None:
             # Never run; the instance is already in its initial state.
-            logger.warning("Reset called on a workflow instance that has never run; no state to restore.")
+            logger.debug("Reset called on a workflow instance that has never run; no state to restore.")
             return
         # Deep-copy on restore too, so the applied state never aliases the stored
-        # snapshot and subsequent resets remain repeatable.
-        await self._runner.restore_checkpoint(copy.deepcopy(self._initial_checkpoint))
+        # snapshot and subsequent resets remain repeatable. Start a new lineage: the
+        # pristine snapshot is an in-memory checkpoint that was never persisted, so
+        # checkpoints created by the next run must not chain to its (storage-absent) id.
+        await self._runner.restore_checkpoint(
+            copy.deepcopy(self._initial_checkpoint),
+            start_new_lineage=True,
+        )
         self._status = WorkflowRunState.IDLE

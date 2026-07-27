@@ -353,7 +353,7 @@ class RunnerImpl:
             self._iteration,
         )
 
-    async def restore_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
+    async def restore_checkpoint(self, checkpoint: WorkflowCheckpoint, *, start_new_lineage: bool = False) -> None:
         """Restore runner state from an in-memory ``WorkflowCheckpoint`` object.
 
         Unlike :meth:`restore_from_checkpoint`, this does not load from a storage
@@ -365,6 +365,9 @@ class RunnerImpl:
 
         Args:
             checkpoint: The checkpoint whose state should be restored.
+            start_new_lineage: When True, clear the previous-checkpoint pointer after restoring
+                so checkpoints created by the next run begin a fresh lineage with no parent. Use
+                this when the restored checkpoint is not part of the persisted lineage.
 
         Raises:
             WorkflowCheckpointException: If the checkpoint's graph signature does not
@@ -383,7 +386,7 @@ class RunnerImpl:
             self._state.import_state(checkpoint.state)
             await self._restore_executor_states()
             await self._ctx.apply_checkpoint(checkpoint)
-            self._mark_resumed(checkpoint)
+            self._mark_resumed(checkpoint, start_new_lineage=start_new_lineage)
         except Exception as e:
             logger.error(f"Failed to restore from checkpoint {checkpoint.checkpoint_id}: {e}")
             raise WorkflowCheckpointException(f"Failed to restore from checkpoint {checkpoint.checkpoint_id}") from e
@@ -445,14 +448,20 @@ class RunnerImpl:
 
         return parsed
 
-    def _mark_resumed(self, checkpoint: WorkflowCheckpoint) -> None:
+    def _mark_resumed(self, checkpoint: WorkflowCheckpoint, *, start_new_lineage: bool = False) -> None:
         """Restore per-run checkpoint bookkeeping from a resumed checkpoint.
 
         Sets the iteration counter and previous-checkpoint pointer so that
         checkpoints created after the resume continue the restored lineage.
+
+        When ``start_new_lineage`` is True, the previous-checkpoint pointer is cleared
+        instead, so checkpoints created by the next run begin a fresh lineage with no
+        parent. This is used when restoring a checkpoint that is not part of the
+        persisted lineage (e.g. an in-memory reset snapshot) to avoid chaining later
+        persisted checkpoints to a parent id that does not exist in storage.
         """
         self._iteration = checkpoint.iteration_count
-        self._previous_checkpoint_id = checkpoint.checkpoint_id
+        self._previous_checkpoint_id = None if start_new_lineage else checkpoint.checkpoint_id
 
     async def _set_executor_state(self, executor_id: str, state: dict[str, Any]) -> None:
         """Store executor state in state under a reserved key.
