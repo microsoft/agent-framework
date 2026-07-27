@@ -123,12 +123,12 @@ from mcp import McpError
 from typing_extensions import Any
 
 from ._feature_usage import FeatureIndex
-from ._session_store import (
-    FoundrySessionStore,
+from ._request_context import (
     _request_user_directory_segment,  # pyright: ignore[reportPrivateUsage]
     _request_user_fingerprint,  # pyright: ignore[reportPrivateUsage]
     _validate_foundry_request_context,  # pyright: ignore[reportPrivateUsage]
 )
+from ._session_store import FoundrySessionStore
 
 logger = logging.getLogger(__name__)
 

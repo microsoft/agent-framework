@@ -2,48 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Literal
 
 from agent_framework import ExperimentalFeature, FileSessionStore
 from agent_framework._feature_stage import experimental
-from azure.ai.agentserver.core import FoundryAgentRequestContext, get_request_context
 
-_PROTOCOL_V2_REQUIRED_MESSAGE = (
-    "The hosted environment is running on protocol 1.0.0, but the agent requires protocol 2.0.0. "
-    "Please upgrade your agent protocol to 2.0.0 in `agent.manifest.yaml` or `agent.yaml`, or "
-    "downgrade the `agent-framework-foundry-hosting` package to `1.0.0a260625` or before to use 1.0.0."
-)
-
-
-def _validate_foundry_request_context(  # pyright: ignore[reportUnusedFunction]
-    context: FoundryAgentRequestContext,
-    *,
-    is_hosted: bool,
-) -> None:
-    """Validate that a hosted request contains protocol-v2 user identity."""
-    if is_hosted and context.call_id is None:
-        raise RuntimeError(_PROTOCOL_V2_REQUIRED_MESSAGE)
-    if is_hosted and not context.user_id:
-        raise RuntimeError(
-            "The hosted environment is missing the platform user ID in the request context. "
-            "Please ensure that the request is coming from a valid Foundry platform service."
-        )
-
-
-def _request_user_fingerprint() -> str | None:
-    """Return a stable opaque fingerprint for the active request user."""
-    # FoundryAgentRequestContext.user_id is populated from the same
-    # x-agent-user-id value exposed as ResponseContext.platform_context.user_id_key.
-    user_id_key = get_request_context().user_id
-    return hashlib.sha256(user_id_key.encode("utf-8")).hexdigest() if user_id_key else None
-
-
-def _request_user_directory_segment() -> str | None:
-    """Return the safe on-disk directory segment for the active request user."""
-    fingerprint = _request_user_fingerprint()
-    return f"user-{fingerprint}" if fingerprint else None
+from ._request_context import _request_user_directory_segment  # pyright: ignore[reportPrivateUsage]
 
 
 @experimental(feature_id=ExperimentalFeature.SESSION_STORE)

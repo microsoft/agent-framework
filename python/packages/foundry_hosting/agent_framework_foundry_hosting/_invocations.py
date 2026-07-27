@@ -9,7 +9,7 @@ from starlette.responses import Response, StreamingResponse
 from typing_extensions import Any, AsyncGenerator
 
 from ._feature_usage import FeatureIndex
-from ._session_store import _validate_foundry_request_context  # pyright: ignore[reportPrivateUsage]
+from ._request_context import _validate_foundry_request_context  # pyright: ignore[reportPrivateUsage]
 
 
 class InvocationsHostServer(InvocationAgentServerHost):
