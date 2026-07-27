@@ -30,13 +30,13 @@ the per-language bit tables are in
   explicitly approved client/pipeline family and an approved actual HTTPS origin
   on every request (including redirects). Credentials or an Azure setting alone
   never approve a custom gateway/origin.
-- **Live signal** — reflect features exercised *so far*, re-evaluated per request,
-  not frozen at client construction.
+- **Live signal** — read the process's observed-feature set *so far* at request
+  send time, rather than freezing it at client construction.
 - **Low cost / few moving parts** — reuse telemetry already in the request path;
-  near-zero runtime overhead; as little machinery as the job needs.
-- **Privacy** — encode only coarse boolean feature usage; no identifiers,
-  arguments, prompts, payloads, model/deployment names, endpoints, or
-  customer-defined names.
+  bounded fixed-width processing; as little machinery as the job needs.
+- **Privacy** — encode only coarse "observed at least once" Boolean feature
+  state, never counts; no identifiers, arguments, prompts, payloads,
+  model/deployment names, endpoints, or customer-defined names.
 - **Use, not presence** — package-level indexes mean a capability reached its
   first meaningful activation, not that a package was installed/imported or a
   DI container constructed an unused service.
@@ -60,7 +60,7 @@ Stamp a `(feat=...)` comment onto the UA, but only on approved Azure/Foundry
 client pipelines, and re-evaluate it per request.
 
 - Good, reuses telemetry already sent to approved backends we can read.
-- Good, per-request stamping reflects the live mask (not frozen at construction).
+- Good, request-time stamping reflects the live mask (not frozen at construction).
 - Good, first-party scoping means no fingerprint leaks to third-party providers.
 - Good, two-factor destination approval (pipeline + actual origin) denies custom
   `base_url` gateways and strips the token on unapproved redirect hops.
@@ -114,6 +114,10 @@ client pipelines, and re-evaluate it per request.
 A single mask per process; bits are OR-ed in as features are first used and never
 cleared. The token reflects "what this process has used so far."
 
+- **Binary interpretation:** a set bit means the feature was observed at least
+  once in this process before the request was sent. A bit repeated on later
+  requests is the same Boolean observation, not another feature use. It cannot be
+  summed into invocation, request, agent, user, or tenant counts.
 - Good, fits our **mixed feature lifecycle**: many features are *not* bound to an
   outbound service request — an agent/workflow may first run or build, a
   context/history provider may first participate in a session, and a host may
@@ -121,8 +125,17 @@ cleared. The token reflects "what this process has used so far."
   mask can carry those activations forward.
 - Good, trivial and cheap: one OR under a lock (Python) / one atomic OR into one
   of two 64-bit lanes (.NET); no per-request state plumbing.
+- Good, deliberately coarse for privacy: it avoids emitting a sequence of exact
+  per-call feature combinations that could reconstruct a workload's behavioral
+  trace.
 - Neutral, coarser than per-call — early requests carry fewer bits than later
-  ones, and the token says "this process used X", not "this call used X".
+  ones, and the token says "this process used X", not "this call used X" or "X
+  was used this many times."
+
+For example, at time 1 Agent A can use MCP and a Foundry chat client. At time 2,
+Agent B in the same worker can make a normal Foundry chat call without MCP. The
+time-2 request still carries the MCP bit because MCP was previously observed in
+that process. It does **not** say Agent B used MCP, nor count a second MCP use.
 
 #### S2. Per-request set, reset between calls (botocore's model — rejected)
 
@@ -139,7 +152,10 @@ See [Prior art](#prior-art).
   participation, hosting startup). The latter have no service request to attach to, so a
   per-request set would simply miss them.
 - Bad, needs `contextvars` propagation through every async/threaded path and a
-  reset discipline; the bleed-guard botocore documents is the warning sign.
+  reset discipline, plus enable/disable calls around every scoped operation; the
+  bleed-guard botocore documents is the warning sign.
+- Bad, creates a more detailed per-call behavioral trace, increasing the privacy
+  sensitivity and review burden compared with a coarse process-lifetime Boolean.
 - Note, per-call attribution for the request-scoped subset is better served by
   the deferred OTel span path (option C) than by reshaping the UA token.
 
@@ -342,33 +358,65 @@ the Python v1 list) = decimal `72339073309605893`.
 #### L. Decimal — `feat=v1.72339073309605893`
 
 - Good, human-familiar; trivial to parse.
-- Neutral, no visual alignment to bit/nibble boundaries; slightly longer than hex
-  for large masks. No advantage over hex.
+- Neutral, no visual alignment to four-bit groups; slightly longer than hex for
+  large masks. No advantage over hex.
 
 #### M. Hex (chosen) — `feat=v1.101000100000005`
 
 - Good, compact (≤32 chars for a 128-bit mask).
 - Good, decodes with one stdlib call in every language (`int(x, 16)` /
-  two 64-bit lane parses in .NET); nibble boundaries are eyeball-able.
+  two 64-bit lane parses in .NET); each hex character corresponds to four
+  consecutive bit positions.
 - Good, lowercase, no `0x` prefix, no leading zeros — unambiguous and stable.
 
-#### N. Binary / bit-list — `feat=v1.100000001000000000000000100000000000000000000000000000101` or `feat=v1.0,2,32,48,56`
+A grouped variant such as `feat=v1.101.0001.0000.0005` was also considered.
+Separators make the value longer and must be removed before `int(x, 16)` can
+parse it, while the ordinary hex digits already preserve fixed four-bit groups.
+
+#### N. Binary — `feat=v1.100000001000000000000000100000000000000000000000000000101`
+
+- Good, directly shows every zero/one position.
+- Bad, grows to 128 payload characters and is difficult to scan reliably.
+
+#### O. Bit-list — `feat=v1.0,2,32,48,56`
 
 - Good, most directly human-readable ("which bits").
-- Bad, longest form in the UA; the bit-list needs delimiter handling and grows
-  with the number of set bits.
+- Bad, needs delimiter handling and grows with the number of set bits; a full
+  128-bit list is substantially larger than every fixed-width representation.
 
-#### O. Alphabet / base-N (e.g. Crockford base32 `feat=v1.208004000005`, base62 `feat=v1.5LJRx1i6xJ`)
+#### P. Alphabet / base-N (e.g. Crockford base32 `feat=v1.208004000005`, base62 `feat=v1.5LJRx1i6xJ`)
 
 - Good, shortest representation.
 - Bad, needs a custom alphabet + decode table on both ends; base62 is
   case-sensitive (fragile through case-normalizing intermediaries); not
-  eyeball-able. Premature optimization for a value that is already ≤32 chars in
-  hex.
+  directly readable. Premature optimization for a value that is already ≤32
+  chars in hex.
+
+All forms are ASCII. The table shows total bytes added to the existing
+User-Agent, including the leading space and `(feat=v1.)` wrapper:
+
+| Representation | Example (5 bits) | All current Python rows (63) | All current .NET rows (52) | Full 128-bit v1 |
+| --- | ---: | ---: | ---: | ---: |
+| Hex | 26 | 34 | 30 | 43 |
+| Grouped hex | 29 | 39 | 34 | 50 |
+| Decimal | 28 | 38 | 34 | 50 |
+| Binary | 68 | 100 | 86 | 139 |
+| Bit-list | 23 | 189 | 156 | 412 |
+| Crockford base32 | 23 | 29 | 26 | 37 |
+| Base62 | 21 | 26 | 24 | 33 |
+
+There is no defensible average before rollout, and the design does not depend on
+one: a process-global mask may eventually contain every assigned row. There is
+no smaller per-request bit budget because the bits are not request-scoped; the
+registry allocation tenet controls how many distinctions v1 assigns. Client
+processing is bounded by the fixed 128-bit width: marking performs one
+lock/atomic OR, and request-time stamping reads the mask, formats at most 32 hex
+characters, and replaces one User-Agent comment. It performs no registry scan,
+network call, or per-feature enable/disable bookkeeping.
 
 ## Decision Outcome
 
-Chosen: **a per-request, first-party-only User-Agent `(feat=...)` token (A),
+Chosen: **a request-time-stamped, first-party-only User-Agent `(feat=...)` token (A),
 with a 128-bit process-global monotonic accumulator (S1), per-language bit lists
 (H), package-local index enums kept honest by parity and no-overlap tests (J),
 rendered as lowercase hex (M).**
@@ -381,16 +429,18 @@ the token is **stamped per request** only when both the client/pipeline and the
 actual HTTPS origin are approved, so custom origins and cross-origin redirects
 cannot inherit the fingerprint; each
 SDK owns an independent bit list selected by the language already in the UA; the
-mask is rendered as hex (`feat=v1.101000100000005`). **Two opt-out env vars are
-provided:** a dedicated `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` that drops only
-the mask while keeping the base SDK identity/version User-Agent, and the existing
-`AGENT_FRAMEWORK_USER_AGENT_DISABLED` that drops the whole contribution. OTel (C)
-is deferred — mainly because a broadly-emitted span attribute would leak the
-fingerprint into the user's general telemetry, against the first-party-only
-stance and would require user-side OTel setup that may still not make the data
-available to us — but left open behind the version prefix. Per-request scoping
-(S2), a shared registry (I), codegen for the initial registry (K), and the
-decimal/binary/base-N representations (L, N, O) are rejected as complexity or
+mask is rendered as hex (`feat=v1.101000100000005`). The dedicated
+`AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` opt-out drops only the mask while
+keeping the base SDK identity/version User-Agent. Python's existing
+`AGENT_FRAMEWORK_USER_AGENT_DISABLED` continues to suppress its entire
+contribution, including the mask; this decision does not introduce a matching
+whole-User-Agent switch in .NET. OTel (C) is deferred — mainly because a
+broadly-emitted span attribute would leak the fingerprint into the user's
+general telemetry, against the first-party-only stance and would require
+user-side OTel setup that may still not make the data available to us — but left
+open behind the version prefix. Per-request scoping (S2), a shared registry (I),
+codegen for the initial registry (K), and the decimal/grouped-hex/binary/bit-list/
+base-N representations (L, M variant, N, O, P) are rejected as complexity or
 length the problem does not require.
 
 The remaining choice before implementation is the **v1 granularity level** among
@@ -405,18 +455,20 @@ normal growth; it does not waive the registry's
 
 ### Consequences
 
-- Good, adds usage signal at near-zero cost, no new data flow, few moving parts.
-- Good, transparent (public registry, human-decodable token) and disabled by
-  **two** opt-out env vars: a dedicated `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED`
-  (mask only) and `AGENT_FRAMEWORK_USER_AGENT_DISABLED` (whole UA; existing in
-  Python and added to .NET with this work).
-- Good, first-party-only + per-request emission gives a live mask and no
+- Good, adds a bounded-cost usage signal with no new data flow and few moving
+  parts.
+- Good, transparent (public registry, human-decodable token) and disabled by a
+  dedicated `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` mask-only opt-out. Python's
+  existing whole-User-Agent opt-out also suppresses the mask.
+- Good, first-party-only + request-time stamping gives a live mask and no
   third-party fingerprint leak.
 - Good, 128 bits leaves useful v1 headroom; .NET remains lock-free by storing two
   independently atomic 64-bit lanes; per-language lists remove all cross-language
   sync; package-local enums avoid both codegen and provider→core release coupling.
 - Neutral, the token's reach equals eligible framework-configured first-party
   traffic; broader per-call signal (OTel) can be added later if needed.
+- Neutral, every set bit is a repeated Boolean observation after first use;
+  request rows carrying it are not feature invocation counts.
 - Neutral, v1 granularity is intentionally a separate choice; the registry should
   start with fewer bits unless a more detailed bit answers a concrete question.
 - Bad, each feature must add an activation mark, first-party clients need a
@@ -523,10 +575,10 @@ independent for Python and .NET.
 | **Not every first-party client is stampable.** Caller-supplied `AIProjectClient` / OpenAI clients and toolkit-owned clients may not expose a supported per-request policy hook. | Supported-hook-only emission (A) | V1 does not mutate caller-owned clients or private SDK pipelines. Those features may still appear on another eligible request from the same process-global mask. |
 | **Custom origins intentionally receive no feature token.** A customer gateway may use Azure credentials or Azure-named settings but route to a non-approved origin. | Two-factor destination classification (A) | Credentials and configuration names are not proof of telemetry ownership. Unknown/custom origins and cross-origin redirects are denied by default. |
 | **No OTel / per-call signal in v1.** | OTel deferred (C) — primarily on **privacy** and availability grounds | A broadly-emitted span attribute would push the fingerprint into the user's general telemetry / third-party APM vendors, undoing the first-party-only scoping. It also requires customer/user OTel setup, and even Foundry users may not export data where we can query it. Left open only if there is a compelling reason to add. |
-| **Mask reflects "usage so far," not the whole session.** Early requests carry fewer bits than later ones. | Process-global accumulator + per-request stamping | Honest and still useful; the team aggregates across requests. The per-request design is what makes it *grow* rather than freeze. |
+| **Mask reflects "usage so far," not the whole session.** Early requests carry fewer bits than later ones. | Process-global accumulator + request-time stamping | Honest and still useful as a Boolean process-lifetime observation. Repeated request rows must not be summed as additional uses. Reading the mask at request time makes it *grow* rather than freeze. |
 | **No per-agent / per-call attribution.** The mask is one process-wide value — "this process used X", not "this agent/call used X". | Process-global monotonic scope (S1) | A deliberate choice, not a transport limit: botocore *does* per-call attribution in the UA via a per-request `contextvars` set, but many AF activations (workflow build/start, provider participation, hosting startup) occur outside the service request that later emits the token. Per-call detail remains deferred to OTel. |
 | **Shared processes intentionally carry usage across agents and tenants.** A request can include bits first set by another workload in the same worker. | Process-global monotonic scope (S1) | The token must be interpreted only as process-level "used so far," never as request/user/tenant attribution. Privacy review must explicitly accept this. |
-| **Counts are request-weighted and sticky.** Once set, a bit appears on every later eligible request from that process, so long-lived/high-traffic processes dominate. | Monotonic mask emitted per request | The signal supports traffic prevalence and co-occurrence, not first-use counts, unique-process counts, or exact feature invocation frequency. |
+| **Bits are binary, sticky observations — not countable events.** Once set, a bit appears on every later eligible request from that process, so raw request counts repeat the same observation and long-lived/high-traffic processes dominate. | Monotonic mask stamped at request time | The signal supports coarse observed-feature and co-occurrence questions only. It cannot provide first-use counts, unique-process counts, request attribution, or feature invocation frequency. |
 | **Granularity may be too coarse or too detailed.** The chosen level may miss useful distinctions or create more specificity than needed. | v1 granularity choice (F0-F4) | This is the main remaining decision. Adding bits later is easier than removing/redefining them, so v1 should lean toward fewer bits that answer known questions. |
 | **.NET snapshots span two atomic lanes.** A bit can be marked between the low/high reads, so one request may omit that just-added bit. | 128-bit width without a global lock | The mask is monotonic: the snapshot cannot invent or clear a bit, and the next request includes the addition. This matches the existing "usage so far" timing semantics. |
 | **Fingerprinting risk is reduced, not eliminated.** A feature-combination mask is still a deployment signature, and it transits intermediaries (proxies/CDNs) even when first-party-scoped. | Emitting any feature-combination value | Scope + opt-out + coarse granularity mitigate it; v1 should avoid unnecessary detailed bits. |
@@ -552,8 +604,9 @@ These are unresolved and should be decided before implementation:
    concrete question.
 4. **Honor the cross-tool `DO_NOT_TRACK` convention?** Several ecosystems treat
    `DO_NOT_TRACK=1` as a universal telemetry opt-out (HuggingFace Hub honors it;
-   see [Prior art](#prior-art)). Should our opt-out also respect `DO_NOT_TRACK`
-   (in addition to the two `AGENT_FRAMEWORK_*` flags)? Cheap to add and
+   see [Prior art](#prior-art)). Should our mask opt-out also respect
+   `DO_NOT_TRACK` (in addition to `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` and
+   Python's pre-existing whole-UA flag)? Cheap to add and
    community-friendly, but it widens the opt-out surface and needs a clear
    precedence rule. Recommend yes; confirm with the deciders.
 
@@ -564,8 +617,8 @@ These are unresolved and should be decided before implementation:
   `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED`, which drops **only** the feature mask
   while keeping the base SDK identity/version User-Agent. This lets a
   privacy-conscious user withhold the usage signal without losing the
-  support/compat value of the SDK-version header. .NET adopts both environment
-  variable names when it adds the feature.
+  support/compat value of the SDK-version header. .NET adopts the dedicated
+  mask-only flag; adding a .NET whole-User-Agent switch is outside this decision.
 - **Caller-owned clients are not modified.** V1 stamps only framework-created
   clients or clients with a supported public policy/hook registration point. It
   does not patch private pipelines; injected clients are an explicit coverage

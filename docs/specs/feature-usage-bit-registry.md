@@ -12,8 +12,9 @@ allocation authority and published decoder contract; package-local private
 artifact.
 
 This telemetry is intentionally **transparent**: this registry is public, the
-emitted value is human-decodable, and two env vars disable it (mask-only or the
-whole User-Agent — see [Opt-out](#opt-out)).
+emitted value is human-decodable, and a dedicated env var disables the mask
+without removing the base User-Agent. Python's existing whole-User-Agent opt-out
+also suppresses its mask; see [Opt-out](#opt-out).
 
 ## What is collected
 
@@ -27,7 +28,9 @@ index at first meaningful activation; the SDK shifts that index, ORs the mask,
 and emits the value.
 
 No identifiers, arguments, prompts, payloads, or user data are encoded — only the
-coarse boolean \"this feature was used\" per registered bit.
+coarse Boolean \"this feature was observed at least once in this process\" per
+registered bit. A repeated bit on later requests is the same observation, not
+another use and not a count.
 
 ## Allocation tenet
 
@@ -45,6 +48,12 @@ Operational clients, tools, providers, and hosts mark on their first real public
 operation/participation. Constructor marking is reserved for cases where
 construction itself activates or registers the capability; DI instantiation
 alone is not usage.
+
+Ids use the package/integration name for a package-level signal and add a
+capability suffix only when the row tracks a narrower surface. They describe the
+registered feature, not an inheritance hierarchy: for example, Python
+`hosting` is the base `agent-framework-hosting` package, while `hosting.a2a` is
+the separate hosting-A2A integration.
 
 ## Per-language, not shared
 
@@ -83,11 +92,11 @@ no \"same bit, same meaning\" rule.
 
 - **Marking is universal:** every feature sets its index at first meaningful
   activation, regardless of provider.
-- **User-Agent `(feat=...)` comment — approved first-party clients only, per
-  request.** Stamped only when both the **Azure / Foundry** client/pipeline family
-  and the actual HTTPS origin are approved, re-evaluated on every request and
-  redirect hop. Custom origins are default-deny and an unapproved redirect removes
-  the token. It is
+- **User-Agent `(feat=...)` comment — approved first-party clients only,
+  stamped at request time.** Added only when both the **Azure / Foundry**
+  client/pipeline family and the actual HTTPS origin are approved, re-evaluated
+  on every request and redirect hop. Custom origins are default-deny and an
+  unapproved redirect removes the token. It is
   **never** sent to third-party providers — a feature fingerprint must not leak
   into logs we cannot read. See [SPEC-004](004-feature-usage-telemetry.md#emission).
 - **OpenTelemetry: not in v1.** Deferred primarily for privacy (a span attribute
@@ -99,6 +108,13 @@ no \"same bit, same meaning\" rule.
 
 Layout: core features 0–31, orchestration patterns 32–47, and
 provider/integration packages from 48.
+
+The provider/integration block is intentionally **not** partitioned by vendor
+ownership. Some packages span first- and third-party services, ownership can
+change, and protocols/storage integrations do not fit a stable first/third-party
+taxonomy. Index ranges are allocation space, not privacy or emission policy;
+the explicit destination allowlist independently ensures that the mask is sent
+only to approved first-party endpoints.
 
 | Index | Id | Feature | Activated at (representative) |
 | --- | --- | --- | --- |
@@ -157,7 +173,7 @@ provider/integration packages from 48.
 | 76 | `declarative.workflow` | Declarative workflow definitions | `agent_framework_declarative.WorkflowFactory` |
 | 77 | `durabletask` | Durable task runtime | `agent_framework_durabletask` |
 | 78 | `azurefunctions` | Azure Functions agent host | `agent_framework_azurefunctions` |
-| 79 | `tools` | Shell tools | `agent_framework_tools.shell.LocalShellTool` / `DockerShellTool` |
+| 79 | `tools.shell` | Shell tools | `agent_framework_tools.shell.LocalShellTool` / `DockerShellTool` |
 | 80 | `monty` | Monty CodeAct provider | `agent_framework_monty.MontyCodeActProvider` |
 | 81 | `hyperlight` | Hyperlight CodeAct provider | `agent_framework_hyperlight.HyperlightCodeActProvider` |
 | 82 | `azure_cosmos_memory` | Azure Cosmos DB semantic-memory provider | `agent_framework_azure_cosmos_memory.CosmosMemoryContextProvider` |
@@ -221,9 +237,9 @@ provider/integration packages from 48.
 | 66 | `declarative.workflow` | Declarative workflow definitions | `Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowBuilder.Build` |
 | 67 | `durabletask` | Durable task runtime | `Microsoft.Agents.AI.DurableTask` |
 | 68 | `azurefunctions` | Azure Functions agent host | `Microsoft.Agents.AI.Hosting.AzureFunctions` |
-| 69 | `tools` | Shell tools | `Microsoft.Agents.AI.Tools.Shell.ShellExecutor` |
+| 69 | `tools.shell` | Shell tools | `Microsoft.Agents.AI.Tools.Shell.ShellExecutor` |
 | 70 | `hyperlight` | Hyperlight CodeAct provider | `Microsoft.Agents.AI.Hyperlight.HyperlightCodeActProvider` |
-| 71 | `hosting` | Generic AF hosting | `Microsoft.Agents.AI.Hosting.AIHostAgent` |
+| 71 | `hosting.agent` | Hosted AF agent wrapper | `Microsoft.Agents.AI.Hosting.AIHostAgent` |
 | 72 | `local_codeact` | Local Python CodeAct provider | `Microsoft.Agents.AI.LocalCodeAct.LocalCodeActProvider` |
 | 73 | `hosting.a2a` | A2A hosting endpoints | `Microsoft.AspNetCore.Builder.A2AEndpointRouteBuilderExtensions.MapA2AJsonRpc` |
 | 74 | `hosting.openai` | OpenAI-compatible hosting endpoints | `Microsoft.AspNetCore.Builder.MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExtensions.MapOpenAIResponses` |
@@ -231,17 +247,17 @@ provider/integration packages from 48.
 
 ## Opt-out
 
-Two independent environment variables disable the mask:
+The dedicated mask-only environment variable is shared by both SDKs:
 
 - `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED=true|1` — drops **only** the feature
   mask; the base `agent-framework-<lang>/{version}` User-Agent is still sent.
-- `AGENT_FRAMEWORK_USER_AGENT_DISABLED=true|1` — suppresses the **entire** Agent
-  Framework User-Agent contribution (mask included).
 
 The dedicated flag lets a privacy-conscious user keep contributing SDK
 identity/version (useful for support and compatibility triage) while withholding
-the feature-usage signal. `AGENT_FRAMEWORK_USER_AGENT_DISABLED` already exists
-in Python; .NET adds both names when implementing this design.
+the feature-usage signal. Python's existing
+`AGENT_FRAMEWORK_USER_AGENT_DISABLED=true|1` also suppresses its entire Agent
+Framework User-Agent contribution, mask included. Adding a matching .NET
+whole-User-Agent opt-out is outside this design.
 
 ## Governance
 

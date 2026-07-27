@@ -44,14 +44,17 @@ growth.
 Success metric: within one release after rollout, ≥80% of **eligible,
 framework-created** first-party (Foundry) requests carry a **non-empty** feature
 token whose mask reflects features activated **after** client construction (i.e.
-the token is live, not frozen — see the per-request requirement below).
-Secondary: ability to break down first-party traffic by feature combination
-(e.g. "% of Foundry traffic that also uses workflows").
+the token is live, not frozen — see the request-time stamping requirement
+below). This measures transport coverage, not feature invocation volume.
+Secondary: ability to describe which process-lifetime feature bits are observed
+together in eligible traffic (e.g. "requests observed from processes that have
+used workflows"). Repeated requests carrying a bit are not additional uses.
 
 This is done **transparently**: the bit registry is public, the emitted value is
-human-decodable, and two env vars disable it — a dedicated
-`AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` (mask only) and the existing
-`AGENT_FRAMEWORK_USER_AGENT_DISABLED` (whole User-Agent).
+human-decodable, and a dedicated `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED`
+disables the mask while preserving the base User-Agent. Python's existing
+`AGENT_FRAMEWORK_USER_AGENT_DISABLED` continues to suppress its entire
+User-Agent contribution, mask included.
 
 ## What is the problem being solved?
 
@@ -71,11 +74,12 @@ The accumulator and its helpers live in the existing
 `agent_framework/_telemetry.py` (alongside `get_user_agent()` /
 `prepend_agent_framework_to_user_agent()`), so the User-Agent machinery stays in
 one module. It owns a process-global 128-bit accumulator. Python's arbitrary-size
-`int` stores it directly. Two env vars can disable
-it: the existing Python `AGENT_FRAMEWORK_USER_AGENT_DISABLED` (which drops the
-whole User-Agent contribution, mask included), and a **dedicated**
-`AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` that drops **only** the feature mask while
-keeping the base `agent-framework-python/{version}` User-Agent:
+`int` stores it directly. A **dedicated**
+`AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` that drops **only** the feature mask
+while keeping the base `agent-framework-python/{version}` User-Agent is
+introduced by this design. The existing Python
+`AGENT_FRAMEWORK_USER_AGENT_DISABLED` continues to drop the whole User-Agent
+contribution, mask included:
 
 ```python
 # agent_framework/_telemetry.py (same module as get_user_agent)
@@ -133,6 +137,15 @@ def get_feature_token() -> str | None:
   mask is the only scope that can represent them, and its monotonic "usage so
   far" growth is the intended semantic, not a bleed bug. Concurrency-safe via the
   module lock (Python) / two atomic 64-bit lanes in .NET.
+- **Binary and non-countable.** A set bit means "this feature was observed at
+  least once in this process before this request." Repeating that bit on every
+  later eligible request does not represent additional uses and must not be
+  interpreted as request, invocation, agent, user, or tenant counts.
+- **No scoped enable/disable bookkeeping.** Making the mask exact per operation
+  would add hot-path state changes, context propagation, and reset/error-path
+  handling. It would also produce a more detailed behavioral trace and therefore
+  increase privacy sensitivity. V1 deliberately keeps the coarser process-level
+  Boolean.
 - **Token is safe by construction.** The emitted value is `v{int}.{hex}` —
   characters limited to `[0-9a-fv.]` — so no header-injection sanitization is
   required. A 128-bit mask is at most 32 hex characters (contrast botocore,
@@ -143,6 +156,20 @@ def get_feature_token() -> str | None:
 - **No import cycles:** the accumulator lives in core, while each package owns
   private index constants for its own features and calls the core marker. Core
   never imports optional packages.
+
+### Interpretation contract
+
+At time 1, Agent A in a worker can use MCP and a Foundry chat client. At time 2,
+Agent B in the same worker can make a normal Foundry chat call without MCP. The
+time-2 request still carries the MCP bit because MCP was observed earlier in the
+process.
+
+That request means only "this process has used MCP." It does not mean Agent B
+used MCP, that MCP was used on the time-2 request, or that two requests carrying
+the bit equal two MCP uses. Without a separate stable process identifier, the
+signal also cannot produce unique-process counts. Supported analysis is limited
+to coarse observed-feature prevalence and feature co-occurrence, with the
+request-weighting limitation called out explicitly.
 
 ### Bit constants
 
@@ -190,7 +217,7 @@ id. For reference, in v1 `FoundryChatClient` → index 48,
 
 ## Emission
 
-**One path in v1: the User-Agent `feat=` token, stamped per request on an
+**One path in v1: the User-Agent `feat=` token, stamped at request time on an
 explicit allowlist of first-party Azure/Foundry client pipelines only.**
 
 Marking (`mark_feature_used`) is **universal** — every feature sets its index
@@ -205,6 +232,9 @@ their current `default_headers`, `user_agent`, suffix, or policy mechanisms.
 **separate**, added **only** by eligible Azure/Foundry clients, and
 **re-evaluated on each request** so it reflects the mask accumulated so far. A
 helper stamps it:
+
+This request-time read does not make the signal request-scoped. The payload
+remains the process-global Boolean history described above.
 
 ```python
 # agent_framework/_telemetry.py
@@ -234,7 +264,7 @@ OpenAI-compatible origins are denied by default. The check runs on every actual
 request, including redirect hops; a cross-origin or otherwise unapproved redirect
 removes `(feat=...)` before sending.
 
-Eligible first-party clients install a **per-request hook** that performs this
+Eligible first-party clients install a **request hook** that performs this
 classification and calls `apply_feature_token()`:
 
 - **OpenAI-SDK clients created by Agent Framework**: construct the underlying
@@ -253,7 +283,7 @@ classification and calls `apply_feature_token()`:
   `request.http_request.headers["User-Agent"]`. Do not stamp `SearchClient`,
   `CosmosClient`, or another Azure client merely because it is first-party; add
   it to the allowlist only after confirming the data path. This mirrors .NET's
-  per-request `PipelinePolicy` exactly.
+  request-time `PipelinePolicy` exactly.
 
 This fixes the frozen-at-construction problem: the token is materialised at
 **send time**, not client-init time, so it carries features activated after the
@@ -290,19 +320,19 @@ New **internal cross-package** surface in
 - `mark_feature_used(index: int) -> None`
 - `get_feature_token() -> str | None` — returns `v<ver>.<hex>` or `None`.
 - `apply_feature_token(user_agent: str) -> str` — live, idempotent UA stamper
-  used by first-party per-request hooks.
+  used by first-party request hooks.
 - `FEATURE_MASK_DISABLED_ENV_VAR` constant — the dedicated mask-only opt-out env
   var name (`AGENT_FRAMEWORK_FEATURE_MASK_DISABLED`).
 
 Each package also adds a private package-local `FeatureIndex` declaration for
-the rows it owns. Two independent opt-outs gate the mask; see
-[Opt-out](#opt-out).
+the rows it owns. The dedicated mask-only opt-out and Python's existing
+whole-User-Agent opt-out gate the Python mask; see [Opt-out](#opt-out).
 
 Behavioural change to existing API:
 
 - `get_user_agent()` / `prepend_agent_framework_to_user_agent()` are
   **unchanged** — they keep returning the base UA with no `feat=` token. The
-  token is added only by first-party per-request hooks via
+  token is added only by first-party request hooks via
   `apply_feature_token()`.
 
 No breaking changes: when the mask is empty or disabled, for any non-first-party
@@ -311,17 +341,19 @@ byte-for-byte identical to today.
 
 ## Opt-out
 
-Two independent env vars, so users can drop just the mask or the whole UA:
+The dedicated mask-only opt-out is shared by both SDKs. Python also retains its
+pre-existing whole-User-Agent opt-out:
 
-| Env var | Effect |
-| --- | --- |
-| `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` | disables **only** the feature mask; the base `agent-framework-python/{version}` User-Agent is still sent |
-| `AGENT_FRAMEWORK_USER_AGENT_DISABLED` | disables the **entire** AF User-Agent contribution, mask included |
+| Env var | SDKs | Effect |
+| --- | --- | --- |
+| `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` | Python and .NET | disables **only** the feature mask; the base `agent-framework-<lang>/{version}` User-Agent is still sent |
+| `AGENT_FRAMEWORK_USER_AGENT_DISABLED` | Python (existing behavior) | disables the **entire** Python AF User-Agent contribution, mask included |
 
-Both accept `true`/`1` (case-insensitive). The dedicated flag lets a
+The flags accept `true`/`1` (case-insensitive). The dedicated flag lets a
 privacy-conscious user keep contributing the SDK identity/version (useful for
 support and compat triage) while withholding the feature-usage signal. The mask
-is also disabled implicitly whenever the whole User-Agent is.
+is also disabled implicitly whenever Python's whole User-Agent is disabled. A
+new whole-User-Agent opt-out for .NET is outside this design.
 
 ## E2E example
 
@@ -330,7 +362,7 @@ from agent_framework import Agent
 from agent_framework_foundry import FoundryChatClient
 from agent_framework_openai import OpenAIChatClient
 
-# First-party (Foundry) client: per-request hook stamps the live feat token.
+# First-party (Foundry) client: request hook stamps the live feat token.
 agent = Agent(client=FoundryChatClient(...), instructions="...")
 # Agent use marks bit 0; FoundryChatClient marks bit 48
 await agent.run("Hello")
@@ -351,7 +383,8 @@ AGENT_FRAMEWORK_FEATURE_MASK_DISABLED=true python app.py
 # Foundry request User-Agent: agent-framework-python/1.2.3   (no (feat=...) comment)
 ```
 
-Drop the entire User-Agent contribution (mask included):
+Python only: use the existing flag to drop its entire User-Agent contribution
+(mask included):
 
 ```bash
 AGENT_FRAMEWORK_USER_AGENT_DISABLED=true python app.py
@@ -373,20 +406,20 @@ AGENT_FRAMEWORK_USER_AGENT_DISABLED=true python app.py
   hex; otherwise emit `high` without leading zeros followed by `low:x16`. Cast
   each signed lane to `ulong` before formatting so bits 63 and 127 are preserved.
   Reject indexes outside `0..127`.
-- **Emission is per-request and first-party-scoped**, matching Python. The
+- **Emission is stamped at request time and first-party-scoped**, matching
+  Python. The
   existing `AgentFrameworkUserAgentPolicy` / `HostedAgentUserAgentPolicy`
   pipeline policies already run per request — extend them to apply the same
   approved-pipeline + actual-origin classifier, append/refresh the `(feat=...)`
   comment only for approved destinations, and remove it on unapproved redirect
   hops. Do not register it on third-party `IChatClient`s.
 - Same **wire format** (`v<version>.<hex>` comment, hex encoding) and the same
-  two opt-out env vars (`AGENT_FRAMEWORK_FEATURE_MASK_DISABLED`,
-  `AGENT_FRAMEWORK_USER_AGENT_DISABLED`) in both SDKs — but the **mask is decoded
-  per language**: indexes are not shared, so a decoder must read the language from
-  the UA product token and select that language's table before decoding. (.NET's
-  policy was already per-request, so there is no Python/.NET timing asymmetry.)
-  Both environment variables are new behavior for the current .NET policy;
-  `AGENT_FRAMEWORK_USER_AGENT_DISABLED` already exists in Python.
+  dedicated mask-only opt-out (`AGENT_FRAMEWORK_FEATURE_MASK_DISABLED`). The
+  **mask is decoded per language**: indexes are not shared, so a decoder must
+  read the language from the UA product token and select that language's table
+  before decoding. (.NET's policy was already request-time, so there is no
+  Python/.NET timing asymmetry.) Adding a .NET whole-User-Agent opt-out is
+  outside this design.
 
 ## Keeping the bitmap in sync
 
@@ -431,7 +464,7 @@ table) are ignored.
 3. **Package-local indexes + validation** — add private `FeatureIndex`
    declarations to packages and a repository test for exact registry parity,
    complete coverage, range, and zero overlap.
-4. **First-party per-request hooks** — use OpenAI's
+4. **First-party request-time hooks** — use OpenAI's
    `DefaultAsyncHttpxClient` for framework-created clients and the separate
    azure-core `SansIOHTTPPolicy`. Require approved pipeline **and** approved
    actual origin on every request/redirect hop. Verify custom origins and
@@ -442,10 +475,11 @@ table) are ignored.
    Constructor-only marking requires construction itself to exercise the
    capability.
 6. **.NET parity** — package-local index enums plus the two atomic 64-bit lanes
-   with `Interlocked.Or` / compare-exchange fallback; extend existing per-request
+   with `Interlocked.Or` / compare-exchange fallback; extend existing request-time
    Foundry UA policies through the shared destination classifier and formatter.
 7. **Docs & tests** — update package `AGENTS.md`/skills; tests for **both**
-   opt-out env vars (mask-only and whole-UA), first-party scoping, and the live
+   Python opt-out paths (dedicated mask-only and existing whole-UA), the
+   dedicated .NET mask-only opt-out, first-party scoping, and the live
    (non-frozen) UA.
 
 ## Limitations & open questions
