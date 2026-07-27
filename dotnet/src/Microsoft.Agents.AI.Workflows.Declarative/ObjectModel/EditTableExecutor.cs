@@ -34,7 +34,7 @@ internal sealed class EditTableExecutor(EditTable model, WorkflowFormulaState st
                 EvaluationResult<DataValue> addResult = this.Evaluator.GetValue(addItemValue);
                 RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), addResult.Value.ToFormula());
                 await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
-                await this.AssignAsync(variablePath, newRecord, context).ConfigureAwait(false);
+                await this.AssignAsync(variablePath, tableValue, context).ConfigureAwait(false);
                 break;
             case TableChangeType.Remove:
                 ValueExpression removeItemValue = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");
