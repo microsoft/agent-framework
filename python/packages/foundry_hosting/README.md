@@ -10,6 +10,9 @@ Agent Server request context's platform user ID, and their filenames come from
 its platform session ID. Pass `session_store=` to explicitly override either
 default.
 
+Foundry's session file API exposes the hosted `$HOME` directory as `/`, so the
+API path `/.sessions` is stored on disk at `$HOME/.sessions`.
+
 Workflow agents continue to use their existing checkpoint storage layout.
 
 ## Foundry session isolation

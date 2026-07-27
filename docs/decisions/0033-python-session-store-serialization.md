@@ -213,7 +213,8 @@ IDs from `azure.ai.agentserver.core.get_request_context()`. Callers can
 explicitly override either default through `session_store=`. The
 Foundry-specific type is the host configuration seam; its implementation may
 later move from files to a Foundry storage API without changing the generic
-core store contract.
+core store contract. The session file API maps `/` to the hosted `$HOME`
+directory, so this API path is persisted on disk under `$HOME/.sessions`.
 
 ### Decision 2: Use msgspec codecs plus an explicit dynamic registry
 

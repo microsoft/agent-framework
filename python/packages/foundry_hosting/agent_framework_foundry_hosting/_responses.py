@@ -538,7 +538,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         self._agent: SupportsAgentRun = agent
         if not self._is_workflow_agent and session_store is None:
-            session_store = FoundrySessionStore(self.SESSION_STORAGE_PATH) if self.config.is_hosted else SessionStore()
+            session_store = (
+                FoundrySessionStore(Path.home() / self.SESSION_STORAGE_PATH.lstrip("/"))
+                if self.config.is_hosted
+                else SessionStore()
+            )
         self._session_store = session_store
         self._approval_storage: ApprovalStorage = (
             FileBasedFunctionApprovalStorage(self.FUNCTION_APPROVAL_STORAGE_PATH)

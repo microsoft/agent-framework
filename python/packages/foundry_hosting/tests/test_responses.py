@@ -278,17 +278,16 @@ class TestResponsesHostServerInit:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
-        session_storage_path = tmp_path / ".sessions"
+        monkeypatch.setenv("HOME", str(tmp_path))
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
 
-        with patch.object(ResponsesHostServer, "SESSION_STORAGE_PATH", str(session_storage_path)):
-            server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
 
         session_store = server._session_store  # pyright: ignore[reportPrivateUsage]
         assert isinstance(session_store, FoundrySessionStore)
-        assert session_store.storage_path == session_storage_path
+        assert session_store.storage_path == tmp_path / ".sessions"
         assert server.SESSION_STORAGE_PATH == "/.sessions"
 
     def test_init_rejects_history_provider_with_load_messages(self) -> None:
