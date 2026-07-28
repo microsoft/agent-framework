@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass
@@ -176,7 +177,12 @@ class RunnerContext(Protocol):
         ...
 
     def reset_for_new_run(self) -> None:
-        """Reset the context for a new workflow run."""
+        """Reset the context for a new workflow run.
+
+        .. deprecated::
+            ``reset_for_new_run`` is deprecated and will be removed in a future version.
+            ``apply_checkpoint`` should reset the context prior to applying a checkpoint.
+        """
         ...
 
     def set_streaming(self, streaming: bool) -> None:
@@ -469,7 +475,19 @@ class InProcRunnerContext:
 
         This clears messages, events, and resets streaming flag.
         Runtime checkpoint storage is NOT cleared here as it's managed at the workflow level.
+
+        .. deprecated::
+            ``reset_for_new_run`` is deprecated and will be removed in a future version.
+            ``apply_checkpoint`` should reset the context prior to applying a checkpoint.
         """
+        warnings.warn(
+            (
+                "`reset_for_new_run` is deprecated and will be removed in a future version. "
+                "`apply_checkpoint` should reset the context prior to applying a checkpoint."
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._messages.clear()
         # Drop any pending events. The queue and its loop marker are cleared so the queue
         # rebinds lazily under the running loop on next use.
@@ -479,6 +497,10 @@ class InProcRunnerContext:
 
     async def apply_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
         """Apply a checkpoint to the current context, mutating its state."""
+        # Drop any events left over from a prior run so the restored state starts clean.
+        self._event_queue = None
+        self._event_queue_loop = None
+
         # Restore messages
         self._messages.clear()
         messages_data = checkpoint.messages

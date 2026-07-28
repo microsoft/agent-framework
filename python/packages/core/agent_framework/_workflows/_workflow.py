@@ -381,6 +381,13 @@ class Workflow(DictConvertible):
         # retried once this is set; ``reset()`` raises instead of silently doing nothing.
         self._initial_checkpoint_capture_failed: bool = False
 
+        # Guards ``reset()``'s critical section, which mutates instance state across internal
+        # await points. A single ``Workflow`` instance only supports one operation at a time;
+        # starting a ``run()`` (or another ``reset()``) before an in-flight reset completes is a
+        # contract violation. This flag lets those calls detect the misuse and fail fast with a
+        # clear error instead of executing on - or clobbering - half-reset state.
+        self._resetting: bool = False
+
     @property
     def status(self) -> WorkflowRunState:
         """Return the current run-level status of this workflow instance.
@@ -778,6 +785,8 @@ class Workflow(DictConvertible):
             raise WorkflowException(
                 "Workflow is already running; concurrent runs are not allowed on the same instance."
             )
+        if self._resetting:
+            raise WorkflowException("Workflow is being reset; cannot start a run until reset() completes.")
 
         # No run is active, so any runtime checkpoint storage override still set on the
         # context is stale - left over from a prior run whose stream was dropped before
@@ -1299,12 +1308,15 @@ class Workflow(DictConvertible):
         instance is already in its initial state.
 
         Raises:
-            WorkflowException: If a run is currently active on this instance, or if the
-                best-effort capture of the instance's initial checkpoint failed on the first
-                run (so there is no pristine snapshot to restore; rebuild the workflow instead).
+            WorkflowException: If a run is currently active on this instance, if another reset is
+                already in progress, or if the best-effort capture of the instance's initial
+                checkpoint failed on the first run (so there is no pristine snapshot to restore;
+                rebuild the workflow instead).
         """
         if self._is_run_active():
             raise WorkflowException("Cannot reset the workflow while a run is active on the same instance.")
+        if self._resetting:
+            raise WorkflowException("Cannot reset the workflow while another reset is already in progress.")
         if self._initial_checkpoint is None:
             if self._initial_checkpoint_capture_failed:
                 raise WorkflowException(
@@ -1314,12 +1326,18 @@ class Workflow(DictConvertible):
             # Never run; the instance is already in its initial state.
             logger.debug("Reset called on a workflow instance that has never run; no state to restore.")
             return
-        # Deep-copy on restore too, so the applied state never aliases the stored
-        # snapshot and subsequent resets remain repeatable. Start a new lineage: the
-        # pristine snapshot is an in-memory checkpoint that was never persisted, so
-        # checkpoints created by the next run must not chain to its (storage-absent) id.
-        await self._runner.restore_checkpoint(
-            copy.deepcopy(self._initial_checkpoint),
-            start_new_lineage=True,
-        )
-        self._status = WorkflowRunState.IDLE
+
+        self._resetting = True
+        try:
+            await self._runner.restore_checkpoint(
+                # Deep-copy on restore, so the applied state never aliases the stored
+                # snapshot and subsequent resets remain repeatable.
+                copy.deepcopy(self._initial_checkpoint),
+                # Start a new lineage: the pristine snapshot is an in-memory checkpoint
+                # that was never persisted, so checkpoints created by the next run must
+                # not chain to its (storage-absent) id.
+                start_new_lineage=True,
+            )
+            self._status = WorkflowRunState.IDLE
+        finally:
+            self._resetting = False

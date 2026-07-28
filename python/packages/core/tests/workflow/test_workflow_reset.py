@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -171,3 +172,49 @@ async def test_reset_raises_when_initial_checkpoint_capture_failed() -> None:
 
     with pytest.raises(WorkflowException, match="capturing its initial checkpoint failed"):
         await wf.reset()
+
+
+class BlockingRestoreExecutor(Executor):
+    """Executor whose checkpoint restore blocks, to hold a reset() open mid-flight."""
+
+    def __init__(self, entered: asyncio.Event, release: asyncio.Event, id: str = "blocking") -> None:
+        super().__init__(id)
+        self._entered = entered
+        self._release = release
+
+    @handler
+    async def run(self, msg: int, ctx: WorkflowContext[Never, int]) -> None:
+        await ctx.yield_output(msg)
+
+    async def on_checkpoint_save(self) -> dict[str, Any]:
+        return {}
+
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        # Signal that reset() is now suspended inside restore, then block until released.
+        self._entered.set()
+        await self._release.wait()
+
+
+async def test_run_rejected_while_reset_in_progress() -> None:
+    """run() and reset() are mutually exclusive: a run scheduled during an in-flight reset is rejected."""
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    wf: Workflow = WorkflowBuilder(start_executor=BlockingRestoreExecutor(entered, release, id="blocking")).build()
+
+    # First run captures the initial checkpoint so reset() has a snapshot to restore.
+    await wf.run(1)
+
+    # Start a reset and let it suspend inside on_checkpoint_restore.
+    reset_task = asyncio.create_task(wf.reset())
+    await asyncio.wait_for(entered.wait(), timeout=2.0)
+
+    # A run scheduled while the reset is in flight must be rejected, not run on half-reset state.
+    with pytest.raises(WorkflowException, match="being reset"):
+        await wf.run(2)
+
+    # Releasing the reset lets it finish; afterwards a run is allowed again.
+    release.set()
+    await asyncio.wait_for(reset_task, timeout=2.0)
+
+    result = await wf.run(3)
+    assert result.get_outputs() == [3]
