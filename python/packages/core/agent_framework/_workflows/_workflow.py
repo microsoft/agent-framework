@@ -655,7 +655,7 @@ class Workflow(DictConvertible):
         # Handle initial message
         elif message is not None:
             # Seed the initial input through the start executor's internal self-edge. If the caller
-            # passed a WorkflowMessage, unwrap it so we don't double-wrap..
+            # passed a WorkflowMessage, unwrap it so we don't double-wrap.
             start_id = self.start_executor_id
             data = message.data if isinstance(message, WorkflowMessage) else message
             entry_message = WorkflowMessage(
