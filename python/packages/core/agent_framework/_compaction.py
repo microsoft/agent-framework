@@ -1028,6 +1028,7 @@ The summary must never:
 """
 
 DEFAULT_SUMMARY_INPUT_TOKEN_BUDGET: Final[int] = 8_000
+SUMMARY_FAILURE_ERROR_THRESHOLD: Final[int] = 3
 
 
 class SummarizationStrategy:
@@ -1103,6 +1104,25 @@ class SummarizationStrategy:
         self.prompt = prompt or DEFAULT_SUMMARIZATION_PROMPT
         self.max_summary_input_tokens = max_summary_input_tokens
         self.tokenizer = tokenizer or CharacterEstimatorTokenizer()
+        self._consecutive_summary_failures = 0
+        self._summary_failure_error_emitted = False
+
+    def _record_summary_failure(self) -> None:
+        self._consecutive_summary_failures += 1
+        if (
+            self._consecutive_summary_failures >= SUMMARY_FAILURE_ERROR_THRESHOLD
+            and not self._summary_failure_error_emitted
+        ):
+            logger.error(
+                "Summarization compaction has failed %s consecutive times; "
+                "graceful summary compaction may no longer be contributing.",
+                self._consecutive_summary_failures,
+            )
+            self._summary_failure_error_emitted = True
+
+    def _record_summary_success(self) -> None:
+        self._consecutive_summary_failures = 0
+        self._summary_failure_error_emitted = False
 
     async def __call__(self, messages: list[Message]) -> bool:
         ordered_group_ids = _ordered_group_ids_from_annotations(messages)
@@ -1159,6 +1179,7 @@ class SummarizationStrategy:
                 logger.warning(
                     "Skipping summarization compaction: no complete message group fits within max_summary_input_tokens."
                 )
+                self._record_summary_failure()
             return False
 
         try:
@@ -1177,12 +1198,15 @@ class SummarizationStrategy:
                 "Skipping summarization compaction: summary generation failed (%s).",
                 exc,
             )
+            self._record_summary_failure()
             return False
 
         summary_text = summary_response.text.strip() if summary_response.text else ""
         if not summary_text:
             logger.warning("Skipping summarization compaction: summarizer returned no text.")
+            self._record_summary_failure()
             return False
+        self._record_summary_success()
         summary_id = f"summary_{len(messages)}"
         original_message_ids = [message.message_id for message in messages_to_summarize if message.message_id]
         summary_of_group_ids = list(group_ids_to_summarize)

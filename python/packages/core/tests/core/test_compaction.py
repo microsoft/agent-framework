@@ -477,6 +477,24 @@ class _EmptySummarizer:
         return ChatResponse(messages=[Message(role="assistant", contents=["   "])])
 
 
+class _ScriptedSummarizer:
+    def __init__(self, outcomes: list[str | BaseException]) -> None:
+        self.outcomes = outcomes
+
+    async def get_response(
+        self,
+        messages: list[Message],
+        *,
+        stream: bool = False,
+        options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return ChatResponse(messages=[Message(role="assistant", contents=[outcome])])
+
+
 class _RecordingSummarizer:
     def __init__(self) -> None:
         self.requests: list[list[Message]] = []
@@ -618,6 +636,57 @@ async def test_summarization_strategy_returns_false_when_summary_generation_fail
     assert changed is False
     assert any("summary generation failed" in record.message for record in caplog.records)
     assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages)
+
+
+async def test_summarization_strategy_escalates_repeated_summary_failures(caplog: Any) -> None:
+    messages = [
+        Message(role="user", contents=["u1"]),
+        Message(role="assistant", contents=["a1"]),
+        Message(role="user", contents=["u2"]),
+        Message(role="assistant", contents=["a2"]),
+        Message(role="user", contents=["u3"]),
+        Message(role="assistant", contents=["a3"]),
+    ]
+    strategy = SummarizationStrategy(client=_FailingSummarizer(), target_count=2, threshold=0)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    annotate_message_groups(messages)
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        assert await strategy(messages) is False
+        assert await strategy(messages) is False
+        assert await strategy(messages) is False
+        assert await strategy(messages) is False
+
+    error_records = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(error_records) == 1
+    assert "failed 3 consecutive times" in error_records[0].message
+
+
+async def test_summarization_strategy_resets_failure_escalation_after_success(
+    caplog: Any,
+) -> None:
+    summarizer = _ScriptedSummarizer([
+        RuntimeError("first failure"),
+        RuntimeError("second failure"),
+        "recovered summary",
+        RuntimeError("third failure"),
+        RuntimeError("fourth failure"),
+    ])
+    strategy = SummarizationStrategy(client=summarizer, target_count=2, threshold=0)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        for _ in range(5):
+            messages = [
+                Message(role="user", contents=["u1"]),
+                Message(role="assistant", contents=["a1"]),
+                Message(role="user", contents=["u2"]),
+                Message(role="assistant", contents=["a2"]),
+                Message(role="user", contents=["u3"]),
+                Message(role="assistant", contents=["a3"]),
+            ]
+            annotate_message_groups(messages)
+            await strategy(messages)
+
+    assert not any(record.levelno == logging.ERROR for record in caplog.records)
 
 
 async def test_summarization_strategy_returns_false_when_summary_is_empty(
