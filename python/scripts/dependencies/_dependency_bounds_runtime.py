@@ -39,6 +39,21 @@ _PYRIGHT_COMMAND = (
     "import subprocess, sys; "
     "raise SystemExit(subprocess.call([sys.executable, '-m', 'pyright', '--pythonpath', sys.executable]))"
 )
+_DEPENDENCY_PYRIGHT_COMMAND = (
+    "import subprocess, sys; "
+    "raise SystemExit(subprocess.call(["
+    "sys.executable, '-m', 'pyright', '--project', 'pyrightconfig.dependency.json', "
+    "'--pythonpath', sys.executable]))"
+)
+
+
+@lru_cache(maxsize=16)
+def load_dependency_group_requirements(workspace_root: str, group_name: str) -> tuple[str, ...]:
+    """Load string requirements from one root workspace dependency group."""
+    pyproject_path = Path(workspace_root) / "pyproject.toml"
+    data = cast(dict[str, object], tomli.loads(pyproject_path.read_text()))
+    dependency_groups = cast(dict[str, object], data.get("dependency-groups", {}) or {})
+    return _string_requirements(dependency_groups.get(group_name, []))
 
 
 @dataclass(frozen=True)
@@ -152,16 +167,10 @@ def resolve_internal_editables(
 @lru_cache(maxsize=8)
 def load_runtime_tool_requirements(workspace_root: str) -> list[str]:
     """Load shared tool requirements used by package test and typing tasks."""
-    workspace_path = Path(workspace_root)
-    pyproject_path = workspace_path / "pyproject.toml"
-    data = cast(dict[str, object], tomli.loads(pyproject_path.read_text()))
-    dependency_groups = cast(dict[str, object], data.get("dependency-groups", {}) or {})
-    dev_requirements = _string_requirements(dependency_groups.get("dev", []))
-
     # `uv run --isolated` starts from a clean environment, so the validator has to re-attach the
     # shared tooling that package-level poe tasks expect to find.
     runtime_requirements: list[str] = []
-    for requirement in dev_requirements:
+    for requirement in load_dependency_group_requirements(workspace_root, "dev"):
         try:
             parsed = Requirement(requirement)
         except InvalidRequirement:
@@ -180,10 +189,15 @@ def extend_command_with_runtime_tools(command: list[str], workspace_root: Path) 
         command.extend(["--with", requirement])
 
 
-def extend_command_with_task(command: list[str], task_name: str) -> None:
+def extend_command_with_task(command: list[str], task_name: str, *, workspace_root: Path) -> None:
     """Append the command needed to execute one validation task."""
     if task_name == "pyright":
         command.extend(["python", "-c", _PYRIGHT_COMMAND])
+        return
+    if task_name == "dependency-pyright":
+        for requirement in load_dependency_group_requirements(str(workspace_root.resolve()), "test"):
+            command.extend(["--with", requirement])
+        command.extend(["python", "-c", _DEPENDENCY_PYRIGHT_COMMAND])
         return
 
     command.extend(["python", "-m", "poethepoet", task_name])

@@ -38,7 +38,7 @@ from scripts.task_runner import discover_projects, extract_poe_tasks, project_fi
 
 logger = logging.getLogger(__name__)
 
-CHECK_TASK_PRIORITY = ("check", "typing", "pyright", "mypy", "lint")
+CHECK_TASK_PRIORITY = ("dependency-pyright", "check", "typing", "pyright", "mypy", "lint")
 AZURE_MONITOR_OPENTELEMETRY = "azure-monitor-opentelemetry"
 OPENTELEMETRY_SDK = "opentelemetry-sdk"
 VALIDATION_TOOL_DEV_PINS = frozenset({"mypy", "pyrefly", "pyright", "ruff", "ty", "zuban"})
@@ -765,7 +765,7 @@ def _run_tasks(
         if dependency_pin is not None:
             dependency_name, dependency_version = dependency_pin
             command.extend(["--with", f"{dependency_name}=={dependency_version}"])
-        extend_command_with_task(command, task_name)
+        extend_command_with_task(command, task_name, workspace_root=workspace_root)
         try:
             result = subprocess.run(
                 command,

@@ -33,7 +33,7 @@ from scripts.dependencies._dependency_bounds_runtime import (
 )
 from scripts.task_runner import discover_projects, extract_poe_tasks, project_filter_matches
 
-CHECK_TASK_PRIORITY = ("check", "typing", "pyright", "mypy", "lint")
+CHECK_TASK_PRIORITY = ("dependency-pyright", "check", "typing", "pyright", "mypy", "lint")
 REQ_PATTERN = r"^\s*([A-Za-z0-9_.-]+(?:\[[^\]]+\])?)\s*(.*?)\s*$"
 SECTION_HEADER_PATTERN = re.compile(r"^\s*\[([^\]]+)\]\s*$")
 INLINE_ARRAY_ASSIGNMENT_PATTERN = re.compile(
@@ -587,7 +587,7 @@ def _run_tasks(
         if dependency_pin is not None:
             dependency_name, dependency_version = dependency_pin
             command.extend(["--with", f"{dependency_name}=={dependency_version}"])
-        extend_command_with_task(command, task_name)
+        extend_command_with_task(command, task_name, workspace_root=workspace_root)
         try:
             result = subprocess.run(
                 command,

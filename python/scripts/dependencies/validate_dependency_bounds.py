@@ -49,6 +49,7 @@ class PackageTestPlan:
 
     project_path: Path
     package_name: str
+    typing_task: str
     dependency_groups: list[str]
     include_dev_extra: bool
     optional_extras: list[str]
@@ -103,7 +104,8 @@ def _build_test_plans(workspace_root: Path, package_filter: str | None) -> list[
             continue
 
         available_tasks = extract_poe_tasks(pyproject_file)
-        required_tasks = {"test", "pyright"}
+        typing_task = "dependency-pyright" if "dependency-pyright" in available_tasks else "pyright"
+        required_tasks = {"test", typing_task}
         if not required_tasks.issubset(available_tasks):
             missing = sorted(required_tasks - available_tasks)
             missing_tasks.append(f"{project_path}: missing {', '.join(missing)}")
@@ -122,6 +124,7 @@ def _build_test_plans(workspace_root: Path, package_filter: str | None) -> list[
             PackageTestPlan(
                 project_path=project_path,
                 package_name=package_name,
+                typing_task=typing_task,
                 dependency_groups=dependency_group_names,
                 include_dev_extra=include_dev_extra,
                 optional_extras=optional_extra_names,
@@ -156,7 +159,7 @@ def _run_package_tasks(
     # stay inside uv's isolated throwaway environment instead of mutating `.venv`.
     env.pop("VIRTUAL_ENV", None)
 
-    for task_name in ("test", "pyright"):
+    for task_name in ("test", plan.typing_task):
         command = [
             "uv",
             "--no-progress",
@@ -179,7 +182,7 @@ def _run_package_tasks(
             command.extend(["--extra", extra_name])
         for editable_path in plan.internal_editables:
             command.extend(["--with-editable", str(editable_path)])
-        extend_command_with_task(command, task_name)
+        extend_command_with_task(command, task_name, workspace_root=workspace_root)
 
         if dry_run:
             print(f"[cyan]DRY RUN[/cyan] {' '.join(command)}")

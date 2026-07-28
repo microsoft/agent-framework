@@ -384,7 +384,8 @@ uv run poe check -S
 ```
 
 #### `validate-dependency-bounds-test`
-Run workspace-wide dependency compatibility gates at lower and upper resolutions. This runs test + pyright across all packages and stops on first failure:
+Run workspace-wide dependency compatibility gates at lower and upper resolutions. This runs tests plus Pyright (or a
+package-specific `dependency-pyright` task) across all packages and stops on first failure:
 ```bash
 uv run poe validate-dependency-bounds-test
 # Defaults to --package "*"; pass a package to scope test mode

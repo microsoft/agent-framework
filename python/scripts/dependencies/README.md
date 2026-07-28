@@ -46,6 +46,9 @@ Run the commands below from the `python/` directory.
   - Resolves internal editable packages from the target's enabled groups and extras, following only base transitive
     dependencies and explicitly requested extras so aggregate surfaces such as `core[all]` do not leak into unrelated
     package probes.
+  - Uses a package-defined `dependency-pyright` task when present, allowing dependency probes to type-check the
+    package implementation without requiring optional lazy namespace packages. Normal repository Pyright tasks are
+    unchanged. These tasks reuse the root workspace `test` dependency requirements inside their isolated environment.
 
 
 ## Common entrypoints
