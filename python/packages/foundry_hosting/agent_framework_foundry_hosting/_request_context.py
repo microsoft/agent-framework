@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Literal
 
-from azure.ai.agentserver.core import FoundryAgentRequestContext, get_request_context
+from azure.ai.agentserver.core import FoundryAgentRequestContext
 
 _PROTOCOL_V2_REQUIRED_MESSAGE = (
     "The hosted environment is running on protocol 1.0.0, but the agent requires protocol 2.0.0. "
@@ -51,12 +51,3 @@ def validate_foundry_request_context(
             "The hosted environment is missing the platform user ID in the request context. "
             "Please ensure that the request is coming from a valid Foundry platform service."
         )
-
-
-def request_user_directory_segment() -> str | None:
-    """Return the validated platform user ID for an on-disk directory."""
-    user_id = get_request_context().user_id
-    if not user_id:
-        return None
-    validate_path_segment(user_id, kind="user id")
-    return user_id

@@ -539,7 +539,7 @@ class TestAgentSessionPersistence:
         except OSError as exc:
             pytest.skip(f"Symlinks are not available: {exc}")
 
-        with _request_context(user_id="user-A"), pytest.raises(ValueError, match="escaped storage directory"):
+        with _request_context(user_id="user-A"), pytest.raises(ValueError, match="escaped user directory"):
             await store.get("conversation-1")
 
     async def test_scoped_file_store_rejects_symlinked_session_leaf_within_user_directory(
@@ -556,7 +556,7 @@ class TestAgentSessionPersistence:
         except OSError as exc:
             pytest.skip(f"Symlinks are not available: {exc}")
 
-        with _request_context(user_id="user-A"), pytest.raises(ValueError, match="escaped storage directory"):
+        with _request_context(user_id="user-A"), pytest.raises(ValueError, match="escaped user directory"):
             await store.get("conversation-1")
 
     async def test_scoped_file_store_rejects_symlinked_isolation_directory(self, tmp_path: Path) -> None:
@@ -569,7 +569,7 @@ class TestAgentSessionPersistence:
         except OSError as exc:
             pytest.skip(f"Symlinks are not available: {exc}")
 
-        with _request_context(user_id="user-A"), pytest.raises(ValueError, match="Session directory escaped"):
+        with _request_context(user_id="user-A"), pytest.raises(ValueError, match="User directory escaped"):
             await store.get("conversation-1")
 
     async def test_scoped_file_store_rejects_symlinked_isolation_directory_within_storage_root(
@@ -584,7 +584,7 @@ class TestAgentSessionPersistence:
         except OSError as exc:
             pytest.skip(f"Symlinks are not available: {exc}")
 
-        with _request_context(user_id="user-A"), pytest.raises(ValueError, match="Session directory escaped"):
+        with _request_context(user_id="user-A"), pytest.raises(ValueError, match="User directory escaped"):
             await store.get("conversation-1")
 
     @pytest.mark.parametrize("user_id", ["../../escape", "/tmp/escape", "user/subdirectory", "user\\subdirectory"])

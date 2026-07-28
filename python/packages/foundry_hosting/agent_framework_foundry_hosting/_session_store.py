@@ -7,8 +7,9 @@ from typing import Literal
 
 from agent_framework import ExperimentalFeature, FileSessionStore
 from agent_framework._feature_stage import experimental
+from azure.ai.agentserver.core import get_request_context
 
-from ._request_context import request_user_directory_segment
+from ._request_context import validate_path_segment
 
 
 @experimental(feature_id=ExperimentalFeature.SESSION_STORE)
@@ -37,19 +38,22 @@ class FoundrySessionStore(FileSessionStore):
 
     def _session_file_path(self, session_id: str) -> Path:
         """Resolve a snapshot path within the active Foundry user's directory."""
-        directory_segment = request_user_directory_segment()
-        candidate_directory = self._storage_root / directory_segment if directory_segment else self._storage_root
-        session_directory = candidate_directory.resolve()
-        if session_directory != candidate_directory or not session_directory.is_relative_to(self._storage_root):
-            raise ValueError(f"Session directory escaped storage directory: '{session_directory}'.")
-        session_directory.mkdir(parents=True, exist_ok=True)
+        user_directory = self._storage_root
+        if user_id := get_request_context().user_id:
+            validate_path_segment(user_id, kind="user id")
+            candidate_user_directory = self._storage_root / user_id
+            user_directory = candidate_user_directory.resolve()
+            if user_directory != candidate_user_directory or not user_directory.is_relative_to(self._storage_root):
+                raise ValueError(f"User directory escaped storage directory: '{user_directory}'.")
+        user_directory.mkdir(parents=True, exist_ok=True)
 
-        candidate_path = session_directory / self._session_file_name(session_id)
-        file_path = candidate_path.resolve()
+        session_file_name = self._session_file_name(session_id)
+        candidate_session_file_path = user_directory / session_file_name
+        session_file_path = candidate_session_file_path.resolve()
         if (
-            file_path != candidate_path
-            or not file_path.is_relative_to(session_directory)
-            or not file_path.is_relative_to(self._storage_root)
+            session_file_path != candidate_session_file_path
+            or not session_file_path.is_relative_to(user_directory)
+            or not session_file_path.is_relative_to(self._storage_root)
         ):
-            raise ValueError(f"Session path escaped storage directory: {session_id!r}")
-        return file_path
+            raise ValueError(f"Session file path escaped user directory: {session_id!r}")
+        return session_file_path
