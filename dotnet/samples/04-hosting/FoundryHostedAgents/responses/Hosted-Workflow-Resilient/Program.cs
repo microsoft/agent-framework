@@ -53,19 +53,19 @@ IChatClient chatClient = new AIProjectClient(new Uri(endpoint), credential)
 // Name). By default an agent gets a fresh random Id per process, so after a crash the restarted
 // process would rebuild the workflow with different ids and the saved checkpoint would no longer
 // match, failing the resume. Fixed ids keep the rebuilt workflow identical across restarts.
-AIAgent frenchAgent = chatClient.AsAIAgent(new ChatClientAgentOptions
+AIAgent frenchAgent = chatClient.AsAIAgent(options: new()
 {
     Id = "french-translator",
     Name = "french-translator",
     ChatOptions = new() { Instructions = "You are a translation assistant that translates the provided text to French." },
 });
-AIAgent spanishAgent = chatClient.AsAIAgent(new ChatClientAgentOptions
+AIAgent spanishAgent = chatClient.AsAIAgent(options: new()
 {
     Id = "spanish-translator",
     Name = "spanish-translator",
     ChatOptions = new() { Instructions = "You are a translation assistant that translates the provided text to Spanish." },
 });
-AIAgent englishAgent = chatClient.AsAIAgent(new ChatClientAgentOptions
+AIAgent englishAgent = chatClient.AsAIAgent(options: new()
 {
     Id = "english-translator",
     Name = "english-translator",

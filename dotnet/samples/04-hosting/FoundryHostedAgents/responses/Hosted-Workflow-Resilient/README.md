@@ -7,7 +7,18 @@ A durable, long-running **workflow** hosted as a Foundry Hosted Agent using the 
 - **Long-running with no client connected.** When a caller starts a background response (`store: true`, `background: true`), the platform keeps the agent running even if the caller disconnects.
 - **Crash recovery.** If the container crashes or is recycled mid-run, the platform restarts it and re-invokes the handler. A workflow hosted as an agent checkpoints its progress between steps, so it resumes from its last completed step instead of restarting from scratch.
 - **At most one step repeats.** The hosting handler persists the session at each completed output item (a natural workflow step boundary), so a crash loses at most the step that was in flight.
-- **Opt-in, off by default.** The only code difference from the non-resilient sample is one line:
+- **Stable executor ids.** Recovery matches the saved checkpoint to the rebuilt workflow by executor id, and an agent-backed step derives its id from the agent's id. A default agent gets a fresh random id per process, which would never match after a restart, so each agent is created with an explicit stable `Id`:
+
+  ```csharp
+  AIAgent frenchAgent = chatClient.AsAIAgent(options: new()
+  {
+      Id = "french-translator",
+      Name = "french-translator",
+      ChatOptions = new() { Instructions = "...translate to French." },
+  });
+  ```
+
+- **Opt-in, off by default.** Turning on resilience is one line:
 
   ```csharp
   builder.Services.AddFoundryResponses(agent, configure: o => o.ResilientBackground = true);
