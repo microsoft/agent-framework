@@ -979,6 +979,35 @@ def _format_messages_for_summary(messages: list[Message]) -> str:
     return "\n".join(lines)
 
 
+def _select_summary_input_groups(
+    groups: Sequence[tuple[str, list[Message]]],
+    *,
+    prompt: str,
+    max_summary_input_tokens: int | None,
+    tokenizer: TokenizerProtocol,
+) -> tuple[list[str], list[Message]]:
+    if max_summary_input_tokens is None:
+        return (
+            [group_id for group_id, _ in groups],
+            [message for _, group_messages in groups for message in group_messages],
+        )
+
+    selected_group_ids: list[str] = []
+    selected_messages: list[Message] = []
+    prompt_token_count = tokenizer.count_tokens(prompt)
+
+    for group_id, group_messages in groups:
+        candidate_messages = [*selected_messages, *group_messages]
+        candidate_text = _format_messages_for_summary(candidate_messages)
+        candidate_token_count = prompt_token_count + tokenizer.count_tokens(candidate_text)
+        if candidate_token_count > max_summary_input_tokens:
+            break
+        selected_group_ids.append(group_id)
+        selected_messages = candidate_messages
+
+    return selected_group_ids, selected_messages
+
+
 DEFAULT_SUMMARIZATION_PROMPT: Final[
     str
 ] = """**Generate a clear and complete summary of the entire conversation in no more than five sentences.**
@@ -995,6 +1024,8 @@ The summary must never:
 - Comment on events or ideas not present in the conversation
 - Omit any details included in an earlier summary
 """
+
+DEFAULT_SUMMARY_INPUT_TOKEN_BUDGET: Final[int] = 8_000
 
 
 class SummarizationStrategy:
@@ -1026,6 +1057,8 @@ class SummarizationStrategy:
         target_count: int = 4,
         threshold: int | None = 2,
         prompt: str | None = None,
+        max_summary_input_tokens: int | None = DEFAULT_SUMMARY_INPUT_TOKEN_BUDGET,
+        tokenizer: TokenizerProtocol | None = None,
     ) -> None:
         """Create a summarization strategy.
 
@@ -1043,19 +1076,31 @@ class SummarizationStrategy:
             prompt: Optional summarization instruction. If omitted, a default
                 prompt that preserves goals, decisions, and unresolved items is
                 used.
+            max_summary_input_tokens: Maximum estimated token count for the
+                summarizer request prompt and user transcript. Whole message
+                groups are selected until the next group would exceed this
+                budget. Pass ``None`` to disable the input budget.
+            tokenizer: Token counter used to estimate summarizer request size.
+                If omitted, :class:`CharacterEstimatorTokenizer` is used.
 
         Raises:
             ValueError: If ``target_count`` is less than 1.
             ValueError: If ``threshold`` is provided and is negative.
+            ValueError: If ``max_summary_input_tokens`` is provided and is less
+                than 1.
         """
         if target_count <= 0:
             raise ValueError("target_count must be greater than 0.")
         if threshold is not None and threshold < 0:
             raise ValueError("threshold must be greater than or equal to 0.")
+        if max_summary_input_tokens is not None and max_summary_input_tokens <= 0:
+            raise ValueError("max_summary_input_tokens must be greater than 0.")
         self.client = client
         self.target_count = target_count
         self.threshold = threshold if threshold is not None else 0
         self.prompt = prompt or DEFAULT_SUMMARIZATION_PROMPT
+        self.max_summary_input_tokens = max_summary_input_tokens
+        self.tokenizer = tokenizer or CharacterEstimatorTokenizer()
 
     async def __call__(self, messages: list[Message]) -> bool:
         ordered_group_ids = _ordered_group_ids_from_annotations(messages)
@@ -1096,12 +1141,22 @@ class SummarizationStrategy:
         if not group_ids_to_summarize:
             return False
 
-        messages_to_summarize: list[Message] = []
-        for group_id, group_messages in included_non_system_groups:
-            if group_id in keep_group_id_set:
-                continue
-            messages_to_summarize.extend(group_messages)
+        candidate_groups = [
+            (group_id, group_messages)
+            for group_id, group_messages in included_non_system_groups
+            if group_id not in keep_group_id_set
+        ]
+        group_ids_to_summarize, messages_to_summarize = _select_summary_input_groups(
+            candidate_groups,
+            prompt=self.prompt,
+            max_summary_input_tokens=self.max_summary_input_tokens,
+            tokenizer=self.tokenizer,
+        )
         if not messages_to_summarize:
+            if self.max_summary_input_tokens is not None:
+                logger.warning(
+                    "Skipping summarization compaction: no complete message group fits within max_summary_input_tokens."
+                )
             return False
 
         try:

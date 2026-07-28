@@ -477,6 +477,27 @@ class _EmptySummarizer:
         return ChatResponse(messages=[Message(role="assistant", contents=["   "])])
 
 
+class _RecordingSummarizer:
+    def __init__(self) -> None:
+        self.requests: list[list[Message]] = []
+
+    async def get_response(
+        self,
+        messages: list[Message],
+        *,
+        stream: bool = False,
+        options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        self.requests.append(messages)
+        return ChatResponse(messages=[Message(role="assistant", contents=["budgeted summary"])])
+
+
+class _CharacterCountTokenizer:
+    def count_tokens(self, text: str) -> int:
+        return len(text)
+
+
 async def test_summarization_strategy_adds_bidirectional_trace_links() -> None:
     messages = [
         Message(role="user", contents=["u1"]),
@@ -506,6 +527,44 @@ async def test_summarization_strategy_adds_bidirectional_trace_links() -> None:
         if message.message_id in summarized_message_ids:
             assert _group_unknown_value(message, SUMMARIZED_BY_SUMMARY_ID_KEY) == summary_id
             assert message.additional_properties.get(EXCLUDED_KEY) is True
+
+
+async def test_summarization_strategy_bounds_summary_input_to_complete_groups() -> None:
+    summarizer = _RecordingSummarizer()
+    messages = [
+        Message(role="user", contents=["first old " * 20]),
+        Message(role="assistant", contents=["second oversized " * 120]),
+        Message(role="user", contents=["third should wait"]),
+        Message(role="assistant", contents=["fourth should wait"]),
+        Message(role="user", contents=["recent user"]),
+        Message(role="assistant", contents=["recent assistant"]),
+    ]
+    first_old_message = messages[0]
+    oversized_message = messages[1]
+    strategy = SummarizationStrategy(
+        client=summarizer,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        target_count=2,
+        threshold=0,
+        max_summary_input_tokens=1_000,
+        tokenizer=_CharacterCountTokenizer(),
+    )
+    annotate_message_groups(messages)
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    assert len(summarizer.requests) == 1
+    summary_request_text = summarizer.requests[0][1].text
+    assert summary_request_text is not None
+    assert "first old" in summary_request_text
+    assert "second oversized" not in summary_request_text
+    assert first_old_message.additional_properties.get(EXCLUDED_KEY) is True
+    assert oversized_message.additional_properties.get(EXCLUDED_KEY) is not True
+    summary = next(message for message in messages if _group_unknown_value(message, SUMMARY_OF_MESSAGE_IDS_KEY))
+    summarized_message_ids = _group_unknown_value(summary, SUMMARY_OF_MESSAGE_IDS_KEY)
+    assert isinstance(summarized_message_ids, list)
+    assert first_old_message.message_id in summarized_message_ids
+    assert oversized_message.message_id not in summarized_message_ids
 
 
 async def test_summarization_strategy_returns_false_when_summary_generation_fails(
