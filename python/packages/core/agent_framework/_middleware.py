@@ -1445,7 +1445,7 @@ class AgentMiddlewareLayer:
 
 
 def _determine_middleware_type(middleware: Any) -> MiddlewareType:
-    """Determine middleware type using decorator and/or parameter type annotation.
+    """Determine the middleware type from function annotations or decorators.
 
     Args:
         middleware: The middleware function to analyze.
@@ -1456,6 +1456,8 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
     Raises:
         MiddlewareException: When middleware type cannot be determined or there's a mismatch.
     """
+    middleware_name = getattr(middleware, "__name__", type(middleware).__name__)
+
     # Check for decorator marker
     decorator_type: MiddlewareType | None = getattr(middleware, "_middleware_type", None)
 
@@ -1480,7 +1482,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
             # Not enough parameters - can't be valid middleware
             raise MiddlewareException(
                 f"Middleware function must have at least 2 parameters (context, call_next), "
-                f"but {middleware.__name__} has {len(params)}"
+                f"but {middleware_name} has {len(params)}"
             )
     except Exception as e:
         if isinstance(e, MiddlewareException):
@@ -1493,7 +1495,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
         if decorator_type != param_type:
             raise MiddlewareException(
                 f"MiddlewareTypes type mismatch: decorator indicates '{decorator_type.value}' "
-                f"but parameter type indicates '{param_type.value}' for function {middleware.__name__}"
+                f"but parameter type indicates '{param_type.value}' for function {middleware_name}"
             )
         return decorator_type
 
@@ -1507,7 +1509,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
 
     # Neither decorator nor parameter type specified - throw exception
     raise MiddlewareException(
-        f"Cannot determine middleware type for function {middleware.__name__}. "
+        f"Cannot determine middleware type for function {middleware_name}. "
         f"Please either use @agent_middleware/@function_middleware/@chat_middleware decorators "
         f"or specify parameter types (AgentContext, FunctionInvocationContext, or ChatContext)."
     )
