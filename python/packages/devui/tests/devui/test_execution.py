@@ -13,12 +13,16 @@ import asyncio
 import tempfile
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from agent_framework import Agent, AgentExecutor, FunctionExecutor, WorkflowBuilder
 
 # Import mock classes from conftest for direct use in some tests
-from conftest import MockBaseChatClient  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+from conftest import (  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+    MockAgent,
+    MockBaseChatClient,
+)
 
 from agent_framework_devui._discovery import EntityDiscovery
 from agent_framework_devui._executor import AgentFrameworkExecutor, EntityNotFoundError
@@ -157,6 +161,27 @@ async def test_chat_client_receives_correct_messages(executor_with_real_agent):
     # Verify the input text is present in the messages
     all_text = " ".join(m.text or "" for m in messages)
     assert "2+2" in all_text, f"Expected '2+2' in messages, got text: '{all_text}'"
+
+
+async def test_agent_execution_forwards_function_invocation_kwargs() -> None:
+    """Forward request-scoped function invocation arguments to the agent."""
+    discovery = EntityDiscovery(None)
+    executor = AgentFrameworkExecutor(discovery, MessageMapper())
+    agent = MockAgent()
+    entity_info = await discovery.create_entity_info_from_object(agent, source="test")
+    discovery.register_entity(entity_info.id, entity_info, agent)
+    request = AgentFrameworkRequest(
+        metadata={"entity_id": entity_info.id},
+        input="hello",
+        stream=True,
+        function_invocation_kwargs={"tenantId": "abc123"},
+    )
+
+    with patch.object(agent, "run", wraps=agent.run) as run_spy:
+        async for _ in executor.execute_streaming(request):
+            pass
+
+    assert run_spy.call_args.kwargs["function_invocation_kwargs"] == {"tenantId": "abc123"}
 
 
 # =============================================================================

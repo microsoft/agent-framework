@@ -375,6 +375,8 @@ class AgentFrameworkExecutor:
                 run_kwargs: dict[str, Any] = {"stream": True}
                 if session:
                     run_kwargs["session"] = session
+                if request.function_invocation_kwargs is not None:
+                    run_kwargs["function_invocation_kwargs"] = request.function_invocation_kwargs
 
                 stream = cast(Any, agent.run(user_message, **run_kwargs))
                 async for update in stream:

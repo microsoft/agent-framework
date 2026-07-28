@@ -312,6 +312,9 @@ class AgentFrameworkRequest(BaseModel):
     # Reasoning parameters (for o-series models)
     reasoning: dict[str, Any] | None = None  # {"effort": "low" | "medium" | "high" | "minimal"}
 
+    # Agent Framework tool invocation context
+    function_invocation_kwargs: dict[str, Any] | None = None
+
     # Optional extra_body for advanced use cases
     extra_body: dict[str, Any] | None = None
 
