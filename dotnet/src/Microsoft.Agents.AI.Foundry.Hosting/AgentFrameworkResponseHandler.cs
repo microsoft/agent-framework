@@ -155,6 +155,13 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var platformCallId = context.PlatformContext?.CallId;
         HostedCallContext.CallId = platformCallId;
 
+        // Capture, before the stamping block below writes it, whether this session was already
+        // established by a prior turn. On a hosted turn the store loads a session that a prior turn
+        // saved together with its write-once HostedSessionContext; a freshly created session has none
+        // yet. This specific marker (not a count of state-bag entries) tells a resume from a first
+        // turn.
+        var sessionEstablishedByPriorTurn = session?.GetHostedContext() is not null;
+
         // Stamp/validate the hosted identity only when one was resolved. Locally (non-hosted) there is
         // no user identity, so there is nothing to partition or tamper-check and the session is shared.
         if (session is not null && resolvedHostedContext is not null)
@@ -204,12 +211,13 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // resume to completion.
         if (!context.IsRecovery)
         {
-            // Load conversation history only for fresh sessions. When a session already exists
-            // (e.g. resuming a workflow paused at an external-input port), the workflow's
-            // checkpointed state already contains the prior turns' messages — replaying history
-            // would re-drive completed actions and break HITL resume semantics.
+            // Load conversation history only for fresh sessions. When a session was already
+            // established by a prior turn (e.g. resuming a workflow paused at an external-input port),
+            // its checkpointed state already contains those messages — replaying history would
+            // re-drive completed actions and break HITL resume semantics. The signal is the specific
+            // HostedSessionContext marker captured above, not a count of state-bag entries.
             var isResume = (!string.IsNullOrWhiteSpace(conversationId) || !string.IsNullOrWhiteSpace(request.PreviousResponseId))
-                && session?.StateBag?.Count > 0;
+                && sessionEstablishedByPriorTurn;
             if (!isResume)
             {
                 var history = await context.GetHistoryAsync(cancellationToken).ConfigureAwait(false);
