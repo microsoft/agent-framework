@@ -53,12 +53,15 @@ internal static class PortableValueExtensions
 
         FormulaType elementType = formulaValues[0] switch
         {
-            PrimitiveValue<bool> => FormulaType.Boolean,
-            PrimitiveValue<string> => FormulaType.String,
-            PrimitiveValue<int> or PrimitiveValue<long> or PrimitiveValue<decimal> => FormulaType.Decimal,
-            PrimitiveValue<float> or PrimitiveValue<double> => FormulaType.Number,
-            PrimitiveValue<TimeSpan> => FormulaType.Time,
-            PrimitiveValue<DateTime> => FormulaType.DateTime,
+            PrimitiveValue<bool>
+                or PrimitiveValue<string>
+                or PrimitiveValue<int>
+                or PrimitiveValue<long>
+                or PrimitiveValue<decimal>
+                or PrimitiveValue<float>
+                or PrimitiveValue<double>
+                or PrimitiveValue<TimeSpan>
+                or PrimitiveValue<DateTime> => formulaValues[0].Type,
             _ => throw new DeclarativeModelException($"Unsupported table element type: {formulaValues[0].Type.GetType().Name}"),
         };
 

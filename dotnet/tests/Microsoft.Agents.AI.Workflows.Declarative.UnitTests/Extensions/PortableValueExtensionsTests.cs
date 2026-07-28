@@ -160,6 +160,23 @@ public sealed class PortableValueExtensionsTests
         Assert.Equal(["one", "two"], values);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void LegacyDateTablePreservesFormulaType(bool includeTime)
+    {
+        // Arrange
+        DateTime value = new(2026, 7, 27, includeTime ? 12 : 0, 0, 0, DateTimeKind.Utc);
+
+        // Act
+        TableValue restored = Assert.IsAssignableFrom<TableValue>(new PortableValue(new[] { value }.AsPortable()).ToFormula());
+
+        // Assert
+        FormulaType expectedType = includeTime ? FormulaType.DateTime : FormulaType.Date;
+        Assert.Equal(expectedType, restored.Type.GetFieldType("Value"));
+        Assert.Equal(expectedType, Assert.Single(restored.Rows).Value.GetField("Value").Type);
+    }
+
     [Fact]
     public void DictionaryType()
     {
