@@ -356,6 +356,7 @@ USAGE_DETAIL_TO_OTEL_ATTR: Final[tuple[tuple[str, OtelAttr], ...]] = (
     ("openai.cached_input_tokens", OtelAttr.CACHE_READ_INPUT_TOKENS),
     ("openai.cache_write_tokens", OtelAttr.CACHE_CREATION_INPUT_TOKENS),
     ("prompt/cached_tokens", OtelAttr.CACHE_READ_INPUT_TOKENS),
+    ("prompt/cache_write_tokens", OtelAttr.CACHE_CREATION_INPUT_TOKENS),
     ("openai.reasoning_tokens", OtelAttr.REASONING_OUTPUT_TOKENS),
     ("completion/reasoning_tokens", OtelAttr.REASONING_OUTPUT_TOKENS),
     ("reasoning_tokens", OtelAttr.REASONING_OUTPUT_TOKENS),
