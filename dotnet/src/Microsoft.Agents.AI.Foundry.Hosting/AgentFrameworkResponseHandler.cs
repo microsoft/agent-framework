@@ -503,14 +503,35 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 yield return evt!;
 
                 // Resilient checkpoint cadence: persist the session at each completed output item,
-                // a natural workflow phase boundary. Idempotent and gated; awaiting here is safe
-                // because this sits in the outer (finally-only) try, not the inner try/catch.
+                // a natural workflow phase boundary. This is a best-effort durability optimization:
+                // a workflow hosted as an agent runs on its own thread, so serializing the session
+                // here can overlap with the still-running workflow writing its own in-memory
+                // checkpoints and throw ("Collection was modified"). That only affects this one
+                // incremental snapshot, not correctness: the authoritative save in the finally block
+                // below runs after the stream has fully drained and the workflow has stopped running,
+                // and persists the final consistent state. The serialize throws before any file is
+                // written, so a failed attempt leaves the previously persisted session intact. Never
+                // let such a transient failure abort the turn (which would otherwise escape as an
+                // unhandled handler failure and leave the response stuck in_progress).
                 if (isResilientTurn
                     && evt is ResponseOutputItemDoneEvent
                     && session is not null
                     && !string.IsNullOrWhiteSpace(sessionConversationId))
                 {
-                    await sessionStore.SaveSessionAsync(agent, sessionConversationId, session, resolvedUserId, cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        await sessionStore.SaveSessionAsync(agent, sessionConversationId, session, resolvedUserId, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        if (this._logger.IsEnabled(LogLevel.Debug))
+                        {
+                            this._logger.LogDebug(
+                                ex,
+                                "Incremental session save was skipped for response {ResponseId}; the end-of-turn save will persist the final state.",
+                                context.ResponseId);
+                        }
+                    }
                 }
 
                 if (evt is ResponseCompletedEvent or ResponseFailedEvent or ResponseIncompleteEvent)
