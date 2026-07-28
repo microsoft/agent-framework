@@ -567,6 +567,37 @@ async def test_summarization_strategy_bounds_summary_input_to_complete_groups() 
     assert oversized_message.message_id not in summarized_message_ids
 
 
+async def test_summarization_strategy_skips_oversized_first_group() -> None:
+    summarizer = _RecordingSummarizer()
+    messages = [
+        Message(role="user", contents=["oversized first group " * 120]),
+        Message(role="assistant", contents=["small later group"]),
+        Message(role="user", contents=["recent user"]),
+        Message(role="assistant", contents=["recent assistant"]),
+    ]
+    oversized_message = messages[0]
+    small_message = messages[1]
+    strategy = SummarizationStrategy(
+        client=summarizer,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        target_count=2,
+        threshold=0,
+        max_summary_input_tokens=1_000,
+        tokenizer=_CharacterCountTokenizer(),
+    )
+    annotate_message_groups(messages)
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    assert len(summarizer.requests) == 1
+    summary_request_text = summarizer.requests[0][1].text
+    assert summary_request_text is not None
+    assert "oversized first group" not in summary_request_text
+    assert "small later group" in summary_request_text
+    assert oversized_message.additional_properties.get(EXCLUDED_KEY) is not True
+    assert small_message.additional_properties.get(EXCLUDED_KEY) is True
+
+
 async def test_summarization_strategy_returns_false_when_summary_generation_fails(
     caplog: Any,
 ) -> None:

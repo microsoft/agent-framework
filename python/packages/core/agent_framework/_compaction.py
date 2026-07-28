@@ -1001,6 +1001,8 @@ def _select_summary_input_groups(
         candidate_text = _format_messages_for_summary(candidate_messages)
         candidate_token_count = prompt_token_count + tokenizer.count_tokens(candidate_text)
         if candidate_token_count > max_summary_input_tokens:
+            if not selected_messages:
+                continue
             break
         selected_group_ids.append(group_id)
         selected_messages = candidate_messages
