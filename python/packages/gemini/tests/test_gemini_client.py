@@ -7,14 +7,14 @@ import datetime
 import json
 import logging
 import os
-from typing import Any, TypedDict, cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import Agent, Content, FunctionTool, Message
 from google.genai import types
 from pydantic import BaseModel
-from typing_extensions import NotRequired
+from typing_extensions import NotRequired, TypedDict
 
 from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, RawGeminiChatClient, ThinkingConfig
 
