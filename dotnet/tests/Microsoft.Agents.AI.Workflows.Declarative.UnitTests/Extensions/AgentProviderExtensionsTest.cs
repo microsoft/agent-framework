@@ -24,8 +24,8 @@ public sealed class AgentProviderExtensionsTest(ITestOutputHelper output) : Work
     private const string AgentName = "test-agent";
 
     [Fact]
-    public Task AutoSendFalseOnWorkflowConversationSuppressesResponseEventsAsync() =>
-        this.RunAsync(autoSend: false, conversationId: WorkflowConversationId, expectResponseEvents: false);
+    public Task AutoSendFalseOnWorkflowConversationStillEmitsResponseEventsAsync() =>
+        this.RunAsync(autoSend: false, conversationId: WorkflowConversationId, expectResponseEvents: true);
 
     [Fact]
     public Task AutoSendTrueOnWorkflowConversationEmitsResponseEventsAsync() =>
@@ -58,8 +58,13 @@ public sealed class AgentProviderExtensionsTest(ITestOutputHelper output) : Work
         MockAgentProvider mockProvider = new();
         AgentResponseUpdate[] updates =
         [
-            new(ChatRole.Assistant, "hello "),
-            new(ChatRole.Assistant, "world"),
+            new(new ChatResponseUpdate { MessageId = "" }),
+            new(new ChatResponseUpdate(ChatRole.Assistant, "hello ") { MessageId = " " }),
+            new(new ChatResponseUpdate(ChatRole.Assistant, "world") { MessageId = "", Role = null }),
+            new(ChatRole.Assistant, "!")
+            {
+                RawRepresentation = new object(),
+            },
         ];
         mockProvider
             .Setup(p => p.InvokeAgentAsync(
@@ -109,6 +114,18 @@ public sealed class AgentProviderExtensionsTest(ITestOutputHelper output) : Work
         {
             Assert.Equal(updates.Length, updateEventCount);
             Assert.Equal(1, responseEventCount);
+
+            AgentResponseUpdateEvent[] updateEvents = events.OfType<AgentResponseUpdateEvent>().ToArray();
+            Assert.Equal("", updateEvents[0].Update.MessageId);
+
+            string messageId = Assert.IsType<string>(updateEvents[1].Update.MessageId);
+            Assert.NotEmpty(messageId);
+            Assert.All(updateEvents.Skip(1), updateEvent => Assert.Equal(messageId, updateEvent.Update.MessageId));
+
+            AgentResponseEvent responseEvent = Assert.Single(events.OfType<AgentResponseEvent>());
+            ChatMessage responseMessage = Assert.Single(responseEvent.Response.Messages);
+            Assert.Equal(messageId, responseMessage.MessageId);
+            Assert.Equal("hello world!", responseMessage.Text);
         }
         else
         {

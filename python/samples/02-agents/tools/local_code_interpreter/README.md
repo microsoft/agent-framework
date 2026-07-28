@@ -16,7 +16,7 @@ management), see
 ## Installation
 
 ```bash
-pip install agent-framework agent-framework-hyperlight --pre
+pip install agent-framework-hyperlight agent-framework-foundry --pre
 ```
 
 > The Hyperlight Wasm backend is currently published only for `linux/x86_64` and

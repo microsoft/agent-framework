@@ -6,7 +6,6 @@
 #     "agent-framework-hosting",
 #     "agent-framework-hosting-telegram",
 #     "aiogram>=3.29.1,<4",
-#     "azure-identity",
 # ]
 # ///
 # Run with: uv run polling_app.py

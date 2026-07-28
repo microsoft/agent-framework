@@ -512,6 +512,98 @@ async def test_runner_reset_iteration_count():
     assert runner._iteration == 0  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_runner_capture_and_restore_checkpoint_object_roundtrip():
+    """build_checkpoint() then restore_checkpoint() must roundtrip.
+
+    Shared state and executor snapshots are captured into an in-memory ``WorkflowCheckpoint``
+    and restored from it without any storage backend (the path the parent WorkflowExecutor
+    uses to checkpoint a nested sub-workflow).
+    """
+
+    class CounterExecutor(Executor):
+        def __init__(self, id: str) -> None:
+            super().__init__(id=id)
+            self.count = 0
+
+        @handler
+        async def handle(self, message: MockMessage, ctx: WorkflowContext[Any, int]) -> None:
+            self.count += message.data
+
+        async def on_checkpoint_save(self) -> dict[str, Any]:
+            return {"count": self.count}
+
+        async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+            self.count = int(state.get("count", 0))
+
+    executor = CounterExecutor(id="counter")
+    state = State()
+    ctx = InProcRunnerContext()
+    runner = Runner([], {executor.id: executor}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    # Establish some state to capture.
+    executor.count = 7
+    state.set("shared_key", "shared_value")
+    state.commit()
+
+    checkpoint = await runner.build_checkpoint()
+    assert checkpoint.graph_signature_hash == "test_hash"
+
+    # Mutate after capture; restoring must roll back to the captured snapshot.
+    executor.count = 999
+    state.set("shared_key", "mutated")
+    state.commit()
+
+    await runner.restore_checkpoint(checkpoint)
+
+    assert executor.count == 7
+    assert state.get("shared_key") == "shared_value"
+    assert runner._resumed_from_checkpoint is True  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_runner_build_checkpoint_includes_in_flight_messages():
+    """build_checkpoint() must snapshot in-flight messages non-destructively."""
+    executor = MockExecutor(id="executor_a")
+    state = State()
+    ctx = InProcRunnerContext()
+    runner = Runner([], {executor.id: executor}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="START"))
+
+    checkpoint = await runner.build_checkpoint()
+
+    # The in-flight message is captured in the snapshot ...
+    assert list(checkpoint.messages.keys()) == ["START"]
+    assert len(checkpoint.messages["START"]) == 1
+    # ... without draining it from the runner (capture is non-destructive).
+    assert await ctx.has_messages() is True
+
+
+async def test_runner_build_checkpoint_do_not_advance_previous_checkpoint_id():
+    """build_checkpoint() must not advance _previous_checkpoint_id so a later capture chains to it."""
+    executor = MockExecutor(id="executor_a")
+    state = State()
+    ctx = InProcRunnerContext()
+    runner = Runner([], {executor.id: executor}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    # Pre-condition: nothing captured yet, so there is no parent to chain back to.
+    assert runner._previous_checkpoint_id is None  # pyright: ignore[reportPrivateUsage]
+
+    first = await runner.build_checkpoint()
+    assert first.previous_checkpoint_id is None
+
+    # Capturing advances the tracked checkpoint id to the newly-created checkpoint ...
+    assert runner._previous_checkpoint_id is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_runner_restore_checkpoint_rejects_graph_mismatch():
+    """restore_checkpoint() must reject a checkpoint from a different graph."""
+    runner = Runner([], {}, State(), InProcRunnerContext(), "test_name", graph_signature_hash="hash-a")
+
+    foreign = WorkflowCheckpoint(workflow_name="test_name", graph_signature_hash="hash-b")
+    with pytest.raises(WorkflowCheckpointException, match="Workflow graph has changed"):
+        await runner.restore_checkpoint(foreign)
+
+
 class CheckpointingContext(InProcRunnerContext):
     """A context that supports checkpointing for testing."""
 

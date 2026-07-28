@@ -5,6 +5,7 @@
 import importlib.metadata
 
 from ._parsing import (
+    create_conversation_id,
     create_response_id,
     messages_from_responses_input,
     responses_from_run,
@@ -20,6 +21,7 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "__version__",
+    "create_conversation_id",
     "create_response_id",
     "messages_from_responses_input",
     "responses_from_run",

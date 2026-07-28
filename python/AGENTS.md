@@ -95,6 +95,7 @@ python/
 ### Protocols & UI
 - [a2a](packages/a2a/AGENTS.md) - Agent-to-Agent protocol
 - [hosting-a2a](packages/hosting-a2a/AGENTS.md) - A2A hosting conversion helpers
+- [hosting-mcp](packages/hosting-mcp/AGENTS.md) - MCP hosting conversion helpers
 - [ag-ui](packages/ag-ui/AGENTS.md) - AG-UI protocol
 - [chatkit](packages/chatkit/AGENTS.md) - OpenAI ChatKit integration
 - [devui](packages/devui/AGENTS.md) - Developer UI for testing
