@@ -55,6 +55,27 @@ internal sealed class WorkflowHostAgent : AIAgent
     public override string? Name { get; }
     public override string? Description { get; }
 
+    /// <inheritdoc/>
+    /// <remarks>
+    /// In addition to the base behaviour, this returns the hosted <see cref="Workflow"/> when
+    /// requested with an unkeyed <see cref="Workflow"/> service type. This lets a host inspect the
+    /// workflow (for example, its executor ids via <see cref="Workflow.ReflectExecutors"/> and
+    /// <see cref="Workflow.StartExecutorId"/>) without constructing a session. It is used by the
+    /// Foundry resilient-hosting readiness check to detect auto-generated executor ids that would
+    /// break crash-recovery resume.
+    /// </remarks>
+    public override object? GetService(Type serviceType, object? serviceKey = null)
+    {
+        _ = Throw.IfNull(serviceType);
+
+        if (serviceKey is null && serviceType == typeof(Workflow))
+        {
+            return this._workflow;
+        }
+
+        return base.GetService(serviceType, serviceKey);
+    }
+
     private string GenerateNewId()
     {
         string result;
