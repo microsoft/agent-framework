@@ -1753,7 +1753,7 @@ def test_streaming_usage_not_double_counted(mock_anthropic_client: MagicMock) ->
     reported 25.
     """
     client = create_test_anthropic_client(mock_anthropic_client)
-    emitted = UsageDetails()
+    emitted: dict[str, int] = {}
     updates = [
         u
         for u in (
@@ -1778,7 +1778,7 @@ def test_streaming_usage_delta_input_not_double_counted(mock_anthropic_client: M
     should equal the last cumulative value message_delta reports.
     """
     client = create_test_anthropic_client(mock_anthropic_client)
-    emitted = UsageDetails()
+    emitted: dict[str, int] = {}
     updates = [
         u
         for u in (

@@ -24,6 +24,7 @@ from agent_framework import (
     ResponseStream,
     TextSpanRegion,
     UsageDetails,
+    add_usage_details,
     tool,
 )
 from agent_framework._settings import SecretString, load_settings
@@ -548,7 +549,7 @@ class RawAnthropicClient(
                 # Anthropic streams cumulative usage snapshots (message_start seeds it,
                 # each message_delta carries the running total), so thread a per-stream
                 # accumulator to _process_stream_event to emit increments instead.
-                emitted_usage: UsageDetails = UsageDetails()
+                emitted_usage: dict[str, int] = {}
                 async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
                     parsed_chunk = self._process_stream_event(chunk, emitted_usage)
                     if parsed_chunk:
@@ -1081,7 +1082,7 @@ class RawAnthropicClient(
         )
 
     def _process_stream_event(
-        self, event: BetaRawMessageStreamEvent, emitted_usage: UsageDetails | None = None
+        self, event: BetaRawMessageStreamEvent, emitted_usage: dict[str, int] | None = None
     ) -> ChatResponseUpdate | None:
         """Process a streaming event from the Anthropic client.
 
@@ -1166,7 +1167,7 @@ class RawAnthropicClient(
         return usage_details
 
     @staticmethod
-    def _incremental_usage(cumulative: UsageDetails, emitted: UsageDetails | None) -> UsageDetails:
+    def _incremental_usage(cumulative: UsageDetails, emitted: dict[str, int] | None) -> UsageDetails:
         """Convert a cumulative Anthropic usage snapshot into the increment since the last one.
 
         Anthropic streams cumulative usage: ``message_start`` seeds it (with an
@@ -1183,16 +1184,21 @@ class RawAnthropicClient(
         """
         if emitted is None:
             return cumulative
-        # Usage keys are dynamic (providers add their own), so accumulate through
-        # plain-dict views; indexing a TypedDict with a variable key isn't expressible.
-        emitted_counts = cast("dict[str, int]", emitted)
-        delta: dict[str, int] = {}
-        for key, value in cast("dict[str, int | None]", cumulative).items():
-            if value is None:
-                continue
-            delta[key] = value - emitted_counts.get(key, 0)
-            emitted_counts[key] = value
-        return cast("UsageDetails", delta)
+        # The increment is cumulative minus what was already emitted, restricted to
+        # the keys this snapshot reports (a delta event may carry only a subset).
+        # add_usage_details sums int values and skips anything else, so negating the
+        # emitted totals and adding them yields exactly that increment.
+        negated = UsageDetails()
+        for key in cumulative:
+            emitted_value = emitted.get(key)
+            if isinstance(emitted_value, int):
+                negated[key] = -emitted_value
+        delta = add_usage_details(cumulative, negated)
+        emitted.clear()
+        for key, value in cumulative.items():
+            if isinstance(value, int):
+                emitted[key] = value
+        return delta
 
     def _parse_contents_from_anthropic(
         self,
