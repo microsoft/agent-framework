@@ -2,6 +2,7 @@
 
 using System;
 using System.ClientModel.Primitives;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -322,6 +323,7 @@ public static class FoundryHostingExtensions
 
         services.AddResponsesServer(configure ?? (_ => { }));
         AddAgentRegistrationHealthCheck(services);
+        AddResilientWorkflowIdHealthCheck(services);
     }
 
     /// <summary>
@@ -352,6 +354,63 @@ public static class FoundryHostingExtensions
                 failureStatus: HealthStatus.Unhealthy,
                 tags: ["foundry", "agent", "readiness"]));
         });
+    }
+
+    /// <summary>
+    /// Registers a <c>/readiness</c> health check that, while
+    /// <see cref="ResponsesServerOptions.ResilientBackground"/> is on, reports unhealthy when a
+    /// workflow hosted as an agent has auto-generated executor ids. Such ids change every process,
+    /// so a crash-recovery resume would fail to match its checkpoint. Surfacing this at readiness
+    /// turns a late, cryptic resume failure into an early, actionable not-ready signal. On a
+    /// non-resilient host the check is a no-op. Dedupes by name so a repeat registration is ignored.
+    /// </summary>
+    private static void AddResilientWorkflowIdHealthCheck(IServiceCollection services)
+    {
+        const string HealthCheckName = "foundry-resilient-workflow-ids";
+        services.AddHealthChecks();
+        services.Configure<HealthCheckServiceOptions>(opts =>
+        {
+            foreach (var existing in opts.Registrations)
+            {
+                if (string.Equals(existing.Name, HealthCheckName, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+
+            opts.Registrations.Add(new HealthCheckRegistration(
+                name: HealthCheckName,
+                factory: sp => new ResilientWorkflowExecutorIdHealthCheck(
+                    isResilient: () => sp.GetService<IOptions<ResponsesServerOptions>>()?.Value.ResilientBackground ?? false,
+                    agents: () => EnumerateRegisteredAgents(services)),
+                failureStatus: HealthStatus.Unhealthy,
+                tags: ["foundry", "workflow", "readiness"]));
+        });
+    }
+
+    /// <summary>
+    /// Enumerates the <see cref="AIAgent"/> instances registered on <paramref name="services"/> as
+    /// concrete singletons (default or keyed). Reads the descriptors directly so no agent is
+    /// resolved or constructed; agents registered via a factory (rather than an instance) are not
+    /// inspectable this way and are skipped.
+    /// </summary>
+    private static IEnumerable<AIAgent> EnumerateRegisteredAgents(IServiceCollection services)
+    {
+        foreach (var descriptor in services)
+        {
+            if (descriptor.ServiceType != typeof(AIAgent))
+            {
+                continue;
+            }
+
+            object? instance = descriptor.IsKeyedService
+                ? descriptor.KeyedImplementationInstance
+                : descriptor.ImplementationInstance;
+            if (instance is AIAgent agent)
+            {
+                yield return agent;
+            }
+        }
     }
 
     /// <summary>
