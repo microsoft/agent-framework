@@ -141,3 +141,33 @@ async def test_reset_starts_a_fresh_checkpoint_lineage() -> None:
         assert cp.previous_checkpoint_id is None or cp.previous_checkpoint_id in all_ids, (
             "Post-reset checkpoint chains to a parent that does not exist in storage (dangling lineage)"
         )
+
+
+class BadCheckpointExecutor(Executor):
+    """Executor whose checkpoint save always fails, to simulate an uncapturable initial snapshot."""
+
+    @handler
+    async def run(self, msg: int, ctx: WorkflowContext[Never, int]) -> None:
+        await ctx.yield_output(msg)
+
+    async def on_checkpoint_save(self) -> dict[str, Any]:
+        raise RuntimeError("checkpoint save boom")
+
+
+async def test_run_succeeds_when_initial_checkpoint_capture_fails() -> None:
+    """Initial-checkpoint capture is best effort: a failure must not prevent the workflow from running."""
+    wf: Workflow = WorkflowBuilder(start_executor=BadCheckpointExecutor(id="bad")).build()
+
+    result = await wf.run(7)
+    assert result.get_outputs() == [7]
+
+
+async def test_reset_raises_when_initial_checkpoint_capture_failed() -> None:
+    """reset() surfaces the capture failure instead of silently doing nothing."""
+    wf: Workflow = WorkflowBuilder(start_executor=BadCheckpointExecutor(id="bad")).build()
+
+    # First run triggers the (failing) best-effort capture but still completes.
+    await wf.run(1)
+
+    with pytest.raises(WorkflowException, match="capturing its initial checkpoint failed"):
+        await wf.reset()

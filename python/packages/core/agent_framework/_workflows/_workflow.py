@@ -376,6 +376,11 @@ class Workflow(DictConvertible):
         # reset back to this state via ``reset()`` and reused for another run.
         self._initial_checkpoint: WorkflowCheckpoint | None = None
 
+        # True when the best-effort initial-checkpoint capture failed on the first run.
+        # A pristine snapshot can only be taken before the first run, so capture is not
+        # retried once this is set; ``reset()`` raises instead of silently doing nothing.
+        self._initial_checkpoint_capture_failed: bool = False
+
     @property
     def status(self) -> WorkflowRunState:
         """Return the current run-level status of this workflow instance.
@@ -660,15 +665,25 @@ class Workflow(DictConvertible):
 
         # Handle initial message
         elif message is not None:
-            # Seed the initial input through the start executor's internal self-edge.
+            # Seed the initial input through the start executor's internal self-edge. If the caller
+            # passed a WorkflowMessage, unwrap it so we don't double-wrap..
             start_id = self.start_executor_id
-            await self._runner.context.send_message(
-                WorkflowMessage(
-                    data=message,
-                    source_id=INTERNAL_SOURCE_ID(start_id),
-                    target_id=start_id,
-                )
+            data = message.data if isinstance(message, WorkflowMessage) else message
+            entry_message = WorkflowMessage(
+                data=data,
+                source_id=INTERNAL_SOURCE_ID(start_id),
+                target_id=start_id,
             )
+
+            # Ensure that the start executor can handle the input type.
+            start_executor = self.get_start_executor()
+            if not start_executor.can_handle(entry_message):
+                raise RuntimeError(
+                    f"Start executor '{start_id}' cannot handle input of type '{type(data).__name__}'. "
+                    f"Expected input types: {start_executor.input_types}."
+                )
+
+            await self._runner.context.send_message(entry_message)
             # Record the entry checkpoint (iteration 0) capturing the seeded input before any
             # executor runs. The runner only checkpoints after each superstep.
             await self._runner.create_checkpoint_if_enabled()
@@ -1241,16 +1256,31 @@ class Workflow(DictConvertible):
         return existing_stream is not None
 
     async def _capture_initial_checkpoint_if_needed(self) -> None:
-        """Capture a pristine in-memory checkpoint on the first run.
+        """Best-effort capture of a pristine in-memory checkpoint on the first run.
 
         The snapshot is taken before any executor runs, so it represents the
         workflow's initial state. It is deep-copied so later state mutations
         cannot corrupt the stored snapshot, which keeps ``reset()`` repeatable.
+
+        Capture is best effort: it must never prevent the workflow from running.
+        A capture is only meaningful before the first run (while the state is still
+        pristine), so on failure we record it and do not retry on later runs -
+        capturing then would snapshot already-advanced state. ``reset()`` surfaces
+        the failure to the caller instead of silently doing nothing.
         """
-        if self._initial_checkpoint is not None:
+        if self._initial_checkpoint is not None or self._initial_checkpoint_capture_failed:
             return
-        checkpoint = await self._runner.build_checkpoint()
-        self._initial_checkpoint = copy.deepcopy(checkpoint)
+        try:
+            checkpoint = await self._runner.build_checkpoint()
+            self._initial_checkpoint = copy.deepcopy(checkpoint)
+        except Exception as exc:
+            self._initial_checkpoint_capture_failed = True
+            logger.warning(
+                "Failed to capture the initial checkpoint for workflow %s; reset() will be unavailable "
+                "for this instance. Error: %s",
+                self.id,
+                exc,
+            )
 
     async def reset(self) -> None:
         """Reset this workflow instance back to its initial state for reuse.
@@ -1269,11 +1299,18 @@ class Workflow(DictConvertible):
         instance is already in its initial state.
 
         Raises:
-            WorkflowException: If a run is currently active on this instance.
+            WorkflowException: If a run is currently active on this instance, or if the
+                best-effort capture of the instance's initial checkpoint failed on the first
+                run (so there is no pristine snapshot to restore; rebuild the workflow instead).
         """
         if self._is_run_active():
             raise WorkflowException("Cannot reset the workflow while a run is active on the same instance.")
         if self._initial_checkpoint is None:
+            if self._initial_checkpoint_capture_failed:
+                raise WorkflowException(
+                    "Cannot reset the workflow: capturing its initial checkpoint failed on the first run, "
+                    "so there is no pristine snapshot to restore. Rebuild the workflow instead."
+                )
             # Never run; the instance is already in its initial state.
             logger.debug("Reset called on a workflow instance that has never run; no state to restore.")
             return

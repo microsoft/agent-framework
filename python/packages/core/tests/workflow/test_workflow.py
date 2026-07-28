@@ -321,6 +321,26 @@ async def test_workflow_with_checkpointing_enabled(simple_executor: Executor):
         assert result is not None
 
 
+async def test_run_with_unhandled_input_type_raises(simple_executor: Executor):
+    """Running with an input the start executor cannot handle must fail loudly, not silently drop it."""
+    workflow = WorkflowBuilder(start_executor=simple_executor).build()
+
+    # simple_executor only handles str; an int is not routable to it.
+    with pytest.raises(RuntimeError, match="cannot handle input of type 'int'"):
+        await workflow.run(42)
+
+
+async def test_run_unwraps_workflow_message_input(simple_executor: Executor):
+    """A WorkflowMessage passed to run() is unwrapped (not double-wrapped) so its data reaches the handler."""
+    # simple_executor handles str; passing WorkflowMessage(data=<str>) must not be dropped as a type
+    # mismatch. Without unwrapping, the start executor would receive a WorkflowMessage (not a str) and
+    # the input would be silently dropped by the internal edge runner.
+    workflow = WorkflowBuilder(start_executor=simple_executor).build()
+
+    result = await workflow.run(WorkflowMessage(data="wrapped", source_id="test", target_id=None))
+    assert result.get_final_state() == WorkflowRunState.IDLE
+
+
 async def test_workflow_checkpointing_not_enabled_for_external_restore(
     simple_executor: Executor,
 ):

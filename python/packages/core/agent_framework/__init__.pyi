@@ -255,7 +255,7 @@ from ._workflows._checkpoint import (
     InMemoryCheckpointStorage,
     WorkflowCheckpoint,
 )
-from ._workflows._const import DEFAULT_MAX_ITERATIONS
+from ._workflows._const import DEFAULT_MAX_ITERATIONS, INTERNAL_SOURCE_ID
 from ._workflows._edge import (
     Case,
     Default,
@@ -336,6 +336,7 @@ __all__ = [
     "GROUP_INDEX_KEY",
     "GROUP_KIND_KEY",
     "GROUP_TOKEN_COUNT_KEY",
+    "INTERNAL_SOURCE_ID",
     "MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY",
     "SKIP_PARSING",
     "SUMMARIZED_BY_SUMMARY_ID_KEY",
