@@ -33,11 +33,42 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
             changeType: TableChangeType.Add,
             value: new RecordDataValue([new("id", new NumberDataValue(7))]));
 
-        // Verify the variable now contains the added record
+        // Verify the variable remains a table containing the added record
         FormulaValue resultValue = this.State.Get("MyTable");
-        RecordValue resultRecord = Assert.IsAssignableFrom<RecordValue>(resultValue);
-        DecimalValue idValue = Assert.IsType<DecimalValue>(resultRecord.GetField("id"));
+        TableValue resultTable = Assert.IsAssignableFrom<TableValue>(resultValue);
+        Assert.Equal(2, resultTable.Rows.Count());
+        DecimalValue idValue = Assert.IsType<DecimalValue>(resultTable.Rows.Last().Value.GetField("id"));
         Assert.Equal(7, idValue.Value);
+    }
+
+    [Fact]
+    public async Task ConsecutiveAddsPreserveTableAsync()
+    {
+        // Arrange
+        FormulaValue tableValue = this.State.Engine.Eval("[{id: 1}]");
+        this.State.Set("MyTable", tableValue);
+
+        EditTable firstAdd = this.CreateModel(
+            nameof(ConsecutiveAddsPreserveTableAsync),
+            "MyTable",
+            TableChangeType.Add,
+            new RecordDataValue([new("id", new NumberDataValue(2))]));
+        EditTable secondAdd = this.CreateModel(
+            nameof(ConsecutiveAddsPreserveTableAsync),
+            "MyTable",
+            TableChangeType.Add,
+            new RecordDataValue([new("id", new NumberDataValue(3))]));
+
+        // Act
+        await this.ExecuteAsync(new EditTableExecutor(firstAdd, this.State));
+        await this.ExecuteAsync(new EditTableExecutor(secondAdd, this.State));
+
+        // Assert
+        TableValue resultTable = Assert.IsAssignableFrom<TableValue>(this.State.Get("MyTable"));
+        decimal[] ids = resultTable.Rows
+            .Select(row => Assert.IsType<DecimalValue>(row.Value.GetField("id")).Value)
+            .ToArray();
+        Assert.Equal([1, 2, 3], ids);
     }
 
     [Fact]
@@ -57,9 +88,11 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
                 new("name", new StringDataValue("Second"))
             ]));
 
-        // Verify the variable now contains the added record
+        // Verify the variable remains a table containing the added record
         FormulaValue resultValue = this.State.Get("MyTable");
-        RecordValue resultRecord = Assert.IsAssignableFrom<RecordValue>(resultValue);
+        TableValue resultTable = Assert.IsAssignableFrom<TableValue>(resultValue);
+        Assert.Equal(2, resultTable.Rows.Count());
+        RecordValue resultRecord = resultTable.Rows.Last().Value;
         DecimalValue idValue = Assert.IsType<DecimalValue>(resultRecord.GetField("id"));
         Assert.Equal(2, idValue.Value);
         StringValue nameValue = Assert.IsType<StringValue>(resultRecord.GetField("name"));
@@ -83,9 +116,10 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
             changeType: TableChangeType.Add,
             value: new RecordDataValue([new("id", new NumberDataValue(1))]));
 
-        // Verify the variable now contains the added record
+        // Verify the variable remains a table containing the added record
         FormulaValue resultValue = this.State.Get("MyTable");
-        RecordValue resultRecord = Assert.IsAssignableFrom<RecordValue>(resultValue);
+        TableValue resultTable = Assert.IsAssignableFrom<TableValue>(resultValue);
+        RecordValue resultRecord = Assert.Single(resultTable.Rows).Value;
         DecimalValue idValue = Assert.IsType<DecimalValue>(resultRecord.GetField("id"));
         Assert.Equal(1, idValue.Value);
     }
@@ -345,11 +379,12 @@ public sealed class EditTableExecutorTest(ITestOutputHelper output) : WorkflowAc
         EditTableExecutor action = new(model, this.State);
         await this.ExecuteAsync(action);
 
-        // Assert - Variable should contain the newly added record
+        // Assert - Variable should remain a table containing the newly added record
         VerifyModel(model, action);
         FormulaValue resultValue = this.State.Get("MyTable");
-        RecordValue resultRecord = Assert.IsAssignableFrom<RecordValue>(resultValue);
-        DecimalValue idValue = Assert.IsType<DecimalValue>(resultRecord.GetField("id"));
+        TableValue resultTable = Assert.IsAssignableFrom<TableValue>(resultValue);
+        Assert.Equal(2, resultTable.Rows.Count());
+        DecimalValue idValue = Assert.IsType<DecimalValue>(resultTable.Rows.Last().Value.GetField("id"));
         Assert.Equal(10, idValue.Value);
     }
 
