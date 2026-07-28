@@ -1196,7 +1196,7 @@ def test_parse_usage_with_cache_write_tokens() -> None:
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore[arg-type]
 
     details_dict = cast("dict[str, Any]", details)
-    assert details_dict["openai.cache_write_tokens"] == 1024
+    assert details_dict["prompt/cache_write_tokens"] == 1024
     assert details["cache_creation_input_token_count"] == 1024
     assert details["cache_read_input_token_count"] == 0
 
@@ -1216,7 +1216,7 @@ def test_parse_usage_omits_missing_cache_write_tokens() -> None:
 
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore[arg-type]
 
-    assert "openai.cache_write_tokens" not in details
+    assert "prompt/cache_write_tokens" not in details
     assert "cache_creation_input_token_count" not in details
     assert details["cache_read_input_token_count"] == 10
 
