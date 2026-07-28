@@ -288,9 +288,10 @@ async def test_provider_accepts_custom_instructions() -> None:
     assert all(DEFAULT_FILE_MEMORY_INSTRUCTIONS not in chunk for chunk in context.instructions)
 
 
-def test_file_memory_provider_is_experimental() -> None:
-    """The provider should be marked experimental under the harness feature."""
-    assert getattr(FileMemoryProvider, "__feature_stage__", None) == "experimental"
+def test_file_memory_provider_is_not_experimental() -> None:
+    """The provider is graduated and should no longer carry experimental metadata."""
+    assert getattr(FileMemoryProvider, "__feature_stage__", None) is None
+    assert getattr(FileMemoryProvider, "__feature_id__", None) is None
 
 
 async def test_tools_reject_nested_paths() -> None:

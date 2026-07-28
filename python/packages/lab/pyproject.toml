@@ -4,7 +4,7 @@ description = "Experimental modules for Microsoft Agent Framework"
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260709"
+version = "1.0.0b260721"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -57,17 +57,17 @@ math = [
 
 [dependency-groups]
 dev = [
-    "uv==0.11.28",
-    "ruff==0.15.20",
+    "uv==0.11.29",
+    "ruff==0.15.22",
     "pytest==9.1.1",
-    "mypy==2.2.0",
+    "mypy==2.3.0",
     "pyright==1.1.411",
     #tasks
     "poethepoet==0.48.0",
     "rich>=13.7.1,<15.0.0",
     "tomli==2.4.1",
     "tomli-w==1.2.0",
-    "prek==0.4.8",
+    "prek==0.4.10",
 ]
 # tau2 is an executable optional feature fetched from source because it is not available on PyPI.
 tau2 = [
@@ -111,11 +111,11 @@ extend-exclude = ["**/data/**"]
 
 [tool.ruff.lint]
 ignore = [
-    "T201",  # Allow print statements in experimental/lab code for debugging purposes.
-    "ASYNC230",  # Allow 'await' outside of async functions in test and experimental code.
-    "INP001",  # Ignore missing __init__.py in namespace packages.
-    "RUF029",  # Allow use of 'assert' statements; assertions are used for internal checks in experimental code.
-    "ASYNC240",  # Allow 'async for' outside of async functions in test and experimental code.
+    "print",  # Allow print statements in experimental/lab code for debugging purposes.
+    "blocking-open-call-in-async-function",  # Allow blocking file opens in async experimental code.
+    "implicit-namespace-package",  # Ignore missing __init__.py in namespace packages.
+    "unused-async",  # Allow async functions without await in experimental code.
+    "blocking-path-method-in-async-function",  # Allow blocking pathlib calls in async experimental code.
 ]
 
 [tool.coverage.run]

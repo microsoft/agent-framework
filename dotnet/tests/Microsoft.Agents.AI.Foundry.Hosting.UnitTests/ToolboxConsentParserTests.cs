@@ -24,6 +24,32 @@ public class ToolboxConsentParserTests
         Assert.Equal("https://login.example.com/consent?data=abc", consent.ConsentUrl);
     }
 
+    [Theory]
+    [InlineData("mcp")]
+    [InlineData("a2a_preview")]
+    [InlineData("some_future_source")]
+    public void TryParseConsentRequired_IsSourceTypeAgnostic_ReturnsTrue(string sourceType)
+    {
+        // Arrange: consent detection keys off the nested CONSENT_REQUIRED error code, not the
+        // tool source "type". Work IQ emits "a2a_preview" (issue #7227) rather than "mcp"; the
+        // parser must surface consent for any source type so hosting does not fail like the
+        // Python parser that hard-coded type == "mcp".
+        string message =
+            "Request failed (remote): tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) " +
+            "{\"errors\":[{\"name\":\"work-iq-connection\",\"type\":\"" + sourceType + "\"," +
+            "\"error\":{\"code\":\"CONSENT_REQUIRED\",\"message\":\"https://consent.example/login?data=xyz\"}}]}";
+
+        // Act
+        var parsed = ToolboxConsentParser.TryParseConsentRequired("work-iq-toolbox", message, out var consents);
+
+        // Assert
+        Assert.True(parsed);
+        var consent = Assert.Single(consents);
+        Assert.Equal("work-iq-toolbox", consent.ToolboxName);
+        Assert.Equal("work-iq-connection", consent.ToolName);
+        Assert.Equal("https://consent.example/login?data=xyz", consent.ConsentUrl);
+    }
+
     [Fact]
     public void TryParseConsentRequired_MultipleConsentErrors_ReturnsAll()
     {

@@ -124,7 +124,11 @@ def detect_media_type_from_base64(
         if data is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
         # Remove data URI prefix if present
-        data_str = data_uri.split(";base64,", 1)[1]
+        if not data_uri.startswith("data:") or "," not in data_uri:
+            raise ValueError("Invalid data URI format.")
+        prefix, data_str = data_uri.split(",", 1)
+        if not prefix.endswith(";base64"):
+            raise ValueError("Data URI must use base64 encoding.")
     if data_str is not None:
         if data is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
@@ -1507,6 +1511,12 @@ class Content:
         # Concatenate text, handling None values
         self_text = self.text or ""
         other_text = other.text or ""
+        if (
+            self_text
+            and other_text
+            and ("reasoning_text" in self.additional_properties) != ("reasoning_text" in other.additional_properties)
+        ):
+            raise AdditionItemMismatch("Cannot merge reasoning text with a reasoning summary")
         combined_text = self_text + other_text if (self_text or other_text) else None
 
         # Handle protected_data replacement

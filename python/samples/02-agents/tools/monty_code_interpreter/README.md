@@ -16,11 +16,11 @@ management), see
 ## Installation
 
 ```bash
-pip install agent-framework agent-framework-monty --pre
+pip install agent-framework-monty agent-framework-foundry --pre
 ```
 
-> `agent-framework-monty` is an alpha package and is not yet part of
-> `agent-framework[all]`. The `--pre` flag is required.
+> The beta `agent-framework-monty` package is included in
+> `agent-framework[all]`.
 >
 > Monty is cross-platform and has no hypervisor/WASM backend dependency.
 > Inside the sandbox, OS / filesystem / network calls are blocked

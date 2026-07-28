@@ -115,11 +115,11 @@ def validate_directory(directory: str) -> str:
     abs_dir = os.path.abspath(directory)
 
     if not os.path.exists(abs_dir):
-        print(f"Error: Directory '{directory}' does not exist", file=sys.stderr)  # noqa: T201
+        print(f"Error: Directory '{directory}' does not exist", file=sys.stderr)  # ruff:ignore[print]
         sys.exit(1)
 
     if not os.path.isdir(abs_dir):
-        print(f"Error: '{directory}' is not a directory", file=sys.stderr)  # noqa: T201
+        print(f"Error: '{directory}' is not a directory", file=sys.stderr)  # ruff:ignore[print]
         sys.exit(1)
 
     return abs_dir
@@ -129,21 +129,21 @@ def print_startup_info(
     entities_dir: str, host: str, port: int, ui_enabled: bool, reload: bool, auth_token: str | None = None
 ) -> None:
     """Print startup information."""
-    print("Agent Framework DevUI")  # noqa: T201
-    print("=" * 50)  # noqa: T201
-    print(f"Entities directory: {entities_dir}")  # noqa: T201
-    print(f"Server URL: http://{host}:{port}")  # noqa: T201
-    print(f"UI enabled: {'Yes' if ui_enabled else 'No'}")  # noqa: T201
-    print(f"Auto-reload: {'Yes' if reload else 'No'}")  # noqa: T201
+    print("Agent Framework DevUI")  # ruff:ignore[print]
+    print("=" * 50)  # ruff:ignore[print]
+    print(f"Entities directory: {entities_dir}")  # ruff:ignore[print]
+    print(f"Server URL: http://{host}:{port}")  # ruff:ignore[print]
+    print(f"UI enabled: {'Yes' if ui_enabled else 'No'}")  # ruff:ignore[print]
+    print(f"Auto-reload: {'Yes' if reload else 'No'}")  # ruff:ignore[print]
 
     # Display auth token if authentication is enabled
     if auth_token:
-        print("Authentication: Enabled")  # noqa: T201
-        print(f"Auth token: {auth_token}")  # noqa: T201
-        print("💡 Use this token in Authorization: Bearer <token> header")  # noqa: T201
+        print("Authentication: Enabled")  # ruff:ignore[print]
+        print(f"Auth token: {auth_token}")  # ruff:ignore[print]
+        print("💡 Use this token in Authorization: Bearer <token> header")  # ruff:ignore[print]
 
-    print("=" * 50)  # noqa: T201
-    print("Scanning for entities...")  # noqa: T201
+    print("=" * 50)  # ruff:ignore[print]
+    print("Scanning for entities...")  # ruff:ignore[print]
 
 
 def main() -> None:
@@ -191,11 +191,11 @@ def main() -> None:
         )
 
     except KeyboardInterrupt:
-        print("\nShutting down Agent Framework DevUI...")  # noqa: T201
+        print("\nShutting down Agent Framework DevUI...")  # ruff:ignore[print]
         sys.exit(0)
     except Exception as e:
         logger.exception("Failed to start server")
-        print(f"Error: {e}", file=sys.stderr)  # noqa: T201
+        print(f"Error: {e}", file=sys.stderr)  # ruff:ignore[print]
         sys.exit(1)
 
 

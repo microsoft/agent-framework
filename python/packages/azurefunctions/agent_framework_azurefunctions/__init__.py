@@ -3,6 +3,7 @@
 import importlib.metadata
 
 from ._app import AgentFunctionApp
+from ._hitl_context import WorkflowHitlContext
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -11,5 +12,6 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "AgentFunctionApp",
+    "WorkflowHitlContext",
     "__version__",
 ]

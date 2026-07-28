@@ -5,9 +5,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
 from agent_framework_declarative import WorkflowFactory
-from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_openai import OpenAIChatOptions
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
