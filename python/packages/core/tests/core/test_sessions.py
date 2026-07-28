@@ -1012,7 +1012,10 @@ class TestFileSessionStore:
         session = AgentSession(session_id="unsupported")
         session.state["nested"] = [{"value": UnsupportedState()}]
 
-        with pytest.raises(TypeError, match=r"state\.nested\[0\]\.value.*UnsupportedState"):
+        with (
+            pytest.warns(RuntimeWarning, match="leaving it unchanged"),
+            pytest.raises(TypeError, match=r"state\.nested\[0\]\.value.*UnsupportedState"),
+        ):
             await FileSessionStore(tmp_path).set("unsupported", session)
 
     @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
@@ -1058,7 +1061,7 @@ class TestFileSessionStore:
         assert len(quarantined_files) == 1
         assert await store.get("session-1") is None
 
-    async def test_invalid_registered_payload_is_quarantined(self, tmp_path: Path) -> None:
+    async def test_invalid_registered_payload_preserves_snapshot(self, tmp_path: Path) -> None:
         store = FileSessionStore(tmp_path)
         session_file = store._session_file_path("session-1")
         session_file.write_text(
@@ -1072,14 +1075,13 @@ class TestFileSessionStore:
             encoding="utf-8",
         )
 
-        with pytest.raises(ValueError, match="quarantined.*retry"):
+        with pytest.raises(ValueError, match="Failed to restore session state"):
             await store.get("session-1")
 
-        assert not session_file.exists()
-        quarantined_files = await asyncio.to_thread(lambda: list(tmp_path.glob(".*.corrupt")))
-        assert len(quarantined_files) == 1
+        assert session_file.exists()
+        assert not await asyncio.to_thread(lambda: list(tmp_path.glob(".*.corrupt")))
 
-    async def test_registered_decoder_attribute_error_is_quarantined(self, tmp_path: Path) -> None:
+    async def test_registered_decoder_attribute_error_preserves_snapshot(self, tmp_path: Path) -> None:
         store = FileSessionStore(tmp_path)
         session_file = store._session_file_path("session-1")
         session_file.write_text(
@@ -1093,12 +1095,51 @@ class TestFileSessionStore:
             encoding="utf-8",
         )
 
-        with pytest.raises(ValueError, match="quarantined.*retry"):
+        with pytest.raises(ValueError, match="Failed to restore session state"):
             await store.get("session-1")
 
-        assert not session_file.exists()
-        quarantined_files = await asyncio.to_thread(lambda: list(tmp_path.glob(".*.corrupt")))
-        assert len(quarantined_files) == 1
+        assert session_file.exists()
+        assert not await asyncio.to_thread(lambda: list(tmp_path.glob(".*.corrupt")))
+
+    async def test_unsupported_snapshot_version_preserves_snapshot(self, tmp_path: Path) -> None:
+        store = FileSessionStore(tmp_path)
+        session_file = store._session_file_path("session-1")
+        session_file.write_text(
+            json.dumps({
+                "type": "session",
+                "version": "1.1",
+                "session_id": "session-1",
+                "service_session_id": None,
+                "state": {},
+            }),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError, match="Unsupported session snapshot version '1.1'"):
+            await store.get("session-1")
+
+        assert session_file.exists()
+        assert not await asyncio.to_thread(lambda: list(tmp_path.glob(".*.corrupt")))
+
+    async def test_invalid_snapshot_schema_preserves_snapshot(self, tmp_path: Path) -> None:
+        store = FileSessionStore(tmp_path)
+        session_file = store._session_file_path("session-1")
+        session_file.write_text(
+            json.dumps({
+                "type": "session",
+                "version": "1.0",
+                "session_id": 123,
+                "service_session_id": None,
+                "state": {},
+            }),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError, match="invalid schema"):
+            await store.get("session-1")
+
+        assert session_file.exists()
+        assert not await asyncio.to_thread(lambda: list(tmp_path.glob(".*.corrupt")))
 
     async def test_corrupt_quarantine_does_not_remove_concurrent_replacement(
         self,
@@ -1139,7 +1180,7 @@ class TestFileSessionStore:
         assert restored is not None
         assert restored.session_id == "replacement"
 
-    @pytest.mark.parametrize("session_id", ["", "two words", "tenant/user", "session.id", "café"])
+    @pytest.mark.parametrize("session_id", ["", "x" * (FileSessionStore.MAX_SESSION_ID_LENGTH + 1)])
     async def test_invalid_session_id_raises(self, tmp_path: Path, session_id: str) -> None:
         store = FileSessionStore(tmp_path)
         session = AgentSession()
@@ -1150,6 +1191,37 @@ class TestFileSessionStore:
             await store.set(session_id, session)
         with pytest.raises(ValueError, match="session_id"):
             await store.delete(session_id)
+
+    @pytest.mark.parametrize(
+        ("session_id", "is_encoded"),
+        [
+            ("two words", True),
+            ("tenant/user", True),
+            ("session.id", False),
+            ("café", True),
+            ("telegram:123:456", True),
+            ("CON", True),
+            ("x" * 128, False),
+        ],
+    )
+    async def test_opaque_session_id_round_trips_through_safe_filename(
+        self,
+        tmp_path: Path,
+        session_id: str,
+        is_encoded: bool,
+    ) -> None:
+        store = FileSessionStore(tmp_path)
+        session = AgentSession(session_id="framework-session")
+
+        await store.set(session_id, session)
+        restored = await store.get(session_id)
+
+        assert restored is not None
+        assert restored.session_id == "framework-session"
+        session_file = store._session_file_path(session_id)
+        assert session_file.is_file()
+        assert session_file.parent == tmp_path
+        assert session_file.name.startswith("~session-") is is_encoded
 
     @pytest.mark.parametrize("session_id", ["NUL.txt", "COM¹", "LPT².log"])
     async def test_reserved_windows_filename_is_encoded(self, tmp_path: Path, session_id: str) -> None:

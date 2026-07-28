@@ -51,7 +51,7 @@ The framework therefore needs to decide:
 - Treat an optimized binary format as a nice-to-have only when the chosen JSON implementation supports it without a
   separate state model or substantial additional complexity.
 - Perform one typed encode and decode operation per file write/read.
-- Preserve existing dynamic application registration of nested state types.
+- Preserve dynamic registration of nested state types by the provider modules that own them.
 - Fail before persistence when an object cannot be restored after a cold start.
 - Keep the existing serialized `{"type": "<id>", ...}` representation compatible.
 
@@ -89,8 +89,9 @@ overriding the same async methods.
 ## Decision 2: Serialization and type restoration
 
 Once a file-backed store exists, it needs an on-disk format and a reliable way to reconstruct the complete
-`AgentSession`, including nested framework and application-defined state. This decision is independent of where the
-store API lives or whether that API is abstract or concrete.
+`AgentSession`, including nested framework and application-defined state. Serialization belongs to each durable store
+implementation rather than the `SessionStore` API: the default in-memory store does not serialize, and custom stores
+remain free to choose another protocol.
 
 The alternatives below compare top-level snapshot validation, JSON encoding/decoding cost, and how each option
 interacts with the dynamic custom-state registry. Binary storage is not a primary selection criterion.
@@ -198,8 +199,9 @@ implementations.
 `InMemorySessionStore`, protocol, or ABC is introduced. `agent-framework-hosting` consumes the core type and no longer
 owns or re-exports `SessionStore` (this will be a breaking change in the `hosting` package).
 
-`SessionStore` accepts opaque non-empty keys so custom backends can use their native key contracts. The built-in
-`FileSessionStore` restricts direct file keys to at most 128 ASCII letters, digits, `-`, and `_`. `AgentState` remains
+`SessionStore` accepts opaque non-empty keys so custom backends can use their native key contracts. `FileSessionStore`
+accepts opaque keys up to 128 characters and encodes values that are not portable filename stems; this supports
+provider IDs such as `telegram:<bot-id>:<chat-id>` without permitting path traversal. `AgentState` remains
 storage-agnostic and passes keys through unchanged; each store implementation owns backend-specific validation or
 normalization. Protocol-specific hosts such as Foundry may still derive their own stable storage key before calling the
 store.
@@ -209,12 +211,16 @@ default `ResponsesHostServer` store when hosted; local hosting defaults to the
 in-memory `SessionStore`. `FoundrySessionStore` currently subclasses
 `FileSessionStore`, stores snapshots under
 `/.sessions/<user-id>/<session-id>.json`, and derives the validated platform
-IDs from `azure.ai.agentserver.core.get_request_context()`. Callers can
-explicitly override either default through `session_store=`. The
-Foundry-specific type is the host configuration seam; its implementation may
-later move from files to a Foundry storage API without changing the generic
-core store contract. The session file API maps `/` to the hosted `$HOME`
-directory, so this API path is persisted on disk under `$HOME/.sessions`.
+IDs from `azure.ai.agentserver.core.get_request_context()`. A Foundry session
+controls hosted compute and filesystem lifetime, while a MAF `AgentSession`
+contains framework context state; using the same identifier correlates them but
+does not make their semantics equivalent. Callers can override the default
+through `session_store=` when snapshots must be stored outside Foundry, such as
+in a database or blob store. The Foundry-specific type is the host configuration
+seam; its implementation may later move from files to a Foundry storage API
+without changing the generic core store contract. The session file API maps `/`
+to the hosted `$HOME` directory, so this API path is persisted on disk under
+`$HOME/.sessions`.
 
 ### Decision 2: Use msgspec codecs plus an explicit dynamic registry
 
@@ -251,11 +257,16 @@ the snapshot envelope, and carries an explicit payload version. The benchmark's 
 choose the Struct.
 
 `register_state_type` supports stable type IDs and optional codecs, rejects collisions, and provides defaults for
-`to_dict` / `from_dict` classes and Pydantic models. One recursive serializer is shared by `AgentSession.to_dict()` and
-the durable codecs. The established implicit Pydantic registration behavior remains temporarily for compatibility, but
-now emits `DeprecationWarning` instructing applications to register the model at module import time. Same-process
-round-trips continue to work; cold-start deserialization is not guaranteed without explicit registration. Unknown
-persisted type IDs remain raw dictionaries.
+`to_dict` / `from_dict` classes and Pydantic models. Type IDs share one process-wide registry, so provider packages
+should use stable package-qualified identifiers and register their own state types at module import time; consumers do
+not need to know those implementation details. One recursive serializer is shared by `AgentSession.to_dict()` and the
+durable codecs. The established implicit Pydantic registration behavior remains temporarily for compatibility, but now
+emits `DeprecationWarning`. Same-process round-trips continue to work; cold-start deserialization is not guaranteed
+without explicit provider registration. Unknown persisted type IDs remain raw dictionaries.
+
+File snapshots are quarantined only when their bytes cannot be parsed as the selected JSON or MessagePack format.
+Schema errors, unsupported snapshot versions, and registered state-decoder failures leave the original file in place so
+an application fix, rollback, or compatible reader can recover it.
 
 `FileHistoryProvider` also adds msgspec JSON as its default JSON Lines codec. It supports the same explicit
 `serialization_format="msgpack"` choice using length-prefixed append-only MessagePack records. Its existing `dumps` /

@@ -14,11 +14,11 @@ import asyncio
 import json
 import os
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, overload
+from typing import Literal, cast, overload
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -174,6 +174,17 @@ class _RecordingHistoryClient(BaseChatClient):
             return ChatResponse(messages=[Message(role="assistant", contents=[Content.from_text("recorded")])])
 
         return get_response()
+
+
+class _FailingSessionStore(SessionStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.set_attempts = 0
+
+    async def set(self, session_id: str, session: AgentSession) -> None:
+        del session_id, session
+        self.set_attempts += 1
+        raise OSError("session storage is full")
 
 
 def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
@@ -484,9 +495,9 @@ class TestSessionPersistenceHelpers:
         assert all(character.isascii() and (character.isalnum() or character in "-_") for character in key_a)
         assert key_a == repeated_key_a
 
-    def test_conversation_object_id_preserves_safe_values_and_hashes_unsafe_values(self) -> None:
+    def test_conversation_object_id_preserves_supported_opaque_values(self) -> None:
         assert _conversation_object_id("conversation-1") == "conversation-1"
-        assert _conversation_object_id("conversation/unsafe").startswith("conversation_")
+        assert _conversation_object_id("conversation/opaque") == "conversation/opaque"
 
 
 class TestAgentSessionPersistence:
@@ -765,6 +776,69 @@ class TestAgentSessionPersistence:
         assert body["status"] == "failed"
         assert stored is not None
         assert stored.state["before_failure"] == "saved"
+
+    async def test_streaming_save_failure_emits_failed_response(self) -> None:
+        store = _FailingSessionStore()
+        agent = _make_agent()
+
+        def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream:
+            session = kwargs["session"]
+            assert isinstance(session, AgentSession)
+
+            async def updates() -> AsyncIterator[AgentResponseUpdate]:
+                session.state["stream_complete"] = True
+                yield AgentResponseUpdate(contents=[Content.from_text("done")], role="assistant")
+
+            return ResponseStream(updates())
+
+        agent.run = MagicMock(side_effect=run_streaming)
+        server = _make_server(agent, session_store=store)
+
+        response = await _post(server, stream=True)
+        event_types = _sse_event_types(_parse_sse_events(response.text))
+
+        assert event_types[-1] == "response.failed"
+        assert "response.completed" not in event_types
+        assert store.set_attempts == 1
+
+    async def test_cancellation_is_preserved_when_best_effort_save_fails(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        store = _FailingSessionStore()
+        agent = _make_agent()
+
+        def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream:
+            session = kwargs["session"]
+            assert isinstance(session, AgentSession)
+
+            async def updates() -> AsyncIterator[AgentResponseUpdate]:
+                session.state["started"] = True
+                yield AgentResponseUpdate(contents=[Content.from_text("started")], role="assistant")
+
+            return ResponseStream(updates())
+
+        agent.run = MagicMock(side_effect=run_streaming)
+        server = _make_server(agent, session_store=store)
+        request = CreateResponse(model="m", input="hi", stream=True)
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_inner_agent(request, context),  # pyright: ignore[reportPrivateUsage]
+            )
+            await anext(handler)
+            await anext(handler)
+            await anext(handler)
+            with pytest.raises(asyncio.CancelledError):
+                await handler.athrow(asyncio.CancelledError())
+
+        assert store.set_attempts == 1
+        assert "while unwinding an interrupted request" in caplog.text
 
 
 # endregion

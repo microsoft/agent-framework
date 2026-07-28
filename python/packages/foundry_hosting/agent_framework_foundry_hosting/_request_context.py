@@ -14,7 +14,7 @@ _PROTOCOL_V2_REQUIRED_MESSAGE = (
 )
 
 
-def _validate_path_segment(
+def validate_path_segment(
     segment: str,
     *,
     kind: Literal["context id", "user id"],
@@ -38,7 +38,7 @@ def _validate_path_segment(
         raise RuntimeError(f"Invalid {kind}: {segment!r}")
 
 
-def _validate_foundry_request_context(  # pyright: ignore[reportUnusedFunction]
+def validate_foundry_request_context(
     context: FoundryAgentRequestContext,
     *,
     is_hosted: bool,
@@ -53,10 +53,10 @@ def _validate_foundry_request_context(  # pyright: ignore[reportUnusedFunction]
         )
 
 
-def _request_user_directory_segment() -> str | None:  # pyright: ignore[reportUnusedFunction]
+def request_user_directory_segment() -> str | None:
     """Return the validated platform user ID for an on-disk directory."""
     user_id = get_request_context().user_id
     if not user_id:
         return None
-    _validate_path_segment(user_id, kind="user id")
+    validate_path_segment(user_id, kind="user id")
     return user_id

@@ -124,8 +124,8 @@ from typing_extensions import Any
 
 from ._feature_usage import FeatureIndex
 from ._request_context import (
-    _validate_foundry_request_context,  # pyright: ignore[reportPrivateUsage]
-    _validate_path_segment,  # pyright: ignore[reportPrivateUsage]
+    validate_foundry_request_context,
+    validate_path_segment,
 )
 from ._session_store import FoundrySessionStore
 
@@ -314,11 +314,11 @@ def _checkpoint_storage_for_context(
     segments, and each resolved directory is verified to stay under its parent
     before any directory is created on disk (CWE-22).
     """
-    _validate_path_segment(context_id, kind="context id")
+    validate_path_segment(context_id, kind="context id")
 
     base_path = Path(root).resolve()
     if user_id:
-        _validate_path_segment(user_id, kind="user id")
+        validate_path_segment(user_id, kind="user id")
         user_path = (base_path / user_id).resolve()
         if not user_path.is_relative_to(base_path):
             raise RuntimeError(f"Invalid user id: {user_id!r}")
@@ -345,7 +345,7 @@ def _approval_storage_path_for_user(base_path: str, user_id: str) -> str:
     path segment and the resulting directory is verified to stay under the base
     directory before use (CWE-22).
     """
-    _validate_path_segment(user_id, kind="user id")
+    validate_path_segment(user_id, kind="user id")
     directory, filename = os.path.split(base_path)
     base_dir = Path(directory or ".").resolve()
     user_dir = (base_dir / user_id).resolve()
@@ -480,6 +480,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             session_store: Optional Agent Framework session store override.
                 Defaults to a :class:`FoundrySessionStore` under ``/.sessions``
                 when hosted and an in-memory :class:`SessionStore` locally.
+                Provide another implementation when MAF session snapshots must
+                be persisted outside Foundry, such as in a database or blob
+                store.
             **kwargs: Additional keyword arguments.
 
         Note:
@@ -526,8 +529,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
         ):
             # The Responses provider already supplies the complete transcript on every
-            # call. A loading no-op provider prevents Agent from auto-injecting its
-            # default InMemoryHistoryProvider and replaying that transcript twice.
+            # call. Agent.run would otherwise mutate the same user-owned agent by
+            # auto-injecting its default InMemoryHistoryProvider. Install a loading
+            # no-op provider up front so that transcript is not replayed twice.
             agent.context_providers.append(
                 InMemoryHistoryProvider(
                     source_id=_HOSTED_RESPONSES_HISTORY_SOURCE_ID,
@@ -609,7 +613,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response."""
         request_context = get_request_context()
-        _validate_foundry_request_context(request_context, is_hosted=self.config.is_hosted)
+        validate_foundry_request_context(request_context, is_hosted=self.config.is_hosted)
         if (
             self.config.is_hosted
             and not self._is_workflow_agent
@@ -631,7 +635,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         request: CreateResponse,
         context: ResponseContext,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
-        """Handle the creation of a response for a regular (non-workflow) agent."""
+        """Handle a regular agent with MAF state scoped by a Foundry session.
+
+        Foundry sessions govern hosted compute and filesystem lifetime. MAF
+        AgentSession objects hold framework context state. The shared identifier
+        correlates the two without making their lifecycle semantics equivalent.
+        """
         response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
@@ -642,6 +651,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         session: AgentSession | None = None
         request_session_store: SessionStore | None = None
         session_store_key: str | None = None
+        # Successful runs save before response.completed so a persistence failure
+        # can become response.failed. The finally path covers cancellation or an
+        # abandoned stream and must not save a second time.
         session_save_attempted = False
 
         async def save_session() -> None:
@@ -765,7 +777,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 yield event
         finally:
             if session is not None and not session_save_attempted:
-                await save_session()
+                try:
+                    await save_session()
+                except Exception:
+                    logger.exception(
+                        "Failed to persist the Agent Framework session while unwinding an interrupted request"
+                    )
 
     async def _handle_inner_workflow(
         self,

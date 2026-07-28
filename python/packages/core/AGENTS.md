@@ -76,8 +76,8 @@ agent_framework/
 
 - **`AgentSession`** - Manages conversation state and session metadata
 - **`SessionStore`** - Experimental in-memory opaque `session_id -> AgentSession` snapshot store; reads return independent copies
-- **`FileSessionStore`** - Experimental msgspec file-backed session snapshot store with atomic last-writer-wins updates; JSON is the default, `serialization_format="msgpack"` enables binary MessagePack, file keys use a restricted portable shape, and corrupt snapshots are quarantined before an error is raised
-- **`register_state_type`** - Registers custom `AgentSession.state` classes with stable type IDs and optional mapping codecs. Implicit Pydantic registration remains temporarily with `DeprecationWarning`, but module-level registration is needed to guarantee cold-start restoration.
+- **`FileSessionStore`** - Experimental msgspec file-backed session snapshot store with atomic last-writer-wins updates; JSON is the default, `serialization_format="msgpack"` enables binary MessagePack, opaque keys are encoded to portable filenames, and only syntactically malformed snapshots are quarantined (schema, version, and state-decoder failures preserve the original file)
+- **`register_state_type`** - Registers custom `AgentSession.state` classes with stable, process-wide type IDs and optional mapping codecs. Provider modules own registration for their custom state types and should use package-qualified IDs. Implicit Pydantic registration remains temporarily with `DeprecationWarning`, but module-level registration is needed to guarantee cold-start restoration.
 - **`ServiceSessionId`** - Mapping alias for structured service-owned continuation handles used in `AgentSession.service_session_id`
 - **`SessionContext`** - Context object for session-scoped data during agent runs. `extend_messages(...)` can attach
   ordered, deduplicated `origin_session_ids` attribution when a provider injects content from other sessions.

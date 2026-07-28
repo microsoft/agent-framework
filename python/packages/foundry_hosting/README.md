@@ -8,7 +8,8 @@ uses the experimental `FoundrySessionStore` under `/.sessions` when hosted and
 an in-memory `SessionStore` locally. Hosted snapshots are partitioned by the
 Agent Server request context's platform user ID, and their filenames come from
 its platform session ID. Pass `session_store=` to explicitly override either
-default.
+default when MAF session snapshots must be stored outside Foundry, such as in a
+database or blob store.
 
 Foundry's session file API exposes the hosted `$HOME` directory as `/`, so the
 API path `/.sessions` is stored on disk at `$HOME/.sessions`.
@@ -28,6 +29,11 @@ Regular-agent session snapshots use the platform user and session IDs:
 ```text
 /.sessions/<user-id>/<session-id>.json
 ```
+
+A Foundry session controls hosted compute and filesystem lifetime. A MAF
+`AgentSession` contains framework context state. Responses hosting uses the same
+identifier to correlate and locate the snapshot, but the two session concepts
+do not otherwise share lifecycle semantics.
 
 Workflow checkpoints and function approvals preserve the existing Foundry
 Hosting layout. Hosted paths insert the validated raw platform user ID:

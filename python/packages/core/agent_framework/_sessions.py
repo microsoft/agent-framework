@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import logging
 import math
@@ -107,6 +108,8 @@ _DEFAULT_MSGPACK_DECODER = msgspec.msgpack.Decoder()
 _JSON_FILE_EXTENSION = ".json"
 _JSON_LINES_FILE_EXTENSION = ".jsonl"
 _MSGPACK_FILE_EXTENSION = ".msgpack"
+_SESSION_SNAPSHOT_VERSION = "1.0"
+_MAX_ENCODED_SESSION_FILE_STEM_LENGTH = 180
 
 
 def _default_json_dumps(value: Any) -> bytes:
@@ -123,7 +126,12 @@ def _default_json_loads(value: str | bytes) -> Any:
 
 
 def _contains_non_finite_float(value: Any) -> bool:
-    """Return whether a nested JSON-compatible value contains NaN or infinity."""
+    """Return whether legacy JSON encoding is needed for NaN or infinity.
+
+    msgspec normalizes non-finite floats to ``null``, while the previous
+    FileHistoryProvider JSON encoder emitted Python's ``NaN`` and ``Infinity``
+    tokens. Detecting them keeps existing history files byte-compatible.
+    """
     if isinstance(value, float):
         return not math.isfinite(value)
     if isinstance(value, Mapping):
@@ -134,7 +142,12 @@ def _contains_non_finite_float(value: Any) -> bool:
 
 
 def _is_literal_session_file_stem_safe(session_id: str) -> bool:
-    """Return whether a session ID can be used directly as a filename stem."""
+    """Return whether an opaque session ID is a portable filename stem.
+
+    FileSessionStore and FileHistoryProvider accept opaque IDs, including IDs
+    with separators and platform-reserved names such as ``CON``. Unsafe values
+    are encoded by :func:`_session_file_stem` rather than rejected.
+    """
     windows_stem = session_id.split(".", maxsplit=1)[0].upper()
     if (
         not session_id
@@ -145,7 +158,7 @@ def _is_literal_session_file_stem_safe(session_id: str) -> bool:
         return False
     if any(ord(character) < 32 for character in session_id):
         return False
-    return all(character.isalnum() or character in "._-" for character in session_id)
+    return all(character.isascii() and (character.isalnum() or character in "._-") for character in session_id)
 
 
 def _session_file_stem(session_id: str, *, encoded_prefix: str) -> str:
@@ -153,7 +166,11 @@ def _session_file_stem(session_id: str, *, encoded_prefix: str) -> str:
     if _is_literal_session_file_stem_safe(session_id):
         return session_id
     encoded_session_id = urlsafe_b64encode(session_id.encode("utf-8")).decode("ascii").rstrip("=")
-    return f"{encoded_prefix}{encoded_session_id}"
+    encoded_stem = f"{encoded_prefix}{encoded_session_id}"
+    if len(encoded_stem) <= _MAX_ENCODED_SESSION_FILE_STEM_LENGTH:
+        return encoded_stem
+    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+    return f"{encoded_prefix}sha256-{digest}"
 
 
 def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[str]:
@@ -192,7 +209,7 @@ _STATE_CLASS_REGISTRY: dict[type[Any], _StateTypeRegistration] = {}
 
 
 def _resolve_state_type_id(cls: type[Any], type_id: str | None) -> str:
-    """Resolve the stable serialized ID for a registered session-state type."""
+    """Resolve the stable, process-wide ID for a registered state type."""
     if type_id is not None:
         resolved = type_id
     elif callable(identifier := getattr(cls, "_get_type_identifier", None)):
@@ -267,10 +284,14 @@ def register_state_type(
     """Register a type for automatic deserialization in session state.
 
     Registration is explicit so persisted sessions can be restored after a
-    process restart. The type identifier is resolved from ``type_id``, then
-    ``_get_type_identifier()``, then ``TYPE``, and finally the lowercased class
-    name. Classes implementing ``to_dict`` / ``from_dict`` and Pydantic models
-    receive default codecs; other classes must provide both callbacks.
+    process restart. Type identifiers share one process-wide registry and must
+    therefore be globally unique; provider packages should pass a stable,
+    package-qualified ``type_id``. For compatibility with existing framework
+    types, the identifier otherwise falls back to ``_get_type_identifier()``,
+    then ``TYPE``, and finally the lowercased class name. Conflicting
+    registrations fail immediately rather than silently selecting one type.
+    Classes implementing ``to_dict`` / ``from_dict`` and Pydantic models receive
+    default codecs; other classes must provide both callbacks.
 
     Call this at module level immediately after defining the custom state class.
     Importing that module then registers the type before any persisted session
@@ -381,6 +402,13 @@ def _serialize_value(value: Any, *, path: str) -> Any:
         type_id = _resolve_state_type_id(value_type, None)
         register_state_type(value_type, type_id=type_id)
         return _serialize_value(value, path=path)
+    warnings.warn(
+        f"AgentSession state value at {path} has unsupported type {value_type.__name__!r}; "
+        "AgentSession.to_dict() is leaving it unchanged for compatibility, but durable session stores will reject it. "
+        "Call register_state_type() with a restorable codec.",
+        RuntimeWarning,
+        stacklevel=4,
+    )
     return value
 
 
@@ -457,8 +485,8 @@ class _SessionSnapshot(msgspec.Struct):
     type: Literal["session"]
     session_id: str
     service_session_id: str | dict[str, Any] | None
-    state: _SessionStatePayload
-    version: Literal["1.0"] = "1.0"
+    state: object
+    version: str = _SESSION_SNAPSHOT_VERSION
 
 
 def _session_snapshot_enc_hook(value: Any) -> Any:
@@ -468,19 +496,10 @@ def _session_snapshot_enc_hook(value: Any) -> Any:
     raise NotImplementedError(f"Objects of type {type(value).__name__!r} are not supported.")
 
 
-def _session_snapshot_dec_hook(target_type: type[Any], value: Any) -> Any:
-    """Restore the complete dynamic state payload for msgspec."""
-    if target_type is _SessionStatePayload:
-        if not isinstance(value, Mapping):
-            raise TypeError("Session state payload must be a mapping.")
-        return _SessionStatePayload(_deserialize_state(dict(cast(Mapping[str, Any], value))))
-    raise NotImplementedError(f"Objects of type {target_type.__name__!r} are not supported.")
-
-
 _SESSION_SNAPSHOT_ENCODER = msgspec.json.Encoder(enc_hook=_session_snapshot_enc_hook)
-_SESSION_SNAPSHOT_DECODER = msgspec.json.Decoder(_SessionSnapshot, dec_hook=_session_snapshot_dec_hook)
+_SESSION_SNAPSHOT_DECODER = msgspec.json.Decoder(_SessionSnapshot)
 _SESSION_SNAPSHOT_MSGPACK_ENCODER = msgspec.msgpack.Encoder(enc_hook=_session_snapshot_enc_hook)
-_SESSION_SNAPSHOT_MSGPACK_DECODER = msgspec.msgpack.Decoder(_SessionSnapshot, dec_hook=_session_snapshot_dec_hook)
+_SESSION_SNAPSHOT_MSGPACK_DECODER = msgspec.msgpack.Decoder(_SessionSnapshot)
 
 
 # Register known types
@@ -738,12 +757,12 @@ class ContextProvider:
     may be persisted by a session store. Standard JSON-native Python values
     (``None``, booleans, integers, finite floats, strings, lists, tuples, and
     mappings) require no registration. If a provider stores an instance of a
-    custom class or Pydantic model, the application must call
+    custom class or Pydantic model, the provider module must call
     :func:`register_state_type` for that class at module level, immediately
-    after its definition. Importing the module then registers the type before a
-    persisted session is loaded, even when the related context provider has not
-    been instantiated yet. Framework-owned state types such as :class:`Message`
-    are registered by Agent Framework.
+    after its definition. Importing the provider then registers the type before
+    a persisted session is loaded, without requiring the application to know
+    which internal state types the provider uses. Framework-owned state types
+    such as :class:`Message` are registered by Agent Framework.
 
     Attributes:
         source_id: Unique identifier for this provider instance (required).
@@ -887,11 +906,12 @@ class HistoryProvider(ContextProvider):
     Agent Framework registers ``Message`` for session persistence. If a history
     provider stores any other custom class or Pydantic model in its
     provider-scoped ``state`` or elsewhere in :attr:`AgentSession.state`, the
-    application must call :func:`register_state_type` at module level
+    provider module must call :func:`register_state_type` at module level
     immediately after defining that class. This ensures importing the provider
     module registers its state types before session restoration and before the
-    provider itself is instantiated. Prefer JSON-native Python values when a
-    custom runtime type is not needed after restoration.
+    provider itself is instantiated, without requiring consumer registration.
+    Prefer JSON-native Python values when a custom runtime type is not needed
+    after restoration.
 
     Attributes:
         load_messages: Whether to load messages before invocation (default True).
@@ -1532,19 +1552,21 @@ class FileSessionStore(SessionStore):
 
     The complete snapshot is encoded and decoded in one call through a typed
     :mod:`msgspec` codec. The dynamic state mapping is routed through the
-    explicit :func:`register_state_type` registry by one state-payload hook.
+    explicit :func:`register_state_type` registry during encoding and restored
+    after the typed envelope and snapshot version are validated.
 
     Security posture:
         Persisted session snapshots are stored as plaintext JSON or binary
         MessagePack on the local filesystem.
         Treat ``storage_path`` as trusted application storage, not as a secret
-        store. Restricted store keys and resolved-path validation help prevent
-        path traversal via ``session_id``, but they do not encrypt file contents
-        or coordinate concurrent updates across processes or hosts. Process-local
-        operations are serialized per file, and atomic replacement prevents
-        partial writes; cross-process writers still use last-writer-wins
-        semantics. Use OS-level file permissions, trusted directories, and
-        carefully review what session state is allowed to be persisted.
+        store. Opaque store keys are encoded as portable filename stems, and
+        resolved-path validation prevents path traversal via ``session_id``.
+        These protections do not encrypt file contents or coordinate concurrent
+        updates across processes or hosts. Process-local operations are
+        serialized per file, and atomic replacement prevents partial writes;
+        cross-process writers still use last-writer-wins semantics. Use OS-level
+        file permissions, trusted directories, and carefully review what session
+        state is allowed to be persisted.
     """
 
     MAX_SESSION_ID_LENGTH: ClassVar[int] = 128
@@ -1600,13 +1622,9 @@ class FileSessionStore(SessionStore):
                     return None
                 try:
                     snapshot = self._decoder.decode(serialized)
-                    session = AgentSession(
-                        session_id=snapshot.session_id,
-                        service_session_id=snapshot.service_session_id,
-                    )
-                    session.state = snapshot.state.value
-                    return session
-                except (msgspec.DecodeError, TypeError, ValueError) as exc:
+                except msgspec.ValidationError as exc:
+                    raise ValueError(f"Session snapshot '{file_path}' has an invalid schema.") from exc
+                except msgspec.DecodeError as exc:
                     try:
                         quarantine_path = self._quarantine_corrupt_snapshot(file_path, serialized)
                     except OSError as quarantine_error:
@@ -1623,6 +1641,24 @@ class FileSessionStore(SessionStore):
                         f"Failed to deserialize session from '{file_path}'. The corrupt snapshot was quarantined to "
                         f"'{quarantine_path}'; retry to create a new session."
                     ) from exc
+                if snapshot.version != _SESSION_SNAPSHOT_VERSION:
+                    raise ValueError(
+                        f"Unsupported session snapshot version {snapshot.version!r} in '{file_path}'; "
+                        f"expected {_SESSION_SNAPSHOT_VERSION!r}."
+                    )
+                raw_state: object = snapshot.state
+                if not isinstance(raw_state, dict):
+                    raise ValueError(f"Session snapshot state in '{file_path}' must be a mapping.")
+                try:
+                    state = _deserialize_state(cast(dict[str, Any], raw_state))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"Failed to restore session state from '{file_path}'.") from exc
+                session = AgentSession(
+                    session_id=snapshot.session_id,
+                    service_session_id=snapshot.service_session_id,
+                )
+                session.state = state
+                return session
 
         return await asyncio.to_thread(_read)
 
@@ -1677,14 +1713,11 @@ class FileSessionStore(SessionStore):
             session_id: Session-store ID to validate.
 
         Raises:
-            ValueError: If the ID is empty, too long, or contains characters
-                other than ASCII letters, digits, ``-``, and ``_``.
+            ValueError: If the ID is empty or too long.
         """
         SessionStore.validate_session_id(session_id)
         if len(session_id) > FileSessionStore.MAX_SESSION_ID_LENGTH:
             raise ValueError(f"session_id must be at most {FileSessionStore.MAX_SESSION_ID_LENGTH} characters")
-        if not all(character.isascii() and (character.isalnum() or character in "-_") for character in session_id):
-            raise ValueError("session_id must contain only ASCII letters, digits, '-' and '_'")
 
     def get_session_directory(self) -> Path:
         """Return the directory used for the current file-store operation.
