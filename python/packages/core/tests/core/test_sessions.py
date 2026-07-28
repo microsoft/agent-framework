@@ -1223,6 +1223,19 @@ class TestFileSessionStore:
         assert session_file.parent == tmp_path
         assert session_file.name.startswith("~session-") is is_encoded
 
+    async def test_rejects_symlinked_session_file_within_storage_root(self, tmp_path: Path) -> None:
+        store = FileSessionStore(tmp_path)
+        target_file = tmp_path / "other-session.json"
+        session_file = tmp_path / "session-1.json"
+        await asyncio.to_thread(target_file.write_text, "{}", encoding="utf-8")
+        try:
+            await asyncio.to_thread(session_file.symlink_to, target_file)
+        except OSError as exc:
+            pytest.skip(f"Symlinks are not available: {exc}")
+
+        with pytest.raises(ValueError, match="escaped storage directory"):
+            await store.get("session-1")
+
     @pytest.mark.parametrize("session_id", ["NUL.txt", "COM¹", "LPT².log"])
     async def test_reserved_windows_filename_is_encoded(self, tmp_path: Path, session_id: str) -> None:
         provider = FileHistoryProvider(tmp_path)

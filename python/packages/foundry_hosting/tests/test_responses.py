@@ -542,6 +542,23 @@ class TestAgentSessionPersistence:
         with _request_context(user_id="user-A"), pytest.raises(ValueError, match="escaped storage directory"):
             await store.get("conversation-1")
 
+    async def test_scoped_file_store_rejects_symlinked_session_leaf_within_user_directory(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        store = FoundrySessionStore(tmp_path)
+        user_directory = tmp_path / "user-A"
+        user_directory.mkdir()
+        target_file = user_directory / "conversation-2.json"
+        target_file.write_text("outside", encoding="utf-8")
+        try:
+            (user_directory / "conversation-1.json").symlink_to(target_file)
+        except OSError as exc:
+            pytest.skip(f"Symlinks are not available: {exc}")
+
+        with _request_context(user_id="user-A"), pytest.raises(ValueError, match="escaped storage directory"):
+            await store.get("conversation-1")
+
     async def test_scoped_file_store_rejects_symlinked_isolation_directory(self, tmp_path: Path) -> None:
         store = FoundrySessionStore(tmp_path)
         user_directory = "user-A"
@@ -549,6 +566,21 @@ class TestAgentSessionPersistence:
         outside_directory.mkdir()
         try:
             (tmp_path / user_directory).symlink_to(outside_directory, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"Symlinks are not available: {exc}")
+
+        with _request_context(user_id="user-A"), pytest.raises(ValueError, match="Session directory escaped"):
+            await store.get("conversation-1")
+
+    async def test_scoped_file_store_rejects_symlinked_isolation_directory_within_storage_root(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        store = FoundrySessionStore(tmp_path)
+        other_user_directory = tmp_path / "user-B"
+        other_user_directory.mkdir()
+        try:
+            (tmp_path / "user-A").symlink_to(other_user_directory, target_is_directory=True)
         except OSError as exc:
             pytest.skip(f"Symlinks are not available: {exc}")
 

@@ -35,7 +35,21 @@ class FoundrySessionStore(FileSessionStore):
         """Initialize a Foundry-scoped file store rooted at ``storage_path``."""
         super().__init__(storage_path, serialization_format=serialization_format)
 
-    def get_session_directory(self) -> Path:
-        """Return the active request user's validated session directory."""
+    def _session_file_path(self, session_id: str) -> Path:
+        """Resolve a snapshot path within the active Foundry user's directory."""
         directory_segment = request_user_directory_segment()
-        return self.storage_path / directory_segment if directory_segment else self.storage_path
+        candidate_directory = self._storage_root / directory_segment if directory_segment else self._storage_root
+        session_directory = candidate_directory.resolve()
+        if session_directory != candidate_directory or not session_directory.is_relative_to(self._storage_root):
+            raise ValueError(f"Session directory escaped storage directory: '{session_directory}'.")
+        session_directory.mkdir(parents=True, exist_ok=True)
+
+        candidate_path = session_directory / self._session_file_name(session_id)
+        file_path = candidate_path.resolve()
+        if (
+            file_path != candidate_path
+            or not file_path.is_relative_to(session_directory)
+            or not file_path.is_relative_to(self._storage_root)
+        ):
+            raise ValueError(f"Session path escaped storage directory: {session_id!r}")
+        return file_path

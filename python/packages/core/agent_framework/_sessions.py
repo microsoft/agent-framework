@@ -1719,15 +1719,6 @@ class FileSessionStore(SessionStore):
         if len(session_id) > FileSessionStore.MAX_SESSION_ID_LENGTH:
             raise ValueError(f"session_id must be at most {FileSessionStore.MAX_SESSION_ID_LENGTH} characters")
 
-    def get_session_directory(self) -> Path:
-        """Return the directory used for the current file-store operation.
-
-        Subclasses may override this hook to scope operations to a child
-        directory. Filename encoding and containment checks remain owned by the
-        base implementation.
-        """
-        return self._storage_root
-
     @staticmethod
     def _quarantine_corrupt_snapshot(file_path: Path, serialized: bytes) -> Path | None:
         """Move an unchanged corrupt snapshot aside so a retry can recover."""
@@ -1748,16 +1739,17 @@ class FileSessionStore(SessionStore):
 
     def _session_file_path(self, session_id: str) -> Path:
         """Resolve the contained snapshot path for ``session_id``."""
-        self.validate_session_id(session_id)
-        session_directory = self.get_session_directory().resolve()
-        if not session_directory.is_relative_to(self._storage_root):
-            raise ValueError(f"Session directory escaped storage directory: '{session_directory}'.")
-        session_directory.mkdir(parents=True, exist_ok=True)
-        file_stem = _session_file_stem(session_id, encoded_prefix=self._ENCODED_SESSION_PREFIX)
-        file_path = (session_directory / f"{file_stem}{self._file_extension}").resolve()
-        if not file_path.is_relative_to(session_directory):
+        candidate_path = self._storage_root / self._session_file_name(session_id)
+        file_path = candidate_path.resolve()
+        if file_path != candidate_path or not file_path.is_relative_to(self._storage_root):
             raise ValueError(f"Session path escaped storage directory: {session_id!r}")
         return file_path
+
+    def _session_file_name(self, session_id: str) -> str:
+        """Return the portable snapshot filename for ``session_id``."""
+        self.validate_session_id(session_id)
+        file_stem = _session_file_stem(session_id, encoded_prefix=self._ENCODED_SESSION_PREFIX)
+        return f"{file_stem}{self._file_extension}"
 
 
 class InMemoryHistoryProvider(HistoryProvider):
