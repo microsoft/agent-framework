@@ -23,7 +23,7 @@ async def mock_server_handler(request: web.Request) -> web.StreamResponse:
     # Write event type line
     await response.write(b"event: activity\n")
     # Write data line
-    data_line = f'data: {{"type":"message","text":"{long_data}","conversation":{{"id":"test"}}}}\n'.encode("utf-8")
+    data_line = f'data: {{"type":"message","text":"{long_data}","conversation":{{"id":"test"}}}}\n'.encode()
     await response.write(data_line)
     return response
 

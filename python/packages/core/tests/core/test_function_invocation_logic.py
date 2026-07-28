@@ -2374,6 +2374,7 @@ def test_replace_approval_contents_with_results_allows_reused_call_id_after_comp
         ("call_reused", "second output"),
     ]
 
+
 def test_replace_approval_contents_with_results_uses_result_call_ids_for_placeholders() -> None:
     from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
 
