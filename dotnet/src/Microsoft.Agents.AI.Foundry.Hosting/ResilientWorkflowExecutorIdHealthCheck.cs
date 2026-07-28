@@ -87,6 +87,6 @@ internal sealed class ResilientWorkflowExecutorIdHealthCheck : IHealthCheck
         return Task.FromResult(new HealthCheckResult(
             status: context.Registration.FailureStatus,
             description:
-                $"Resilient workflow ids: one or more hosted workflow steps use an agent with an auto-generated id, which breaks crash-recovery resume (the checkpoint is matched to the rebuilt workflow by executor id, and an auto-generated id changes on every restart). Assign a stable Id to each agent in the workflow, for example chatClient.AsAIAgent(options: new() {{ Id = \"translator\", Name = \"translator\" }}). Offending steps: {string.Join("; ", offenders)}."));
+                $"For resilient workflows, every workflow step agent must have an explicit id so crash-recovery resume can match the checkpoint to the rebuilt workflow (an auto-generated id changes on every restart). Please assign a stable id to each of these step agents: {string.Join("; ", offenders)}."));
     }
 }
