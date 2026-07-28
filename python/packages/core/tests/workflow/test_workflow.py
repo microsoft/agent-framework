@@ -2,6 +2,7 @@
 
 import asyncio
 import gc
+import logging
 import tempfile
 from collections.abc import AsyncIterable, Awaitable, Sequence
 from dataclasses import dataclass, field
@@ -107,6 +108,38 @@ class MockExecutorRequestApproval(Executor):
             await ctx.yield_output(data)
         else:
             await ctx.send_message(NumberMessage(data=data))
+
+
+async def test_fresh_message_while_pending_advances_state_without_abandoning_requests(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A fresh message while a request is pending is allowed but hazardous.
+
+    A fresh ``message`` does NOT abandon the pending request - it can still be answered
+    later - but the new run advances executor state, so a response for the earlier request
+    applies to a workflow that has moved on. The run is allowed and a warning is emitted.
+    """
+    executor = MockExecutorRequestApproval(id="approver")
+    workflow = WorkflowBuilder(start_executor=executor).build()
+
+    # Turn 1: request approval for data=1 -> workflow idles with a pending request.
+    result1 = await workflow.run(NumberMessage(data=1))
+    assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+    original_request_id = result1.get_request_info_events()[0].request_id
+
+    # Turn 2: a fresh message for data=2 while the first request is still pending. This is
+    # allowed but warns, and advances the executor's stored state from 1 to 2.
+    with caplog.at_level(logging.WARNING):
+        result2 = await workflow.run(NumberMessage(data=2))
+    assert "request_info event(s) are still pending" in caplog.text
+    assert "a fresh message" in caplog.text
+    assert result2.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+
+    # Turn 3: the ORIGINAL request is still answerable, proving the fresh message did not
+    # abandon it. But because the executor state moved on to 2, the response applies to the
+    # moved-on state and yields 2, not the original 1.
+    result3 = await workflow.run(responses={original_request_id: ApprovalMessage(approved=True)})
+    assert result3.get_outputs() == [2]
 
 
 async def test_workflow_run_streaming() -> None:

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [github-copilot-1.0.0] - 2026-07-23
+
+### Added
+- **agent-framework-github-copilot**: Forward input attachments (images, documents, and other inline binary content) to GitHub Copilot as inline blobs ([#7300](https://github.com/microsoft/agent-framework/pull/7300))
+
+### Changed
+- **agent-framework-github-copilot**: Promote the package from release candidate to stable
+
 ## [hosting-a2a-1.0.0a260723] - 2026-07-23
 
 ### Added

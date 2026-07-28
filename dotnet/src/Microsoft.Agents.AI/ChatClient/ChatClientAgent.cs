@@ -478,7 +478,7 @@ public sealed partial class ChatClientAgent : AIAgent
         ChatOptions? chatOptions,
         CancellationToken cancellationToken)
     {
-        ChatHistoryProvider? chatHistoryProvider = this.ResolveChatHistoryProvider(chatOptions);
+        ChatHistoryProvider? chatHistoryProvider = this.ResolveChatHistoryProvider(session, chatOptions);
 
         if (chatHistoryProvider is not null)
         {
@@ -510,7 +510,7 @@ public sealed partial class ChatClientAgent : AIAgent
         ChatOptions? chatOptions,
         CancellationToken cancellationToken)
     {
-        ChatHistoryProvider? chatHistoryProvider = this.ResolveChatHistoryProvider(chatOptions);
+        ChatHistoryProvider? chatHistoryProvider = this.ResolveChatHistoryProvider(session, chatOptions);
 
         if (chatHistoryProvider is not null)
         {
@@ -980,22 +980,33 @@ public sealed partial class ChatClientAgent : AIAgent
         }
     }
 
-    private ChatHistoryProvider? ResolveChatHistoryProvider(ChatOptions? chatOptions)
+    private ChatHistoryProvider? ResolveChatHistoryProvider(ChatClientAgentSession session, ChatOptions? chatOptions)
     {
-        ChatHistoryProvider? provider =
-            chatOptions?.ConversationId is null || IsAGUIProviderName(this._agentMetadata.ProviderName)
-            ? this.ChatHistoryProvider
-            : null;
+        // A service that manages chat history server-side disengages the chat history provider so that history
+        // is not stored in two places. The service is considered to store history when a conversation id is
+        // present either on the options (explicitly supplied by the caller) or on the session (returned by the
+        // service on a previous or the current run).
+        //
+        // The per-service-call persistence check must remain: PerServiceCallChatHistoryPersistingChatClient
+        // calls back into LoadChatHistoryAsync/NotifyProviders (which reach here) precisely when per-service-call
+        // persistence is active, and in its simulated path it stamps a sentinel onto session.ConversationId.
+        // Without this check that sentinel would be mistaken for service-stored history and wrongly disengage
+        // the provider the decorator depends on.
+        bool serviceStoresHistory =
+            !this.RequiresPerServiceCallChatHistoryPersistence
+            && !IsAGUIProviderName(this._agentMetadata.ProviderName)
+            && (!string.IsNullOrWhiteSpace(chatOptions?.ConversationId)
+                || !string.IsNullOrWhiteSpace(session.ConversationId));
+
+        ChatHistoryProvider? provider = serviceStoresHistory ? null : this.ChatHistoryProvider;
 
         // If someone provided an override ChatHistoryProvider via AdditionalProperties, we should use that instead.
         if (chatOptions?.AdditionalProperties?.TryGetValue(out ChatHistoryProvider? overrideProvider) is true)
         {
-            if (!IsAGUIProviderName(this._agentMetadata.ProviderName) &&
-                this._agentOptions?.ThrowOnChatHistoryProviderConflict is true &&
-                string.IsNullOrWhiteSpace(chatOptions?.ConversationId) is false)
+            if (this._agentOptions?.ThrowOnChatHistoryProviderConflict is true && serviceStoresHistory)
             {
                 throw new InvalidOperationException(
-                    $"Only {nameof(ChatClientAgentSession.ConversationId)} or {nameof(this.ChatHistoryProvider)} may be used, but not both. The current {nameof(ChatClientAgentSession)} has a {nameof(ChatClientAgentSession.ConversationId)} indicating server-side chat history management, but an override {nameof(this.ChatHistoryProvider)} was provided via {nameof(AgentRunOptions.AdditionalProperties)}.");
+                    $"Only {nameof(ChatClientAgentSession.ConversationId)} or {nameof(this.ChatHistoryProvider)} may be used, but not both. A {nameof(ChatClientAgentSession.ConversationId)} indicating server-side chat history management is present (on the {nameof(ChatClientAgentSession)} or the {nameof(this.ChatOptions)}), but an override {nameof(this.ChatHistoryProvider)} was provided via {nameof(AgentRunOptions.AdditionalProperties)}.");
             }
 
             // Validate that the override provider's StateKeys do not clash with any AIContextProvider's StateKeys.
@@ -1030,7 +1041,7 @@ public sealed partial class ChatClientAgent : AIAgent
         ChatOptions? chatOptions,
         CancellationToken cancellationToken)
     {
-        var chatHistoryProvider = this.ResolveChatHistoryProvider(chatOptions);
+        var chatHistoryProvider = this.ResolveChatHistoryProvider(session, chatOptions);
         if (chatHistoryProvider is null)
         {
             return messages;
