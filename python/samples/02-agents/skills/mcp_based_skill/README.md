@@ -9,15 +9,14 @@ This sample demonstrates how to discover **Agent Skills served over MCP** with a
 - Building a `SkillsProvider` from an `MCPSkillsSource`, which reads
   `skill://index.json` (SEP-2640 canonical discovery) and constructs skills from
   the index entries.
-- Both discovery entry types: `skill-md` (the `SKILL.md` body and sibling
-  resources are fetched on demand from the server) and `archive` (a single ZIP /
-  TAR / gzip-TAR resource that is downloaded and safely unpacked to a local
-  directory, then served like a file-based skill). Archive extraction is hardened
-  against path-traversal, link-based escapes, and decompression bombs, and
-  scripts bundled in an archive are never exposed as runnable — MCP-delivered
-  scripts are always treated as read-only content.
 - The progressive disclosure pattern across MCP: advertise → load → read
   resources, exactly as for filesystem-backed skills.
+
+> `MCPSkillsSource` supports both index entry types — `skill-md` (the `SKILL.md`
+> body and sibling resources are fetched on demand) and `archive` (a single ZIP /
+> TAR / gzip-TAR resource, unpacked in memory and served like a file-based skill).
+> Which ones you see depends on what the MCP server advertises; this sample simply
+> consumes whatever the server returns.
 
 ## Running the Sample
 
