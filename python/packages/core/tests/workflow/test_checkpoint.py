@@ -430,7 +430,7 @@ async def test_workflow_checkpoint_ancestry_preserved_after_resume():
 async def test_workflow_entry_checkpoint_records_input_and_replays():
     """The entry checkpoint records the run's raw input, enabling a full replay from the start executor.
 
-    The first checkpoint (iteration 0) is created before any executor runs and captures the input
+    The first checkpoint is created before any executor runs and captures the input
     message seeded onto the start executor's internal self-edge. Restoring it on a fresh instance
     re-delivers that input to the start executor, so the entire run - including the start executor -
     replays and produces the same output.
@@ -473,7 +473,7 @@ async def test_workflow_entry_checkpoint_records_input_and_replays():
     first_outputs = (await workflow.run("hello")).get_outputs()
     assert first_outputs == ["hello-start-done"]
 
-    # The entry checkpoint (iteration 0) is created before any executor runs and begins a new lineage.
+    # The entry checkpoint is created before any executor runs.
     checkpoints = await storage.list_checkpoints(workflow_name=workflow_name)
     entry = [cp for cp in checkpoints if cp.iteration_count == 0]
     assert len(entry) == 1, "A fresh checkpointed run must create exactly one entry checkpoint at iteration 0"

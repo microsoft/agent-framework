@@ -675,7 +675,7 @@ class Workflow(DictConvertible):
                 )
 
             await self._runner.context.send_message(entry_message)
-            # Record the entry checkpoint (iteration 0) capturing the seeded input before any
+            # Record the entry checkpoint capturing the seeded input before any
             # executor runs. The runner only checkpoints after each superstep.
             await self._runner.create_checkpoint_if_enabled()
 
